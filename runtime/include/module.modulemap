@@ -1,0 +1,4 @@
+module EchoRuntime {
+    header "echo_runtime.h"
+    export *
+}

@@ -1,0 +1,114 @@
+import AppKit
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var pets: PetCatalog?
+    private var companion: CompanionController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--diagnose-voice") {
+            Task { @MainActor in
+                let passed = await VoiceDiagnosticProbe.run()
+                exit(passed ? 0 : 1)
+            }
+            return
+        }
+        installMenus()
+        do {
+            let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
+            let pets = PetCatalog(settings: settings,
+                                  builtinRoot: Bundle.main.resourceURL?.appendingPathComponent("pets"),
+                                  importedRoot: SettingsStore.directory.appendingPathComponent("pets"))
+            pets.onFailure = { [weak self] error in self?.showFailure(error) }
+            self.pets = pets
+            let store = try pets.loadInitial()
+            let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: WorkspacePersistence.defaultURL),
+                                           sourceFactory: { ModelTaskSource(settings: settings) })
+            companion = CompanionController(petStore: store, workspace: workspace, settings: settings, pets: pets)
+            store.start()
+        } catch { showFailure(error) }
+    }
+
+    private func installMenus() {
+        let menu = NSMenu()
+        let applicationItem = NSMenuItem()
+        let applicationMenu = NSMenu(title: "Echo")
+        applicationMenu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        applicationMenu.addItem(.separator())
+        applicationMenu.addItem(withTitle: "退出 Echo", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        applicationItem.submenu = applicationMenu
+        menu.addItem(applicationItem)
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "文件")
+        fileMenu.addItem(withTitle: "新对话", action: #selector(newConversation), keyEquivalent: "n").target = self
+        fileMenu.addItem(withTitle: "添加项目文件夹…", action: #selector(addProject), keyEquivalent: "").target = self
+        fileItem.submenu = fileMenu; menu.addItem(fileItem)
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        for (title, selector, key) in [("剪切", "cut:", "x"), ("复制", "copy:", "c"),
+                                       ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] {
+            editMenu.addItem(withTitle: title, action: NSSelectorFromString(selector), keyEquivalent: key)
+        }
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "撤销", action: NSSelectorFromString("undo:"), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "重做", action: NSSelectorFromString("redo:"), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(withTitle: "搜索聊天", action: #selector(search), keyEquivalent: "f").target = self
+        editItem.submenu = editMenu
+        menu.addItem(editItem)
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "窗口")
+        windowMenu.addItem(withTitle: "收起主窗口", action: #selector(hideConversation), keyEquivalent: "w").target = self
+        let sidebar = windowMenu.addItem(withTitle: "切换侧栏", action: #selector(toggleSidebar), keyEquivalent: "s")
+        sidebar.keyEquivalentModifierMask = [.command, .option]; sidebar.target = self
+        let inspector = windowMenu.addItem(withTitle: "切换详情栏", action: #selector(toggleInspector), keyEquivalent: "i")
+        inspector.keyEquivalentModifierMask = [.command, .option]; inspector.target = self
+        windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowItem.submenu = windowMenu
+        menu.addItem(windowItem)
+        NSApp.mainMenu = menu
+    }
+
+    @objc private func showSettings() { companion?.showSettings() }
+    @objc private func hideConversation() { companion?.mainController?.hideMainWindow() }
+    @objc private func newConversation() {
+        guard let companion else { return }
+        companion.mainController?.showWorkspace()
+        companion.workspace.newConversation(projectID: companion.workspace.selected?.projectID)
+        companion.workspace.isMainWindowVisible = true
+        companion.synchronize(animated: false)
+    }
+    @objc private func addProject() {
+        WorkspaceActions.chooseFolder { [weak self] url in _ = self?.companion?.workspace.addProject(url: url) }
+    }
+    @objc private func search() {
+        companion?.workspace.isMainWindowVisible = true; companion?.synchronize(animated: false)
+        companion?.mainController?.focusSearch()
+    }
+    @objc private func toggleSidebar() { companion?.mainController?.toggleSidebar() }
+    @objc private func toggleInspector() { companion?.mainController?.toggleInspector() }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        pets?.stop()
+        companion?.shutdown()
+        companion = nil
+        pets = nil
+    }
+
+    private func showFailure(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "无法启动桌面精灵"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "退出")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+        NSApp.terminate(nil)
+    }
+}
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
