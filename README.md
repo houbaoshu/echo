@@ -18,6 +18,8 @@ Echo 是面向 Apple Silicon Mac 的原生聊天工作区，提供桌面精灵�
 
 需要 Apple Silicon Mac、macOS 26 或更新版本、Rust/Cargo，以及支持 Swift 6 的 Xcode Command Line Tools 和 macOS 26 SDK。首次构建需要下载 Rust 依赖。脚本使用系统 `/bin/zsh`，默认选择 macOS 26 SDK，也可通过 `SDKROOT` 指定兼容 SDK。
 
+Agent 集成实验的第 2 阶段已增加独立静态库。构建还需要相邻的 `../mini-agent-agent-core-exp`（第 1 阶段会话核心），通过 Cargo 路径依赖编译，并将其 `config/prompts/conversation.md` 打包到应用资源。运行时无需该源码目录。桥接暂未接入聊天或语音入口，接口与阶段边界见 [第 2 阶段交付记录](docs/agent-integration-stage2.md)。
+
 仅构建验证包，不访问签名钥匙串：
 
 ```sh
@@ -55,6 +57,7 @@ Echo 是面向 Apple Silicon Mac 的原生聊天工作区，提供桌面精灵�
 | --- | --- |
 | `runtime/src/` | Rust 精灵清单解析、WebP 解码与切帧、动画状态和交互优先级 |
 | `runtime/include/` | C ABI 与 Swift 模块映射；Swift 复制帧数据并缓存为 `CGImage` |
+| `agent-bridge/`、`macos/AgentBridge.swift` | 独立 Agent C ABI、共享 Tokio 后台运行、事件与取消生命周期、Swift 内存所有权及轮询适配 |
 | `macos/PetStore.swift`、`PetWindow.swift`、`PetCatalog.swift` | 精灵运行时桥接、透明悬浮窗口、素材导入与切换 |
 | `macos/Companion*.swift`、`MainWindowController.swift`、`ConversationViews.swift` | 桌面浮层、窗口布局和聊天界面 |
 | `macos/WorkspaceStore.swift`、`TaskStore.swift`、`ModelTaskSource.swift` | 项目与会话管理、每会话任务状态、模型请求与取消 |
@@ -83,6 +86,7 @@ Echo 是面向 Apple Silicon Mac 的原生聊天工作区，提供桌面精灵�
 ```sh
 cargo test --locked --workspace
 cargo clippy --locked --workspace -- -D warnings
+/bin/zsh scripts/test-agent-bridge.sh
 /bin/zsh scripts/test-chat.sh
 /bin/zsh scripts/test-chat-ui.sh
 /bin/zsh scripts/test-workspace.sh
