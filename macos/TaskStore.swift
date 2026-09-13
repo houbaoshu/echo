@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-enum TaskStatus: String, Codable { case running, stopped, completed, interrupted, failed }
+enum TaskStatus: String, Codable { case running, stopping, stopped, completed, interrupted, failed }
 enum TaskEvent { case progress(String), completed(String), failed(String) }
 enum TaskLifecycleEvent {
     case started(UUID)
@@ -30,10 +30,12 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
     var status: Status = .completed
     var timestamp = Date()
     var errorMessage: String?
+    var coreID: UInt64?
+    var steering: String?
     // Decode-only provenance for removing the old demo source's canned messages.
     private(set) var legacyWithoutCompletion = false
 
-    private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, text, isComplete }
+    private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, text, isComplete, coreID, steering }
     init(role: Role, content: String, status: Status = .completed) {
         self.role = role; self.content = content; self.status = status
     }
@@ -47,6 +49,8 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         status = savedStatus ?? (role == .assistant && complete == false ? .interrupted : .completed)
         timestamp = try values.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date(timeIntervalSince1970: 0)
         errorMessage = try values.decodeIfPresent(String.self, forKey: .errorMessage)
+        coreID = try values.decodeIfPresent(UInt64.self, forKey: .coreID)
+        steering = try values.decodeIfPresent(String.self, forKey: .steering)
         legacyWithoutCompletion = savedStatus == nil && complete == nil
     }
     func encode(to encoder: any Encoder) throws {
@@ -54,6 +58,7 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         try values.encode(id, forKey: .id); try values.encode(role, forKey: .role)
         try values.encode(content, forKey: .content); try values.encode(status, forKey: .status)
         try values.encode(timestamp, forKey: .timestamp); try values.encodeIfPresent(errorMessage, forKey: .errorMessage)
+        try values.encodeIfPresent(coreID, forKey: .coreID); try values.encodeIfPresent(steering, forKey: .steering)
     }
 }
 
@@ -79,6 +84,25 @@ struct ActivityTask: Codable {
     func cancel()
 }
 
+@MainActor protocol AgentSessionSource: TaskSource {
+    func open(sessionID: String, history: Data?, messages: [ConversationMessage], directory: URL?,
+              receive: @escaping ([String: Any]) -> Void, failure: @escaping (String) -> Void) throws
+    func control(_ type: String, fields: [String: Any]) throws
+    func close(afterCleanup: @escaping () -> Void)
+}
+
+struct AgentToolRecord: Identifiable, Codable, Equatable {
+    var id: String { "\(turnID):\(entryID):\(callID)" }
+    var callID: String
+    var entryID: UInt64
+    var turnID: UInt64
+    var afterMessageID: UUID?
+    var command: String
+    var result: String?
+    var state = "待执行"
+    var directory: String?
+}
+
 @MainActor final class TaskStore: ObservableObject {
     let lifecycle = PassthroughSubject<TaskLifecycleEvent, Never>()
     @Published private(set) var task: ActivityTask?
@@ -90,6 +114,23 @@ struct ActivityTask: Codable {
     @Published var mainDraft = ""
     @Published var followUpDraft = ""
     @Published var notice: String?
+    @Published private(set) var tools: [AgentToolRecord] = []
+    @Published private(set) var needsDirectory = false
+    @Published private(set) var waitingForProject = false
+    private var agentHistory: Data?
+    private var agentTurnID: UInt64?
+    private var pendingOperation: UInt64?
+    private var agentGeneration = UUID()
+    private var storageFailure: String?
+    var sessionID = UUID()
+    var projectDirectory: (() -> URL?)?
+    var checkpoint: ((Snapshot) throws -> Void)?
+    var acquireDirectory: ((String, @escaping () -> Void) -> Void)?
+    var cancelDirectoryWait: (() -> Void)?
+    var releaseDirectory: (() -> Void)?
+    var agentLoadError: String?
+    var usesAgent: Bool { source is any AgentSessionSource }
+    private var agent: (any AgentSessionSource)? { source as? any AgentSessionSource }
     private let source: (any TaskSource)?
     private var retired = false
     private var responseMessageID: UUID?
@@ -104,20 +145,28 @@ struct ActivityTask: Codable {
         var followUpDraft: String
         var activityDismissed: Bool
         var activitiesCollapsed: Bool
+        var agentHistory: Data? = nil
+        var tools: [AgentToolRecord]? = nil
+        var agentStored: Bool? = nil
+        var loadError: String? = nil
     }
     var snapshot: Snapshot {
         Snapshot(task: task, messages: messages, mainDraft: mainDraft, followUpDraft: followUpDraft,
-                 activityDismissed: activityDismissed, activitiesCollapsed: activitiesCollapsed)
+                 activityDismissed: activityDismissed, activitiesCollapsed: activitiesCollapsed,
+                 agentHistory: agentHistory, tools: usesAgent ? tools : nil, loadError: agentLoadError)
     }
     convenience init(snapshot: Snapshot, source: (any TaskSource)?) {
         self.init(source: source)
         task = snapshot.task
-        if task?.status == .running {
+        if task?.status == .running || task?.status == .stopping {
             task?.status = .interrupted
             task?.runID = UUID()
             task?.summary = "已中断 · 可继续跟进"
         }
         messages = snapshot.messages
+        agentHistory = snapshot.agentHistory; tools = snapshot.tools ?? []; agentLoadError = snapshot.loadError
+        for index in tools.indices where tools[index].result == nil { tools[index].state = "执行结果未知" }
+        for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
         // Only legacy messages lack completion metadata. Remove the old canned
         // source's output before any history is sent to a real model.
         let canned = [
@@ -177,12 +226,13 @@ struct ActivityTask: Codable {
     var isActivityVisible: Bool { activityCount > 0 && !activitiesCollapsed }
 
     var canRetry: Bool {
+        if usesAgent { return !retired && agentLoadError == nil && [.failed, .stopped, .interrupted].contains(task?.status) }
         guard !retired, [.failed, .stopped, .interrupted].contains(task?.status),
               messages.contains(where: { $0.role == .user }), let last = messages.last else { return false }
         return last.role == .assistant && [.failed, .stopped, .interrupted].contains(last.status)
     }
-    var isGenerating: Bool { task?.status == .running }
-    var canSubmit: Bool { !retired }
+    var isGenerating: Bool { task?.status == .running || task?.status == .stopping }
+    var canSubmit: Bool { !retired && task?.status != .stopping && agentLoadError == nil }
     var requestMessages: [ConversationMessage] { ConversationContext.messages(messages) }
     private func updateResponse(_ content: String? = nil, status: ConversationMessage.Status, error: String? = nil) {
         guard let id = responseMessageID, let index = messages.firstIndex(where: { $0.id == id }) else { return }
@@ -223,6 +273,7 @@ struct ActivityTask: Codable {
     }
     @discardableResult func send(_ draft: String) -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if usesAgent { return sendAgent(text) }
         guard !retired, !isGenerating, !text.isEmpty else { return false }
         source?.cancel()
         if task == nil {
@@ -246,6 +297,7 @@ struct ActivityTask: Codable {
     }
     @discardableResult func retry() -> Bool {
         guard !retired, canRetry else { return false }
+        if usesAgent { beginAgent(text: nil); return true }
         source?.cancel()
         task?.runID = UUID(); task?.status = .running; task?.summary = "正在等待模型回复…"
         responseMessageID = messages.last?.id
@@ -265,6 +317,12 @@ struct ActivityTask: Codable {
     }
     func stopTask() {
         guard isGenerating, let runID = task?.runID else { return }
+        if usesAgent {
+            guard task?.status != .stopping else { return }
+            task?.status = .stopping; task?.summary = "正在停止…"
+            pendingOperation = nil; needsDirectory = false; waitingForProject = false
+            cancelDirectoryWait?(); agent?.cancel(); return
+        }
         // Close the event gate before cancellation, including synchronous callbacks.
         task?.status = .stopped; task?.summary = "已停止 · 可继续跟进"
         updateResponse(status: .stopped)
@@ -280,6 +338,198 @@ struct ActivityTask: Codable {
         retired = true
         if isGenerating { task?.status = .interrupted; updateResponse(status: .interrupted) }
         lifecycle.send(.retired)
-        source?.cancel(); onUserAction = nil; onVisibilityChange = nil
+        if let agent {
+            cancelDirectoryWait?()
+            agent.close(afterCleanup: releaseDirectory ?? {})
+        } else { source?.cancel() }
+        onUserAction = nil; onVisibilityChange = nil
+    }
+
+    private func sendAgent(_ text: String) -> Bool {
+        guard canSubmit, !text.isEmpty else { return false }
+        if isGenerating {
+            do {
+                try agent?.control("steer", fields: ["text": text])
+                pendingOperation = nil; cancelDirectoryWait?(); waitingForProject = false; needsDirectory = false
+                var message = ConversationMessage(role: .user, content: text)
+                message.steering = "待处理"; messages.append(message)
+                onUserAction?(); _ = saveAgent(); return true
+            } catch { notice = error.localizedDescription; return false }
+        }
+        beginAgent(text: text); return true
+    }
+
+    private func beginAgent(text: String?) {
+        guard let agent else { return }
+        let prior = requestMessages
+        storageFailure = nil; notice = nil; agentTurnID = nil; pendingOperation = nil
+        agentGeneration = UUID(); let generation = agentGeneration
+        if task == nil { task = .init(id: UUID(), runID: UUID(), title: String((text ?? "继续处理").prefix(80)), summary: "", status: .running) }
+        task?.runID = UUID(); task?.status = .running; task?.summary = "正在请求模型…"
+        if let text { messages.append(.init(role: .user, content: text)) }
+        activityDismissed = false; onUserAction?(); lifecycle.send(.started(task!.runID))
+        guard saveAgent() else { task?.status = .failed; return }
+        do {
+            try agent.open(sessionID: sessionID.uuidString, history: agentHistory, messages: prior,
+                directory: projectDirectory?(), receive: { [weak self] batch in
+                    guard let self, !self.retired, self.agentGeneration == generation else { return }
+                    self.receiveAgent(batch)
+                }, failure: { [weak self] error in self?.failAgent(error) })
+            try agent.control(text == nil ? "continue" : "submit", fields: text.map { ["text": $0] } ?? [:])
+        } catch { failAgent(error.localizedDescription) }
+    }
+
+    @discardableResult private func saveAgent() -> Bool {
+        do { try checkpoint?(snapshot); return true }
+        catch {
+            storageFailure = "会话保存失败，已停止后续执行：\(error.localizedDescription)"
+            notice = storageFailure; pendingOperation = nil; cancelDirectoryWait?()
+            task?.summary = storageFailure!
+            if isGenerating { task?.status = .stopping; agent?.cancel() }
+            else { task?.status = .failed }
+            return false
+        }
+    }
+    private func failAgent(_ error: String) {
+        notice = error; task?.summary = error
+        pendingOperation = nil; cancelDirectoryWait?()
+        task?.status = .stopping
+        agent?.close { [weak self] in
+            guard let self else { return }
+            self.releaseDirectory?(); self.task?.status = .failed
+            if let runID = self.task?.runID { self.lifecycle.send(.reply(runID, .failed(error))) }
+            _ = self.saveAgent()
+        }
+    }
+
+    func provideDirectory(_ url: URL?) {
+        guard needsDirectory, task?.status == .running else { return }
+        do {
+            try agent?.control("provide_directory", fields: ["directory": url?.path ?? (NSNull() as Any)])
+            needsDirectory = false; task?.summary = url == nil ? "正在取消未执行的调用…" : "正在准备工具…"
+        } catch { notice = error.localizedDescription }
+    }
+
+    private func receiveAgent(_ batch: [String: Any]) {
+        guard batch["session_id"] as? String == sessionID.uuidString else { return }
+        if batch["type"] as? String == "initialization_failed" { failAgent("Agent 初始化失败，请检查模型配置、资源和历史。"); return }
+        let events = batch["events"] as? [[String: Any]] ?? []
+        if let turn = batch["turn_id"] as? UInt64, let current = agentTurnID, turn < current { return }
+        if let history = batch["history"] as? [String: Any] {
+            agentHistory = try? JSONSerialization.data(withJSONObject: history, options: [.sortedKeys])
+            projectHistory(history)
+        }
+        for event in events {
+            guard event["version"] as? Int == 1, event["session_id"] as? String == sessionID.uuidString,
+                  let kind = event["kind"] as? [String: Any], let type = kind["type"] as? String else { continue }
+            let turn = event["turn_id"] as? UInt64
+            if type == "turn_started" { agentTurnID = turn }
+            if let current = agentTurnID, turn != current { continue }
+            switch type {
+            case "steering_queued", "steering_accepted":
+                if let id = kind["message_id"] as? UInt64, let index = messages.firstIndex(where: { $0.coreID == id }) {
+                    messages[index].steering = type == "steering_queued" ? "待处理" : "已接收"
+                }
+            case "model_started":
+                needsDirectory = false; waitingForProject = false; pendingOperation = nil
+                if task?.status != .stopping { task?.summary = "正在请求模型…" }
+            case "directory_required":
+                if task?.status != .stopping { needsDirectory = true; task?.summary = "等待选择项目文件夹" }
+            case "tool_started":
+                if let call = kind["call"] as? [String: Any], let id = call["id"] as? String,
+                   let index = tools.lastIndex(where: { $0.callID == id && $0.turnID == turn && $0.result == nil }) {
+                    tools[index].state = "执行中"; tools[index].directory = kind["directory"] as? String
+                    if task?.status != .stopping { task?.summary = "正在执行：\(tools[index].command.prefix(120))" }
+                }
+            case "finished":
+                // Stop only becomes terminal when Rust confirms process cleanup.
+                if task?.status == .stopping && batch["type"] as? String != "cancelled" { continue }
+                finishAgent(kind["outcome"] as? [String: Any] ?? [:])
+            default: break
+            }
+        }
+        if let error = batch["error"] as? String, task?.status != .stopping { failAgent(error); return }
+        if batch["type"] as? String == "cancelled", task?.status == .stopping {
+            finishAgent(["status": "interrupted"])
+        }
+        guard saveAgent(), task?.status == .running,
+              batch["type"] as? String == "tool_pending", let operation = batch["operation_id"] as? UInt64,
+              let history = batch["history"] as? [String: Any], let path = history["directory"] as? String else { return }
+        pendingOperation = operation; waitingForProject = true; task?.summary = "等待项目空闲…"
+        let generation = agentGeneration
+        let ready = { [weak self] in
+            guard let self, self.agentGeneration == generation, self.pendingOperation == operation,
+                  self.task?.status == .running else { return }
+            self.waitingForProject = false
+            guard self.saveAgent() else { return }
+            do { try self.agent?.control("start_tool", fields: ["operation_id": operation]) }
+            catch { self.failAgent(error.localizedDescription) }
+        }
+        if let acquireDirectory { acquireDirectory(path, ready) } else { ready() }
+    }
+
+    private func finishAgent(_ outcome: [String: Any]) {
+        needsDirectory = false; waitingForProject = false; pendingOperation = nil; releaseDirectory?()
+        for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
+        let status = outcome["status"] as? String
+        if let storageFailure {
+            task?.status = .failed; task?.summary = storageFailure
+            if let runID = task?.runID { lifecycle.send(.reply(runID, .failed(storageFailure))) }
+        }
+        else if status == "completed" {
+            let reply = outcome["reply"] as? String ?? ""
+            task?.status = .completed; task?.summary = String(reply.prefix(180))
+            if let runID = task?.runID { lifecycle.send(.reply(runID, .completed(reply))) }
+        } else if status == "interrupted" {
+            task?.status = .stopped; task?.summary = "已停止 · 可继续处理"
+            if let runID = task?.runID { lifecycle.send(.stopped(runID)) }
+        } else {
+            let error = outcome["error"] as? String ?? (status == "step_limit" ? "已达到本轮 30 次模型请求限制。" : "模型连续返回无效工具格式，已停止。")
+            task?.status = .failed; task?.summary = error
+            if let runID = task?.runID { lifecycle.send(.reply(runID, .failed(error))) }
+        }
+    }
+
+    private func projectHistory(_ history: [String: Any]) {
+        var anchor: UUID?
+        var pendingTools: [String: Int] = [:]
+        for entry in history["entries"] as? [[String: Any]] ?? [] {
+            guard let id = entry["id"] as? UInt64, let turn = entry["turn_id"] as? UInt64,
+                  let value = entry["value"] as? [String: Any], let message = value["message"] as? [String: Any],
+                  let role = message["role"] as? String else { continue }
+            if role == "user" || role == "assistant" {
+                let content = message["content"] as? String ?? ""
+                if !content.isEmpty {
+                    let matching = messages.firstIndex { $0.coreID == id }
+                        ?? messages.firstIndex { $0.coreID == nil && $0.role.rawValue == role && $0.content == content }
+                    if let index = matching { messages[index].coreID = id; anchor = messages[index].id }
+                    else {
+                        var visible = ConversationMessage(role: role == "user" ? .user : .assistant, content: content)
+                        visible.coreID = id; messages.append(visible); anchor = visible.id
+                    }
+                }
+                for call in message["tool_calls"] as? [[String: Any]] ?? [] {
+                    guard let callID = call["id"] as? String else { continue }
+                    if let index = tools.firstIndex(where: { $0.callID == callID && $0.entryID == id }) {
+                        pendingTools[callID] = index; continue
+                    }
+                    let function = call["function"] as? [String: Any] ?? [:]
+                    let arguments = function["arguments"] as? String ?? ""
+                    let parsed = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) as? [String: Any]
+                    tools.append(.init(callID: callID, entryID: id, turnID: turn, afterMessageID: anchor,
+                                       command: parsed?["command"] as? String ?? arguments))
+                    pendingTools[callID] = tools.count - 1
+                }
+            } else if role == "tool", let callID = message["tool_call_id"] as? String,
+                      let index = pendingTools.removeValue(forKey: callID) {
+                tools[index].result = message["content"] as? String
+                let result = (try? JSONSerialization.jsonObject(with: Data((tools[index].result ?? "").utf8))) as? [String: Any]
+                switch result?["status"] as? String {
+                case "not_executed": tools[index].state = "未执行"
+                case "unknown": tools[index].state = "执行结果未知"
+                default: tools[index].state = "执行结束"
+                }
+            }
+        }
     }
 }

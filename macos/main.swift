@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.pets = pets
             let store = try pets.loadInitial()
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: WorkspacePersistence.defaultURL),
-                                           sourceFactory: { ModelTaskSource(settings: settings) })
+                                           sourceFactory: { AgentTaskSource(settings: settings) })
             companion = CompanionController(petStore: store, workspace: workspace, settings: settings, pets: pets)
             store.start()
         } catch { showFailure(error) }
@@ -87,6 +87,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func toggleSidebar() { companion?.mainController?.toggleSidebar() }
     @objc private func toggleInspector() { companion?.mainController?.toggleInspector() }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let workspace = companion?.workspace else { return .terminateNow }
+        Task { @MainActor in
+            await workspace.prepareForTermination()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 
     func applicationWillTerminate(_ notification: Notification) {
         pets?.stop()

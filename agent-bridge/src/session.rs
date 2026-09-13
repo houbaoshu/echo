@@ -160,7 +160,11 @@ fn initialize(
         Conversation::new(config.session_id, settings)?
     };
     if config.directory.is_some() {
-        core.provide_directory(config.directory)?;
+        // A project can disappear between Swift's availability check and this
+        // background initialization. Chat remains usable; the first tool pauses.
+        if core.provide_directory(config.directory).is_err() {
+            core.provide_directory(None)?;
+        }
     }
     let model = OpenAiModel::with_protocol(
         OpenAiConfig {
@@ -307,11 +311,18 @@ impl Worker {
                 "stale or missing tool proposal".into(),
             ));
         }
+        let operation = self.core.next_operation();
+        if matches!(operation, Operation::WaitingForDirectory) {
+            // Directory invalidation at the dispatch gate is a pause, not an
+            // infrastructure failure. next_operation emitted DirectoryRequired.
+            self.proposal = None;
+            return Ok(());
+        }
         let Operation::Tool {
             id,
             action,
             directory,
-        } = self.core.next_operation()
+        } = operation
         else {
             self.proposal = None;
             return Err(mini_agent::Error::Config("tool no longer ready".into()));

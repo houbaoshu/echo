@@ -6,19 +6,19 @@ Echo 是面向 Apple Silicon Mac 的原生聊天工作区，提供桌面精灵�
 
 - **桌面精灵**：内置赤焰和沧沧，支持待机、悬停跳跃、方向拖动及 v2 素材的注视动画。点击精灵打开主窗口；浮层显示当前活动摘要，支持跟进、停止和隐藏。隐藏摘要或主窗口不会取消后台模型请求。
 - **聊天工作区**：原生三栏布局，包含项目与会话侧栏、聊天区和可收起的详情栏。支持会话搜索、重命名、删除、独立草稿和多会话并行请求。新对话首次发送后才进入列表；已有会话在本次运行中保持顺序，重启后按保存的对话时间排序。
-- **文本模型**：支持 OpenAI 兼容的 Chat Completions 和 Responses 接口、SSE 流式回复及非流式 JSON 响应。可停止并保留已收到的文本；失败、停止或中断后可原位重试，不重复追加用户消息。后续请求携带用户消息、已完成回复及停止时保留的非空回复。
+- **统一 Agent 会话**：支持 OpenAI 兼容的 Chat Completions 和 Responses，使用非流式模型请求。Rust Core 决定直接回答或执行 bash；运行中可追加指令，助手说明与最终回复正常显示，命令及结果进入可折叠工具记录。Stop 等待清理结束；“继续处理”保留真实工具历史，不重复原用户消息。
 - **消息显示**：支持标题、强调、链接、列表、引用和代码块，复制保留 Markdown 原文。Enter 发送，Shift + Enter 换行，中文输入法确认候选字不会发送。
 - **语音转写**：输入框麦克风按钮将识别结果追加到草稿，不自动发送。转写绑定启动时的会话，不要求配置文本模型。
 - **Live Voice**：通过流式 ASR → 文本模型 → 流式 TTS 进行语音对话，支持临时字幕、静音、结束语音、文字打断和语音插话。全应用同时只运行一个语音会话，切换会话或打开设置不会改变其归属。转写、Live Voice 和语音设置测试互斥。
 - **精灵导入**：设置中可导入包含 `pet.json` 和 WebP 精灵图的文件夹，支持 v1/v2 素材，导入后点击卡片切换。重复素材不会重复导入；切换保留窗口位置和会话。
 
-项目文件夹仅用于组织会话，支持重命名、Finder 定位和重新定位路径；移除项目不会删除磁盘文件。
+项目文件夹也作为命令的初始工作目录。普通聊天无需目录，首次工具调用可在所属会话选择或关联项目；同一真实目录按轮次串行，不同目录可并行。活动任务期间不能解除项目关联或重新定位。bash 自动在本机执行，项目目录不是访问边界；Stop 不回滚已有修改。移除项目不会删除磁盘文件。
 
 ## 构建与运行
 
 需要 Apple Silicon Mac、macOS 26 或更新版本、Rust/Cargo，以及支持 Swift 6 的 Xcode Command Line Tools 和 macOS 26 SDK。首次构建需要下载 Rust 依赖。脚本使用系统 `/bin/zsh`，默认选择 macOS 26 SDK，也可通过 `SDKROOT` 指定兼容 SDK。
 
-Agent 集成实验的第 2 阶段已增加独立静态库。构建还需要相邻的 `../mini-agent-agent-core-exp`（第 1 阶段会话核心），通过 Cargo 路径依赖编译，并将其 `config/prompts/conversation.md` 打包到应用资源。运行时无需该源码目录。桥接暂未接入聊天或语音入口，接口与阶段边界见 [第 2 阶段交付记录](docs/agent-integration-stage2.md)。
+Agent 集成实验已完成第 3 阶段 Swift 会话、工具界面和持久化接入。构建需要相邻的 `../mini-agent-agent-core-exp`（第 1 阶段会话核心），通过 Cargo 路径依赖编译，并将其 `config/prompts/conversation.md` 打包到应用资源。运行时无需该源码目录。接口见 [第 2 阶段交付记录](docs/agent-integration-stage2.md)，本阶段范围见 [第 3 阶段交付记录](docs/agent-integration-stage3.md)。
 
 仅构建验证包，不访问签名钥匙串：
 
@@ -60,21 +60,22 @@ Agent 集成实验的第 2 阶段已增加独立静态库。构建还需要相�
 | `agent-bridge/`、`macos/AgentBridge.swift` | 独立 Agent C ABI、共享 Tokio 后台运行、事件与取消生命周期、Swift 内存所有权及轮询适配 |
 | `macos/PetStore.swift`、`PetWindow.swift`、`PetCatalog.swift` | 精灵运行时桥接、透明悬浮窗口、素材导入与切换 |
 | `macos/Companion*.swift`、`MainWindowController.swift`、`ConversationViews.swift` | 桌面浮层、窗口布局和聊天界面 |
-| `macos/WorkspaceStore.swift`、`TaskStore.swift`、`ModelTaskSource.swift` | 项目与会话管理、每会话任务状态、模型请求与取消 |
+| `macos/WorkspaceStore.swift`、`TaskStore.swift`、`AgentTaskSource.swift` | 项目调度、每会话任务与工具状态、统一历史和 Core 接入；旧 ModelTaskSource 保留用于兼容回归 |
 | `macos/Voice*.swift`、`DictationController.swift` | 语音状态、WebSocket 协议、AVAudioEngine 采集与播放、插话和转写 |
 | `macos/Settings*.swift` | 设置界面、配置持久化和钥匙串访问 |
 | `assets/pets/`、`scripts/`、`tests/` | 内置素材、构建与诊断脚本、回归测试 |
 
 本地数据目录为 `~/Library/Application Support/local.chiyan.desktop-pet/`：
 
-- `workspace.json` 保存项目、会话、消息和草稿，采用原子写入并保留有效备份；损坏时保留原件并尝试恢复。重启后未完成请求标记为中断，不会自动重发。
+- `workspace.json` 保存项目和会话索引；`agent-sessions/<会话 ID>.json` 单独原子保存消息、草稿、完整模型历史和工具记录。工具意图保存后才放行，结果保存失败会停止后续执行。索引保留备份；单会话历史损坏或缺失时禁止执行，不回退到缺少工具结果的旧聊天。重启后未完成任务标记中断，缺失工具结果按“执行结果未知”恢复，不自动重放命令。旧工作区在加载后兼容迁移。
 - `settings.json` 保存模型配置、音色和精灵选择；`pets/` 保存导入素材。
 - API Key 保存在 macOS 钥匙串，不写入上述 JSON；窗口布局偏好保存在 UserDefaults。
 
 ## 已知限制
 
 - 当前是本机开发应用，没有公证、安装器或自动更新；不支持 Intel Mac 或 macOS 26 之前的系统。
-- 不读取项目文件内容，不修改项目文件，不执行工具、Shell 或 Git，也不支持附件。模型设置只维护一组服务配置，不自动获取模型或音色列表。
+- 工具首版仅支持 bash，每次模型决策最多执行一条命令；不支持附件。模型设置只维护一组服务配置，不自动获取模型或音色列表。
+- Live Voice 仍保留旧交互；工具运行时的语音补充和播报状态协调属于第 4 阶段，尚未验收。设置中的连接测试仍是固定文本探针。
 - 聊天只处理文本；Markdown 不渲染图片、HTML、表格或代码高亮。没有会话上下文自动摘要或长度裁剪，长会话可能超过服务限制。
 - 语音接口固定使用豆包 / 火山方舟 Agent Plan 的 ASR、TTS 服务，并非端到端语音模型。插话先暂停播报再确认新语音，极短插话或重复助手原话可能被忽略；播报结束后有约 2 秒尾音保护期。延迟和回声表现仍需在实际麦克风、耳机及扬声器环境中验证。
 - 精灵不会自主移动，精灵动画未适配系统“减少动态效果”。没有精灵下载或删除管理；导入 WebP 最大 32 MB、约 1600 万像素，素材路径不能越出所选文件夹。
@@ -87,6 +88,7 @@ Agent 集成实验的第 2 阶段已增加独立静态库。构建还需要相�
 cargo test --locked --workspace
 cargo clippy --locked --workspace -- -D warnings
 /bin/zsh scripts/test-agent-bridge.sh
+/bin/zsh scripts/test-agent-session.sh
 /bin/zsh scripts/test-chat.sh
 /bin/zsh scripts/test-chat-ui.sh
 /bin/zsh scripts/test-workspace.sh

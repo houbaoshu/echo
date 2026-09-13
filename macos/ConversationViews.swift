@@ -381,7 +381,11 @@ struct ConversationView: View {
                                     retry: store.canRetry && message.id == store.messages.last?.id ? retry : nil)
                                 if message.role == .assistant { Spacer(minLength: 0) }
                             }.id(message.id)
+                            ForEach(store.tools.filter { $0.afterMessageID == message.id }) { tool in
+                                AgentToolView(tool: tool).id("tool.\(tool.turnID).\(tool.id)")
+                            }
                         }
+                        ForEach(store.tools.filter { $0.afterMessageID == nil }) { tool in AgentToolView(tool: tool) }
                         Color.clear.frame(height: 1).id("conversation.bottom")
                     }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
                         .frame(maxWidth: .infinity)
@@ -405,8 +409,42 @@ struct ConversationView: View {
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { proxy.scrollTo("conversation.bottom", anchor: .bottom) }
                     }
                 }
+                .onChange(of: store.tools.count) { _, _ in
+                    if followTail { proxy.scrollTo("conversation.bottom", anchor: .bottom) }
+                }
             }
             VStack(spacing: 8) {
+                if store.usesAgent, let task = store.task {
+                    HStack {
+                        if store.isGenerating { ProgressView().controlSize(.small) }
+                        Text(task.summary).font(WorkspaceStyle.caption).textSelection(.enabled)
+                        Spacer()
+                        if store.canRetry { Button("继续处理", action: retry) }
+                    }
+                }
+                if let notice = store.notice ?? store.agentLoadError {
+                    Text(notice).font(WorkspaceStyle.caption).foregroundStyle(.orange).textSelection(.enabled)
+                }
+                if store.needsDirectory, let workspace {
+                    HStack {
+                        Text("执行命令需要项目文件夹").font(WorkspaceStyle.caption)
+                        Menu("关联项目") {
+                            ForEach(workspace.projects.filter(\.isAvailable)) { project in
+                                Button(project.name) { workspace.provideDirectory(URL(fileURLWithPath: project.path), conversationID: conversationID) }
+                            }
+                        }.disabled(workspace.projects.filter(\.isAvailable).isEmpty)
+                        Button("选择文件夹…") {
+                            let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
+                            panel.allowsMultipleSelection = false
+                            panel.begin { response in
+                                MainActor.assumeIsolated {
+                                    workspace.provideDirectory(response == .OK ? panel.url : nil, conversationID: conversationID)
+                                }
+                            }
+                        }
+                        Button("取消执行") { workspace.provideDirectory(nil, conversationID: conversationID) }
+                    }
+                }
                 if isBackgroundVoice, let owner = voiceOwner, let ws = workspace {
                     VoiceAttributionBar(workspace: ws, voice: voice, owner: owner) {
                         ws.revealVoice(owner: owner)
@@ -430,7 +468,7 @@ struct ConversationView: View {
         if isVoiceOwner {
             return canStop && draftEmpty
         } else {
-            return canStop
+            return canStop && (!store.usesAgent || draftEmpty)
         }
     }
     private var composer: some View {
@@ -532,6 +570,11 @@ struct ConversationView: View {
                     }
                 } else {
                     Spacer(minLength: 0)
+                    if store.usesAgent && canStop && !draftEmpty {
+                        Button(action: stop) { Image(systemName: "stop.circle.fill") }
+                            .buttonStyle(.plain).help("停止任务")
+                            .disabled(store.task?.status == .stopping)
+                    }
                     Button {
                         if dictation.isActive { dictation.finishRecording() } else { startDictation() }
                     } label: { Image(systemName: dictation.isActive ? "mic.fill" : "mic").font(.system(size: 16)) }
@@ -558,7 +601,7 @@ struct ConversationView: View {
                         .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
                         .frame(width: 32, height: 32)
                         .background(draftEmpty && !primaryStops ? Color.secondary.opacity(0.4) : Color.accentColor, in: Circle())
-                }.buttonStyle(.plain).disabled(draftEmpty && !primaryStops)
+                }.buttonStyle(.plain).disabled((draftEmpty && !primaryStops) || store.task?.status == .stopping || (!primaryStops && !store.canSubmit))
                     .accessibilityLabel(primaryStops ? "停止回复" : "发送消息")
                     .accessibilityIdentifier(primaryStops ? "conversation.stop" : "conversation.send")
             }
@@ -567,6 +610,46 @@ struct ConversationView: View {
             .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.primary.opacity(0.08), lineWidth: 1))
             .shadow(color: .black.opacity(0.05), radius: 10, y: 3)
             .onDisappear { dictation.cancel() }
+    }
+}
+
+struct AgentToolView: View {
+    let tool: AgentToolRecord
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(tool.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                if let directory = tool.directory { Text(directory).font(.caption).foregroundStyle(.secondary) }
+                if let result = tool.result {
+                    if let data = result.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        Text(resultSummary(json)).font(.caption).foregroundStyle(.secondary)
+                        if let stdout = json["stdout"] as? String, !stdout.isEmpty {
+                            Text(stdout).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        }
+                        if let stderr = json["stderr"] as? String, !stderr.isEmpty {
+                            Text(stderr).font(.system(.caption, design: .monospaced)).foregroundStyle(.orange).textSelection(.enabled)
+                        }
+                        if let detail = json["detail"] as? String ?? json["message"] as? String {
+                            Text(detail).font(.caption).textSelection(.enabled)
+                        }
+                    } else { Text(result).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
+                } else if tool.state == "执行结果未知" {
+                    Text("中断前可能已产生修改；继续处理时需先检查现场。").font(.caption)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
+        } label: {
+            Label("\(tool.state) · \(tool.command.prefix(90))", systemImage: "terminal")
+                .font(.caption).lineLimit(2)
+        }.padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+    private func resultSummary(_ json: [String: Any]) -> String {
+        var parts = [tool.state]
+        if let code = json["exit_code"] as? Int { parts.append("退出码 \(code)") }
+        if json["timed_out"] as? Bool == true { parts.append("超时") }
+        if json["stdout_truncated"] as? Bool == true { parts.append("stdout 已截断") }
+        if json["stderr_truncated"] as? Bool == true { parts.append("stderr 已截断") }
+        return parts.joined(separator: " · ")
     }
 }
 

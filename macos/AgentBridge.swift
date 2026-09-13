@@ -21,6 +21,7 @@ final class AgentBridge {
     let sessionID: String
     var onBatch: (([String: Any]) -> Void)?
     var onFailure: ((Error) -> Void)?
+    var onClosed: (() -> Void)?
 
     /// model uses the ABI names base_url, model, api_key and protocol. The caller
     /// supplies saved settings/keychain credentials; this adapter never stores keys.
@@ -92,7 +93,7 @@ final class AgentBridge {
                 onBatch?(batch)
                 if self.handle == nil { return false }
             }
-            if result["closed"] as? Bool == true { polling = nil; return false }
+            if result["closed"] as? Bool == true { polling = nil; onClosed?(); return false }
             return true
         } catch { polling = nil; onFailure?(error); return false }
     }

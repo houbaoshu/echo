@@ -91,10 +91,11 @@ struct ConversationMessageView: View {
                     Text(message.status.label).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
                 }
                 if let error = message.errorMessage { Text(error).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled) }
-                if let retry { Button("重试", systemImage: "arrow.clockwise", action: retry).buttonStyle(.bordered) }
+                if let retry { Button("继续处理", systemImage: "arrow.clockwise", action: retry).buttonStyle(.bordered) }
             } else {
                 Text(message.content).font(WorkspaceStyle.body).lineSpacing(6).textSelection(.enabled)
                     .padding(14).background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
+                if let steering = message.steering { Text(steering).font(.caption).foregroundStyle(.secondary) }
             }
         }.contextMenu {
             Button("复制") {

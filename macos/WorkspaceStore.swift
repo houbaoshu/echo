@@ -61,6 +61,26 @@ struct WorkspaceSnapshot: Codable {
         }
         return result
     }
+    func sessionURL(_ id: UUID) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent("agent-sessions/\(id.uuidString).json")
+    }
+    func saveSession(_ state: TaskStore.Snapshot, id: UUID) throws {
+        let target = sessionURL(id)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(state)
+        if (try? Data(contentsOf: target)) == data { return }
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: target, options: .atomic)
+    }
+    func restoreSession(_ saved: WorkspaceSnapshot.Conversation) -> TaskStore.Snapshot {
+        guard saved.state.agentStored == true else { return saved.state }
+        do { return try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: sessionURL(saved.id))) }
+        catch {
+            var state = saved.state
+            state.loadError = "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。"
+            return state
+        }
+    }
     func load() -> (WorkspaceSnapshot?, String?) {
         guard FileManager.default.fileExists(atPath: url.path) else { return (nil, nil) }
         do { return (try decode(url), nil) }
@@ -80,7 +100,19 @@ struct WorkspaceSnapshot: Codable {
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(snapshot)
+        var compact = snapshot
+        func reference(_ saved: WorkspaceSnapshot.Conversation) throws -> WorkspaceSnapshot.Conversation {
+            var result = saved
+            if saved.state.tools != nil && saved.state.loadError == nil {
+                try saveSession(saved.state, id: saved.id)
+                result.state.messages = []; result.state.tools = nil; result.state.agentHistory = nil
+                result.state.agentStored = true
+            }
+            return result
+        }
+        compact.conversations = try compact.conversations.map(reference)
+        compact.drafts = try compact.drafts?.map(reference)
+        let data = try encoder.encode(compact)
         if (try? decode(url)) != nil {
             try Data(contentsOf: url).write(to: backupURL, options: .atomic)
         }
@@ -117,6 +149,7 @@ struct WorkspaceSnapshot: Codable {
     // Keep display timestamps fixed for this app session. Persist actual interaction
     // times separately so only the next launch applies the new order.
     private var pendingRecency: [UUID: Date] = [:]
+    private let directoryScheduler = AgentDirectoryScheduler()
 
     init(persistence: WorkspacePersistence? = nil,
          initialStore: TaskStore? = nil,
@@ -141,8 +174,9 @@ struct WorkspaceSnapshot: Codable {
             if let snapshot {
                 projects = snapshot.projects
                 conversations = snapshot.conversations.map { saved in
-                    let store = TaskStore(snapshot: saved.state, source: sourceFactory())
-                    let title = !saved.manuallyNamed && store.messages != saved.state.messages
+                    let restored = persistence.restoreSession(saved)
+                    let store = TaskStore(snapshot: restored, source: sourceFactory())
+                    let title = !saved.manuallyNamed && store.messages != restored.messages
                         ? String((store.messages.first(where: { $0.role == .user })?.content ?? "新会话").prefix(60))
                         : saved.title
                     return WorkspaceConversation(id: saved.id,
@@ -153,7 +187,7 @@ struct WorkspaceSnapshot: Codable {
                 drafts = (snapshot.drafts ?? []).map { saved in
                     WorkspaceConversation(id: saved.id,
                         projectID: projects.contains(where: { $0.id == saved.projectID }) ? saved.projectID : nil,
-                        title: "新对话", store: TaskStore(snapshot: saved.state, source: sourceFactory()))
+                        title: "新对话", store: TaskStore(snapshot: persistence.restoreSession(saved), source: sourceFactory()))
                 }
                 // Restore history and drafts, but leave the previous session's
                 // selection and desktop activity behind on every launch.
@@ -252,6 +286,27 @@ struct WorkspaceSnapshot: Codable {
 
     private func bind(_ conversation: WorkspaceConversation) {
         let id = conversation.id
+        conversation.store.sessionID = id
+        conversation.store.projectDirectory = { [weak self, weak conversation] in
+            guard let self, let project = self.projects.first(where: { $0.id == conversation?.projectID }), project.isAvailable else { return nil }
+            return URL(fileURLWithPath: project.path).resolvingSymlinksInPath().standardizedFileURL
+        }
+        conversation.store.checkpoint = { [weak self] state in
+            guard let self else { throw CocoaError(.fileWriteUnknown) }
+            if self.saveBlocked { throw CocoaError(.fileWriteNoPermission) }
+            if let error = state.loadError { throw SettingsError(error) }
+            try self.persistence?.saveSession(state, id: id)
+            // Ensure a new conversation is discoverable before any tool starts.
+            // The manifest stores references; tool updates write only this sidecar.
+            if !self.persistedAgentIDs.contains(id) {
+                try self.persistence?.save(self.snapshot)
+                self.persistedAgentIDs.insert(id)
+            }
+        }
+        let scheduler = directoryScheduler
+        conversation.store.acquireDirectory = { path, ready in scheduler.acquire(path, owner: id, ready: ready) }
+        conversation.store.cancelDirectoryWait = { scheduler.cancelWait(id) }
+        conversation.store.releaseDirectory = { scheduler.release(id) }
         conversation.store.onUserAction = { [weak self] in self?.didUse(id) }
         conversation.store.onVisibilityChange = { [weak self] visible in self?.isMainWindowVisible = visible }
         observations[id] = conversation.store.objectWillChange.sink { [weak self] _ in
@@ -262,6 +317,7 @@ struct WorkspaceSnapshot: Codable {
             }
         }
     }
+    private var persistedAgentIDs: Set<UUID> = []
     private func didUse(_ id: UUID) {
         let usedAt = Date()
         // A blank composer becomes a sidebar conversation only after the first real message.
@@ -351,6 +407,7 @@ struct WorkspaceSnapshot: Codable {
         projects[index].name = name; scheduleSave()
     }
     func relocateProject(_ id: UUID, to url: URL) {
+        guard !projectIsActive(id) else { persistenceNotice = "任务活动期间不能重新定位项目。"; return }
         let path = url.standardizedFileURL.resolvingSymlinksInPath().path
         guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
         guard !projects.contains(where: { $0.id != id && $0.path == path }) else {
@@ -359,9 +416,45 @@ struct WorkspaceSnapshot: Codable {
         projects[index].path = path; scheduleSave()
     }
     func removeProject(_ id: UUID) {
+        guard !projectIsActive(id) else { persistenceNotice = "任务活动期间不能解除项目关联。"; return }
         objectWillChange.send()
         (conversations + drafts).filter { $0.projectID == id }.forEach { $0.projectID = nil }
         projects.removeAll { $0.id == id }; flush()
+    }
+    func projectIsActive(_ id: UUID) -> Bool {
+        (conversations + drafts).contains { $0.projectID == id && $0.store.isGenerating }
+    }
+    func associateProject(_ projectID: UUID?, conversationID: UUID) {
+        guard let conversation = conversation(id: conversationID), !conversation.store.isGenerating else { return }
+        objectWillChange.send()
+        conversation.projectID = projects.contains(where: { $0.id == projectID }) ? projectID : nil
+        flush()
+    }
+    func provideDirectory(_ url: URL?, conversationID: UUID) {
+        guard let conversation = conversation(id: conversationID), conversation.store.needsDirectory else { return }
+        if let url {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                persistenceNotice = "所选文件夹不可用，请重新选择。"; return
+            }
+            objectWillChange.send(); conversation.projectID = addProject(url: url)
+            // Persist the binding before letting the pending call proceed.
+            do { try persistence?.save(snapshot) }
+            catch { persistenceNotice = error.localizedDescription; conversation.store.stopTask(); return }
+        }
+        conversation.store.provideDirectory(url?.resolvingSymlinksInPath().standardizedFileURL)
+    }
+
+    func prepareForTermination() async {
+        shuttingDown = true; dictation.shutdown(); voice.shutdown()
+        let stores = (conversations + drafts).map(\.store)
+        stores.forEach { $0.stopTask() }
+        while stores.contains(where: \.isGenerating) {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        flush()
+        stores.forEach { $0.shutdown() }
+        await AgentBridge.waitForShutdown()
     }
     private func scheduleSave() {
         guard !shuttingDown else { return }
