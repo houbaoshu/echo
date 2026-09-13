@@ -21,7 +21,7 @@ struct VoiceSessionSnapshot: Equatable {
     }
     enum Microphone: Equatable { case enabled, muted }
     enum Recognition: Equatable {
-        enum OffReason: Equatable { case idle, muted, currentReply, recovery, ending }
+        enum OffReason: Equatable { case idle, muted, currentReply, recovery, stopping, ending }
         case off(OffReason)
         case connecting
         case listening
@@ -57,6 +57,7 @@ struct VoiceSessionSnapshot: Equatable {
     var bargeIn: BargeIn = .off
     var subtitle = ""
     var error: Failure?
+    var agentActivity: String?
 
     /// One projection for all surfaces; never infer microphone preference from ASR.
     func presentation(modelIsGenerating: Bool) -> VoiceSessionPresentation {
@@ -74,7 +75,7 @@ struct VoiceSessionSnapshot: Equatable {
             }
             let replyStatus: String?
             switch replyAudio {
-            case .none: replyStatus = modelIsGenerating ? "正在思考…" : nil
+            case .none: replyStatus = agentActivity ?? (modelIsGenerating ? "正在思考…" : nil)
             case .preparing: replyStatus = "正在准备播报…"
             case .playing, .draining: replyStatus = "正在播报"
             }
@@ -82,6 +83,7 @@ struct VoiceSessionSnapshot: Equatable {
                 if isMuted { status = replyStatus + " · 麦克风已静音" }
                 else if case .armed = bargeIn { status = replyStatus + " · 可打断" }
                 else if case .off(.currentReply) = recognition { status = replyStatus + " · 暂停聆听" }
+                else if agentActivity != nil, recognition == .listening { status = replyStatus + " · 可补充语音" }
                 else { status = replyStatus }
             } else if isMuted {
                 status = "麦克风已静音"
@@ -90,6 +92,7 @@ struct VoiceSessionSnapshot: Equatable {
                 case .off(.recovery): status = "正在恢复聆听"
                 case .off(.currentReply): status = "暂停聆听"
                 case .off(.ending): status = "正在结束…"
+                case .off(.stopping): status = "正在停止…"
                 case .off(.idle), .connecting: status = "正在连接…"
                 case .off(.muted): status = "暂停聆听"
                 case .listening: status = "正在聆听"

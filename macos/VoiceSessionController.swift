@@ -35,7 +35,7 @@ import Combine
     private var recognitionID = UUID()
     private var turnID = UUID()
     private var runID: UUID?
-    // Runs already underway, or accepted while starting, remain text-only.
+    // Legacy text-source runs already underway, or accepted while starting, remain text-only.
     private var textOnlyRunID: UUID?
     private var submitting = false
     private var tracker = VoiceUtteranceTracker()
@@ -49,6 +49,11 @@ import Combine
     private var recoveryTask: Task<Void, Never>?
     private var recoveryID = UUID()
     private var observation: AnyCancellable?
+    private var taskObservation: AnyCancellable?
+    private var handledFinalRunID: UUID?
+    private var submissionHadAudio = false
+    // The legacy TaskSource adapter has no steering API. Production sessions use AgentSessionSource.
+    private var usesAgent: Bool { store?.usesAgent == true }
     private var dictationObservation: AnyCancellable?
     private var startup: Task<Void, Never>?
     private var captureWatchdog: Task<Void, Never>?
@@ -132,11 +137,26 @@ import Combine
         sessionID = UUID(); let call = sessionID
         self.configuration = configuration; self.key = key; store = conversation.store
         snapshot = VoiceSessionSnapshot(session: .starting(.init(sessionID: call, conversationID: conversation.id)))
-        textOnlyRunID = conversation.store.isGenerating ? conversation.store.task?.runID : nil
+        textOnlyRunID = !usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
+        runID = usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
+        handledFinalRunID = nil
+        delta = VoiceTextDelta()
         playedAudioForCurrentRun = false
         receivedCapturePacket = false
         cancelRecovery()
         observation = conversation.store.lifecycle.sink { [weak self] event in self?.handle(event) }
+        if usesAgent {
+            taskObservation = conversation.store.$task.sink { [weak self] task in
+                guard let self else { return }
+                self.updateSnapshot { $0.agentActivity = task?.status == .running || task?.status == .stopping ? task?.summary : nil }
+                if task?.status == .stopping {
+                    self.cancelRecovery()
+                    self.stopRecognition(reason: .stopping)
+                    self.interruptReply(preserveRun: true)
+                    self.updateSnapshot { $0.subtitle = "" }
+                }
+            }
+        }
         startup = Task { [weak self] in
             guard let self, self.sessionID == call, !Task.isCancelled else { return }
             VoiceDiagnostics.shared.record("4 音频输入", "START", "检查麦克风权限")
@@ -149,6 +169,9 @@ import Combine
                 self.updateSnapshot { $0.session = .active(.init(sessionID: call, conversationID: conversation.id)) }
                 if self.textOnlyRunID != nil {
                     self.updateSnapshot { $0.recognition = .off(.currentReply) }
+                    self.audio.resetCapture(epoch: self.inputEpoch, paused: true)
+                } else if self.store?.task?.status == .stopping {
+                    self.updateSnapshot { $0.recognition = .off(.stopping) }
                     self.audio.resetCapture(epoch: self.inputEpoch, paused: true)
                 } else { self.beginRecognition() }
                 self.captureTask = Task { [weak self] in
@@ -238,6 +261,7 @@ import Combine
     }
     private func accept(_ result: ASRResult) {
         var update = VoiceTranscription()
+        var pendingSubtitle = ""
         for utterance in (result.result?.utterances ?? []).sorted(by: { $0.start_time < $1.start_time }) {
             if let bargeInEchoGuard, !bargeInEchoGuard.permits(utterance.text) { continue }
             if case .checking = snapshot.bargeIn {
@@ -250,7 +274,10 @@ import Combine
             let speech = tracker.accept(single)
             update.beganSpeaking = update.beganSpeaking || speech.beganSpeaking
             update.committed += speech.committed
-            if !speech.subtitle.isEmpty { update.subtitle = speech.subtitle }
+            if !speech.subtitle.isEmpty {
+                update.subtitle = speech.subtitle
+                pendingSubtitle = utterance.definite == true ? "" : speech.subtitle
+            }
         }
         guard !update.subtitle.isEmpty || !update.committed.isEmpty else { return }
         if !update.subtitle.isEmpty {
@@ -259,6 +286,16 @@ import Combine
         if !update.committed.isEmpty {
             let text = update.committed.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
+            if usesAgent {
+                guard store?.canSubmit == true else { return }
+                // Keep this ASR stream and its utterance IDs across follow-ups;
+                // late/repeated finals must not become duplicate user messages.
+                if store?.send(text) == true {
+                    updateSnapshot { $0.subtitle = pendingSubtitle }
+                    bargeInEchoGuard = nil
+                }
+                return
+            }
             stopRecognition(reason: .currentReply)
             updateSnapshot { $0.subtitle = "" }
             store?.stopTask()
@@ -314,14 +351,14 @@ import Combine
     }
 
     private func confirmBargeIn() {
-        // Invalidate model/TTS/playback ownership before stopTask synchronously
-        // publishes .stopped. Keep the fresh recognizer and its utterance tracker.
+        // Invalidate TTS/playback callbacks while retaining Agent task ownership
+        // and the fresh recognizer. Only the legacy source requires stopTask.
         let echoGuard = bargeInEchoGuard
-        interruptReply()
+        interruptReply(preserveRun: usesAgent)
         bargeInEchoGuard = echoGuard // Keep guarding partial revisions through the first final.
         playedAudioForCurrentRun = false
-        store?.stopTask()
-        VoiceDiagnostics.shared.record("插话", "PASS", "静止输出后的语音已确认，停止当前回复")
+        if !usesAgent { store?.stopTask() }
+        VoiceDiagnostics.shared.record("插话", "PASS", usesAgent ? "语音已确认，停止播报并等待补充定稿" : "静止输出后的语音已确认，停止当前回复")
     }
 
     private func cancelBargeIn(resumePlayback: Bool = false) {
@@ -333,6 +370,7 @@ import Combine
     }
     private func handle(_ event: TaskLifecycleEvent) {
         guard isActive else { return }
+        if usesAgent { handleAgent(event); return }
         switch event {
         case .started(let id):
             if case .starting = snapshot.session {
@@ -378,6 +416,43 @@ import Combine
         case .retired: end()
         }
     }
+    private func handleAgent(_ event: TaskLifecycleEvent) {
+        switch event {
+        case .started(let id):
+            interruptReply(); runID = id; handledFinalRunID = nil
+            delta = VoiceTextDelta(); playedAudioForCurrentRun = false
+            resumeAgentListening()
+        case .reply(let id, let reply):
+            guard runID == id else { return }
+            switch reply {
+            case .progress: break // Assistant explanations and tool output never enter TTS.
+            case .completed(let text):
+                guard handledFinalRunID != id else { return }
+                handledFinalRunID = id
+                // A user already speaking owns the input; do not cut their utterance
+                // off to play a final that arrived before their follow-up was committed.
+                guard case .active = snapshot.session, subtitle.isEmpty, !submitting,
+                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                cancelRecovery()
+                stopRecognition(reason: .currentReply)
+                feed(text); textInput?.finish()
+            case .failed(let message): end(error: message)
+            }
+        case .stopped(let id):
+            guard store?.task?.runID == id else { return }
+            let hadAudio = playedAudioForCurrentRun
+            interruptReply()
+            scheduleListeningRecovery(runID: nil, playedAudio: hadAudio)
+        case .retired: end()
+        }
+    }
+    private func resumeAgentListening() {
+        guard usesAgent, case .active = snapshot.session, !submitting,
+              store?.task?.status != .stopping, snapshot.replyAudio == .none,
+              synthesisTask == nil, recoveryTask == nil, recognizer == nil else { return }
+        if isMuted { updateSnapshot { $0.recognition = .off(.muted) } }
+        else { beginRecognition() }
+    }
     private func feed(_ text: String) {
         do {
             let addition = try delta.append(text)
@@ -422,9 +497,10 @@ import Combine
             }
         }
     }
-    private func interruptReply() {
+    private func interruptReply(preserveRun: Bool = false) {
         cancelBargeIn()
-        turnID = UUID(); runID = nil
+        turnID = UUID()
+        if !preserveRun { runID = nil }
         textInput?.finish(); textInput = nil
         synthesisTask?.cancel(); synthesisTask = nil; synthesizer?.cancel(); synthesizer = nil
         audio.interruptPlayback()
@@ -438,7 +514,8 @@ import Combine
     private func scheduleListeningRecovery(runID: UUID?, playedAudio: Bool) {
         cancelRecovery()
         guard isActive, case .active = snapshot.session, !submitting, textOnlyRunID == nil else { return }
-        guard store?.isGenerating != true, snapshot.replyAudio == .none, synthesisTask == nil else { return }
+        guard (usesAgent ? store?.task?.status != .stopping : store?.isGenerating != true),
+              snapshot.replyAudio == .none, synthesisTask == nil else { return }
         if snapshot.bargeIn != .off {
             stopRecognition(reason: .currentReply)
             cancelBargeIn(resumePlayback: true)
@@ -456,18 +533,19 @@ import Combine
                 guard let self else { return }
                 guard self.sessionID == call, self.recoveryID == token, !Task.isCancelled else { return }
                 guard case .active = self.snapshot.session, !self.submitting else { return }
-                guard self.store?.isGenerating != true, self.snapshot.replyAudio == .none, self.synthesisTask == nil else { return }
+                guard (self.usesAgent ? self.store?.task?.status != .stopping : self.store?.isGenerating != true),
+                      self.snapshot.replyAudio == .none, self.synthesisTask == nil else { return }
                 self.recoveryTask = nil
                 if self.isMuted {
                     self.updateSnapshot { $0.recognition = .off(.muted) }
                 } else {
-                    self.beginRecognition()
+                    if self.recognizer == nil { self.beginRecognition() }
                 }
             }
         } else if isMuted {
             updateSnapshot { $0.recognition = .off(.muted) }
         } else {
-            beginRecognition()
+            if recognizer == nil { beginRecognition() }
         }
     }
     func toggleMute() {
@@ -485,7 +563,9 @@ import Combine
                 cancelBargeIn(resumePlayback: true)
             } else if hadRecognition { stopRecognition(reason: .muted) }
         } else {
-            if store?.isGenerating == true || snapshot.replyAudio.runID != nil || synthesisTask != nil || textOnlyRunID != nil {
+            if usesAgent && store?.task?.status == .stopping {
+                updateSnapshot { $0.recognition = .off(.stopping) }
+            } else if (!usesAgent && store?.isGenerating == true) || snapshot.replyAudio.runID != nil || synthesisTask != nil || textOnlyRunID != nil {
                 updateSnapshot { $0.recognition = .off(.currentReply) }
                 armBargeIn()
             } else if recoveryTask != nil {
@@ -512,16 +592,24 @@ import Combine
     func prepareForSubmission() {
         guard canSubmit else { return }
         submitting = true
-        cancelRecovery()
+        submissionHadAudio = snapshot.replyAudio.runID != nil && playedAudioForCurrentRun
+        if !usesAgent { cancelRecovery() }
         stopRecognition(reason: .currentReply)
         updateSnapshot { $0.subtitle = "" }
-        interruptReply()
-        store?.stopTask()
+        interruptReply(preserveRun: usesAgent)
+        if !usesAgent { store?.stopTask() }
     }
     func finishSubmission() {
         submitting = false
+        if usesAgent {
+            if submissionHadAudio { scheduleListeningRecovery(runID: runID, playedAudio: true) }
+            else if recoveryTask != nil { updateSnapshot { $0.recognition = .off(.recovery) } }
+            else { resumeAgentListening() }
+        }
+        submissionHadAudio = false
     }
     func stopReply() {
+        if usesAgent && store?.task?.status == .stopping { return }
         guard canSubmit, store?.isGenerating == true || snapshot.replyAudio.runID != nil || !subtitle.isEmpty || recoveryTask != nil else { return }
         let hadPlayedAudio = playedAudioForCurrentRun
         cancelRecovery()
@@ -543,12 +631,14 @@ import Combine
         }
         captureWatchdog?.cancel(); captureWatchdog = nil
         cancelRecovery()
-        sessionID = UUID(); observation = nil
+        sessionID = UUID(); observation = nil; taskObservation = nil
         startup?.cancel(); startup = nil; captureTask?.cancel(); captureTask = nil
-        stopRecognition(reason: .ending); interruptReply(); store?.stopTask(); audio.stop()
+        stopRecognition(reason: .ending); interruptReply()
+        if !usesAgent { store?.stopTask() }
+        audio.stop()
         inputEpoch += 1; audio.resetCapture(epoch: inputEpoch, paused: true)
         store = nil; key = ""
-        textOnlyRunID = nil; submitting = false
+        textOnlyRunID = nil; handledFinalRunID = nil; submitting = false; submissionHadAudio = false
         let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0) } ?? snapshot.error
         snapshot = VoiceSessionSnapshot(error: failure)
     }

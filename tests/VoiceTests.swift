@@ -149,6 +149,10 @@ actor PendingModelTester: ConnectionTesting {
     }
     @MainActor static func main() async throws {
         _ = NSApplication.shared
+        if CommandLine.arguments.contains("--agent-integration") {
+            try await agentVoiceIntegrationTests()
+            return
+        }
         snapshotTests()
         try await captureWatchdogPauseTests()
         try await mutedPlaybackTailProtectionTests()
@@ -166,6 +170,7 @@ actor PendingModelTester: ConnectionTesting {
         await speakerPreviewTests()
         try await captureDiagnosticsTests()
         try await DictationTests.run()
+        try await agentVoiceTests()
         print("Passed \(checks) voice checks (no network, keychain, microphone or playback used).")
     }
     @MainActor static func snapshotTests() {
