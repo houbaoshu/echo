@@ -183,7 +183,7 @@ struct ModelSettingsView: View {
             if settings.testing { ProgressView().controlSize(.small) }
             Button(settings.testing ? "取消测试" : "测试连接") {
                 if settings.testing { settings.cancelTest() } else { settings.testConnection() }
-            }.help("使用当前配置发送一次简短请求，不会自动保存")
+            }.help("验证当前协议的工具调用能力，不执行命令，也不自动保存")
                 .accessibilityIdentifier("settings.test")
         }
     }

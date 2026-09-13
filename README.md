@@ -18,7 +18,7 @@ Echo 是面向 Apple Silicon Mac 的原生聊天工作区，提供桌面精灵�
 
 需要 Apple Silicon Mac、macOS 26 或更新版本、Rust/Cargo，以及支持 Swift 6 的 Xcode Command Line Tools 和 macOS 26 SDK。首次构建需要下载 Rust 依赖。脚本使用系统 `/bin/zsh`，默认选择 macOS 26 SDK，也可通过 `SDKROOT` 指定兼容 SDK。
 
-Agent 集成实验已完成第 4 阶段 Live Voice 接入，尚未进入第 5 阶段端到端与打包验收。构建需要相邻的 `../mini-agent-agent-core-exp`（第 1 阶段会话核心），通过 Cargo 路径依赖编译，并将其 `config/prompts/conversation.md` 打包到应用资源。运行时无需该源码目录。接口见 [第 2 阶段交付记录](docs/agent-integration-stage2.md)，会话与持久化见 [第 3 阶段交付记录](docs/agent-integration-stage3.md)，语音范围见 [第 4 阶段交付记录](docs/agent-integration-stage4.md)。
+Agent 集成实验已完成第 5 阶段端到端与打包验收，结果与复验入口见 [第 5 阶段交付记录](docs/agent-integration-stage5.md)。构建需要相邻的 `../mini-agent-agent-core-exp`（第 1 阶段会话核心），通过 Cargo 路径依赖编译，并将其 `config/prompts/conversation.md` 打包到应用资源。运行时无需该源码目录。接口见 [第 2 阶段交付记录](docs/agent-integration-stage2.md)，会话与持久化见 [第 3 阶段交付记录](docs/agent-integration-stage3.md)，语音范围见 [第 4 阶段交付记录](docs/agent-integration-stage4.md)。
 
 仅构建验证包，不访问签名钥匙串：
 
@@ -45,7 +45,7 @@ Agent 集成实验已完成第 4 阶段 Live Voice 接入，尚未进入第 5 �
 通过主窗口齿轮或 `⌘,` 打开设置。
 
 1. 在“模型”中选择协议，填写 API 根地址、API Key 和 Model ID，然后保存。例如根地址 `https://api.openai.com/v1`，应用会按协议追加 `/chat/completions` 或 `/responses`。支持 HTTPS 和本机回环 HTTP。
-2. “测试连接”使用当前表单发送固定短消息，不保存配置、不上传会话。正常聊天使用已保存的配置；首次启动不会自动发送模型请求。
+2. “测试连接”使用 Rust 模型层验证当前表单所选协议能否返回有效的 bash 工具调用；不执行命令、不保存配置、不上传已有会话。正常聊天使用已保存的配置；首次启动不会自动发送模型请求。
 3. 使用语音前，模型设置中保存的密钥必须具有豆包 / 火山方舟 Agent Plan 语音服务权限。当前语音默认复用该密钥，兼容已有的专用语音凭据；普通文本服务的密钥不一定可用于语音。语音页仅提供音色 ID 配置，不提供单独密钥输入框。
 4. 在“语音”中保存音色 ID，或使用“检查连接”“试听音色”验证。默认音色为 `zh_female_gaolengyujie_uranus_bigtts`。检查和试听会请求服务，但不录音、不自动保存。首次转写或通话需要麦克风权限，识别音频发送到语音服务，音频在本机仅作内存处理。
 
@@ -75,7 +75,7 @@ Agent 集成实验已完成第 4 阶段 Live Voice 接入，尚未进入第 5 �
 
 - 当前是本机开发应用，没有公证、安装器或自动更新；不支持 Intel Mac 或 macOS 26 之前的系统。
 - 工具首版仅支持 bash，每次模型决策最多执行一条命令；不支持附件。模型设置只维护一组服务配置，不自动获取模型或音色列表。
-- Live Voice 已通过模拟音频和本机模型服务的 Agent 集成回归，真实服务与桌面体验留待第 5 阶段验收。设置中的连接测试仍是固定文本探针。
+- Live Voice 已通过模拟插话回归、真实 ASR → Rust Agent → TTS 链路及本机音频设备诊断。真人插话的主观延迟、扬声器回声和多设备切换尚未做系统性体验评估。
 - 聊天只处理文本；Markdown 不渲染图片、HTML、表格或代码高亮。没有会话上下文自动摘要或长度裁剪，长会话可能超过服务限制。
 - 语音接口固定使用豆包 / 火山方舟 Agent Plan 的 ASR、TTS 服务，并非端到端语音模型。插话先暂停播报再确认新语音，极短插话或重复助手原话可能被忽略；播报结束后有约 2 秒尾音保护期。延迟和回声表现仍需在实际麦克风、耳机及扬声器环境中验证。
 - 精灵不会自主移动，精灵动画未适配系统“减少动态效果”。没有精灵下载或删除管理；导入 WebP 最大 32 MB、约 1600 万像素，素材路径不能越出所选文件夹。
@@ -96,9 +96,10 @@ cargo clippy --locked --workspace -- -D warnings
 /bin/zsh scripts/test-voice.sh --agent-integration
 /bin/zsh scripts/build.sh
 /bin/zsh scripts/test-signing.sh
+/bin/zsh scripts/test-packaged-app.sh build/validation/Echo.app
 ```
 
-聊天、工作区和语音回归使用模拟依赖；默认签名测试不访问真实钥匙串。它们不能替代真实服务、麦克风或跨构建钥匙串授权验证。
+聊天、工作区和语音回归使用模拟依赖；默认签名测试不访问真实钥匙串。`test-packaged-app.sh` 将完整应用复制到 `/private/tmp`，从空工作目录启动真实窗口，使用本机模型服务和临时文件验证两种协议、历史恢复与退出清理，并保存窗口截图；需要桌面和屏幕录制权限。它们不能替代真实服务、麦克风或跨构建钥匙串授权验证。
 
 `test-voice.sh --agent-integration` 使用本机回环模型服务、真实 Rust Core 和临时项目内的 bash，ASR/TTS 与音频设备仍为模拟依赖；需要 Python 3 和回环端口权限。
 
@@ -106,8 +107,11 @@ cargo clippy --locked --workspace -- -D warnings
 
 ```sh
 /bin/zsh scripts/test-signing.sh --keychain
+/bin/zsh scripts/test-agent-live.sh
 /bin/zsh scripts/test-voice-live.sh --play
 /bin/zsh scripts/diagnose-voice.sh
 ```
 
-实网语音测试发送固定测试语句，不读取聊天、不录音；去掉 `--play` 可跳过播放。诊断脚本会构建开发签名应用，检查本地采集、连接及播放，上传的 ASR 探针为静音，日志写入 `build/test-logs/voice-diagnostic.log`。应先在应用中授予麦克风权限。正常语音日志也可在“设置 → 语音”查看。
+`test-agent-live.sh` 用已保存的服务配置与密钥验证两种协议的直接回复和临时项目读改验。实网 Agent 和语音探针均打包提示词并使用开发签名，可能触发钥匙串访问授权；不更改保存的模型设置。
+
+实网语音测试发送固定测试语句，经 Rust Agent 完成回复后只合成最终文本一次，不读取已有聊天、不录音；去掉 `--play` 可跳过播放。诊断脚本会构建开发签名应用，检查本地采集、连接及播放，上传的 ASR 探针为静音，日志写入 `build/test-logs/voice-diagnostic.log`。应先在应用中授予麦克风权限。正常语音日志也可在“设置 → 语音”查看。

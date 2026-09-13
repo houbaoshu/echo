@@ -1,6 +1,7 @@
 """Deterministic Chat/Responses fixture; commands only touch the test cwd."""
 import json
 import time
+import shlex
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -21,8 +22,33 @@ class Handler(BaseHTTPRequestHandler):
                 command = "printf 'started\\n' >> trace; sleep 0.7; printf 'done\\n' >> trace"
             if "cancel-tool" in text:
                 command = "printf 'started\\n' >> trace; sleep 15; printf 'forbidden\\n' >> trace"
+        if "acceptance-quit-tool" in text and not results:
+            command = "echo $$ > shell.pid; sleep 15 & echo $! > child.pid; printf 'started\\n' >> trace; wait; printf 'forbidden\\n' >> trace"
         if "multi-tool" in text and len(results) == 1:
             command = "printf 'second\\n' >> trace; printf 'second result'"
+        if "acceptance-rwv" in text or "acceptance-history" in text:
+            observed = [json.loads(x.get("output", x.get("content", "{}"))) for x in results]
+            expected = ["before\n", "", "after\n"]
+            assert all(x["stdout"] == expected[i] and x["exit_code"] == 0
+                       for i, x in enumerate(observed)), observed
+            assert body["stream"] is False
+            if responses:
+                assert body["store"] is False
+            commands = ["cat note.txt", "printf 'after\\n' > note.txt", "test \"$(cat note.txt)\" = after && cat note.txt"]
+            command = commands[len(results)] if len(results) < 3 else None
+            if "acceptance-history" in text:
+                assert len(results) == 3
+                command = None
+        if "tool capability test" in text:
+            model = body["model"]
+            if model.startswith("probe-delay:"):
+                time.sleep(1)
+            if model.startswith(("probe:", "probe-delay:")):
+                command = "printf forbidden > " + shlex.quote(model.split(":", 1)[1])
+            if model == "probe-text-only":
+                command = None
+            if model == "probe-malformed":
+                command = 17
         reply = "最终回复：" + ("已读取真实工具结果" if results else text)
         if "skip" in text:
             command = None

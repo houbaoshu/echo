@@ -21,6 +21,29 @@ import Foundation
         try server.run(); defer { server.terminate(); server.waitUntilExit() }
         let port = String(decoding: pipe.fileHandleForReading.availableData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         precondition(Int(port) != nil, "fixture failed to start")
+        let tester = ModelConnectionTester(resources: temp.appendingPathComponent("resources"))
+        let forbidden = temp.appendingPathComponent("probe-must-not-execute")
+        for api in ModelAPIProtocol.allCases {
+            var config = ModelConfiguration(baseURL: "http://127.0.0.1:\(port)",
+                model: "probe:\(forbidden.path)", apiProtocol: api)
+            try await tester.test(configuration: config, key: "synthetic-key")
+            for model in ["probe-text-only", "probe-malformed"] {
+                config.model = model
+                do {
+                    try await tester.test(configuration: config, key: "synthetic-key")
+                    preconditionFailure("Invalid tool capability must fail: \(model)")
+                } catch is SettingsError { }
+            }
+            config.model = "probe-delay:\(forbidden.path)"
+            let cancelling = Task { [config] in try await tester.test(configuration: config, key: "synthetic-key") }
+            try await Task.sleep(for: .milliseconds(100))
+            cancelling.cancel()
+            do { try await cancelling.value; preconditionFailure("Probe cancellation must throw") }
+            catch is CancellationError { }
+        }
+        await AgentBridge.waitForShutdown()
+        precondition(!FileManager.default.fileExists(atPath: forbidden.path), "Connection probe executed a command")
+        print("PASS: Rust connection probe, both protocols, text-only/malformed rejection, cancellation, no command execution")
         var protocolName = "chat_completions"
         let factory = { AgentTaskSource(model: ["base_url": "http://127.0.0.1:\(port)", "model": "fixture", "protocol": protocolName],
                                         resources: temp.appendingPathComponent("resources")) }

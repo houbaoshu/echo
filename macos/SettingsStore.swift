@@ -108,69 +108,6 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
         completionHandler(nil)
     }
 }
-struct ModelConnectionTester: ConnectionTesting {
-    let session: URLSession
-    init(session: URLSession? = nil) {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 30
-        self.session = session ?? URLSession(configuration: config, delegate: NoRedirectDelegate(), delegateQueue: nil)
-    }
-    func test(configuration: ModelConfiguration, key: String) async throws {
-        let configuration = try configuration.validated()
-        var request = URLRequest(url: try configuration.endpoint(), timeoutInterval: 30)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
-        var body: [String: Any] = ["model": configuration.model, "stream": false]
-        switch configuration.apiProtocol {
-        case .chatCompletions:
-            body["messages"] = [["role": "user", "content": "Reply with OK only."]]
-        case .responses:
-            body["input"] = "Reply with OK only."
-            body["store"] = false
-        }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await session.data(for: request)
-        try Task.checkCancellation()
-        guard let response = response as? HTTPURLResponse else { throw SettingsError("接口返回了无法识别的响应。") }
-        switch response.statusCode {
-        case 200..<300:
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw SettingsError("接口返回了无法识别的响应。")
-            }
-            let hasText: Bool
-            switch configuration.apiProtocol {
-            case .chatCompletions:
-                let choices = json["choices"] as? [[String: Any]]
-                let message = choices?.first?["message"] as? [String: Any]
-                hasText = (message?["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            case .responses:
-                guard json["status"] as? String == "completed",
-                      json["error"] == nil || json["error"] is NSNull else {
-                    throw SettingsError("Responses 请求未完成或服务返回错误，请重试或检查模型支持情况。")
-                }
-                let output = json["output"] as? [[String: Any]] ?? []
-                hasText = output.contains { item in
-                    guard item["type"] as? String == "message", item["role"] as? String == "assistant",
-                          let content = item["content"] as? [[String: Any]] else { return false }
-                    return content.contains {
-                        $0["type"] as? String == "output_text" &&
-                        ($0["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                    }
-                }
-            }
-            guard hasText else {
-                throw SettingsError("接口不兼容：未收到 \(configuration.apiProtocol.title) 文本回复。")
-            }
-        case 401, 403: throw SettingsError("鉴权失败，请检查 API Key 和模型访问权限。")
-        case 404: throw SettingsError("模型或接口不存在，请检查默认模型和 Base URL。")
-        case 429: throw SettingsError("请求受限或额度不足，请稍后重试或检查服务额度。")
-        case 400, 405, 422: throw SettingsError("模型不可用或接口不兼容，请检查模型名称及 \(configuration.apiProtocol.title) 支持情况。")
-        default: throw SettingsError("连接失败（HTTP \(response.statusCode)），请检查服务状态和 API 根地址。")
-        }
-    }
-}
-
 @MainActor final class SettingsStore: ObservableObject {
     @Published var voiceDraft = VoiceConfiguration()
     @Published var voiceAPIKey = ""
@@ -335,7 +272,7 @@ struct ModelConnectionTester: ConnectionTesting {
             testing = true
             task = Task { [weak self] in
                 var result: String; var success = false
-                do { try await tester.test(configuration: configuration, key: key); result = "连接成功，指定模型已返回回复。"; success = true }
+                do { try await tester.test(configuration: configuration, key: key); result = "连接成功，指定协议已返回有效的 bash 工具调用。"; success = true }
                 catch is CancellationError { return }
                 catch let error as SettingsError { result = error.message }
                 catch let error as URLError where error.code == .timedOut { result = "连接超时，请检查服务地址与网络后重试。" }

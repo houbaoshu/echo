@@ -4,8 +4,26 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pets: PetCatalog?
     private var companion: CompanionController?
+    private var acceptanceWorkspace: WorkspaceStore?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let index = CommandLine.arguments.firstIndex(of: "--acceptance-test") {
+            guard CommandLine.arguments.count == index + 3 else { exit(2) }
+            Task { @MainActor in
+                do {
+                    try await AgentAcceptanceProbe.run(baseURL: CommandLine.arguments[index + 1],
+                        root: URL(fileURLWithPath: CommandLine.arguments[index + 2])) { self.acceptanceWorkspace = $0 }
+                    // terminateLater enters AppKit's nested event loop. Invoke
+                    // from a run-loop event, like the Quit menu, after this Swift
+                    // task leaves the main dispatch queue so cleanup can resume.
+                    NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
+                } catch {
+                    if let workspace = acceptanceWorkspace { await workspace.prepareForTermination() }
+                    print("FAIL: \(error.localizedDescription)"); exit(1)
+                }
+            }
+            return
+        }
         if CommandLine.arguments.contains("--diagnose-voice") {
             Task { @MainActor in
                 let passed = await VoiceDiagnosticProbe.run()
@@ -89,9 +107,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleInspector() { companion?.mainController?.toggleInspector() }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let workspace = companion?.workspace else { return .terminateNow }
+        guard let workspace = companion?.workspace ?? acceptanceWorkspace else { return .terminateNow }
         Task { @MainActor in
             await workspace.prepareForTermination()
+            if acceptanceWorkspace != nil { print("PASS: AppKit termination acknowledged Rust cleanup and saved history"); fflush(nil) }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
