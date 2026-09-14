@@ -576,6 +576,12 @@ import Combine
             }
         }
     }
+    func toggleSpeakerMute() {
+        guard case .active = snapshot.session else { return }
+        let muted = !snapshot.speakerMuted
+        audio.setOutputMuted(muted)
+        updateSnapshot { $0.speakerMuted = muted }
+    }
     func reveal() {
         guard let id = conversationID else { return }
         workspace?.revealVoice(conversationID: id)

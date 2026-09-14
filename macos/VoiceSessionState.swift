@@ -52,6 +52,7 @@ struct VoiceSessionSnapshot: Equatable {
 
     var session: Session = .inactive
     var microphone: Microphone = .enabled
+    var speakerMuted = false
     var recognition: Recognition = .off(.idle)
     var replyAudio: ReplyAudio = .none
     var bargeIn: BargeIn = .off

@@ -233,6 +233,7 @@ struct MainWindowLayout {
         guard !isSettingsVisible else { return false }
         guard let window else { return false }
         if window.attachedSheet != nil { return false }
+        if let editor = window.firstResponder as? NSTextView, editor.hasMarkedText() { return false }
         if let responder = window.firstResponder as? NSView {
             var current: NSView? = responder
             while let view = current {
@@ -243,6 +244,10 @@ struct MainWindowLayout {
             }
         }
         guard let selected = workspace.selected else { return false }
+        if workspace.dictation.isActive, workspace.dictation.conversationID == selected.id {
+            workspace.dictation.cancel(discard: true)
+            return true
+        }
         let isVoiceReplying = workspace.voice.conversationID == selected.id && workspace.voice.presentation.isReplyAudioActive
         let canStop = selected.store.isGenerating || isVoiceReplying
         if canStop {

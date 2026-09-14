@@ -283,6 +283,10 @@ struct WorkspaceSnapshot: Codable {
         guard voice.snapshot.session.owner == owner else { return }
         voice.toggleMute()
     }
+    func toggleVoiceSpeakerMute(owner: VoiceSessionSnapshot.Owner) {
+        guard voice.snapshot.session.owner == owner else { return }
+        voice.toggleSpeakerMute()
+    }
     func requestComposerFocus(conversationID: UUID) {
         composerFocusID = conversationID
         composerFocusRequest += 1

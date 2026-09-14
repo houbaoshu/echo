@@ -10,9 +10,54 @@ import SwiftUI
     func cancel() {}
 }
 
+@MainActor private final class ComposerAgent: AgentSessionSource {
+    var controls: [String] = []
+    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {}
+    func cancel() {}
+    func open(sessionID: String, history: Data?, messages: [ConversationMessage], directory: URL?,
+              receive: @escaping ([String: Any]) -> Void, failure: @escaping (String) -> Void) throws {}
+    func control(_ type: String, fields: [String: Any]) throws { controls.append(type) }
+    func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
+}
+
+@MainActor private final class ComposerAudio: VoiceAudioHandling {
+    var onFailure: ((String) -> Void)?
+    var inputOutputLatency: TimeInterval { 0 }
+    var input: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation?
+    func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+        let (stream, input) = AsyncThrowingStream<VoiceCapturePacket, Error>.makeStream()
+        self.input = input
+        return stream
+    }
+    func monitorCapture(epoch: Int) {}
+    func setPlaybackPaused(_ paused: Bool) {}
+    var outputMuted = false
+    func setOutputMuted(_ muted: Bool) { outputMuted = muted }
+    func play(_ data: Data) async throws {}
+    func drain() async throws {}
+    func interruptPlayback() {}
+    func stop() { input?.finish(); input = nil }
+}
+
+@MainActor private final class ComposerRecognizer: VoiceRecognizing {
+    var receive: (@MainActor (ASRResult) -> Void)?
+    var pending: CheckedContinuation<Void, any Error>?
+    func run(key: String, audio: AsyncThrowingStream<Data, Error>, receive: @escaping @MainActor (ASRResult) -> Void) async throws {
+        self.receive = receive
+        try await withCheckedThrowingContinuation { pending = $0 }
+    }
+    func emit(_ text: String) {
+        receive?(ASRResult(result: .init(text: text, utterances: [.init(text: text, start_time: 0, end_time: 100, definite: true)])))
+    }
+    func finish() { pending?.resume(); pending = nil }
+    func cancel() { pending?.resume(throwing: CancellationError()); pending = nil }
+}
+
 @main struct ConversationUITests {
     @MainActor static func main() async throws {
         _ = NSApplication.shared
+        try await testComposerActionMatrix()
+        try await testStoppingAndDictationEscape()
         try await assistantUpdatesDoNotSubmit()
         try await testEscapeAndKeyboardCommands()
         try await testLiveVoiceComposerStatesAndAttribution()
@@ -109,6 +154,280 @@ import SwiftUI
         } else { preconditionFailure("Could not render chat preview") }
         window.orderOut(nil)
         print("PASS: Enter, Shift+Enter, IME, Markdown blocks; preview: build/chat-v1-preview.png")
+    }
+
+    @MainActor private static func testStoppingAndDictationEscape() async throws {
+        let source = ComposerAgent()
+        let agentStore = TaskStore(source: source)
+        let recognizer = ComposerRecognizer()
+        let dictation = DictationController(audio: ComposerAudio(), recognizer: { recognizer }, permission: { true })
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let workspace = WorkspaceStore(initialStore: agentStore, dictation: dictation, voice: voice)
+        let conversation = workspace.selected!
+        let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 650),
+                                     styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "composer-escape-\(UUID())")!, windowOverride: window)
+        main.present()
+        defer { main.shutdown(); workspace.shutdown() }
+        func refresh() async throws {
+            try await Task.sleep(for: .milliseconds(100)); window.contentView?.layoutSubtreeIfNeeded()
+        }
+        func node(_ id: String) -> AnyObject? { findAccessibility(id, in: window.contentView!) }
+        _ = agentStore.send("generate")
+        agentStore.mainDraft = "steer"
+        try await refresh()
+        precondition(node("conversation.send")?.isAccessibilityEnabled?() == true)
+        precondition(node("conversation.stop") != nil)
+        precondition(node("conversation.send")?.accessibilityPerformPress?() == true)
+        precondition(source.controls.contains("steer") && agentStore.mainDraft.isEmpty)
+        agentStore.stopTask()
+        precondition(agentStore.task?.status == .stopping)
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversation.id)
+        voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
+        try await refresh()
+        precondition(node("conversation.stop") == nil, "Live Voice hides Stop even while an Agent task is stopping")
+        precondition(node("voice.end")?.isAccessibilityEnabled?() == true)
+        precondition(node("voice.end")?.accessibilityPerformPress?() == true)
+        precondition(!voice.isActive)
+
+        agentStore.mainDraft = "原草稿"
+        dictation.start(conversation: conversation, key: "test")
+        try await refresh()
+        precondition(node("dictation.cancel")?.isAccessibilityEnabled?() == true)
+        precondition(node("conversation.stop") == nil)
+        recognizer.emit("丢弃")
+        window.makeFirstResponder(nil)
+        window.cancelOperation(nil)
+        try await refresh()
+        precondition(!dictation.isActive && agentStore.mainDraft == "原草稿" && agentStore.task?.status == .stopping)
+        precondition(window.firstResponder is ComposerTextView, "Window Escape restores composer focus")
+        dictation.start(conversation: conversation, key: "test")
+        try await refresh()
+        recognizer.emit("定稿中也丢弃")
+        dictation.finishRecording()
+        try await refresh()
+        precondition(main.handleEscape())
+        precondition(!dictation.isActive && agentStore.mainDraft == "原草稿")
+        try await refresh()
+
+        // Keep native marked text mounted even while the recording preview covers it.
+        let editor = window.firstResponder as! ComposerTextView
+        editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        let marked = editor.markedRange()
+        dictation.start(conversation: conversation, key: "test")
+        try await refresh()
+        precondition(editor.hasMarkedText() && editor.markedRange() == marked)
+        let composing = editor.string
+        editor.insertText("不应插入", replacementRange: marked)
+        precondition(editor.string == composing && editor.hasMarkedText(), "Recording rejects IME commits beneath the preview")
+        precondition(!main.handleEscape(), "Window Escape protects IME composition")
+        recognizer.emit("追加转写")
+        dictation.finishRecording(); recognizer.finish()
+        try await refresh()
+        precondition(editor.hasMarkedText() && editor.markedRange() == marked)
+        precondition(agentStore.mainDraft.hasSuffix("\n追加转写"), "Final transcript is retained while IME remains pending")
+        editor.insertText("你", replacementRange: editor.markedRange())
+        try await refresh()
+        precondition(editor.string.contains("你") && editor.string.hasSuffix("\n追加转写") && agentStore.mainDraft == editor.string,
+                     "Candidate confirmation preserves both IME text and appended transcript")
+        print("PASS: Agent steering and stopping, independent Voice end/dictation cancel, window Escape and recording IME preservation")
+    }
+
+    @MainActor private static func testComposerActionMatrix() async throws {
+        let setter = NSSelectorFromString("accessibilitySetValue:forAttribute:")
+        if NSApp.responds(to: setter) { NSApp.perform(setter, with: NSNumber(value: true), with: "AXEnhancedUserInterface") }
+        let audio = ComposerAudio(), recognizer = ComposerRecognizer(), source = PreviewSource()
+        var permissionReply: CheckedContinuation<Bool, Never>?
+        let dictation = DictationController(audio: audio, recognizer: { recognizer }, permission: {
+            await withCheckedContinuation { permissionReply = $0 }
+        })
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let store = TaskStore(source: source)
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
+        let conversation = workspace.selected!
+        let host = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice, dictation: dictation,
+            startDictation: { dictation.start(conversation: conversation, key: "test") },
+            startVoice: { voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test") },
+            conversationID: conversation.id, send: { workspace.sendMainMessage(conversationID: conversation.id) },
+            stop: { workspace.stop(conversationID: conversation.id) }, retry: {})
+            .background(Color(nsColor: .textBackgroundColor)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); workspace.shutdown() }
+        func refresh() async throws {
+            try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded()
+        }
+        func node(_ id: String) -> AnyObject? { findAccessibility(id, in: host) }
+        func press(_ id: String) {
+            precondition(node(id)?.accessibilityPerformPress?() == true, "Missing action: \(id)")
+        }
+        func editor(in view: NSView) -> ComposerTextView? {
+            if let editor = view as? ComposerTextView { return editor }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        func key(_ editor: ComposerTextView, _ code: UInt16) {
+            editor.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: code == 53 ? "\u{1b}" : "\r",
+                charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!)
+        }
+        try await refresh()
+        let original = editor(in: host)!
+        let primaryFrame = node("voice.start")!.accessibilityFrame!()
+        func check(_ primary: String, present: [String], absent: [String], enabled: Bool = true) {
+            precondition(node("conversation.actions") != nil)
+            guard let button = node(primary) else { preconditionFailure("Missing primary: \(primary)") }
+            let frame = button.accessibilityFrame!()
+            precondition(abs(frame.maxX - primaryFrame.maxX) < 1 && abs(frame.minY - primaryFrame.minY) < 1
+                         && frame.size == primaryFrame.size, "Primary location and hit area stay fixed: \(primary)")
+            precondition(button.isAccessibilityEnabled?() == enabled, "Action availability: \(primary)")
+            for id in present { precondition(node(id) != nil, "Missing \(id)") }
+            for id in absent { precondition(node(id) == nil, "Stale action \(id)") }
+            precondition(editor(in: host) === original, "The native editor stays mounted")
+        }
+        func snapshot(_ name: String, narrow: Bool = false) async throws {
+            if narrow { window.setContentSize(NSSize(width: 440, height: 600)) }
+            for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                window.appearance = NSAppearance(named: appearance)
+                try await refresh()
+                guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { preconditionFailure("Screenshot unavailable") }
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/composer-\(name)-\(suffix).png"))
+            }
+            if narrow { window.setContentSize(NSSize(width: 720, height: 600)) }
+            try await refresh()
+        }
+        check("voice.start", present: ["dictation.start"], absent: ["conversation.send", "conversation.stop", "voice.end"])
+        store.mainDraft = " \n "
+        try await refresh(); key(original, 36)
+        precondition(!voice.isActive && source.histories.isEmpty)
+        try await snapshot("idle")
+        store.mainDraft = "draft"
+        try await refresh()
+        check("conversation.send", present: ["dictation.start"], absent: ["voice.start", "conversation.stop"])
+        press("conversation.send"); try await refresh()
+        check("conversation.stop", present: ["dictation.start"], absent: ["conversation.send", "voice.start"])
+        try await snapshot("generating")
+        store.mainDraft = "supplement"
+        try await refresh()
+        check("conversation.send", present: ["conversation.stop", "dictation.start"], absent: ["voice.start"], enabled: false)
+        key(original, 36)
+        precondition(source.histories.count == 1 && store.mainDraft == "supplement", "Legacy generation retains unsent text")
+        try await snapshot("generating-draft")
+        press("conversation.stop"); try await refresh()
+        original.insertText("!", replacementRange: NSRange(location: original.string.utf16.count, length: 0))
+        original.setSelectedRange(NSRange(location: 2, length: 3))
+        let draft = store.mainDraft, selection = original.selectedRange()
+        precondition(original.undoManager?.canUndo == true)
+        press("dictation.start"); try await refresh()
+        check("dictation.finish", present: ["dictation.cancel", "dictation.waveform", "dictation.subtitle"],
+              absent: ["dictation.start", "voice.start", "conversation.send", "conversation.stop", "voice.end"], enabled: false)
+        precondition(!dictation.captureReady && !original.isEditable && original.string == draft)
+        key(original, 36); precondition(source.histories.count == 1)
+        try await snapshot("preparing")
+        permissionReply?.resume(returning: true); permissionReply = nil
+        try await refresh()
+        // Quiet-to-normal speech envelope, rather than a full-height constant signal.
+        for packet in 0..<8 {
+            var pcm = Data()
+            for sample in 0..<3200 {
+                let envelope = Double(packet * 10 + sample / 320)
+                let amplitude = 0.003 + 0.035 * pow(sin(envelope * 0.19), 2)
+                let value = UInt16(bitPattern: Int16(sin(Double(sample) * 0.12) * amplitude * 32767))
+                pcm.append(UInt8(truncatingIfNeeded: value)); pcm.append(UInt8(truncatingIfNeeded: value >> 8))
+            }
+            audio.input?.yield(.init(data: pcm, epoch: 1))
+        }
+        recognizer.emit(String(repeating: "这是录音中的长字幕。", count: 30))
+        try await refresh()
+        check("dictation.finish", present: ["dictation.cancel"], absent: ["conversation.send", "dictation.start"])
+        precondition(dictation.captureReady && dictation.levels.contains { $0 > 0 })
+        try await snapshot("recording", narrow: true)
+        press("dictation.finish"); try await refresh()
+        check("dictation.progress", present: ["dictation.cancel"], absent: ["dictation.finish", "conversation.stop"], enabled: false)
+        try await snapshot("finalizing")
+        recognizer.finish(); try await refresh()
+        precondition(original.isEditable && original.selectedRange() == selection && window.firstResponder === original)
+        precondition(store.mainDraft.hasPrefix(draft + "\n") && source.histories.count == 1)
+        original.undoManager?.undo()
+        precondition(store.mainDraft == draft, "Final transcript append is independently undoable")
+        original.setSelectedRange(selection)
+        press("dictation.start"); try await refresh()
+        key(original, 53); try await refresh()
+        permissionReply?.resume(returning: true); permissionReply = nil
+        try await refresh()
+        precondition(!dictation.isActive && store.mainDraft == draft && original.selectedRange() == selection)
+        precondition(window.firstResponder === original)
+
+        // IME, undo and selection survive voice presentation updates.
+        original.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        let marked = original.markedRange()
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversation.id)
+        voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
+        try await refresh()
+        precondition(original.hasMarkedText() && original.markedRange() == marked)
+        original.unmarkText()
+        voice.end()
+        store.mainDraft = ""
+        try await refresh()
+        press("voice.start"); try await refresh()
+        let liveOwner = voice.snapshot.session.owner!
+        check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "dictation.start", "voice.start", "conversation.stop"])
+        key(original, 36); precondition(voice.snapshot.session.owner == liveOwner)
+        press("voice.speaker"); try await refresh()
+        precondition(voice.snapshot.speakerMuted && !voice.isMuted && voice.snapshot.session.owner == liveOwner)
+        precondition(node("voice.speaker")?.accessibilityLabel?() == "开启扬声器")
+        press("voice.mute"); try await refresh(); precondition(voice.isMuted && voice.snapshot.speakerMuted)
+        press("voice.speaker"); try await refresh()
+        precondition(!voice.snapshot.speakerMuted && voice.isMuted)
+        precondition(node("voice.speaker")?.accessibilityLabel?() == "静音扬声器")
+        press("voice.mute"); try await refresh(); precondition(!voice.isMuted)
+        try await snapshot("voice")
+        store.mainDraft = "text during voice"
+        try await refresh()
+        check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["voice.end", "dictation.start", "conversation.stop"])
+        press("conversation.send"); try await refresh()
+        precondition(store.mainDraft.isEmpty && voice.snapshot.session.owner == liveOwner)
+        check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "conversation.stop"])
+        voice.updateSnapshot { $0.replyAudio = .playing(UUID()) }
+        try await refresh()
+        check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.stop", "conversation.send"])
+        store.mainDraft = "during playback"
+        try await refresh()
+        check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["conversation.stop", "voice.end"], enabled: false)
+        store.mainDraft = ""
+        key(original, 53); try await refresh()
+        precondition(!store.isGenerating && voice.snapshot.session.owner == liveOwner, "Escape stops reply without ending voice")
+        store.mainDraft = "retry me"
+        store.agentLoadError = "Unavailable"
+        try await refresh()
+        check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["voice.end", "conversation.stop"], enabled: false)
+        precondition(!workspace.sendMainMessage(conversationID: conversation.id) && store.mainDraft == "retry me")
+        store.agentLoadError = nil
+        store.mainDraft = Array(repeating: "多行草稿", count: 8).joined(separator: "\n")
+        voice.updateSnapshot { $0.subtitle = String(repeating: "长字幕内容", count: 60) }
+        try await snapshot("voice-draft", narrow: true)
+        store.mainDraft = ""
+        _ = store.send("reply")
+        try await refresh()
+        check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "conversation.stop"])
+        press("voice.end"); try await refresh()
+        precondition(!voice.isActive, "Stopping a task never disables ending Voice")
+        store.stopTask()
+
+        let other = workspace.newConversation()
+        let background = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: other.id)
+        voice.updateSnapshot { $0.session = .active(background); $0.recognition = .listening }
+        store.mainDraft = "background voice allows text"
+        try await refresh()
+        precondition(node("voice.reveal") != nil && node("dictation.start")?.isAccessibilityEnabled?() == false)
+        precondition(node("voice.mute") == nil && node("voice.speaker") == nil && node("voice.end") == nil)
+        precondition(node("conversation.send")?.isAccessibilityEnabled?() == true)
+        press("voice.reveal"); precondition(workspace.selectedID == other.id)
+        try await snapshot("background-voice", narrow: true)
+        voice.end()
+        print("PASS: actual Composer actions, stable primary frame, Voice text cycle/failure, dictation preview/cancel/focus/undo, IME, background ownership; light/dark screenshots")
     }
 
     @MainActor private static func testCodeCopyAndSyntaxPreview() async throws {
@@ -511,13 +830,24 @@ import SwiftUI
         let presentation = PetControlsPresentation()
         var endVoiceCalled = false
         var startVoiceCalled = false
-        _ = PetControls(store: store, voice: voice, presentation: presentation,
-                        startVoice: { startVoiceCalled = true },
-                        endVoice: { _ in endVoiceCalled = true })
-        precondition(voice.isActive, "PetControls sees active voice")
-        workspace.endVoice(owner: owner)
-        precondition(!voice.isActive, "Voice ended")
-        precondition(!endVoiceCalled && !startVoiceCalled)
+        let petHost = NSHostingView(rootView: PetControls(store: store, voice: voice, presentation: presentation,
+            startVoice: { startVoiceCalled = true },
+            endVoice: { selectedOwner in
+                precondition(selectedOwner == owner)
+                endVoiceCalled = true; workspace.endVoice(owner: selectedOwner)
+            }).frame(width: 160, height: 80).background(Color(nsColor: .windowBackgroundColor)))
+        let petWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 160, height: 80),
+                                 styleMask: .borderless, backing: .buffered, defer: false)
+        petWindow.contentView = petHost
+        defer { petWindow.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(100)); petHost.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("voice.end", in: petHost)?.accessibilityLabel?() == "结束语音")
+        if let bitmap = petHost.bitmapImageRepForCachingDisplay(in: petHost.bounds) {
+            petHost.cacheDisplay(in: petHost.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/pet-voice-end.png"))
+        }
+        precondition(findAccessibility("voice.end", in: petHost)?.accessibilityPerformPress?() == true)
+        precondition(!voice.isActive && endVoiceCalled && !startVoiceCalled, "Pet × ends its owned Voice session")
 
         print("PASS: Settings and companion voice integration without phone terminology")
     }

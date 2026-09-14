@@ -10,6 +10,8 @@ import Combine
     @Published private(set) var state: State = .idle
     @Published private(set) var subtitle = ""
     @Published private(set) var error: String?
+    @Published private(set) var captureReady = false
+    @Published private(set) var levels: [Double] = []
     private(set) var conversationID: UUID?
     var isActive: Bool { state.isActive }
     private weak var workspace: WorkspaceStore?
@@ -67,6 +69,7 @@ import Combine
             error = "请先结束 Live Voice 或语音测试，再开始转写。"; state = .failed; return
         }
         generation = UUID(); let current = generation
+        captureReady = false; levels = []
         conversationID = conversation.id; store = conversation.store
         confirmed = []; finalTranscript = nil; tracker = VoiceUtteranceTracker(); subtitle = ""; error = nil; state = .recording
         startup = Task { [weak self] in
@@ -86,6 +89,7 @@ import Combine
             guard allowed else { self.complete(error: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。"); return }
             do {
                 let captured = try self.audio.start(capture: true)
+                self.captureReady = true
                 let (stream, input) = AsyncThrowingStream<Data, Error>.makeStream(bufferingPolicy: .bufferingOldest(10))
                 self.audioInput = input
                 self.recognitionTask = Task { [weak self] in
@@ -119,7 +123,10 @@ import Combine
                     do {
                         for try await packet in captured {
                             guard let self, self.generation == current, !Task.isCancelled else { return }
-                            if self.state == .recording { self.watchdog?.cancel(); self.watchdog = nil }
+                            if self.state == .recording {
+                                self.watchdog?.cancel(); self.watchdog = nil
+                                self.appendLevels(packet.data)
+                            }
                             if case .dropped = input.yield(packet.data) { throw SettingsError("语音上传过慢，请检查网络后重试。") }
                         }
                         guard let self, self.generation == current, !Task.isCancelled else { return }
@@ -134,9 +141,8 @@ import Combine
         }
     }
     func finishRecording() {
-        guard state == .recording else { return }
-        guard captureTask != nil else { cancel(); return }
-        state = .finalizing; watchdog?.cancel()
+        guard state == .recording, captureReady else { return }
+        state = .finalizing; captureReady = false; watchdog?.cancel()
         // Drain captured PCM, send the ASR final packet, then await its final response.
         audio.finishCapture()
         let current = generation
@@ -157,6 +163,7 @@ import Combine
         audioInput?.finish(); audioInput = nil
         recognitionTask?.cancel(); recognitionTask = nil; recognizer?.cancel(); recognizer = nil
         audio.stop()
+        captureReady = false; levels = []
         let content = finalTranscript ?? confirmed.joined(separator: " ")
         if !discard, !content.isEmpty, let store {
             let separator = store.mainDraft.isEmpty || store.mainDraft.hasSuffix("\n") ? "" : "\n"
@@ -164,6 +171,21 @@ import Combine
         }
         confirmed = []; finalTranscript = nil; store = nil; conversationID = nil; subtitle = ""
         self.error = error; state = error == nil ? .idle : .failed
+    }
+    private func appendLevels(_ data: Data) {
+        // Existing 16 kHz signed little-endian PCM, one RMS envelope per 20 ms.
+        let bytes = Array(data)
+        var envelope: [Double] = []
+        for start in stride(from: 0, to: bytes.count - bytes.count % 2, by: 640) {
+            let end = min(start + 640, bytes.count - bytes.count % 2)
+            var energy = 0.0
+            for offset in stride(from: start, to: end, by: 2) {
+                let sample = Double(Int16(bitPattern: UInt16(bytes[offset]) | UInt16(bytes[offset + 1]) << 8)) / 32768
+                energy += sample * sample
+            }
+            envelope.append(min(1, sqrt(energy / Double((end - start) / 2)) * 4))
+        }
+        levels = Array((levels + envelope).suffix(80))
     }
     func shutdown() {
         retired = true; cancel()
