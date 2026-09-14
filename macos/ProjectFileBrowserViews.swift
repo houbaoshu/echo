@@ -124,8 +124,16 @@ private struct ProjectFileBrowserView: View {
                     Text("空文件").foregroundStyle(WorkspaceStyle.secondary).padding(14)
                     Spacer()
                 } else {
-                    ProjectReadOnlyText(text: text).id(browser.state.selectedPath)
-                        .accessibilityIdentifier("projectFiles.preview")
+                    Group {
+                        if ["md", "markdown"].contains(((browser.state.selectedPath ?? "") as NSString).pathExtension.lowercased()) {
+                            ScrollView {
+                                AssistantMarkdown(content: text).equatable()
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                            }.accessibilityIdentifier("projectFiles.markdown")
+                        } else {
+                            ProjectReadOnlyText(text: text, path: browser.state.selectedPath ?? "")
+                        }
+                    }.id(browser.state.selectedPath).accessibilityIdentifier("projectFiles.preview")
                 }
             case .information(let message), .failed(let message):
                 VStack(alignment: .leading, spacing: 12) {
@@ -146,6 +154,11 @@ private struct ProjectFileBrowserView: View {
 
 struct ProjectReadOnlyText: NSViewRepresentable {
     let text: String
+    var path = ""
+    final class Coordinator {
+        var language: PreviewSyntaxHighlighter.Language?
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
@@ -164,6 +177,13 @@ struct ProjectReadOnlyText: NSViewRepresentable {
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let view = scroll.documentView as? NSTextView else { return }
-        if view.string != text { view.string = text; view.sizeToFit() }
+        let language = PreviewSyntaxHighlighter.language(for: path)
+        let changed = view.string != text
+        if changed { view.string = text }
+        if changed || context.coordinator.language != language {
+            if let storage = view.textStorage { PreviewSyntaxHighlighter.apply(to: storage, language: language) }
+            context.coordinator.language = language
+        }
+        if changed { view.sizeToFit() }
     }
 }

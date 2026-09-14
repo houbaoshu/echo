@@ -58,11 +58,7 @@ struct AssistantMarkdown: View, Equatable {
                 HStack(alignment: .top, spacing: 8) {
                     if let marker = block.marker { Text(marker).foregroundStyle(WorkspaceStyle.secondary).frame(minWidth: 16, alignment: .trailing) }
                     if block.code {
-                        ScrollView(.horizontal) {
-                            Text(block.text).font(.system(size: WorkspaceStyle.bodySize, design: .monospaced))
-                                .fixedSize(horizontal: true, vertical: true).padding(12)
-                        }.fixedSize(horizontal: false, vertical: true)
-                            .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                        MarkdownCodeBlock(text: block.text)
                     } else {
                         Text(block.text)
                             .font(block.heading.map { .system(size: $0 == 1 ? 22 : $0 == 2 ? 19 : 16, weight: .semibold) } ?? WorkspaceStyle.body)
@@ -76,6 +72,56 @@ struct AssistantMarkdown: View, Equatable {
                     .padding(.leading, CGFloat(max(0, block.listDepth - 1)) * 18)
             }
         }.textSelection(.enabled).foregroundStyle(WorkspaceStyle.primary)
+    }
+}
+
+private struct MarkdownCodeBlock: View {
+    let text: AttributedString
+    @State private var copiedAt: UUID?
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    if NSPasteboard.general.setString(String(text.characters), forType: .string) {
+                        copiedAt = UUID()
+                    }
+                } label: {
+                    Image(systemName: copiedAt == nil ? "doc.on.doc" : "checkmark")
+                        .font(WorkspaceStyle.caption)
+                        .frame(width: 28, height: 28)
+                        .background(.primary.opacity(isHovered ? 0.09 : 0), in: Circle())
+                        .contentShape(Circle())
+                }.buttonStyle(.plain).foregroundStyle(WorkspaceStyle.secondary)
+                    .onHover { isHovered = $0 }
+                    .overlay(alignment: .topTrailing) {
+                        if isHovered || copiedAt != nil {
+                            Text(copiedAt == nil ? "复制代码" : "已复制")
+                                .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.primary)
+                                .textSelection(.disabled).fixedSize()
+                                .padding(.horizontal, 9).padding(.vertical, 5)
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                                .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                                .offset(y: -34).allowsHitTesting(false).accessibilityHidden(true)
+                        }
+                    }
+                    .accessibilityLabel(copiedAt == nil ? "复制代码" : "已复制")
+                    .accessibilityIdentifier("conversation.code.copy")
+            }.padding(.horizontal, 12).padding(.top, 8)
+            ScrollView(.horizontal) {
+                Text(text).font(.system(size: WorkspaceStyle.bodySize, design: .monospaced))
+                    .fixedSize(horizontal: true, vertical: true).padding(12)
+            }.fixedSize(horizontal: false, vertical: true)
+        }.background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+            .onChange(of: text) { _, _ in copiedAt = nil }
+            .task(id: copiedAt) {
+                guard copiedAt != nil else { return }
+                do { try await Task.sleep(for: .milliseconds(1500)) } catch { return }
+                copiedAt = nil
+            }
     }
 }
 

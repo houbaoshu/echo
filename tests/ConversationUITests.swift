@@ -19,6 +19,7 @@ import SwiftUI
         try await testSettingsAndCompanionVoiceIntegration()
         try await testComposerPreservesEditorStateAcrossVoiceUpdates()
         try await testRightSidebarLayoutAndToggling()
+        try await testCodeCopyAndSyntaxPreview()
         let editor = ComposerTextView()
         editor.isRichText = false
         var sends = 0
@@ -108,6 +109,91 @@ import SwiftUI
         } else { preconditionFailure("Could not render chat preview") }
         window.orderOut(nil)
         print("PASS: Enter, Shift+Enter, IME, Markdown blocks; preview: build/chat-v1-preview.png")
+    }
+
+    @MainActor private static func testCodeCopyAndSyntaxPreview() async throws {
+        let pasteboard = NSPasteboard.general
+        let savedItems = (pasteboard.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+            return copy
+        }
+        defer { pasteboard.clearContents(); pasteboard.writeObjects(savedItems) }
+        let code = "\tlet message = \"你好 👋 **literal**\"\n\n    print(message)\n" + String(repeating: "wide ", count: 100) + "\n"
+        let host = NSHostingView(rootView: AssistantMarkdown(content: "```swift\n\(code)```")
+            .frame(width: 400, height: 300).accessibilityElement(children: .contain))
+        host.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        func settle() async throws {
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+        }
+        try await settle()
+        guard let copy = findAccessibility("conversation.code.copy", in: host) else {
+            preconditionFailure("Code block Copy button missing")
+        }
+        precondition(copy.accessibilityPerformPress?() == true)
+        try await settle()
+        precondition(pasteboard.string(forType: .string) == code, "Copy preserves all code, whitespace and Unicode, without fences")
+        precondition(findAccessibility("conversation.code.copy", in: host)?.accessibilityLabel?() == "已复制")
+        try await Task.sleep(for: .milliseconds(1600))
+        try await settle()
+        precondition(findAccessibility("conversation.code.copy", in: host)?.accessibilityLabel?() == "复制代码", "Copy feedback clears")
+        host.rootView = AssistantMarkdown(content: "```python\nprint('updated')\n```")
+            .frame(width: 400, height: 300).accessibilityElement(children: .contain)
+        try await settle()
+        precondition(findAccessibility("conversation.code.copy", in: host)?.accessibilityPerformPress?() == true)
+        precondition(pasteboard.string(forType: .string) == "print('updated')\n", "Copy uses current streamed content")
+
+        let samples: [(String, String, String)] = [
+            ("main.SWIFT", "let title = \"你好 👋 // literal\" // let 42\n", "let"),
+            ("main.rs", "fn main() { let x = 42; }", "fn"),
+            ("main.tsx", "export const title: string = 'hello';", "export"),
+            ("main.py", "def greet():\n    return \"# literal\" # comment", "def"),
+            ("main.c", "int main() { return 42; }", "int"),
+            ("main.java", "public class Main {}", "public"),
+            ("main.go", "package main", "package"),
+            ("data.json", "{\"enabled\": true, \"count\": 42}", "true"),
+            ("data.yml", "enabled: true # comment", "true"),
+            ("data.toml", "enabled = true", "true"),
+            ("run.sh", "if true; then echo 'hello'; fi", "if"),
+            ("main.rb", "def greet; end", "def"),
+            ("index.html", "<div title=\"hello\">hello</div>", "<div"),
+            ("style.css", "body { margin: auto; }", "auto"),
+            ("query.sql", "SELECT * FROM items WHERE id = 42", "SELECT")
+        ]
+        for (path, source, keyword) in samples {
+            let storage = NSTextStorage(string: source)
+            let language = PreviewSyntaxHighlighter.language(for: path)
+            precondition(language != nil)
+            PreviewSyntaxHighlighter.apply(to: storage, language: language)
+            precondition(storage.string == source, "Highlighting preserves source bytes")
+            precondition(storage.attribute(.foregroundColor, at: (source as NSString).range(of: keyword).location,
+                                           effectiveRange: nil) as? NSColor == .systemPurple, "Keyword highlighting for \(path)")
+        }
+        let source = samples[0].1
+        let previewHost = NSHostingView(rootView: ProjectReadOnlyText(text: source, path: "main.swift"))
+        window.contentView = previewHost
+        try await settle()
+        guard let preview = findAccessibility("projectFiles.text", in: previewHost) as? NSTextView,
+              let storage = preview.textStorage else { preconditionFailure("Read-only preview missing") }
+        func color(_ token: String) -> NSColor? {
+            storage.attribute(.foregroundColor, at: (source as NSString).range(of: token).location, effectiveRange: nil) as? NSColor
+        }
+        precondition(!preview.isEditable && preview.isSelectable && !preview.isRichText)
+        precondition(color("let") == .systemPurple && color("// literal") == .systemRed && color("// let") == .secondaryLabelColor)
+        preview.setSelectedRange(NSRange(location: 4, length: 5))
+        let selection = preview.selectedRange()
+        previewHost.rootView = ProjectReadOnlyText(text: source, path: "unknown.extension")
+        try await settle()
+        precondition(PreviewSyntaxHighlighter.language(for: "unknown.extension") == nil)
+        precondition(preview.string == source && preview.selectedRange() == selection)
+        precondition(color("let") == .labelColor && color("// literal") == .labelColor, "Unknown extensions reset to plain text")
+        print("PASS: code Copy, clipboard fidelity and feedback; read-only syntax colors, language detection and plain-text fallback")
     }
 
     @MainActor private static func assistantUpdatesDoNotSubmit() async throws {
@@ -639,8 +725,8 @@ import SwiftUI
         let longText = "# Project preview\n\n只读文本\n" + (0..<200).map {
             "Line \($0): " + String(repeating: "wide code content ", count: 20)
         }.joined(separator: "\n")
-        try Data(longText.utf8).write(to: root.appendingPathComponent("README.md"))
-        workspace.fileBrowser.openFile("README.md")
+        try Data(longText.utf8).write(to: root.appendingPathComponent("wide.swift"))
+        workspace.fileBrowser.openFile("wide.swift")
         try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
         guard let preview = findAccessibility("projectFiles.text", in: main.inspectorItem.viewController.view) as? NSTextView else {
             preconditionFailure("Native read-only text preview missing")
@@ -682,7 +768,7 @@ import SwiftUI
         precondition(abs(main.splitController.columnWidth(main.inspectorItem) - normalWidth) < 2, "Original column width restored")
         precondition(scroll.contentView.bounds.origin == scrollOrigin && preview.selectedRange() == NSRange(location: 100, length: 12))
         precondition(editor(in: content) === composer && composer.selectedRange() == NSRange(location: 2, length: 3))
-        precondition(conversation.store.mainDraft == savedDraft && workspace.fileBrowser.state.selectedPath == "README.md")
+        precondition(conversation.store.mainDraft == savedDraft && workspace.fileBrowser.state.selectedPath == "wide.swift")
         try await togglePreview()
         workspace.fileBrowser.returnToDirectory()
         try await settlePreviewLayout()
@@ -699,9 +785,55 @@ import SwiftUI
         try await settlePreviewLayout()
         precondition(main.inspectorItem.isCollapsed && !main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
         main.toggleInspector()
+        let markdownPreview = """
+        # Project preview
+
+        只读 **粗体** 和 [链接](https://example.com)。
+
+        - 第一项
+        - 第二项
+
+        > 引用内容
+
+        ```swift
+        let message = "你好"
+        print(message)
+        ```
+        """
+        try Data(markdownPreview.utf8).write(to: root.appendingPathComponent("README.md"))
         workspace.fileBrowser.openFile("README.md")
         try await settlePreviewLayout()
         print("PASS: preview expand/collapse, column restoration, native scroll/selection and composer preservation, file switching and close")
+        func assertMarkdownPreview() {
+            precondition(findAccessibility("projectFiles.text", in: inspector) == nil, "Markdown is rendered, not shown in the source text view")
+            precondition(findAccessibility("conversation.code.copy", in: inspector) != nil, "File preview reuses the Markdown code block component")
+            func fields(in view: NSView) -> [NSTextField] {
+                (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap { fields(in: $0) }
+            }
+            let texts = fields(in: inspector)
+            precondition(texts.contains { $0.stringValue == "Project preview" && $0.isSelectable && !$0.isEditable },
+                         "Markdown heading is rendered without its source marker and remains selectable/read-only")
+            precondition(texts.contains { $0.stringValue.contains("引用内容") })
+            precondition(texts.contains { $0.stringValue.contains("第一项") })
+            precondition(texts.contains { $0.stringValue.contains("只读 粗体 和 链接") })
+        }
+        assertMarkdownPreview()
+        try await togglePreview()
+        assertMarkdownPreview()
+        try await togglePreview()
+        assertMarkdownPreview()
+        try Data(markdownPreview.utf8).write(to: root.appendingPathComponent("guide.MARKDOWN"))
+        workspace.fileBrowser.openFile("guide.MARKDOWN")
+        try await settlePreviewLayout()
+        assertMarkdownPreview()
+        workspace.fileBrowser.openFile("folder/child.txt")
+        try await settlePreviewLayout()
+        precondition((findAccessibility("projectFiles.text", in: inspector) as? NSTextView)?.string == "child",
+                     "Switching from Markdown to unknown text restores the plain-text preview")
+        workspace.fileBrowser.openFile("README.md")
+        try await settlePreviewLayout()
+        assertMarkdownPreview()
+        print("PASS: .md/.markdown rendered read-only preview, shared code blocks, expansion and switching back to plain text")
         // Native glass does not support cacheDisplay snapshots. Render the same
         // inspector content in a plain hosting surface for a reviewable artifact.
         let previewHost = NSHostingView(rootView: WorkspaceInspector(workspace: workspace)
