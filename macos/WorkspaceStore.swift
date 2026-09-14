@@ -13,7 +13,7 @@ struct WorkspaceProject: Identifiable, Codable, Equatable {
 
 @MainActor final class WorkspaceConversation: Identifiable {
     let id: UUID
-    var projectID: UUID?
+    fileprivate(set) var projectID: UUID?
     var title: String
     var manuallyNamed: Bool
     var lastUsed: Date
@@ -121,11 +121,16 @@ struct WorkspaceSnapshot: Codable {
 }
 
 @MainActor final class WorkspaceStore: ObservableObject {
+    let fileBrowser = ProjectFileBrowserStore()
     let voice: VoiceSessionController
     let dictation: DictationController
-    @Published private(set) var projects: [WorkspaceProject] = []
+    @Published private(set) var projects: [WorkspaceProject] = [] {
+        didSet { synchronizeFileBrowser() }
+    }
     @Published private(set) var conversations: [WorkspaceConversation] = []
-    @Published private(set) var selectedID: UUID?
+    @Published private(set) var selectedID: UUID? {
+        didSet { synchronizeFileBrowser() }
+    }
     @Published private(set) var composerFocusRequest = 0
     private(set) var composerFocusID: UUID?
     private var drafts: [WorkspaceConversation] = []
@@ -141,6 +146,7 @@ struct WorkspaceSnapshot: Codable {
     private let sourceFactory: () -> (any TaskSource)?
     private let persistence: WorkspacePersistence?
     private var observations: [UUID: AnyCancellable] = [:]
+    private var lifecycleObservations: [UUID: AnyCancellable] = [:]
     private var emptyObservation: AnyCancellable?
     private var saveWork: DispatchWorkItem?
     private var saveDeadline: DispatchTime?
@@ -187,7 +193,8 @@ struct WorkspaceSnapshot: Codable {
                 drafts = (snapshot.drafts ?? []).map { saved in
                     WorkspaceConversation(id: saved.id,
                         projectID: projects.contains(where: { $0.id == saved.projectID }) ? saved.projectID : nil,
-                        title: "新对话", store: TaskStore(snapshot: persistence.restoreSession(saved), source: sourceFactory()))
+                        title: "新对话", lastUsed: saved.lastUsed,
+                        store: TaskStore(snapshot: persistence.restoreSession(saved), source: sourceFactory()))
                 }
                 // Restore history and drafts, but leave the previous session's
                 // selection and desktop activity behind on every launch.
@@ -202,6 +209,17 @@ struct WorkspaceSnapshot: Codable {
     var activityStore: TaskStore { activity?.store ?? emptyActivity }
     func conversation(id: UUID) -> WorkspaceConversation? {
         (conversations + drafts).first { $0.id == id }
+    }
+    func project(for conversationID: UUID) -> WorkspaceProject? {
+        guard let id = conversation(id: conversationID)?.projectID else { return nil }
+        return projects.first { $0.id == id }
+    }
+    private func synchronizeFileBrowser() {
+        fileBrowser.select(project: selectedID.flatMap { project(for: $0) })
+    }
+    func canAssociateProject(conversationID: UUID) -> Bool {
+        guard !shuttingDown, let store = conversation(id: conversationID)?.store else { return false }
+        return store.messages.isEmpty && store.tools.isEmpty && !store.isGenerating && store.agentLoadError == nil
     }
 
     // Commands capture their target at the surface that issued them. Selection and
@@ -309,6 +327,14 @@ struct WorkspaceSnapshot: Codable {
         conversation.store.releaseDirectory = { scheduler.release(id) }
         conversation.store.onUserAction = { [weak self] in self?.didUse(id) }
         conversation.store.onVisibilityChange = { [weak self] visible in self?.isMainWindowVisible = visible }
+        lifecycleObservations[id] = conversation.store.lifecycle.sink { [weak self] event in
+            guard let self, let target = self.conversation(id: id), target.store.usesAgent else { return }
+            switch event {
+            case .reply(_, .completed), .reply(_, .failed), .stopped:
+                self.fileBrowser.refresh(projectID: target.projectID)
+            default: break
+            }
+        }
         observations[id] = conversation.store.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.shuttingDown, (self.conversations + self.drafts).contains(where: { $0.id == id }) else { return }
@@ -338,7 +364,8 @@ struct WorkspaceSnapshot: Codable {
     @discardableResult func newConversation(projectID: UUID? = nil) -> WorkspaceConversation {
         let validProject = projects.contains { $0.id == projectID } ? projectID : nil
         let conversation: WorkspaceConversation
-        if let existing = drafts.first(where: { $0.projectID == validProject }) {
+        if let existing = drafts.filter({ $0.projectID == validProject && canAssociateProject(conversationID: $0.id) })
+            .sorted(by: { $0.lastUsed == $1.lastUsed ? $0.id.uuidString < $1.id.uuidString : $0.lastUsed > $1.lastUsed }).first {
             conversation = existing
         } else {
             conversation = WorkspaceConversation(projectID: validProject, title: "新对话", store: TaskStore(source: sourceFactory()))
@@ -346,6 +373,7 @@ struct WorkspaceSnapshot: Codable {
         }
         if selectedID != conversation.id { dictation.cancel(); flush() }
         selectedID = conversation.id
+        conversation.lastUsed = Date()
         composerFocusID = conversation.id; composerFocusRequest += 1
         scheduleSave()
         return conversation
@@ -355,6 +383,7 @@ struct WorkspaceSnapshot: Codable {
         dictation.cancel()
         flush()
         selectedID = id
+        if let draft = drafts.first(where: { $0.id == id }) { draft.lastUsed = Date() }
         scheduleSave()
     }
     func revealActivity() {
@@ -372,7 +401,7 @@ struct WorkspaceSnapshot: Codable {
         if dictation.conversationID == id { dictation.cancel(discard: true) }
         if voice.conversationID == id { voice.end() }
         voice.clearError(conversationID: id)
-        conversation.store.shutdown(); observations[id] = nil
+        conversation.store.shutdown(); observations[id] = nil; lifecycleObservations[id] = nil
         pendingRecency[id] = nil
         conversations.removeAll { $0.id == id }
         drafts.removeAll { $0.id == id }
@@ -424,11 +453,22 @@ struct WorkspaceSnapshot: Codable {
     func projectIsActive(_ id: UUID) -> Bool {
         (conversations + drafts).contains { $0.projectID == id && $0.store.isGenerating }
     }
-    func associateProject(_ projectID: UUID?, conversationID: UUID) {
-        guard let conversation = conversation(id: conversationID), !conversation.store.isGenerating else { return }
+    @discardableResult func associateProject(_ projectID: UUID?, conversationID: UUID) -> Bool {
+        guard canAssociateProject(conversationID: conversationID),
+              let conversation = conversation(id: conversationID) else { return false }
+        if let projectID, !projects.contains(where: { $0.id == projectID && $0.isAvailable }) { return false }
         objectWillChange.send()
-        conversation.projectID = projects.contains(where: { $0.id == projectID }) ? projectID : nil
+        conversation.projectID = projectID
+        conversation.lastUsed = Date()
+        synchronizeFileBrowser()
         flush()
+        return true
+    }
+    @discardableResult func associateFolder(_ url: URL, conversationID: UUID) -> Bool {
+        // A sheet can outlive its composer. Revalidate before even adding a project.
+        guard selectedID == conversationID, canAssociateProject(conversationID: conversationID),
+              (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return false }
+        return associateProject(addProject(url: url), conversationID: conversationID)
     }
     func provideDirectory(_ url: URL?, conversationID: UUID) {
         guard let conversation = conversation(id: conversationID), conversation.store.needsDirectory else { return }
@@ -438,6 +478,7 @@ struct WorkspaceSnapshot: Codable {
                 persistenceNotice = "所选文件夹不可用，请重新选择。"; return
             }
             objectWillChange.send(); conversation.projectID = addProject(url: url)
+            synchronizeFileBrowser()
             // Persist the binding before letting the pending call proceed.
             do { try persistence?.save(snapshot) }
             catch { persistenceNotice = error.localizedDescription; conversation.store.stopTask(); return }
@@ -481,7 +522,7 @@ struct WorkspaceSnapshot: Codable {
     func shutdown() {
         dictation.shutdown()
         voice.shutdown()
-        shuttingDown = true; flush(); observations.removeAll(); emptyObservation = nil
+        shuttingDown = true; flush(); observations.removeAll(); lifecycleObservations.removeAll(); emptyObservation = nil
         (conversations + drafts).forEach { $0.store.shutdown() }
     }
 }

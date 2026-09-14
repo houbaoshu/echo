@@ -83,6 +83,7 @@ struct WorkspaceSidebar: View {
     @State private var recentExpanded = true
     @State private var projectHeaderHovered = false
     @State private var recentHeaderHovered = false
+    @State private var hoveredProject: UUID?
     @FocusState private var newConversationFocused: Bool
     @FocusState private var addProjectFocused: Bool
     @State private var selectedRow: RowID?
@@ -205,6 +206,7 @@ struct WorkspaceSidebar: View {
         !collapsedProjects.contains(project.id) || !workspace.searchText.isEmpty
     }
     private func projectRow(_ project: WorkspaceProject) -> some View {
+        HStack(spacing: 0) {
         Button {
             if collapsedProjects.contains(project.id) { collapsedProjects.remove(project.id) }
             else { collapsedProjects.insert(project.id) }
@@ -222,7 +224,16 @@ struct WorkspaceSidebar: View {
             .accessibilityValue(projectExpanded(project) ? "已展开聊天" : "已收起聊天")
             .accessibilityHint("点击展开或收起项目聊天")
             .accessibilityIdentifier("workspace.project.\(project.id)")
+            ProjectRowNewConversation(visible: hoveredProject == project.id) {
+                newProjectConversation(project.id)
+            }.accessibilityIdentifier("workspace.project.newConversation.\(project.id)")
+                .padding(.trailing, 8)
+        }.onHover { hoveredProject = $0 ? project.id : nil }
             .contextMenu { projectMenu(project) }
+    }
+    private func newProjectConversation(_ id: UUID) {
+        projectsExpanded = true; collapsedProjects.remove(id)
+        workspace.newConversation(projectID: id)
     }
     @ViewBuilder private func rows(_ conversations: [WorkspaceConversation], projectID: UUID? = nil) -> some View {
         ForEach(conversations) { conversation in
@@ -249,7 +260,7 @@ struct WorkspaceSidebar: View {
         }
     }
     @ViewBuilder private func projectMenu(_ project: WorkspaceProject) -> some View {
-        Button("新对话") { workspace.newConversation(projectID: project.id) }
+        Button("新对话") { newProjectConversation(project.id) }
         Button("重命名") { WorkspaceActions.rename(project.name) { workspace.renameProject(project.id, to: $0) } }
         Button("在 Finder 中显示") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
             .disabled(!project.isAvailable)
@@ -449,6 +460,9 @@ struct ConversationView: View {
                     VoiceAttributionBar(workspace: ws, voice: voice, owner: owner) {
                         ws.revealVoice(owner: owner)
                     }
+                }
+                if let workspace {
+                    ConversationProjectPicker(workspace: workspace, conversationID: conversationID)
                 }
                 composer
             }
@@ -650,15 +664,6 @@ struct AgentToolView: View {
         if json["stdout_truncated"] as? Bool == true { parts.append("stdout 已截断") }
         if json["stderr_truncated"] as? Bool == true { parts.append("stderr 已截断") }
         return parts.joined(separator: " · ")
-    }
-}
-
-struct WorkspaceInspector: View {
-    @ObservedObject var workspace: WorkspaceStore
-
-    var body: some View {
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

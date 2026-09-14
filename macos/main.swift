@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(withTitle: "收起主窗口", action: #selector(hideConversation), keyEquivalent: "w").target = self
         let sidebar = windowMenu.addItem(withTitle: "切换侧栏", action: #selector(toggleSidebar), keyEquivalent: "s")
         sidebar.keyEquivalentModifierMask = [.command, .option]; sidebar.target = self
-        let inspector = windowMenu.addItem(withTitle: "切换详情栏", action: #selector(toggleInspector), keyEquivalent: "i")
+        let inspector = windowMenu.addItem(withTitle: "切换项目文件", action: #selector(toggleInspector), keyEquivalent: "i")
         inspector.keyEquivalentModifierMask = [.command, .option]; inspector.target = self
         windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowItem.submenu = windowMenu

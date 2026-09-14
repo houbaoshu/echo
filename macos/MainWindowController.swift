@@ -273,7 +273,11 @@ struct MainWindowLayout {
         if !sidebar && !sidebarItem.isCollapsed { sidebarItem.isCollapsed = true }
         if !inspector && !inspectorItem.isCollapsed { inspectorItem.isCollapsed = true }
         if sidebar && sidebarItem.isCollapsed { sidebarItem.isCollapsed = false }
-        if inspector && inspectorItem.isCollapsed { inspectorItem.isCollapsed = false }
+        if inspector && inspectorItem.isCollapsed {
+            inspectorItem.isCollapsed = false
+            workspace.fileBrowser.select(project: workspace.selectedID.flatMap { workspace.project(for: $0) })
+            workspace.fileBrowser.refresh()
+        }
     }
     private func prepareResize(_ width: CGFloat) {
         guard !applyingLayout, !isSettingsVisible else { return }
@@ -358,7 +362,7 @@ struct MainWindowLayout {
             item.label = "切换侧栏"; item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: item.label)
             item.action = #selector(toggleSidebar); item.isNavigational = true
         case Self.rightID:
-            item.label = "切换详情栏"; item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: item.label)
+            item.label = "切换项目文件"; item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: item.label)
             item.action = #selector(toggleInspector)
         case Self.titleID:
             item.label = "当前会话"; item.isBordered = false

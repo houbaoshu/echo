@@ -510,6 +510,10 @@ import SwiftUI
     }
 
     @MainActor private static func testRightSidebarLayoutAndToggling() async throws {
+        let accessibilitySetter = NSSelectorFromString("accessibilitySetValue:forAttribute:")
+        if NSApp.responds(to: accessibilitySetter) {
+            NSApp.perform(accessibilitySetter, with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        }
         let store = TaskStore(source: PreviewSource())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
@@ -528,13 +532,153 @@ import SwiftUI
         precondition(!main.sidebarItem.isCollapsed, "Left sidebar is visible by default")
 
         // 3. Toggle expands right sidebar
+        main.present()
         main.toggleInspector()
         precondition(!main.inspectorItem.isCollapsed, "Right sidebar expands when toggled")
+        try await Task.sleep(for: .milliseconds(500))
+        main.window?.contentView?.layoutSubtreeIfNeeded()
+        main.inspectorItem.viewController.view.layoutSubtreeIfNeeded()
+        if let view = main.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/project-files-empty.png"))
+        }
+        precondition(findAccessibility("projectFiles.unassociated", in: main.inspectorItem.viewController.view) != nil,
+                     "Inspector explains missing project instead of showing an empty surface")
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-project-ui-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("# Project preview\n\n只读文本\n".utf8).write(to: root.appendingPathComponent("README.md"))
+        let projectID = workspace.addProject(url: root)
+        let conversation = workspace.selected!
+        conversation.store.mainDraft = "保留输入草稿"
+        precondition(workspace.associateProject(projectID, conversationID: conversation.id))
+        try await Task.sleep(for: .milliseconds(200))
+        main.window?.contentView?.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("projectFiles.entry.README.md", in: main.inspectorItem.viewController.view) != nil)
+        precondition(workspace.projects.contains { $0.id == projectID })
+        guard let content = main.window?.contentView,
+              let picker = findAccessibility("conversation.project", in: content) else {
+            preconditionFailure("Project picker missing above composer")
+        }
+        func editor(in view: NSView) -> ComposerTextView? {
+            if let editor = view as? ComposerTextView { return editor }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        guard let composer = editor(in: content), let window = main.window else { preconditionFailure("Composer missing") }
+        func assertPlacement() {
+            let frame = window.convertToScreen(composer.convert(composer.bounds, to: nil))
+            let pickerFrame = picker.accessibilityFrame?() ?? .zero
+            precondition(pickerFrame.minY >= frame.maxY, "Project picker stays above composer")
+            precondition(abs(pickerFrame.minX - (frame.minX - 16)) < 3, "Picker aligns with outer composer edge")
+        }
+        assertPlacement()
+        func openPicker() async throws -> NSWindow {
+            precondition(picker.accessibilityPerformPress?() == true)
+            try await Task.sleep(for: .milliseconds(200))
+            guard let panel = NSApp.windows.first(where: {
+                $0.isVisible && $0.contentView.map { findAccessibility("projectPicker.search", in: $0) != nil } == true
+            }) else { preconditionFailure("Project panel did not open") }
+            precondition(panel.frame.minY >= (picker.accessibilityFrame?() ?? .zero).maxY - 20,
+                         "Project panel opens above the composer control")
+            return panel
+        }
+        func key(_ window: NSWindow, code: UInt16, characters: String) {
+            window.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
+        }
+        var panel = try await openPicker()
+        key(panel, code: 126, characters: "\u{F700}")
+        key(panel, code: 36, characters: "\r")
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(conversation.projectID == nil && conversation.store.mainDraft == "保留输入草稿",
+                     "Up/Enter selects no project without losing draft")
+        precondition(window.firstResponder === composer, "Closing picker returns composer focus")
+        panel = try await openPicker()
+        key(panel, code: 125, characters: "\u{F701}")
+        key(panel, code: 36, characters: "\r")
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(conversation.projectID == projectID, "Down/Enter selects project")
+        panel = try await openPicker()
+        key(panel, code: 53, characters: "\u{1b}")
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(!panel.isVisible && window.firstResponder === composer, "Escape dismisses project panel and restores input focus")
+        conversation.store.mainDraft = Array(repeating: "多行草稿", count: 8).joined(separator: "\n")
+        try await Task.sleep(for: .milliseconds(120)); content.layoutSubtreeIfNeeded()
+        assertPlacement()
+        workspace.fileBrowser.openFile("README.md")
+        try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
+        guard let preview = findAccessibility("projectFiles.text", in: main.inspectorItem.viewController.view) as? NSTextView else {
+            preconditionFailure("Native read-only text preview missing")
+        }
+        precondition(!preview.isEditable && preview.isSelectable && preview.string.contains("只读文本"))
+        precondition(preview.enclosingScrollView?.hasHorizontalScroller == true && preview.enclosingScrollView?.hasVerticalScroller == true)
+        precondition(preview.frame.height > 0 && preview.frame.width > 0, "Text preview has a laid-out document")
+        // Native glass does not support cacheDisplay snapshots. Render the same
+        // inspector content in a plain hosting surface for a reviewable artifact.
+        let previewHost = NSHostingView(rootView: WorkspaceInspector(workspace: workspace)
+            .frame(width: 300, height: 600).background(Color(nsColor: .windowBackgroundColor)))
+        let previewWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 600),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        previewWindow.contentView = previewHost
+        previewHost.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100)); previewHost.layoutSubtreeIfNeeded()
+        if let bitmap = previewHost.bitmapImageRepForCachingDisplay(in: previewHost.bounds) {
+            previewHost.cacheDisplay(in: previewHost.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/project-file-preview.png"))
+        }
+        previewWindow.orderOut(nil)
+        if let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/project-chat-preview.png"))
+        }
+        workspace.fileBrowser.returnToDirectory()
+
+        // Collapse/reopen refreshes already previewed content without losing selection.
+        try Data("updated".utf8).write(to: root.appendingPathComponent("README.md"))
+        workspace.fileBrowser.openFile("README.md")
 
         // 4. Toggle collapses right sidebar again
         main.toggleInspector()
         precondition(main.inspectorItem.isCollapsed, "Right sidebar collapses when toggled again")
+        main.toggleInspector()
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(workspace.fileBrowser.state.preview == .text("updated"))
+        window.setContentSize(NSSize(width: 760, height: 650))
+        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
+        try await Task.sleep(for: .milliseconds(120)); content.layoutSubtreeIfNeeded()
+        precondition(main.inspectorItem.isCollapsed, "Narrow windows collapse project files")
+        assertPlacement()
+        precondition(workspace.sendMainMessage(conversationID: conversation.id))
+        workspace.stop(conversationID: conversation.id)
+        try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
+        let fixedValue: Any? = findAccessibility("conversation.project", in: content)?.accessibilityValue?()
+        precondition(fixedValue as? String == "项目已固定")
 
-        print("PASS: Right sidebar default collapsed, toggling expands/collapses blank inspector")
+        precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "echo-project-ui") == [.none, .project(projectID), .add])
+        precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "unmatched query") == [.none, .add])
+
+        print("PASS: project picker placement, multiline/narrow layout, fixed attribution, populated inspector, read-only preview and refresh")
+    }
+
+    @MainActor private static func findAccessibility(_ id: String, in root: Any) -> AnyObject? {
+        var visited: Set<ObjectIdentifier> = []
+        func visit(_ value: Any) -> AnyObject? {
+            let object = value as AnyObject
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return nil }
+            // SwiftUI AX nodes implement the Objective-C selectors without declaring
+            // NSAccessibilityProtocol conformance. Use capability dispatch here.
+            if object.accessibilityIdentifier?() == id { return object }
+            let children = (value as? NSView)?.accessibilityChildren() ?? object.accessibilityChildren?() ?? []
+            for child in children {
+                if let found = visit(child) { return found }
+            }
+            if let view = value as? NSView {
+                for child in view.subviews { if let found = visit(child) { return found } }
+            }
+            return nil
+        }
+        return visit(root)
     }
 }

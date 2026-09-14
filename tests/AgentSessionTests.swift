@@ -55,16 +55,22 @@ import Foundation
         precondition(chat.store.task?.status == .completed && chat.store.tools.isEmpty && !chat.store.needsDirectory)
         precondition(chat.store.messages.filter { $0.role == .assistant }.count == 1)
         precondition(chat.store.responseMessage == chat.store.messages.last && chat.store.task?.summary == "已完成")
+        precondition(!workspace.canAssociateProject(conversationID: chat.id))
 
         let first = workspace.newConversation()
         first.store.send("slow-tool")
         try await wait("directory pause") { first.store.needsDirectory }
+        precondition(!workspace.canAssociateProject(conversationID: first.id), "Ordinary picker stays fixed during directory wait")
         precondition(first.store.tools.count == 1 && first.store.tools[0].result == nil)
         let project = temp.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         workspace.provideDirectory(project, conversationID: first.id)
+        precondition(workspace.fileBrowser.location?.projectID == first.projectID)
+        precondition(persistence.load().0?.conversations.first { $0.id == first.id }?.projectID == first.projectID,
+                     "Directory exception saves association before tool execution")
         try await wait("first tool starts") { first.store.tools.first?.state == "执行中" }
         let projectID = first.projectID!
+        precondition(!workspace.associateProject(nil, conversationID: first.id))
         workspace.relocateProject(projectID, to: temp)
         precondition(workspace.projects.first { $0.id == projectID }?.path == project.path)
         workspace.removeProject(projectID)
@@ -83,6 +89,12 @@ import Foundation
         precondition(first.store.messages.last(where: { $0.role == .user })?.steering == "已接收")
         let firstTrace = try String(contentsOf: project.appendingPathComponent("trace"), encoding: .utf8)
         precondition(firstTrace == "started\ndone\n")
+        precondition(workspace.selectedID == chat.id && workspace.fileBrowser.location == nil,
+                     "Another project's completion cannot change selected file root")
+        workspace.select(first.id)
+        workspace.fileBrowser.openFile("trace")
+        try await wait("trace preview") { workspace.fileBrowser.state.preview == .text(firstTrace) }
+        workspace.fileBrowser.returnToDirectory()
 
         let modelSteer = workspace.newConversation(projectID: projectID)
         modelSteer.store.send("slow-model tool")
@@ -116,6 +128,12 @@ import Foundation
         let responses = workspace.newConversation(projectID: projectID)
         responses.store.send("tool")
         try await wait("responses tools") { !responses.store.isGenerating }
+        try await wait("agent refreshes loaded directory") {
+            if case .loaded(let files) = workspace.fileBrowser.state.directories[""] {
+                return files.contains { $0.name == "trace" }
+            }
+            return false
+        }
         precondition(responses.store.task?.status == .completed && responses.store.tools.count == 1)
         precondition(responses.store.messages.last?.content.contains("真实工具结果") == true)
         precondition(responses.store.responseMessage == responses.store.messages.last)
