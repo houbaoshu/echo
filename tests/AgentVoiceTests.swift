@@ -5,6 +5,9 @@ import Foundation
     var sessionID = ""
     var commands: [(String, String?)] = []
     var cancels = 0
+    private var entries: [[String: Any]] = []
+    private var turnID: UInt64 = 0
+    private var finalID: UInt64?
     func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
         preconditionFailure("Voice must use the unified Agent session")
     }
@@ -12,14 +15,30 @@ import Foundation
               receive: @escaping ([String: Any]) -> Void, failure: @escaping (String) -> Void) throws {
         self.sessionID = sessionID; self.receive = receive
     }
-    func control(_ type: String, fields: [String: Any]) throws { commands.append((type, fields["text"] as? String)) }
+    func control(_ type: String, fields: [String: Any]) throws {
+        commands.append((type, fields["text"] as? String))
+        if type == "submit" || type == "continue" { turnID += 1; finalID = nil }
+    }
     func cancel() { cancels += 1 }
     func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
     func emit(_ kind: [String: Any], batchType: String = "events") {
         receive?(["session_id": sessionID, "type": batchType,
-                  "events": [["version": 1, "session_id": sessionID, "turn_id": 1, "kind": kind]]])
+                  "events": [["version": 1, "session_id": sessionID, "turn_id": turnID, "kind": kind]]])
     }
-    func complete(_ text: String) { emit(["type": "finished", "outcome": ["status": "completed", "reply": text]]) }
+    func complete(_ text: String, rawReply: String? = nil) {
+        if finalID == nil {
+            finalID = UInt64(entries.count + 1)
+            entries.append(["id": finalID!, "turn_id": turnID,
+                            "value": ["message": ["role": "assistant", "content": text]]])
+        }
+        let kinds: [[String: Any]] = [
+            ["type": "assistant", "message_id": finalID!, "content": text, "final_reply": true],
+            ["type": "finished", "outcome": ["status": "completed", "reply": rawReply ?? text]]
+        ]
+        receive?(["session_id": sessionID, "type": "events", "turn_id": turnID,
+                  "history": ["entries": entries],
+                  "events": kinds.map { ["version": 1, "session_id": sessionID, "turn_id": turnID, "kind": $0] }])
+    }
 }
 
 @MainActor final class AgentVoiceFixture {
@@ -273,13 +292,24 @@ extension VoiceTests {
             await tick()
             check(f.synths.isEmpty && f.voice.snapshot.recognition == .listening,
                   "intermediate assistant text never starts synthesis or closes ASR")
-            source.complete("今天的天气非常晴朗，适合出门散步。")
+            var completions: [String] = []
+            let subscription = f.store.lifecycle.sink {
+                if case .reply(_, .completed(let text)) = $0 { completions.append(text) }
+            }
+            defer { subscription.cancel() }
+            source.complete("今天的天气非常晴朗，适合出门散步。", rawReply: "transport-only final output")
             await tick()
             check(f.synths.count == 1 && f.synths[0].chunks == ["今天的天气非常晴朗，适合出门散步。"]
                   && f.voice.snapshot.replyAudio == .draining(run), "only the final reply is spoken as one synthesis input")
+            let finalMessage = f.store.responseMessage!
+            check(finalMessage.role == .assistant && f.store.messages.filter { $0.role == .assistant }.count == 1
+                  && completions == [finalMessage.content] && f.store.task?.summary == "已完成",
+                  "history owns the only final message; completion and speech use its content, summary contains only status")
             source.complete("今天的天气非常晴朗，适合出门散步。")
             await tick()
             check(f.synths.count == 1 && f.synths[0].chunks.count == 1, "duplicate terminal delivery never replays the final")
+            check(f.store.messages.filter { $0.role == .assistant } == [finalMessage] && completions.count == 1,
+                  "replayed history and finished events preserve message identity and notify completion only once")
             let oldAudio = f.synths[0].callback!, oldRecognizer = f.recognizers[0]
             await f.probe()
             check(f.voice.snapshot.bargeIn == .checking(run) && f.recognizers.count == 2,

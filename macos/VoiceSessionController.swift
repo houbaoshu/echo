@@ -426,16 +426,17 @@ import Combine
             guard runID == id else { return }
             switch reply {
             case .progress: break // Assistant explanations and tool output never enter TTS.
-            case .completed(let text):
+            case .completed:
                 guard handledFinalRunID != id else { return }
                 handledFinalRunID = id
                 // A user already speaking owns the input; do not cut their utterance
                 // off to play a final that arrived before their follow-up was committed.
-                guard case .active = snapshot.session, subtitle.isEmpty, !submitting,
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                guard let message = store?.responseMessage, message.role == .assistant, message.status == .completed,
+                      case .active = snapshot.session, subtitle.isEmpty, !submitting,
+                      !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 cancelRecovery()
                 stopRecognition(reason: .currentReply)
-                feed(text); textInput?.finish()
+                feed(message.content); textInput?.finish()
             case .failed(let message): end(error: message)
             }
         case .stopped(let id):

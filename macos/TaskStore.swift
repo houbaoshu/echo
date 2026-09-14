@@ -165,6 +165,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         }
         messages = snapshot.messages
         agentHistory = snapshot.agentHistory; tools = snapshot.tools ?? []; agentLoadError = snapshot.loadError
+        if usesAgent, task?.status == .completed { task?.summary = "已完成" }
         for index in tools.indices where tools[index].result == nil { tools[index].state = "执行结果未知" }
         for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
         // Only legacy messages lack completion metadata. Remove the old canned
@@ -234,6 +235,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var isGenerating: Bool { task?.status == .running || task?.status == .stopping }
     var canSubmit: Bool { !retired && task?.status != .stopping && agentLoadError == nil }
     var requestMessages: [ConversationMessage] { ConversationContext.messages(messages) }
+    var responseMessage: ConversationMessage? { messages.first { $0.id == responseMessageID } }
     private func updateResponse(_ content: String? = nil, status: ConversationMessage.Status, error: String? = nil) {
         guard let id = responseMessageID, let index = messages.firstIndex(where: { $0.id == id }) else { return }
         if let content { messages[index].content = content }
@@ -362,7 +364,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     private func beginAgent(text: String?) {
         guard let agent else { return }
         let prior = requestMessages
-        storageFailure = nil; notice = nil; agentTurnID = nil; pendingOperation = nil
+        storageFailure = nil; notice = nil; agentTurnID = nil; pendingOperation = nil; responseMessageID = nil
         agentGeneration = UUID(); let generation = agentGeneration
         if task == nil { task = .init(id: UUID(), runID: UUID(), title: String((text ?? "继续处理").prefix(80)), summary: "", status: .running) }
         task?.runID = UUID(); task?.status = .running; task?.summary = "正在请求模型…"
@@ -426,6 +428,12 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             if type == "turn_started" { agentTurnID = turn }
             if let current = agentTurnID, turn != current { continue }
             switch type {
+            case "assistant":
+                // History owns visible text. The final event only identifies which
+                // projected message supplies completion notifications and speech.
+                if kind["final_reply"] as? Bool == true, let id = kind["message_id"] as? UInt64 {
+                    responseMessageID = messages.first { $0.coreID == id && $0.role == .assistant }?.id
+                }
             case "steering_queued", "steering_accepted":
                 if let id = kind["message_id"] as? UInt64, let index = messages.firstIndex(where: { $0.coreID == id }) {
                     messages[index].steering = type == "steering_queued" ? "待处理" : "已接收"
@@ -469,6 +477,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
 
     private func finishAgent(_ outcome: [String: Any]) {
+        guard isGenerating else { return }
         needsDirectory = false; waitingForProject = false; pendingOperation = nil; releaseDirectory?()
         for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
         let status = outcome["status"] as? String
@@ -477,9 +486,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             if let runID = task?.runID { lifecycle.send(.reply(runID, .failed(storageFailure))) }
         }
         else if status == "completed" {
-            let reply = outcome["reply"] as? String ?? ""
-            task?.status = .completed; task?.summary = String(reply.prefix(180))
-            if let runID = task?.runID { lifecycle.send(.reply(runID, .completed(reply))) }
+            guard let response = responseMessage, !response.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                finishAgent(["status": "failed", "error": "Agent 未返回最终回复，请继续处理。"]); return
+            }
+            task?.status = .completed; task?.summary = "已完成"
+            if let runID = task?.runID { lifecycle.send(.reply(runID, .completed(response.content))) }
         } else if status == "interrupted" {
             task?.status = .stopped; task?.summary = "已停止 · 可继续处理"
             if let runID = task?.runID { lifecycle.send(.stopped(runID)) }

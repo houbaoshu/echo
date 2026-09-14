@@ -58,6 +58,27 @@ import SwiftUI
         precondition(blocks.contains { $0.quote })
         precondition(blocks.contains { $0.marker == "1." } && blocks.contains { $0.marker == "•" })
         precondition(blocks.contains { $0.listDepth == 2 })
+        precondition(blocks.contains { block in block.text.runs.contains {
+            $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true
+                && String(block.text[$0.range].characters) == "粗体"
+        } })
+        precondition(blocks.contains { block in block.text.runs.contains {
+            $0.inlinePresentationIntent?.contains(.code) == true && $0.font != nil
+                && String(block.text[$0.range].characters) == "inline code"
+        } })
+        precondition(blocks.contains { block in block.text.runs.contains {
+            $0.link == URL(string: "https://example.com") && String(block.text[$0.range].characters) == "链接"
+        } })
+        let literalCode = "  **literal** <tag> [link](https://example.com)\n\n    `nested`"
+        let fenced = MarkdownBlock.parse("```text\n\(literalCode)\n```")
+        precondition(fenced.count == 1 && fenced[0].code)
+        precondition(String(fenced[0].text.characters) == literalCode + "\n",
+                     "Fenced code preserves indentation, blank lines and literal Markdown")
+        precondition(fenced[0].text.runs.allSatisfy { $0.link == nil })
+        let adjacent = MarkdownBlock.parse("# Heading\n\nFirst **paragraph**.\n\nSecond `paragraph`.\n\n- one\n- two\n\n3. three\n4. four")
+        precondition(adjacent.filter { $0.heading == 1 }.count == 1)
+        precondition(adjacent.compactMap(\.marker) == ["•", "•", "3.", "4."])
+        precondition(adjacent.filter { $0.heading == nil && $0.marker == nil }.count == 2)
         let unfinished = MarkdownBlock.parse("```swift\nprint(\"stream")
         precondition(unfinished.contains { $0.code && String($0.text.characters).contains("stream") })
         for prefix in ["**", "[link](", "- ", "```", "你好\n\n*"] { _ = MarkdownBlock.parse(prefix) }

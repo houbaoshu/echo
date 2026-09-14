@@ -54,6 +54,7 @@ import Foundation
         try await wait("direct answer") { !chat.store.isGenerating }
         precondition(chat.store.task?.status == .completed && chat.store.tools.isEmpty && !chat.store.needsDirectory)
         precondition(chat.store.messages.filter { $0.role == .assistant }.count == 1)
+        precondition(chat.store.responseMessage == chat.store.messages.last && chat.store.task?.summary == "已完成")
 
         let first = workspace.newConversation()
         first.store.send("slow-tool")
@@ -117,6 +118,9 @@ import Foundation
         try await wait("responses tools") { !responses.store.isGenerating }
         precondition(responses.store.task?.status == .completed && responses.store.tools.count == 1)
         precondition(responses.store.messages.last?.content.contains("真实工具结果") == true)
+        precondition(responses.store.responseMessage == responses.store.messages.last)
+        precondition(responses.store.messages.filter { $0.content == responses.store.responseMessage?.content }.count == 1)
+        precondition(responses.store.tools.first?.afterMessageID != nil && responses.store.tools.first?.result != nil)
         let multiple = workspace.newConversation(projectID: projectID)
         multiple.store.send("multi-tool")
         try await wait("multiple calls") { !multiple.store.isGenerating }
@@ -130,6 +134,14 @@ import Foundation
         let restored = recovered.conversation(id: responses.id)!
         precondition(restored.store.tools == responses.store.tools)
         precondition(restored.store.messages == responses.store.messages)
+        precondition(restored.store.task?.summary == "已完成")
+        var legacySummary = responses.store.snapshot
+        legacySummary.task?.summary = String(responses.store.responseMessage!.content.prefix(180))
+        let restoredSummary = TaskStore(snapshot: legacySummary, source: factory())
+        precondition(restoredSummary.task?.summary == "已完成" && restoredSummary.messages == responses.store.messages,
+                     "Previously saved raw final summaries are normalized without changing history or tool records")
+        precondition(restoredSummary.tools == responses.store.tools)
+        restoredSummary.shutdown()
         precondition(!restored.store.isGenerating)
         restored.store.send("hello again")
         try await wait("recovered context") { !restored.store.isGenerating }
