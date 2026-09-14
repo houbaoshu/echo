@@ -578,6 +578,8 @@ import SwiftUI
         let inspector = main.inspectorItem.viewController.view
         precondition(findAccessibility("projectFiles.refresh", in: inspector) == nil)
         precondition(findAccessibility("projectFiles.showHidden", in: inspector) == nil)
+        precondition(findAccessibility("projectFiles.toggleExpansion", in: inspector) == nil,
+                     "Tree has no preview expansion control")
         guard let folder = findAccessibility("projectFiles.entry.folder", in: inspector) else {
             preconditionFailure("Folder row missing")
         }
@@ -634,6 +636,10 @@ import SwiftUI
         conversation.store.mainDraft = Array(repeating: "多行草稿", count: 8).joined(separator: "\n")
         try await Task.sleep(for: .milliseconds(120)); content.layoutSubtreeIfNeeded()
         assertPlacement()
+        let longText = "# Project preview\n\n只读文本\n" + (0..<200).map {
+            "Line \($0): " + String(repeating: "wide code content ", count: 20)
+        }.joined(separator: "\n")
+        try Data(longText.utf8).write(to: root.appendingPathComponent("README.md"))
         workspace.fileBrowser.openFile("README.md")
         try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
         guard let preview = findAccessibility("projectFiles.text", in: main.inspectorItem.viewController.view) as? NSTextView else {
@@ -642,6 +648,60 @@ import SwiftUI
         precondition(!preview.isEditable && preview.isSelectable && preview.string.contains("只读文本"))
         precondition(preview.enclosingScrollView?.hasHorizontalScroller == true && preview.enclosingScrollView?.hasVerticalScroller == true)
         precondition(preview.frame.height > 0 && preview.frame.width > 0, "Text preview has a laid-out document")
+        let normalWidth = main.splitController.columnWidth(main.inspectorItem)
+        let sidebarWidth = main.splitController.columnWidth(main.sidebarItem)
+        let windowFrame = window.frame
+        let savedDraft = conversation.store.mainDraft
+        composer.setSelectedRange(NSRange(location: 2, length: 3))
+        preview.setSelectedRange(NSRange(location: 100, length: 12))
+        let scroll = preview.enclosingScrollView!
+        scroll.contentView.scroll(to: NSPoint(x: 120, y: 500))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        let scrollOrigin = scroll.contentView.bounds.origin
+        func settlePreviewLayout() async throws {
+            try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
+        }
+        func togglePreview() async throws {
+            precondition(findAccessibility("projectFiles.toggleExpansion", in: inspector)?.accessibilityPerformPress?() == true)
+            try await settlePreviewLayout()
+        }
+        try await togglePreview()
+        precondition(workspace.fileBrowser.isPreviewExpanded && main.conversationItem.isCollapsed)
+        precondition(!main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed)
+        precondition(abs(main.splitController.columnWidth(main.sidebarItem) - sidebarWidth) < 2)
+        precondition(main.splitController.columnWidth(main.inspectorItem) > normalWidth + 400,
+                     "Expanded preview occupies the conversation and inspector columns")
+        precondition(window.frame == windowFrame, "Expansion does not resize the window")
+        precondition(abs(main.splitController.columnWidth(main.inspectorItem) + sidebarWidth + 1
+                         - main.splitController.splitView.bounds.width) < 2, "Preview fills all space beside the sidebar")
+        precondition(!main.conversationItem.canCollapse, "Normal chat divider behavior stays unchanged")
+        precondition(findAccessibility("projectFiles.text", in: inspector) === preview, "Preview view stays mounted")
+        precondition(scroll.contentView.bounds.origin == scrollOrigin && preview.selectedRange() == NSRange(location: 100, length: 12))
+        try await togglePreview()
+        precondition(!workspace.fileBrowser.isPreviewExpanded && !main.conversationItem.isCollapsed)
+        precondition(abs(main.splitController.columnWidth(main.inspectorItem) - normalWidth) < 2, "Original column width restored")
+        precondition(scroll.contentView.bounds.origin == scrollOrigin && preview.selectedRange() == NSRange(location: 100, length: 12))
+        precondition(editor(in: content) === composer && composer.selectedRange() == NSRange(location: 2, length: 3))
+        precondition(conversation.store.mainDraft == savedDraft && workspace.fileBrowser.state.selectedPath == "README.md")
+        try await togglePreview()
+        workspace.fileBrowser.returnToDirectory()
+        try await settlePreviewLayout()
+        precondition(!main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
+        precondition(findAccessibility("projectFiles.toggleExpansion", in: inspector) == nil)
+        workspace.fileBrowser.openFile("README.md")
+        try await settlePreviewLayout()
+        try await togglePreview()
+        workspace.fileBrowser.openFile("folder/child.txt")
+        try await settlePreviewLayout()
+        precondition(!main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
+        try await togglePreview()
+        main.toggleInspector()
+        try await settlePreviewLayout()
+        precondition(main.inspectorItem.isCollapsed && !main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
+        main.toggleInspector()
+        workspace.fileBrowser.openFile("README.md")
+        try await settlePreviewLayout()
+        print("PASS: preview expand/collapse, column restoration, native scroll/selection and composer preservation, file switching and close")
         // Native glass does not support cacheDisplay snapshots. Render the same
         // inspector content in a plain hosting surface for a reviewable artifact.
         let previewHost = NSHostingView(rootView: WorkspaceInspector(workspace: workspace)
@@ -691,6 +751,33 @@ import SwiftUI
         try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
         precondition(findAccessibility("conversation.project", in: content) == nil, "Reopened project chat keeps picker hidden")
         precondition(another.id != conversation.id)
+
+        window.setContentSize(NSSize(width: 1280, height: 820))
+        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
+        try await settlePreviewLayout()
+        try await togglePreview()
+        window.setContentSize(NSSize(width: 760, height: 650))
+        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
+        try await settlePreviewLayout()
+        precondition(main.conversationItem.isCollapsed && !main.inspectorItem.isCollapsed && !main.sidebarItem.isCollapsed,
+                     "Expanded reading keeps the sidebar and preview visible when resizing")
+        window.setContentSize(NSSize(width: 1280, height: 820))
+        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
+        try await settlePreviewLayout()
+        let sameProject = workspace.newConversation(projectID: projectID)
+        precondition(sameProject.id != conversation.id && !workspace.fileBrowser.isPreviewExpanded,
+                     "Switching chats in the same project clears expansion")
+        try await settlePreviewLayout()
+        precondition(!main.conversationItem.isCollapsed)
+        workspace.select(conversation.id)
+        try await settlePreviewLayout()
+        precondition(!workspace.fileBrowser.isPreviewExpanded, "Returning to a chat does not restore stale expansion")
+        try await togglePreview()
+        workspace.select(another.id)
+        try await settlePreviewLayout()
+        precondition(!main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
+        precondition(findAccessibility("projectFiles.toggleExpansion", in: inspector) == nil,
+                     "Switching to an unassociated chat clears the preview control")
 
         precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "echo-project-ui") == [.project(projectID), .add])
         precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "unmatched query") == [.add])

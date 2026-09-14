@@ -64,6 +64,8 @@ import Darwin
         let project = WorkspaceProject(name: "A", path: root.path)
         let browser = ProjectFileBrowserStore()
         precondition(browser.location == nil)
+        browser.togglePreviewExpansion()
+        precondition(!browser.isPreviewExpanded, "No preview cannot expand")
         browser.select(project: project)
         try await wait("root loaded") { if case .loaded = browser.state.directories[""] { return true }; return false }
         precondition(browser.state.directories["dir"] == nil, "No eager recursion")
@@ -72,7 +74,14 @@ import Darwin
         browser.setScrollID("dir")
         browser.openFile("file2.txt")
         try await wait("preview") { browser.state.preview == .text("你好\nsecond\tline") }
+        browser.togglePreviewExpansion()
+        precondition(browser.isPreviewExpanded)
+        browser.refresh()
+        precondition(browser.isPreviewExpanded, "Content refresh preserves expansion")
         browser.returnToDirectory()
+        precondition(!browser.isPreviewExpanded, "Returning to tree collapses preview")
+        browser.togglePreviewExpansion()
+        precondition(!browser.isPreviewExpanded, "A remembered selection in the tree cannot expand")
         precondition(browser.state.expanded == ["dir"] && browser.state.selectedPath == "file2.txt" && browser.state.scrollID == "dir")
         browser.select(project: nil)
         precondition(browser.location == nil && browser.state.directories.isEmpty && browser.state.selectedPath == nil)
@@ -80,6 +89,11 @@ import Darwin
         precondition(browser.state.expanded == ["dir"] && browser.state.selectedPath == "file2.txt")
         browser.openFile("file2.txt")
         try await wait("preview after return") { browser.state.preview == .text("你好\nsecond\tline") }
+        browser.togglePreviewExpansion()
+        browser.openFile("file10.txt")
+        precondition(!browser.isPreviewExpanded, "Changing file clears expansion")
+        browser.openFile("file2.txt")
+        try await wait("original preview") { browser.state.preview == .text("你好\nsecond\tline") }
         try write("file2.txt", Data("updated".utf8))
         browser.refresh(projectID: UUID())
         precondition(browser.state.preview == .text("你好\nsecond\tline"), "Unrelated background task does not refresh or switch project")
@@ -114,6 +128,12 @@ import Darwin
         let otherRoot = root.appendingPathComponent("other")
         try fm.createDirectory(at: otherRoot, withIntermediateDirectories: true)
         let other = WorkspaceProject(name: "B", path: otherRoot.path)
+        browser.openFile("file10.txt")
+        browser.togglePreviewExpansion()
+        browser.select(project: other)
+        precondition(!browser.isPreviewExpanded, "Changing project clears expansion")
+        browser.select(project: project)
+        precondition(!browser.isPreviewExpanded, "Cached project cannot restore expansion")
         browser.select(project: other)
         try await wait("switch project") { browser.state.directories[""] == .loaded([]) }
         try write("old-project.txt", Data())

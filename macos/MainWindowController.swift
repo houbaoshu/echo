@@ -74,11 +74,13 @@ struct MainWindowLayout {
     let splitController = MainSplitController()
     private(set) var sidebarItem: NSSplitViewItem!
     private(set) var inspectorItem: NSSplitViewItem!
+    private(set) var conversationItem: NSSplitViewItem!
     private(set) var layout = MainWindowLayout()
     private let defaults: UserDefaults
     private var applyingLayout = false
     private var ready = false
     private var observation: AnyCancellable?
+    private var previewObservation: AnyCancellable?
     private let projectIcon = NSImageView()
     private let titleField = NSTextField(labelWithString: "新会话")
     private var manualColumn: MainWindowLayout.Column?
@@ -120,6 +122,8 @@ struct MainWindowLayout {
         sidebarItem.preferredThicknessFraction = 0.15; sidebarItem.isSpringLoaded = true
         let content = NSSplitViewItem(viewController: conversationHost)
         content.minimumThickness = 440; content.holdingPriority = .init(249)
+        content.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+        conversationItem = content
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspectorHost)
         inspectorItem.minimumThickness = 260; inspectorItem.maximumThickness = 380
         inspectorItem.canCollapse = true; inspectorItem.canCollapseFromWindowResize = true
@@ -170,6 +174,10 @@ struct MainWindowLayout {
         splitController.resized = { [weak self] in self?.dividerChanged() }
         observation = workspace.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.refreshTitle() }
+        }
+        previewObservation = workspace.fileBrowser.$isPreviewExpanded.removeDuplicates().sink { [weak self] _ in
+            // Published delivers before the stored value changes.
+            DispatchQueue.main.async { [weak self] in self?.applyLayout() }
         }
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         refreshTitle()
@@ -262,6 +270,7 @@ struct MainWindowLayout {
     }
     @objc func toggleInspector() {
         guard !isSettingsVisible else { return }
+        workspace.fileBrowser.collapsePreview()
         layout.inspectorPreferred = inspectorItem.isCollapsed
         manualColumn = .inspector; applyLayout(); saveLayout()
     }
@@ -283,8 +292,12 @@ struct MainWindowLayout {
     private func prepareResize(_ width: CGFloat) {
         guard !applyingLayout, !isSettingsVisible else { return }
         applyingLayout = true; defer { applyingLayout = false }
-        let visible = layout.visibleColumns(width: width)
+        let visible = visibleColumns(width: width)
         setVisibility(sidebar: visible.sidebar, inspector: visible.inspector)
+    }
+    private func visibleColumns(width: CGFloat, manual: MainWindowLayout.Column? = nil) -> (sidebar: Bool, inspector: Bool) {
+        if workspace.fileBrowser.isPreviewExpanded { return (layout.sidebarPreferred, true) }
+        return layout.visibleColumns(width: width, manual: manual)
     }
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
         prepareResize(frameSize.width)
@@ -294,7 +307,16 @@ struct MainWindowLayout {
         guard !applyingLayout, !isSettingsVisible, let window else { return }
         applyingLayout = true; defer { applyingLayout = false }
         let width = window.contentView?.bounds.width ?? window.frame.width
-        let visible = layout.visibleColumns(width: width, manual: manualColumn)
+        let expanded = workspace.fileBrowser.isPreviewExpanded
+        // Keep both hosting controllers mounted so preview scroll/selection and chat state survive.
+        if expanded {
+            inspectorItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
+            conversationItem.isCollapsed = true
+        } else {
+            conversationItem.isCollapsed = false
+            inspectorItem.maximumThickness = 380
+        }
+        let visible = visibleColumns(width: width, manual: manualColumn)
         setVisibility(sidebar: visible.sidebar, inspector: visible.inspector)
         // Reserve a footer when the sidebar is hidden, keeping the gear clear of the composer.
         workspaceBottomConstraint.constant = visible.sidebar ? 0 : -52
@@ -302,17 +324,18 @@ struct MainWindowLayout {
         splitController.splitView.layoutSubtreeIfNeeded()
         let available = splitController.splitView.bounds.width
         if visible.sidebar {
-            let maxWidth = available - 441 - (visible.inspector ? layout.inspectorWidth + 1 : 0)
+            let maxWidth = expanded ? available - 261 : available - 441 - (visible.inspector ? layout.inspectorWidth + 1 : 0)
             splitController.splitView.setPosition(min(layout.sidebarWidth, max(220, maxWidth)), ofDividerAt: 0)
         }
-        if visible.inspector {
+        if visible.inspector && !expanded {
             let maxWidth = available - 441 - (visible.sidebar ? layout.sidebarWidth + 1 : 0)
             splitController.splitView.setPosition(available - min(layout.inspectorWidth, max(260, maxWidth)) - 1, ofDividerAt: 1)
         }
         window.toolbar?.validateVisibleItems()
     }
     private func dividerChanged() {
-        guard !applyingLayout, !isSettingsVisible, window?.inLiveResize != true else { return }
+        guard !applyingLayout, !isSettingsVisible, !workspace.fileBrowser.isPreviewExpanded,
+              !conversationItem.isCollapsed, window?.inLiveResize != true else { return }
         if !sidebarItem.isCollapsed {
             layout.sidebarWidth = min(340, max(220, splitController.columnWidth(sidebarItem)))
         }
@@ -347,7 +370,7 @@ struct MainWindowLayout {
         guard let window else { return }
         window.setFrame(MainWindowLayout.constrain(window.frame, screens: NSScreen.screens.map(\.visibleFrame)), display: true)
     }
-    func shutdown() { workspace.flush(); saveLayout(); observation = nil; NotificationCenter.default.removeObserver(self); window?.orderOut(nil) }
+    func shutdown() { workspace.flush(); saveLayout(); observation = nil; previewObservation = nil; NotificationCenter.default.removeObserver(self); window?.orderOut(nil) }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {

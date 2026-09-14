@@ -39,6 +39,8 @@ enum ProjectFilePreview: Equatable, Sendable {
     }
     @Published private(set) var location: Location?
     @Published private(set) var state = BrowsingState()
+    // Temporary presentation state, deliberately excluded from the per-project cache.
+    @Published private(set) var isPreviewExpanded = false
     private var watcher: ProjectFileWatcher?
     private var watchID = UUID()
     private var cache: [Location: BrowsingState] = [:]
@@ -56,6 +58,7 @@ enum ProjectFilePreview: Equatable, Sendable {
     func select(project: WorkspaceProject?) {
         let next = project.map { Location(projectID: $0.id, root: URL(fileURLWithPath: $0.path).standardizedFileURL.path) }
         guard next != location else { return }
+        collapsePreview()
         if let location { cache[location] = state }
         watcher = nil; watchID = UUID()
         generation = UUID(); directoryRequests = [:]; previewRequest = UUID()
@@ -80,9 +83,17 @@ enum ProjectFilePreview: Equatable, Sendable {
             if state.directories[path] == nil { loadDirectory(path) }
         }
     }
-    func returnToDirectory() { state.showingFile = false }
+    func togglePreviewExpansion() {
+        guard location != nil, state.showingFile, state.selectedPath != nil else { return }
+        isPreviewExpanded.toggle()
+    }
+    func collapsePreview() {
+        if isPreviewExpanded { isPreviewExpanded = false }
+    }
+    func returnToDirectory() { collapsePreview(); state.showingFile = false }
     func openFile(_ path: String, preservingContent: Bool = false) {
         guard let location else { return }
+        if state.selectedPath != path { collapsePreview() }
         state.selectedPath = path; state.showingFile = true
         if !preservingContent { state.preview = .loading }
         let request = UUID(), generation = generation, readPreview = readPreview

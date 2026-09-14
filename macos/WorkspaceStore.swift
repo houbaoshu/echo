@@ -129,7 +129,10 @@ struct WorkspaceSnapshot: Codable {
     }
     @Published private(set) var conversations: [WorkspaceConversation] = []
     @Published private(set) var selectedID: UUID? {
-        didSet { synchronizeFileBrowser() }
+        didSet {
+            if oldValue != selectedID { fileBrowser.collapsePreview() }
+            synchronizeFileBrowser()
+        }
     }
     @Published private(set) var composerFocusRequest = 0
     private(set) var composerFocusID: UUID?

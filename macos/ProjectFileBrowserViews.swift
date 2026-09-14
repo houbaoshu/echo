@@ -106,6 +106,15 @@ private struct ProjectFileBrowserView: View {
                 Text(browser.state.selectedPath ?? "").font(WorkspaceStyle.caption).lineLimit(3)
                     .textSelection(.enabled).help(browser.state.selectedPath ?? "")
                 Spacer(minLength: 0)
+                Button { browser.togglePreviewExpansion() } label: {
+                    Image(systemName: browser.isPreviewExpanded
+                          ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        .scaleEffect(x: -1, y: 1)
+                        .font(.system(size: 12)).frame(width: 24, height: 24).contentShape(Rectangle())
+                }.buttonStyle(.plain).foregroundStyle(WorkspaceStyle.secondary)
+                    .help(browser.isPreviewExpanded ? "收起预览" : "展开预览")
+                    .accessibilityLabel(browser.isPreviewExpanded ? "收起预览" : "展开预览")
+                    .accessibilityIdentifier("projectFiles.toggleExpansion")
             }.padding(14)
             Divider()
             switch browser.state.preview {
