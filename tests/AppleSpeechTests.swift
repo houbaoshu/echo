@@ -21,6 +21,7 @@ import Speech
 
 enum AppleSpeechTests {
     @MainActor static func run() async throws {
+        try await recordedDevicePauseRegression()
         try await localeTests()
         try await backgroundAuthorizationTests()
         let engine = TestAppleSpeechEngine()
@@ -109,6 +110,54 @@ enum AppleSpeechTests {
         do { try await changed.run(key: "", audio: pendingAudio) { _ in }; preconditionFailure("Changed capability must fail closed") }
         catch { precondition(error.localizedDescription.contains("不支持 Apple 本地") && engine.starts == starts) }
         print("PASS: Apple on-device capability, authorization, PCM, finalization and cancellation")
+    }
+
+    @MainActor private static func recordedDevicePauseRegression() async throws {
+        struct Callback: Decodable {
+            let text: String
+            let streamFinal: Bool
+            let speechStart: Double?
+            let speechDuration: Double?
+        }
+        let fixture = try String(contentsOfFile: "tests/fixtures/apple-speech-device-pauses-20260914.jsonl", encoding: .utf8)
+        let callbacks = try fixture.split(separator: "\n").map {
+            try JSONDecoder().decode(Callback.self, from: Data($0.utf8))
+        }
+        let engine = TestAppleSpeechEngine()
+        let recognizer = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+        let (audio, input) = AsyncThrowingStream<Data, Error>.makeStream()
+        var results: [ASRResult] = []
+        let run = Task { try await recognizer.run(key: "", audio: audio) { results.append($0) } }
+        await VoiceTests.tick()
+        for (index, callback) in callbacks.enumerated() {
+            if callback.streamFinal { input.finish() }
+            let segment = callback.speechStart.map { ASRResult.LocalSegment(start: $0, duration: callback.speechDuration!) }
+            engine.receive?(ASRResult(result: .init(text: callback.text, utterances: nil),
+                streamFinal: callback.streamFinal, localSegment: segment), nil)
+            await VoiceTests.tick()
+            if index == 9 {
+                precondition(results.last?.result?.text == "这是我的第一句话 这",
+                             "Real Apple phrase metadata must protect the first phrase before the second partial arrives")
+            }
+        }
+        try await run.value
+        precondition(results.last?.streamFinal == true && results.last?.result?.text == "这是我的第一句话 这是我的第二句话",
+                     "Real empty request-final must preserve both finalized phrases")
+        // Identity is acoustic, not textual: duplicate metadata is idempotent,
+        // while actually repeating the same words in another phrase is retained.
+        let repeated = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+        let (repeatAudio, repeatInput) = AsyncThrowingStream<Data, Error>.makeStream()
+        let repeatRun = Task { try await repeated.run(key: "", audio: repeatAudio) { results.append($0) } }
+        await VoiceTests.tick()
+        for start in [0.0, 0.0, 5.0, 5.0] {
+            engine.receive?(ASRResult(result: .init(text: "再说一次", utterances: nil),
+                                      localSegment: .init(start: start, duration: 1)), nil)
+            await VoiceTests.tick()
+        }
+        repeatInput.finish(); engine.emit("再说一次", final: true)
+        try await repeatRun.value
+        precondition(results.last?.result?.text == "再说一次 再说一次", "Only distinct speech segments append")
+        print("PASS: Raw device callback replay preserves phrase boundaries and empty terminal result")
     }
 
     @MainActor private static func backgroundAuthorizationTests() async throws {

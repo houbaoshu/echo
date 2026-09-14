@@ -15,4 +15,4 @@ swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
     target/aarch64-apple-darwin/release/libecho_agent.a \
     -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -framework Speech -lz \
     -o build/chat-ui-tests
-build/chat-ui-tests
+build/chat-ui-tests "$@"

@@ -27,7 +27,10 @@ import Speech
         task = recognizer.recognitionTask(with: request) { @Sendable result, error in
             // Copy only Sendable values out of the framework callback.
             let transcript = result.map {
-                ASRResult(result: .init(text: $0.bestTranscription.formattedString, utterances: nil), streamFinal: $0.isFinal)
+                ASRResult(result: .init(text: $0.bestTranscription.formattedString, utterances: nil), streamFinal: $0.isFinal,
+                          localSegment: $0.speechRecognitionMetadata.map {
+                              .init(start: $0.speechStartTimestamp, duration: $0.speechDuration)
+                          })
             }
             receive(transcript, error?.localizedDescription)
         }
@@ -41,6 +44,7 @@ import Speech
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var results: AsyncThrowingStream<ASRResult, Error>.Continuation?
     private var cancelled = false
+    var onSpeechResult: ((ASRResult) -> Void)?
 
     private init(engine: any AppleSpeechEngine) { self.engine = engine }
 
@@ -163,21 +167,18 @@ import Speech
                 return false
             }
             group.addTask { @MainActor @Sendable in
-                // Speech may emit an empty terminal result after endAudio even though
-                // previous cumulative hypotheses contain text. Keep the last nonempty
-                // hypothesis for normal finalization only, never for errors/cancellation.
-                var lastText = ""
+                var transcript = AppleDictationTranscript()
                 for try await result in stream {
                     try Task.checkCancellation()
                     guard !self.cancelled else { throw CancellationError() }
-                    let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    if !text.isEmpty { lastText = text }
+                    self.onSpeechResult?(result)
+                    let text = transcript.accept(result)
                     if result.streamFinal {
-                        guard !lastText.isEmpty else { throw SettingsError("Apple 本地识别未识别到清晰语音，请重新录音。") }
-                        receive(ASRResult(result: .init(text: lastText, utterances: nil), streamFinal: true))
+                        guard !text.isEmpty else { throw SettingsError("Apple 本地识别未识别到清晰语音，请重新录音。") }
+                        receive(ASRResult(result: .init(text: text, utterances: nil), streamFinal: true))
                         return true
                     }
-                    if !text.isEmpty { receive(result) }
+                    if !text.isEmpty { receive(ASRResult(result: .init(text: text, utterances: nil))) }
                 }
                 try Task.checkCancellation()
                 throw SettingsError("Apple 本地语音识别提前结束，请重新录音。")
@@ -194,5 +195,33 @@ import Speech
         results?.finish(throwing: CancellationError()); results = nil
         request = nil
         engine.cancel()
+    }
+}
+
+/// Apple on-device dictation ends phrases with speechRecognitionMetadata even
+/// when the request's isFinal is false. Only the current phrase is revisable.
+private struct AppleDictationTranscript {
+    private var phrases: [(start: TimeInterval, text: String)] = []
+    private var partial = ""
+
+    mutating func accept(_ result: ASRResult) -> String {
+        let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !text.isEmpty {
+            if let segment = result.localSegment, segment.start.isFinite, segment.duration > 0 {
+                if let index = phrases.firstIndex(where: { $0.start == segment.start }) {
+                    phrases[index].text = text
+                    // A repeated older phrase must not erase the current hypothesis.
+                } else if phrases.last.map({ segment.start > $0.start }) ?? true {
+                    phrases.append((segment.start, text))
+                    partial = ""
+                }
+            } else if !(result.streamFinal && partial.isEmpty && phrases.last?.text == text) {
+                // Empty request-final uses accumulated text. A nonempty final may
+                // repeat the just-finalized phrase; a new partial can repeat words
+                // legitimately and is always kept until its own phrase boundary.
+                partial = text
+            }
+        }
+        return (phrases.map(\.text) + (partial.isEmpty ? [] : [partial])).joined(separator: " ")
     }
 }

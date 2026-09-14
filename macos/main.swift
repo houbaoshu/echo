@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        _ = DictationDiagnostics.shared
         installMenus()
         do {
             let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))

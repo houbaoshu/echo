@@ -118,3 +118,9 @@ cargo clippy --locked --workspace -- -D warnings
 `test-agent-live.sh` 用已保存的服务配置与密钥验证两种协议的直接回复和临时项目读改验。实网 Agent 和语音探针均打包提示词并使用开发签名，可能触发钥匙串访问授权；不更改保存的模型设置。
 
 实网语音测试发送固定测试语句，经 Rust Agent 完成回复后只合成最终文本一次，不读取已有聊天、不录音；去掉 `--play` 可跳过播放。诊断脚本会构建开发签名应用，检查本地采集、连接及播放，上传的 ASR 探针为静音，日志写入 `build/test-logs/voice-diagnostic.log`。应先在应用中授予麦克风权限。正常语音日志也可在“设置 → 语音”查看。
+
+普通 ASR 的逐回调诊断：先运行 `/bin/zsh scripts/build.sh --signing development`，退出已运行的 Echo，再运行 `/bin/zsh scripts/trace-dictation.sh`。在同一次录音中说第一句、长停顿、说第二句、结束录音，复现后退出应用。脚本会打印本次 `build/test-logs/dictation-*.jsonl` 文件位置，并在退出时报告实际识别通道与回调数量。该诊断显式记录转写全文与草稿，只写本地独立日志，不记录密钥、请求头或音频；正常启动不启用，Live Voice 不安装此诊断观察器。入口被拦截或远程密钥不可用时也会记录原因，Apple 本地回调同样被捕获，避免只有启动记录却误认为已采集到真实远程序列。
+
+日志按 `recordingID` 和 `sequence` 串联 `transport.frame`（真实消息类型、序号、最终帧标志和原始识别字段）、`recognizer.callback`（解码后的文本、各句时间戳及 definite/final/partial）、`callback.before/after`（跟踪器和字幕状态）、`draft.append.before/after`、`draft.willSet` 与 `editor.*`（输入框同步）。`process.start` 包含实际可执行文件路径和构建时间，先据此核对复现使用的版本。原始识别字段保留缺失字段与时间戳，供取得真实序列后制作回归测试；此日志本身不判定覆盖原因。
+
+Apple 本地听写还记录 `apple.rawCallback` 的原始文本、请求级 `streamFinal`、句段级 `speechStart` / `speechDuration`。本地识别可能在请求尚未 final 时结束一个句段；适配器保留这些已完成句段，只更新当前临时句段，正常结束后再整体追加到草稿。`zsh scripts/test-voice.sh --dictation-only` 运行听写回放检查，`zsh scripts/test-apple-speech-device.sh --paused-only` 使用三句固定本地合成音频和四秒间隔验证真实 Speech 的停顿行为。

@@ -487,7 +487,10 @@ struct ConversationView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
             NativeComposer(text: $store.mainDraft, focusRequest: focusRequest,
-                           isSuspended: presentation.isDictating, onEscape: escape, onSend: sendText)
+                           isSuspended: presentation.isDictating,
+                           diagnostics: !voice.isActive && !voice.testing && dictation.diagnosticTrace?.conversationID == conversationID
+                               ? dictation.diagnosticTrace : nil,
+                           onEscape: escape, onSend: sendText)
                 .opacity(presentation.isDictating ? 0 : 1)
                 .allowsHitTesting(!presentation.isDictating)
                 .accessibilityHidden(presentation.isDictating)
@@ -737,6 +740,7 @@ struct NativeComposer: NSViewRepresentable {
     @Binding var text: String
     var focusRequest = 0
     var isSuspended = false
+    var diagnostics: DictationTrace?
     var onEscape: (() -> Bool)?
     let onSend: () -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -755,11 +759,14 @@ struct NativeComposer: NSViewRepresentable {
         editor.delegate = context.coordinator; editor.onSend = onSend; editor.onEscape = onEscape
         scroll.documentView = editor
         editor.string = text
+        diagnostics?.record("editor.created", context.coordinator.diagnosticState(editor))
         return scroll
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? ComposerTextView else { return }
+        diagnostics?.snapshot("editor.update.before", context.coordinator.diagnosticState(editor))
+        defer { diagnostics?.snapshot("editor.update.after", context.coordinator.diagnosticState(editor)) }
         editor.onSend = onSend
         editor.onEscape = onEscape
         editor.onCompositionEnded = { [weak coordinator = context.coordinator, weak editor] in
@@ -812,8 +819,17 @@ struct NativeComposer: NSViewRepresentable {
         var suspendedDraft: String?
         var pendingAppend = ""
         init(_ parent: NativeComposer) { self.parent = parent }
+        func diagnosticState(_ editor: NSTextView) -> [String: Any] {
+            ["boundDraft": parent.text, "editorText": editor.string, "pendingAppend": pendingAppend,
+             "suspendedDraft": suspendedDraft as Any? ?? NSNull(), "requestedSuspension": parent.isSuspended,
+             "editorSuspended": (editor as? ComposerTextView)?.isSuspended ?? false,
+             "editable": editor.isEditable, "markedText": editor.hasMarkedText(),
+             "selectionLocation": editor.selectedRange().location, "selectionLength": editor.selectedRange().length]
+        }
         func textDidChange(_ notification: Notification) {
             guard let editor = notification.object as? NSTextView else { return }
+            parent.diagnostics?.record("editor.textDidChange.before", diagnosticState(editor))
+            defer { parent.diagnostics?.record("editor.textDidChange.after", diagnosticState(editor)) }
             if !editor.hasMarkedText(), !pendingAppend.isEmpty {
                 applyPendingAppend(to: editor)
             } else {
@@ -823,6 +839,8 @@ struct NativeComposer: NSViewRepresentable {
         }
         func applyPendingAppend(to editor: NSTextView) {
             guard !editor.hasMarkedText(), !pendingAppend.isEmpty else { return }
+            parent.diagnostics?.record("editor.pendingAppend.before", diagnosticState(editor))
+            defer { parent.diagnostics?.record("editor.pendingAppend.after", diagnosticState(editor)) }
             let suffix = pendingAppend
             pendingAppend = ""
             let selection = editor.selectedRanges

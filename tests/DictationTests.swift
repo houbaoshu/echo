@@ -19,6 +19,8 @@ import Foundation
 
 enum DictationTests {
     @MainActor static func run() async throws {
+        try await recordedPauseRegression()
+        try diagnosticLoggingTests()
         let audio = FakeAudio(), recognizer = DictationRecognizer(), source = FakeSource()
         var localAttempts = 0
         let dictation = DictationController(audio: audio, recognizer: { recognizer }, localRecognizer: {
@@ -139,6 +141,97 @@ enum DictationTests {
         silent.shutdown()
         try await localTests()
         print("PASS: STT finalization, draft ownership, failures and audio exclusion")
+    }
+
+    @MainActor private static func recordedPauseRegression() async throws {
+        struct Fixture: Decodable {
+            struct Callback: Decodable { let text: String; let streamFinal: Bool; let elapsedMs: Double }
+            let expected: String
+            let callbacks: [Callback]
+            let phraseEnds: [Int]
+        }
+        let url = URL(fileURLWithPath: "tests/fixtures/apple-dictation-pause-20260914.json")
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        let engine = TestAppleSpeechEngine(), store = TaskStore(source: FakeSource())
+        let dictation = DictationController(audio: FakeAudio(), localRecognizer: {
+            try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+        }, permission: { true })
+        let voice = VoiceSessionController(audio: FakeAudio(), permission: { true })
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
+        let settings = SettingsStore(secrets: FakeSecrets())
+        dictation.attach(workspace: workspace, settings: settings)
+        defer { workspace.shutdown() }
+        for termination in ["finish", "cancel", "error"] {
+            store.mainDraft = "已有草稿"
+            dictation.start(conversation: workspace.selected!); await VoiceTests.tick()
+            for (index, callback) in fixture.callbacks.enumerated() {
+                if callback.streamFinal {
+                    if termination == "cancel" { dictation.cancel(discard: true) }
+                    else if termination == "error" {
+                        engine.receive?(nil, "test failure after completed phrases")
+                        await VoiceTests.tick()
+                    } else { dictation.finishRecording() }
+                }
+                // The old controller trace did not capture metadata. These boundaries
+                // are video annotations, not invented "raw" timestamps; the separate
+                // device fixture verifies genuine Apple metadata end to end.
+                let segment = fixture.phraseEnds.firstIndex(of: index + 1).map {
+                    ASRResult.LocalSegment(start: Double($0), duration: 0.5)
+                }
+                engine.receive?(ASRResult(result: .init(text: callback.text, utterances: nil),
+                                          streamFinal: callback.streamFinal, localSegment: segment), nil)
+                await VoiceTests.tick()
+                if index == 9 {
+                    precondition(dictation.subtitle == "这是我的第一句话 这" && store.mainDraft == "已有草稿",
+                                 "A new partial preserves the first phrase in preview without writing the draft")
+                }
+            }
+            let expected = termination == "finish" ? "已有草稿\n" + fixture.expected : "已有草稿"
+            precondition(store.mainDraft == expected,
+                         "Recorded Apple sequence preserves all four phrases on finish; cancellation/error cannot commit them")
+        }
+        print("PASS: Video-annotated 36-callback replay retains four phrases and corrections; cancellation/error preserve draft")
+    }
+
+    // This validates trace fidelity and isolation, not real ASR behavior.
+    @MainActor private static func diagnosticLoggingTests() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("dictation-trace-\(UUID()).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let logger = try DictationDiagnostics(url: url)
+        let store = TaskStore(source: FakeSource())
+        store.mainDraft = "已有草稿"
+        var ordinaryDictation = true
+        let trace = DictationTrace(logger: logger, recordingID: UUID(), conversationID: UUID(), store: store,
+                                  canRecord: { ordinaryDictation })
+        let payload = Data(#"{"result":{"text":"第一句\n第二句","utterances":[{"text":"第二句","end_time":2500,"definite":false}]},"key":"must-not-log"}"#.utf8)
+        trace.frame(VoiceWire.Frame(type: 9, sequence: -2, final: true, payload: payload))
+        var result = try JSONDecoder().decode(ASRResult.self, from: payload)
+        result.streamFinal = true
+        trace.callback(result, accepted: true)
+        store.mainDraft = "已有草稿\n第一句 第二句"
+        ordinaryDictation = false
+        store.mainDraft = "Live Voice must not enter this trace"
+        trace.callback(result, accepted: true)
+        ordinaryDictation = true
+        trace.callback(result, accepted: false)
+        let data = try Data(contentsOf: url)
+        let lines = String(decoding: data, as: UTF8.self).split(separator: "\n")
+        let rows = try lines.map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        precondition(rows.map { $0["event"] as! String } == ["transport.frame", "recognizer.callback", "draft.willSet", "recognizer.callback"])
+        precondition(rows.map { $0["sequence"] as! Int } == [1, 2, 3, 4], "Trace order is preserved")
+        precondition(rows[0]["streamFinal"] as? Bool == true && rows[0]["wireSequence"] as? Int == -2)
+        let raw = rows[0]["asr"] as! [String: Any]
+        let rawResult = raw["result"] as! [String: Any]
+        precondition((rawResult["utterances"] as! [[String: Any]])[0]["start_time"] == nil,
+                     "Raw fields retain absence rather than inserting decoder defaults")
+        let replay = try JSONDecoder().decode(ASRResult.self, from: JSONSerialization.data(withJSONObject: raw))
+        precondition(replay.result?.text == "第一句\n第二句" && replay.result?.utterances?.first?.definite == false)
+        precondition(rows[2]["before"] as? String == "已有草稿" && rows[2]["proposed"] as? String == "已有草稿\n第一句 第二句")
+        precondition(rows[3]["accepted"] as? Bool == false, "Late callbacks remain identifiable")
+        precondition(!String(decoding: data, as: UTF8.self).contains("must-not-log")
+                     && !String(decoding: data, as: UTF8.self).contains("Live Voice"))
+        precondition(DoubaoRecognizer().onDictationFrame == nil, "Live Voice recognizers have no dictation observer by default")
+        print("PASS: Opt-in dictation trace ordering, raw-field replay fidelity, draft transitions and Voice isolation")
     }
 
     @MainActor private static func localTests() async throws {

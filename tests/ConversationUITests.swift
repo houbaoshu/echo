@@ -46,8 +46,8 @@ import SwiftUI
         self.receive = receive
         try await withCheckedThrowingContinuation { pending = $0 }
     }
-    func emit(_ text: String) {
-        receive?(ASRResult(result: .init(text: text, utterances: [.init(text: text, start_time: 0, end_time: 100, definite: true)])))
+    func emit(_ text: String, final: Bool = true, start: Int = 0) {
+        receive?(ASRResult(result: .init(text: text, utterances: [.init(text: text, start_time: start, end_time: start + 100, definite: final)])))
     }
     func finish() { pending?.resume(); pending = nil }
     func cancel() { pending?.resume(throwing: CancellationError()); pending = nil }
@@ -56,6 +56,7 @@ import SwiftUI
 @main struct ConversationUITests {
     @MainActor static func main() async throws {
         _ = NSApplication.shared
+        try await testConsecutiveDictationAppends()
         try await testComposerActionMatrix()
         try await testStoppingAndDictationEscape()
         try await assistantUpdatesDoNotSubmit()
@@ -154,6 +155,87 @@ import SwiftUI
         } else { preconditionFailure("Could not render chat preview") }
         window.orderOut(nil)
         print("PASS: Enter, Shift+Enter, IME, Markdown blocks; preview: build/chat-v1-preview.png")
+    }
+
+    @MainActor private static func testConsecutiveDictationAppends() async throws {
+        let source = PreviewSource(), recognizer = ComposerRecognizer()
+        let store = TaskStore(source: source)
+        let dictation = DictationController(audio: ComposerAudio(), recognizer: { recognizer }, permission: { true })
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
+        let conversation = workspace.selected!
+        let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 650),
+                                     styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "dictation-append-\(UUID())")!, windowOverride: window)
+        main.present()
+        defer { main.shutdown(); workspace.shutdown() }
+        func refresh() async throws {
+            try await Task.sleep(for: .milliseconds(100)); window.contentView?.layoutSubtreeIfNeeded()
+        }
+        try await refresh()
+        guard let editor = findAccessibility("conversation.composer", in: window.contentView!) as? ComposerTextView else {
+            preconditionFailure("Missing native composer")
+        }
+        for initial in ["", "已有草稿🙂", "已有草稿\n"] {
+            store.mainDraft = initial
+            try await refresh()
+            var expected = initial
+            for transcript in ["第一段", "第二段", "第三段"] {
+                editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count))
+                dictation.start(conversation: conversation, key: "test")
+                try await refresh()
+                recognizer.emit("临时结果", final: false)
+                precondition(store.mainDraft == expected && editor.string == expected)
+                dictation.finishRecording()
+                recognizer.receive?(ASRResult(result: .init(text: transcript, utterances: nil), streamFinal: true))
+                recognizer.finish()
+                expected += (expected.isEmpty || expected.hasSuffix("\n") ? "" : "\n") + transcript
+                try await refresh()
+                precondition(store.mainDraft == expected, "Each recording appends to the complete existing draft")
+                precondition(editor.string == expected, "Native composer retains every previous recording")
+            }
+            for cancel in [false, true] {
+                dictation.start(conversation: conversation, key: "test")
+                try await refresh()
+                let lateResult = recognizer.receive
+                if cancel {
+                    recognizer.emit("取消时已有确认文本")
+                    dictation.cancel(discard: true)
+                } else {
+                    dictation.finishRecording()
+                    recognizer.receive?(ASRResult(result: .init(text: " \n ", utterances: nil), streamFinal: true))
+                    recognizer.finish()
+                }
+                try await refresh()
+                lateResult?(ASRResult(result: .init(text: "迟到结果", utterances: nil), streamFinal: true))
+                try await refresh()
+                precondition(store.mainDraft == expected && editor.string == expected,
+                             "Cancellation, empty results and late callbacks preserve the whole draft")
+            }
+        }
+        store.mainDraft = "输入法草稿"
+        try await refresh()
+        editor.setSelectedRange(NSRange(location: editor.string.utf16.count, length: 0))
+        editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await refresh()
+        let composingDraft = store.mainDraft
+        var appended = ""
+        for transcript in ["第一轮转写", "第二轮转写"] {
+            dictation.start(conversation: conversation, key: "test")
+            try await refresh()
+            recognizer.emit(transcript)
+            dictation.finishRecording(); recognizer.finish()
+            appended += "\n" + transcript
+            try await refresh()
+            precondition(editor.hasMarkedText() && store.mainDraft == composingDraft + appended,
+                         "Consecutive recordings preserve both pending IME input and earlier transcripts")
+        }
+        editor.insertText("你", replacementRange: editor.markedRange())
+        try await refresh()
+        precondition(editor.string == "输入法草稿你" + appended && store.mainDraft == editor.string,
+                     "IME confirmation retains every recording exactly once")
+        precondition(source.histories.isEmpty && !voice.isActive, "Ordinary ASR only edits the draft")
+        print("PASS: Consecutive ordinary ASR appends; empty and cancelled recordings preserve the draft")
     }
 
     @MainActor private static func testStoppingAndDictationEscape() async throws {

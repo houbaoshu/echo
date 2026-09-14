@@ -151,6 +151,11 @@ actor PendingModelTester: ConnectionTesting {
     }
     @MainActor static func main() async throws {
         _ = NSApplication.shared
+        if CommandLine.arguments.contains("--dictation-only") {
+            try await AppleSpeechTests.run()
+            try await DictationTests.run()
+            return
+        }
         if CommandLine.arguments.contains("--agent-integration") {
             try await agentVoiceIntegrationTests()
             return
