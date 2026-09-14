@@ -16,6 +16,10 @@ import Darwin
         defer { try? fm.removeItem(at: root) }
         func write(_ path: String, _ data: Data) throws { try data.write(to: root.appendingPathComponent(path)) }
         try write("file10.txt", Data("ten".utf8)); try write("file2.txt", Data("你好\nsecond\tline".utf8))
+        for directory in ["target", "build", ".git", ".local-signing"] {
+            try fm.createDirectory(at: root.appendingPathComponent(directory), withIntermediateDirectories: true)
+        }
+        try write(".DS_Store", Data())
         try write(".hidden", Data()); try write("dir/empty.txt", Data())
         try write("utf16le", Data([0xFF, 0xFE]) + "文本".data(using: .utf16LittleEndian)!)
         try write("utf16be", Data([0xFE, 0xFF]) + "文本".data(using: .utf16BigEndian)!)
@@ -39,16 +43,19 @@ import Darwin
         for path in ["deleted", "../outside", "/etc/passwd", "cycle/file2.txt"] {
             guard case .failed = preview(path) else { preconditionFailure("Invalid path or ancestor must fail: \(path)") }
         }
-        guard case .loaded(let entries) = ProjectFileIO.directory(root: root.path, path: "", showHidden: false) else {
+        guard case .loaded(let entries) = ProjectFileIO.directory(root: root.path, path: "") else {
             preconditionFailure("Root must load")
         }
-        precondition(entries.first?.name == "dir")
+        precondition(entries.first?.name == "build")
         precondition(entries.firstIndex { $0.name == "file2.txt" }! < entries.firstIndex { $0.name == "file10.txt" }!)
-        precondition(!entries.contains { $0.name == ".hidden" })
+        precondition(!entries.contains { $0.name.hasPrefix(".") })
+        for name in ["target", "build", "binary", "unsupported", "oversized", "pipe"] {
+            precondition(entries.contains { $0.name == name }, "Visible content stays in tree: \(name)")
+        }
         precondition(entries.first { $0.name == "cycle" }?.kind == .symbolicLink)
-        precondition(ProjectFileIO.directory(root: root.path, path: "dir/empty", showHidden: true) == .loaded([]))
+        precondition(ProjectFileIO.directory(root: root.path, path: "dir/empty") == .loaded([]))
         try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: root.appendingPathComponent("dir/empty").path)
-        guard case .failed(let permission) = ProjectFileIO.directory(root: root.path, path: "dir/empty", showHidden: false) else {
+        guard case .failed(let permission) = ProjectFileIO.directory(root: root.path, path: "dir/empty") else {
             preconditionFailure("Unreadable directory must fail")
         }
         precondition(permission.contains("权限"))
@@ -71,20 +78,53 @@ import Darwin
         precondition(browser.location == nil && browser.state.directories.isEmpty && browser.state.selectedPath == nil)
         browser.select(project: project)
         precondition(browser.state.expanded == ["dir"] && browser.state.selectedPath == "file2.txt")
-        browser.setShowHidden(true)
-        try await wait("hidden switch") {
-            if case .loaded(let values) = browser.state.directories[""] { return values.contains { $0.name == ".hidden" } }; return false
-        }
         browser.openFile("file2.txt")
         try await wait("preview after return") { browser.state.preview == .text("你好\nsecond\tline") }
         try write("file2.txt", Data("updated".utf8))
         browser.refresh(projectID: UUID())
         precondition(browser.state.preview == .text("你好\nsecond\tline"), "Unrelated background task does not refresh or switch project")
-        browser.refresh(projectID: project.id)
-        try await wait("refresh preview") { browser.state.preview == .text("updated") }
+        try await wait("automatic preview update") { browser.state.preview == .text("updated") }
         try fm.removeItem(at: root.appendingPathComponent("file2.txt"))
-        browser.refresh()
-        try await wait("deleted preview") { if case .failed = browser.state.preview { return true }; return false }
+        try await wait("automatic deleted preview") { if case .failed = browser.state.preview { return true }; return false }
+        browser.returnToDirectory()
+        func names(_ path: String = "") -> [String] {
+            guard case .loaded(let entries) = browser.state.directories[path] else { return [] }
+            return entries.map(\.name)
+        }
+        try write("dir/new.txt", Data("new".utf8))
+        try await wait("nested file creation") { names("dir").contains("new.txt") }
+        try fm.moveItem(at: root.appendingPathComponent("dir/new.txt"), to: root.appendingPathComponent("dir/renamed.txt"))
+        try await wait("nested file rename") { names("dir").contains("renamed.txt") && !names("dir").contains("new.txt") }
+        try fm.removeItem(at: root.appendingPathComponent("dir/renamed.txt"))
+        try await wait("nested file deletion") { !names("dir").contains("renamed.txt") }
+        try fm.createDirectory(at: root.appendingPathComponent("created/child"), withIntermediateDirectories: true)
+        try await wait("directory creation") { names().contains("created") }
+        browser.toggleDirectory("created")
+        try await wait("new directory expands") { names("created").contains("child") }
+        try fm.moveItem(at: root.appendingPathComponent("created"), to: root.appendingPathComponent("renamed"))
+        try await wait("directory rename") { names().contains("renamed") && !names().contains("created") }
+        try fm.removeItem(at: root.appendingPathComponent("renamed"))
+        try await wait("directory deletion") { !names().contains("renamed") }
+        browser.toggleDirectory("dir")
+        precondition(!browser.state.expanded.contains("dir"))
+        try write("dir/collapsed.txt", Data())
+        try await wait("loaded collapsed directory updates") { names("dir").contains("collapsed.txt") }
+        browser.toggleDirectory("dir")
+        precondition(browser.state.expanded.contains("dir") && browser.state.scrollID == "dir")
+        let otherRoot = root.appendingPathComponent("other")
+        try fm.createDirectory(at: otherRoot, withIntermediateDirectories: true)
+        let other = WorkspaceProject(name: "B", path: otherRoot.path)
+        browser.select(project: other)
+        try await wait("switch project") { browser.state.directories[""] == .loaded([]) }
+        try write("old-project.txt", Data())
+        try await Task.sleep(for: .milliseconds(500))
+        precondition(browser.location?.projectID == other.id && browser.state.directories[""] == .loaded([]))
+        try write("other/current.txt", Data())
+        try await wait("new project watcher") { names().contains("current.txt") }
+        browser.select(project: nil)
+        try write("other/after-detach.txt", Data())
+        try await Task.sleep(for: .milliseconds(500))
+        precondition(browser.location == nil && browser.state.directories.isEmpty)
         var relocated = project; relocated.path = root.appendingPathComponent("missing").path
         browser.select(project: relocated)
         precondition(browser.state.selectedPath == nil && browser.state.expanded.isEmpty)
@@ -92,7 +132,7 @@ import Darwin
 
         // Inject slow readers to force old root, old project and old preview results
         // to finish after a newer selection, with no main-thread blocking.
-        let slow = ProjectFileBrowserStore(readDirectory: { root, _, _ in
+        let slow = ProjectFileBrowserStore(readDirectory: { root, _ in
             if root == "/slow" { usleep(150_000) }
             return .loaded([.init(path: root, name: root, kind: .file)])
         }, readPreview: { root, path in
@@ -113,6 +153,6 @@ import Darwin
         slow.select(project: old); slow.select(project: nil)
         try await Task.sleep(for: .milliseconds(250))
         precondition(slow.location == nil && slow.state.directories.isEmpty)
-        print("PASS: file browser encodings, limits, links, permissions, lazy tree, memory navigation, refresh and late-result isolation")
+        print("PASS: file browser encodings, limits, links, permissions, lazy tree, memory navigation, filesystem watching and late-result isolation")
     }
 }

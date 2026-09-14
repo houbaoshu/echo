@@ -39,15 +39,16 @@ enum ProjectFilePreview: Equatable, Sendable {
     }
     @Published private(set) var location: Location?
     @Published private(set) var state = BrowsingState()
-    @Published private(set) var showHidden = false
+    private var watcher: ProjectFileWatcher?
+    private var watchID = UUID()
     private var cache: [Location: BrowsingState] = [:]
     private var generation = UUID()
     private var directoryRequests: [String: UUID] = [:]
     private var previewRequest = UUID()
-    private let readDirectory: @Sendable (String, String, Bool) -> ProjectDirectoryState
+    private let readDirectory: @Sendable (String, String) -> ProjectDirectoryState
     private let readPreview: @Sendable (String, String) -> ProjectFilePreview
 
-    init(readDirectory: @escaping @Sendable (String, String, Bool) -> ProjectDirectoryState = ProjectFileIO.directory,
+    init(readDirectory: @escaping @Sendable (String, String) -> ProjectDirectoryState = ProjectFileIO.directory,
          readPreview: @escaping @Sendable (String, String) -> ProjectFilePreview = ProjectFileIO.preview) {
         self.readDirectory = readDirectory; self.readPreview = readPreview
     }
@@ -56,16 +57,20 @@ enum ProjectFilePreview: Equatable, Sendable {
         let next = project.map { Location(projectID: $0.id, root: URL(fileURLWithPath: $0.path).standardizedFileURL.path) }
         guard next != location else { return }
         if let location { cache[location] = state }
+        watcher = nil; watchID = UUID()
         generation = UUID(); directoryRequests = [:]; previewRequest = UUID()
         location = next
         state = next.flatMap { cache[$0] } ?? BrowsingState()
-        guard next != nil else { return }
+        guard let next else { return }
+        let watchID = watchID
+        watcher = ProjectFileWatcher(root: next.root) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.watchID == watchID, self.location == next else { return }
+                self.refresh()
+            }
+        }
         // Refresh saved positions too: a project may have changed while off screen.
         refresh()
-    }
-    func setShowHidden(_ value: Bool) {
-        guard showHidden != value else { return }
-        showHidden = value; cache.removeAll(); refresh()
     }
     func setScrollID(_ path: String?) { state.scrollID = path }
     func toggleDirectory(_ path: String) {
@@ -76,9 +81,10 @@ enum ProjectFilePreview: Equatable, Sendable {
         }
     }
     func returnToDirectory() { state.showingFile = false }
-    func openFile(_ path: String) {
+    func openFile(_ path: String, preservingContent: Bool = false) {
         guard let location else { return }
-        state.selectedPath = path; state.showingFile = true; state.preview = .loading
+        state.selectedPath = path; state.showingFile = true
+        if !preservingContent { state.preview = .loading }
         let request = UUID(), generation = generation, readPreview = readPreview
         previewRequest = request
         Task { [weak self] in
@@ -90,14 +96,14 @@ enum ProjectFilePreview: Equatable, Sendable {
             self.state.preview = result
         }
     }
-    func loadDirectory(_ path: String = "") {
+    func loadDirectory(_ path: String = "", preservingContent: Bool = false) {
         guard let location else { return }
-        let request = UUID(), generation = generation, hidden = showHidden, readDirectory = readDirectory
+        let request = UUID(), generation = generation, readDirectory = readDirectory
         directoryRequests[path] = request
-        state.directories[path] = .loading
+        if !preservingContent { state.directories[path] = .loading }
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                readDirectory(location.root, path, hidden)
+                readDirectory(location.root, path)
             }.value
             guard let self, self.location == location, self.generation == generation,
                   self.directoryRequests[path] == request else { return }
@@ -113,8 +119,8 @@ enum ProjectFilePreview: Equatable, Sendable {
         guard location != nil else { return }
         generation = UUID(); directoryRequests = [:]
         let paths = Set(state.directories.keys).union(state.expanded).union([""])
-        for path in paths { loadDirectory(path) }
-        if state.showingFile, let path = state.selectedPath { openFile(path) }
+        for path in paths { loadDirectory(path, preservingContent: true) }
+        if state.showingFile, let path = state.selectedPath { openFile(path, preservingContent: true) }
     }
 }
 
@@ -150,7 +156,7 @@ enum ProjectFileIO {
         }
         return fd
     }
-    static func directory(root: String, path: String, showHidden: Bool) -> ProjectDirectoryState {
+    static func directory(root: String, path: String) -> ProjectDirectoryState {
         do {
             let fd = try descriptor(root: root, path: path, directory: true)
             guard let dir = fdopendir(fd) else { let code = errno; close(fd); throw ReadError(message: errorMessage(code)) }
@@ -165,13 +171,13 @@ enum ProjectFileIO {
                 let name = withUnsafePointer(to: &entry.pointee.d_name) {
                     $0.withMemoryRebound(to: CChar.self, capacity: Int(entry.pointee.d_namlen) + 1) { String(cString: $0) }
                 }
-                if name == "." || name == ".." || (!showHidden && name.hasPrefix(".")) { continue }
+                if name.hasPrefix(".") { continue }
                 var info = stat()
                 guard fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {
                     if errno == ENOENT { continue }
                     throw ReadError(message: errorMessage(errno))
                 }
-                if !showHidden && info.st_flags & UInt32(UF_HIDDEN) != 0 { continue }
+                if info.st_flags & UInt32(UF_HIDDEN) != 0 { continue }
                 let kind: ProjectFileEntry.Kind
                 switch info.st_mode & S_IFMT {
                 case S_IFDIR: kind = .directory

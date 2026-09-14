@@ -79,6 +79,7 @@ struct MainWindowLayout {
     private var applyingLayout = false
     private var ready = false
     private var observation: AnyCancellable?
+    private let projectIcon = NSImageView()
     private let titleField = NSTextField(labelWithString: "新会话")
     private var manualColumn: MainWindowLayout.Column?
     private static let leftID = NSToolbarItem.Identifier("chiyan.sidebar")
@@ -331,6 +332,7 @@ struct MainWindowLayout {
     private func refreshTitle() {
         guard !isSettingsVisible else { return }
         let title = workspace.selected?.title ?? "新会话"
+        projectIcon.isHidden = workspace.selected?.projectID == nil
         titleField.stringValue = title; titleField.toolTip = title; window?.title = title
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { hideMainWindow(); return false }
@@ -371,7 +373,15 @@ struct MainWindowLayout {
             titleField.lineBreakMode = .byTruncatingTail
             titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             titleField.widthAnchor.constraint(lessThanOrEqualToConstant: 340).isActive = true
-            item.view = titleField
+            projectIcon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "项目聊天")
+            projectIcon.contentTintColor = WorkspaceStyle.secondaryTextColor
+            projectIcon.setAccessibilityIdentifier("conversation.projectIcon")
+            projectIcon.isHidden = workspace.selected?.projectID == nil
+            projectIcon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+            projectIcon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+            let title = NSStackView(views: [projectIcon, titleField])
+            title.orientation = .horizontal; title.alignment = .centerY; title.spacing = 7
+            item.view = title
         default: return nil
         }
         item.toolTip = item.label

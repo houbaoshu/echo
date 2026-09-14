@@ -542,12 +542,14 @@ import SwiftUI
             view.cacheDisplay(in: view.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/project-files-empty.png"))
         }
-        precondition(findAccessibility("projectFiles.unassociated", in: main.inspectorItem.viewController.view) != nil,
-                     "Inspector explains missing project instead of showing an empty surface")
+        precondition(findAccessibility("projectFiles.unassociated", in: main.inspectorItem.viewController.view) == nil,
+                     "Unassociated inspector stays blank")
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-project-ui-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("folder"), withIntermediateDirectories: true)
+        try Data("child".utf8).write(to: root.appendingPathComponent("folder/child.txt"))
         try Data("# Project preview\n\n只读文本\n".utf8).write(to: root.appendingPathComponent("README.md"))
         let projectID = workspace.addProject(url: root)
         let conversation = workspace.selected!
@@ -573,6 +575,22 @@ import SwiftUI
             precondition(abs(pickerFrame.minX - (frame.minX - 16)) < 3, "Picker aligns with outer composer edge")
         }
         assertPlacement()
+        let inspector = main.inspectorItem.viewController.view
+        precondition(findAccessibility("projectFiles.refresh", in: inspector) == nil)
+        precondition(findAccessibility("projectFiles.showHidden", in: inspector) == nil)
+        guard let folder = findAccessibility("projectFiles.entry.folder", in: inspector) else {
+            preconditionFailure("Folder row missing")
+        }
+        let collapsedValue: Any? = folder.accessibilityValue?()
+        precondition(collapsedValue as? String == "已折叠")
+        precondition(folder.accessibilityPerformPress?() == true)
+        try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) != nil)
+        let expandedValue: Any? = findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityValue?()
+        precondition(expandedValue as? String == "已展开")
+        precondition(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
+        try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil)
         func openPicker() async throws -> NSWindow {
             precondition(picker.accessibilityPerformPress?() == true)
             try await Task.sleep(for: .milliseconds(200))
@@ -589,17 +607,26 @@ import SwiftUI
                 charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
         }
         var panel = try await openPicker()
-        key(panel, code: 126, characters: "\u{F700}")
-        key(panel, code: 36, characters: "\r")
+        key(panel, code: 53, characters: "\u{1b}")
+        try await Task.sleep(for: .milliseconds(150))
+        // Keyboard focus also exposes the hover action for accessibility users.
+        picker.setAccessibilityFocused?(true)
+        try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
+        guard let detach = findAccessibility("conversation.project.detach", in: content) else {
+            preconditionFailure("Draft project detach action missing")
+        }
+        precondition(detach.accessibilityPerformPress?() == true)
         try await Task.sleep(for: .milliseconds(150))
         precondition(conversation.projectID == nil && conversation.store.mainDraft == "保留输入草稿",
-                     "Up/Enter selects no project without losing draft")
-        precondition(window.firstResponder === composer, "Closing picker returns composer focus")
+                     "Detach preserves the draft")
+        precondition(window.firstResponder === composer, "Detach returns composer focus")
         panel = try await openPicker()
-        key(panel, code: 125, characters: "\u{F701}")
-        key(panel, code: 36, characters: "\r")
+        guard let projectOption = findAccessibility("projectPicker.project.\(projectID)", in: panel.contentView!) else {
+            preconditionFailure("Existing project menu item missing")
+        }
+        precondition(projectOption.accessibilityPerformPress?() == true)
         try await Task.sleep(for: .milliseconds(150))
-        precondition(conversation.projectID == projectID, "Down/Enter selects project")
+        precondition(conversation.projectID == projectID, "Menu selects existing project")
         panel = try await openPicker()
         key(panel, code: 53, characters: "\u{1b}")
         try await Task.sleep(for: .milliseconds(150))
@@ -653,11 +680,20 @@ import SwiftUI
         precondition(workspace.sendMainMessage(conversationID: conversation.id))
         workspace.stop(conversationID: conversation.id)
         try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
-        let fixedValue: Any? = findAccessibility("conversation.project", in: content)?.accessibilityValue?()
-        precondition(fixedValue as? String == "项目已固定")
+        precondition(findAccessibility("conversation.project", in: content) == nil,
+                     "Established conversation has no composer project picker")
+        precondition(findAccessibility("conversation.project.detach", in: content) == nil)
+        let titleItem = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "chiyan.title" }!
+        precondition(findAccessibility("conversation.projectIcon", in: titleItem.view!) != nil,
+                     "Project folder indicator appears beside the title")
+        let another = workspace.newConversation()
+        workspace.select(conversation.id)
+        try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("conversation.project", in: content) == nil, "Reopened project chat keeps picker hidden")
+        precondition(another.id != conversation.id)
 
-        precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "echo-project-ui") == [.none, .project(projectID), .add])
-        precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "unmatched query") == [.none, .add])
+        precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "echo-project-ui") == [.project(projectID), .add])
+        precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "unmatched query") == [.add])
 
         print("PASS: project picker placement, multiline/narrow layout, fixed attribution, populated inspector, read-only preview and refresh")
     }

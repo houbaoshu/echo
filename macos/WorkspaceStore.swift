@@ -520,6 +520,7 @@ struct WorkspaceSnapshot: Codable {
         catch { persistenceNotice = "会话保存失败：\(error.localizedDescription)" }
     }
     func shutdown() {
+        fileBrowser.select(project: nil)
         dictation.shutdown()
         voice.shutdown()
         shuttingDown = true; flush(); observations.removeAll(); lifecycleObservations.removeAll(); emptyObservation = nil

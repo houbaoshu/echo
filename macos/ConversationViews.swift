@@ -308,7 +308,7 @@ private struct SidebarRowHighlight: ViewModifier {
 }
 
 // SF Symbols supplies the closed folder; the open flap makes expansion visible without a chevron.
-private struct ProjectFolderIcon: View {
+struct ProjectFolderIcon: View {
     let isExpanded: Bool
     let isAvailable: Bool
     var body: some View {
@@ -461,7 +461,7 @@ struct ConversationView: View {
                         ws.revealVoice(owner: owner)
                     }
                 }
-                if let workspace {
+                if let workspace, workspace.canAssociateProject(conversationID: conversationID) {
                     ConversationProjectPicker(workspace: workspace, conversationID: conversationID)
                 }
                 composer

@@ -22,39 +22,16 @@ private struct ProjectFileBrowserView: View {
     private var project: WorkspaceProject? { workspace.selectedID.flatMap { workspace.project(for: $0) } }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let project {
+            if project != nil {
                 if browser.state.showingFile { filePage }
-                else { directoryPage(project) }
-            } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "folder").font(.system(size: 25))
-                    Text("当前聊天未关联项目").multilineTextAlignment(.center)
-                }.foregroundStyle(WorkspaceStyle.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("projectFiles.unassociated")
+                else { directoryPage }
             }
         }.font(WorkspaceStyle.body).frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("workspace.projectFiles")
     }
-    private func directoryPage(_ project: WorkspaceProject) -> some View {
+    private var directoryPage: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(project.name).font(WorkspaceStyle.medium).lineLimit(1)
-                    Spacer(minLength: 0)
-                    Button { browser.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.plain).help("刷新项目文件").accessibilityLabel("刷新项目文件")
-                        .accessibilityIdentifier("projectFiles.refresh")
-                }
-                Text(project.path).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
-                    .lineLimit(2).truncationMode(.middle).textSelection(.enabled).help(project.path)
-                Toggle("显示隐藏文件", isOn: Binding(get: { browser.showHidden }, set: { browser.setShowHidden($0) }))
-                    .toggleStyle(.checkbox).font(WorkspaceStyle.caption)
-                    .accessibilityIdentifier("projectFiles.showHidden")
-            }.padding(14)
-            Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     directoryContents("", depth: 0)
@@ -79,7 +56,7 @@ private struct ProjectFileBrowserView: View {
             }.font(WorkspaceStyle.caption).padding(10)
         case .loaded(let entries):
             if entries.isEmpty {
-                Text(browser.showHidden ? "空文件夹" : "空文件夹（未显示隐藏文件）")
+                Text("空文件夹")
                     .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
                     .padding(.leading, CGFloat(depth) * 14 + 8).padding(.vertical, 8)
             } else {
@@ -103,8 +80,13 @@ private struct ProjectFileBrowserView: View {
                     Image(systemName: browser.state.expanded.contains(entry.path) ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9)).frame(width: 10)
                 } else { Color.clear.frame(width: 10, height: 1) }
-                Image(systemName: entry.kind == .directory ? "folder" : entry.kind == .symbolicLink ? "link" : "doc")
-                    .foregroundStyle(WorkspaceStyle.secondary)
+                Group {
+                    if entry.kind == .directory {
+                        ProjectFolderIcon(isExpanded: browser.state.expanded.contains(entry.path), isAvailable: true)
+                    } else {
+                        Image(systemName: entry.kind == .symbolicLink ? "link" : "doc")
+                    }
+                }.frame(width: 18, height: 16).foregroundStyle(WorkspaceStyle.secondary)
                 Text(entry.name).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
             }.padding(.leading, CGFloat(depth) * 14 + 6).padding(.trailing, 6).frame(height: 28)
@@ -113,6 +95,7 @@ private struct ProjectFileBrowserView: View {
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).id(entry.path).help(entry.path)
             .accessibilityIdentifier("projectFiles.entry.\(entry.path)")
+            .accessibilityValue(entry.kind == .directory ? (browser.state.expanded.contains(entry.path) ? "已展开" : "已折叠") : "")
     }
     private var filePage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -123,8 +106,6 @@ private struct ProjectFileBrowserView: View {
                 Text(browser.state.selectedPath ?? "").font(WorkspaceStyle.caption).lineLimit(3)
                     .textSelection(.enabled).help(browser.state.selectedPath ?? "")
                 Spacer(minLength: 0)
-                Button { browser.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.plain).help("刷新文件").accessibilityLabel("刷新文件")
             }.padding(14)
             Divider()
             switch browser.state.preview {
