@@ -88,13 +88,80 @@ struct SettingsError: LocalizedError {
     }
 }
 
-struct SettingsSnapshot: Codable {
-    var version = 1
-    var model = ModelConfiguration()
+enum ModelProvider: String, Codable, CaseIterable, Sendable {
+    case openAI, deepSeek, ollama, custom
+
+    var title: String {
+        switch self {
+        case .openAI: "OpenAI"
+        case .deepSeek: "DeepSeek"
+        case .ollama: "Ollama"
+        case .custom: "自定义（兼容 API）"
+        }
+    }
+    var requiresKey: Bool { self != .ollama }
+    var defaults: ModelConfiguration {
+        switch self {
+        case .openAI: ModelConfiguration()
+        case .deepSeek: ModelConfiguration(baseURL: "https://api.deepseek.com", model: "")
+        case .ollama: ModelConfiguration(baseURL: "http://localhost:11434/v1", model: "")
+        case .custom: ModelConfiguration(baseURL: "", model: "")
+        }
+    }
+    static func infer(from configuration: ModelConfiguration) -> Self {
+        let url = URLComponents(string: configuration.baseURL.trimmingCharacters(in: .whitespacesAndNewlines))
+        switch url?.host?.lowercased() {
+        case "api.openai.com": return .openAI
+        case "api.deepseek.com": return .deepSeek
+        default:
+            return ["localhost", "127.0.0.1", "::1", "[::1]"].contains(url?.host?.lowercased() ?? "") && url?.port == 11434 ? .ollama : .custom
+        }
+    }
+}
+
+struct ProviderSettings: Codable, Equatable {
+    var model: ModelConfiguration
     var secretAccount: String?
+}
+
+struct SettingsSnapshot: Codable {
+    var version = 2
+    var activeProvider: ModelProvider = .openAI
+    var providers: [String: ProviderSettings] = [ModelProvider.openAI.rawValue: ProviderSettings(model: ModelConfiguration())]
     var selectedPetID = "builtin:chiyan"
     var voice: VoiceConfiguration?
     var voiceSecretAccount: String?
+
+    var model: ModelConfiguration { settings(for: activeProvider).model }
+    var secretAccount: String? { settings(for: activeProvider).secretAccount }
+    func settings(for provider: ModelProvider) -> ProviderSettings {
+        providers[provider.rawValue] ?? ProviderSettings(model: provider.defaults)
+    }
+    private enum CodingKeys: String, CodingKey {
+        case version, activeProvider, providers, selectedPetID, voice, voiceSecretAccount
+    }
+    private enum LegacyKeys: String, CodingKey { case model, secretAccount }
+    init() {}
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try values.decode(Int.self, forKey: .version)
+        guard version == 1 || version == 2 else { throw SettingsError("设置文件版本不受支持。") }
+        selectedPetID = try values.decode(String.self, forKey: .selectedPetID)
+        voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
+        voiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .voiceSecretAccount)
+        if version == 1 {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            let model = try legacy.decode(ModelConfiguration.self, forKey: .model)
+            activeProvider = ModelProvider.infer(from: model)
+            // Adopt the existing Keychain reference; migration never copies or deletes a key.
+            providers = [activeProvider.rawValue: ProviderSettings(model: model,
+                secretAccount: try legacy.decodeIfPresent(String.self, forKey: .secretAccount))]
+        } else {
+            activeProvider = try values.decode(ModelProvider.self, forKey: .activeProvider)
+            providers = try values.decode([String: ProviderSettings].self, forKey: .providers)
+            guard providers[activeProvider.rawValue] != nil else { throw SettingsError("缺少当前 provider 配置。") }
+        }
+    }
 }
 
 protocol ConnectionTesting: Sendable {
@@ -117,6 +184,7 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     var isVoiceDirty: Bool { voiceDraft != (snapshot.voice ?? VoiceConfiguration()) || voiceAPIKey != savedVoiceKey }
     @Published var selectedSection = "模型"
     @Published var presentationRevision = 0
+    @Published private(set) var selectedProvider: ModelProvider = .openAI
     @Published var draft = ModelConfiguration() { didSet { invalidateTest() } }
     @Published var apiKey = "" { didSet { invalidateTest() } }
     @Published private(set) var snapshot = SettingsSnapshot()
@@ -127,8 +195,19 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     private let url: URL?
     private let secrets: any SecretStore
     private let tester: any ConnectionTesting
-    private var savedKey = ""
-    private var keyLoaded = true
+    private struct Credential {
+        var key = ""
+        var loaded = true
+    }
+    private struct ProviderDraft {
+        var model: ModelConfiguration
+        var key: String
+    }
+    private var credentials: [ModelProvider: Credential] = [:]
+    private var providerDrafts: [ModelProvider: ProviderDraft] = [:]
+    private var savedKey: String { credentials[snapshot.activeProvider]?.key ?? "" }
+    private var keyLoaded: Bool { credentials[snapshot.activeProvider]?.loaded ?? true }
+    private var selectedCredential: Credential { credentials[selectedProvider] ?? Credential() }
     private var task: Task<Void, Never>?
     private var revision = 0
     private var loadBlocked = false
@@ -136,29 +215,55 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("local.chiyan.desktop-pet")
     }
-    var isDirty: Bool { draft != snapshot.model || apiKey != savedKey }
+    var isDirty: Bool {
+        selectedProvider != snapshot.activeProvider || draft != snapshot.settings(for: selectedProvider).model
+            || apiKey != selectedCredential.key
+    }
+    var canRestoreModel: Bool {
+        isDirty || providerDrafts.contains { provider, value in
+            value.model != snapshot.settings(for: provider).model || value.key != (credentials[provider]?.key ?? "")
+        }
+    }
     init(url: URL? = nil, secrets: any SecretStore = KeychainSecretStore(), tester: any ConnectionTesting = ModelConnectionTester()) {
         self.url = url; self.secrets = secrets; self.tester = tester
         if let url, FileManager.default.fileExists(atPath: url.path) {
             do {
                 let decoded = try JSONDecoder().decode(SettingsSnapshot.self, from: Data(contentsOf: url))
-                guard decoded.version == 1 else { throw SettingsError("设置文件版本不受支持。") }
                 snapshot = decoded
             } catch {
                 loadBlocked = true
                 notice = "设置文件无法读取，原文件保留。请修复或移走 settings.json 后重启应用。"
             }
         }
-        draft = snapshot.model
-        if let account = snapshot.secretAccount {
-            do { savedKey = try secrets.read(account); apiKey = savedKey }
-            catch { keyLoaded = false; notice = error.localizedDescription }
-        }
+        selectedProvider = snapshot.activeProvider
+        loadProvider(selectedProvider)
         voiceDraft = snapshot.voice ?? VoiceConfiguration()
         if let account = snapshot.voiceSecretAccount {
             do { savedVoiceKey = try secrets.read(account); voiceAPIKey = savedVoiceKey }
             catch { voiceKeyLoaded = false; voiceNotice = "无法读取已保存的语音密钥，请检查钥匙串访问权限。" }
         }
+    }
+    private func loadProvider(_ provider: ModelProvider) {
+        if credentials[provider] == nil {
+            var credential = Credential()
+            if provider.requiresKey, let account = snapshot.settings(for: provider).secretAccount {
+                do { credential.key = try secrets.read(account) }
+                catch { credential.loaded = false; notice = error.localizedDescription }
+            }
+            credentials[provider] = credential
+        }
+        if credentials[provider]?.loaded == false {
+            notice = "无法读取此 provider 的 API Key，请检查钥匙串权限或重新填写后保存。"
+        }
+        draft = providerDrafts[provider]?.model ?? snapshot.settings(for: provider).model
+        apiKey = provider.requiresKey ? (providerDrafts[provider]?.key ?? selectedCredential.key) : ""
+    }
+    func selectProvider(_ provider: ModelProvider) {
+        guard provider != selectedProvider else { return }
+        providerDrafts[selectedProvider] = ProviderDraft(model: draft, key: apiKey)
+        selectedProvider = provider
+        notice = nil
+        loadProvider(provider)
     }
     func savedVoiceCredentials() throws -> (configuration: VoiceConfiguration, key: String) {
         guard voiceKeyLoaded else { throw SettingsError("无法读取已保存的语音密钥，请检查钥匙串访问权限。") }
@@ -238,21 +343,28 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     func save() {
         do {
             let value = try draft.validated(requiresModel: false)
-            guard !apiKey.contains("\n"), !apiKey.contains("\r") else { throw SettingsError("API Key 不能包含换行。") }
-            guard keyLoaded || !apiKey.isEmpty else { throw SettingsError("原 API Key 尚未读取，请重新填写密钥后保存。") }
-            var next = snapshot; next.model = value
-            let changedKey = apiKey != savedKey || !keyLoaded
-            let oldAccount = snapshot.secretAccount
+            let key = selectedProvider.requiresKey ? apiKey : ""
+            guard !key.contains("\n"), !key.contains("\r") else { throw SettingsError("API Key 不能包含换行。") }
+            guard selectedCredential.loaded || !key.isEmpty else { throw SettingsError("原 API Key 尚未读取，请重新填写密钥后保存。") }
+            var next = snapshot
+            next.activeProvider = selectedProvider
+            let oldAccount = snapshot.settings(for: selectedProvider).secretAccount
+            let changedKey = key != selectedCredential.key || !selectedCredential.loaded
+                || (!selectedProvider.requiresKey && oldAccount != nil)
+            var entry = ProviderSettings(model: value, secretAccount: oldAccount)
             if changedKey {
-                next.secretAccount = apiKey.isEmpty ? nil : UUID().uuidString
-                if let account = next.secretAccount { try secrets.write(apiKey, account: account) }
+                entry.secretAccount = key.isEmpty ? nil : "model-\(selectedProvider.rawValue)-\(UUID().uuidString)"
+                if let account = entry.secretAccount { try secrets.write(key, account: account) }
             }
+            next.providers[selectedProvider.rawValue] = entry
             do { try persist(next) }
             catch {
-                if changedKey, let account = next.secretAccount { try? secrets.remove(account) }
+                if changedKey, let account = entry.secretAccount { try? secrets.remove(account) }
                 throw error
             }
-            snapshot = next; draft = value; savedKey = apiKey; keyLoaded = true
+            snapshot = next; draft = value; apiKey = key
+            credentials[selectedProvider] = Credential(key: key)
+            providerDrafts[selectedProvider] = nil
             notice = nil
             if changedKey, let oldAccount {
                 do { try secrets.remove(oldAccount) }
@@ -264,7 +376,12 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
         var next = snapshot; next.selectedPetID = id
         try persist(next); snapshot = next
     }
-    func restore() { draft = snapshot.model; apiKey = savedKey; notice = nil }
+    func restore() {
+        providerDrafts.removeAll()
+        selectedProvider = snapshot.activeProvider
+        notice = nil
+        loadProvider(selectedProvider)
+    }
     private func invalidateTest() {
         revision += 1; task?.cancel(); task = nil; testing = false; testResult = nil; testSucceeded = false
     }
@@ -274,7 +391,7 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
         do {
             let configuration = try draft.validated()
             guard !apiKey.contains("\r"), !apiKey.contains("\n") else { throw SettingsError("API Key 不能包含换行。") }
-            let key = apiKey; let current = revision; let tester = tester
+            let key = selectedProvider.requiresKey ? apiKey : ""; let current = revision; let tester = tester
             testing = true
             task = Task { [weak self] in
                 var result: String; var success = false
