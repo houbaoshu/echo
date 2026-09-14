@@ -4,7 +4,9 @@ import Foundation
     var callback: (@MainActor (ASRResult) -> Void)?
     var pending: CheckedContinuation<Void, any Error>?
     var cancelled = false
+    var keys: [String] = []
     func run(key: String, audio: AsyncThrowingStream<Data, Error>, receive: @escaping @MainActor (ASRResult) -> Void) async throws {
+        keys.append(key)
         callback = receive
         try await withCheckedThrowingContinuation { pending = $0 }
     }
@@ -18,7 +20,11 @@ import Foundation
 enum DictationTests {
     @MainActor static func run() async throws {
         let audio = FakeAudio(), recognizer = DictationRecognizer(), source = FakeSource()
-        let dictation = DictationController(audio: audio, recognizer: { recognizer }, finalizationTimeout: .milliseconds(40), permission: { true })
+        var localAttempts = 0
+        let dictation = DictationController(audio: audio, recognizer: { recognizer }, localRecognizer: {
+            localAttempts += 1
+            throw SettingsError("Apple 本地语音识别当前不可用")
+        }, finalizationTimeout: .milliseconds(40), permission: { true })
         let store = TaskStore(source: source)
         let call = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() },
             synthesizer: { FakeSynthesizer() }, permission: { true })
@@ -30,12 +36,15 @@ enum DictationTests {
         defer { workspace.voice.shutdown(); workspace.shutdown() }
         store.mainDraft = "原草稿"
         dictation.start(conversation: conversation)
-        precondition(dictation.state == .failed && !audio.capturing, "Missing credentials fail before recording")
+        await VoiceTests.tick()
+        precondition(dictation.state == .failed && !audio.capturing && localAttempts == 1
+                     && dictation.error?.contains("Apple 本地") == true, "Missing credentials try local before recording")
         settings.voiceAPIKey = "test"; settings.saveVoice()
         precondition(settings.snapshot.model.model.isEmpty)
         dictation.start(conversation: conversation)
         await VoiceTests.tick()
         precondition(dictation.state == .recording && audio.capturing)
+        precondition(localAttempts == 1, "Saved remote credentials never prepare Apple Speech")
         recognizer.emit("临时", final: false)
         precondition(store.mainDraft == "原草稿" && dictation.subtitle == "临时")
         recognizer.emit("确定", final: true); recognizer.emit("确定", final: true)
@@ -110,6 +119,158 @@ enum DictationTests {
         recognizer.emit("删除应丢弃", final: true)
         workspace.deleteConversation(conversation.id)
         precondition(!dictation.isActive && store.mainDraft == draft)
+        try await localTests()
         print("PASS: STT finalization, draft ownership, failures and audio exclusion")
+    }
+
+    @MainActor private static func localTests() async throws {
+        let audio = FakeAudio(), engine = TestAppleSpeechEngine(), source = FakeSource()
+        let remote = DictationRecognizer()
+        var remoteStarts = 0, localStarts = 0
+        let dictation = DictationController(audio: audio, recognizer: {
+            remoteStarts += 1; return remote
+        }, localRecognizer: {
+            localStarts += 1
+            return try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+        }, finalizationTimeout: .milliseconds(40), permission: { true })
+        let store = TaskStore(source: source)
+        let voice = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() }, permission: { true })
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
+        let settings = SettingsStore(secrets: FakeSecrets())
+        dictation.attach(workspace: workspace, settings: settings)
+        voice.attach(workspace: workspace, settings: settings)
+        let conversation = workspace.selected!
+        defer { workspace.shutdown() }
+        store.mainDraft = "原草稿"
+
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        precondition(localStarts == 1 && remoteStarts == 0 && audio.capturing)
+        precondition(engine.request?.requiresOnDeviceRecognition == true)
+        engine.emit("本地临时", final: false); await VoiceTests.tick()
+        precondition(dictation.subtitle == "本地临时" && store.mainDraft == "原草稿")
+        engine.emit("本地修订", final: false); await VoiceTests.tick()
+        precondition(dictation.subtitle == "本地修订" && store.mainDraft == "原草稿")
+        dictation.finishRecording()
+        precondition(voice.isDictating && !voice.canStartCall && !audio.capturing)
+        voice.test(configuration: VoiceConfiguration(), key: "test", preview: false)
+        precondition(!voice.testing, "Local finalization still excludes voice probes")
+        store.mainDraft = "编辑后的草稿"
+        let lateFinal = engine.receive
+        engine.emit("本地最终文本", final: true); await VoiceTests.tick()
+        precondition(dictation.state == .idle && store.mainDraft == "编辑后的草稿\n本地最终文本")
+        engine.emit("重复最终文本", final: true); await VoiceTests.tick()
+        precondition(store.mainDraft == "编辑后的草稿\n本地最终文本")
+        precondition(source.histories.isEmpty && audio.played.isEmpty, "Local STT never sends, calls a model or plays TTS")
+
+        // Reproduce clicking the mic to finish after a visible English hypothesis.
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        engine.emit("first version", final: false); await VoiceTests.tick()
+        engine.emit("corrected English text", final: false); await VoiceTests.tick()
+        precondition(dictation.subtitle == "corrected English text")
+        let beforeEmptyFinal = store.mainDraft
+        dictation.finishRecording()
+        engine.emit("", final: false); await VoiceTests.tick()
+        precondition(dictation.subtitle == "corrected English text", "Empty terminal hypotheses cannot erase the displayed text")
+        engine.emit(" ", final: true); await VoiceTests.tick()
+        precondition(dictation.state == .idle && dictation.error == nil
+                     && store.mainDraft == beforeEmptyFinal + "\ncorrected English text")
+        engine.emit("", final: true); await VoiceTests.tick()
+        precondition(store.mainDraft == beforeEmptyFinal + "\ncorrected English text", "Fallback final is appended once")
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        let beforeChinese = store.mainDraft
+        engine.emit("中文听写结果", final: false); await VoiceTests.tick()
+        dictation.finishRecording(); engine.emit("", final: true); await VoiceTests.tick()
+        precondition(dictation.state == .idle && store.mainDraft == beforeChinese + "\n中文听写结果")
+
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        let draft = store.mainDraft
+        lateFinal?(ASRResult(result: .init(text: "旧轮迟到结果", utterances: nil), streamFinal: true), nil)
+        engine.emit("未确认", final: false); await VoiceTests.tick()
+        precondition(store.mainDraft == draft && dictation.subtitle == "未确认")
+        dictation.cancel(discard: true)
+        engine.emit("取消后迟到结果", final: true); await VoiceTests.tick()
+        precondition(!audio.capturing && !dictation.isActive && store.mainDraft == draft)
+
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        engine.emit("失败时不能提交临时文字", final: false); await VoiceTests.tick()
+        engine.receive?(nil, "测试识别失败"); await VoiceTests.tick()
+        precondition(dictation.state == .failed && dictation.error?.contains("测试识别失败") == true
+                     && remoteStarts == 0 && store.mainDraft == draft, "Local runtime failure never switches to remote")
+
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        dictation.finishRecording(); try await Task.sleep(for: .milliseconds(70))
+        precondition(dictation.state == .failed && !audio.capturing && store.mainDraft == draft)
+        engine.emit("超时后迟到", final: true); await VoiceTests.tick()
+        precondition(store.mainDraft == draft)
+
+        // Speech can finalize itself (for example at its duration limit).
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        engine.emit("自然定稿", final: true); await VoiceTests.tick()
+        precondition(dictation.state == .idle && !audio.capturing && store.mainDraft == draft + "\n自然定稿")
+
+        engine.supportsOnDeviceRecognition = false
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        precondition(dictation.state == .failed && !audio.capturing && dictation.error?.contains("不支持 Apple 本地") == true)
+        engine.supportsOnDeviceRecognition = true
+
+        settings.voiceAPIKey = "remote-key"; settings.saveVoice()
+        let previousLocalStarts = localStarts
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        precondition(remoteStarts == 1 && localStarts == previousLocalStarts && audio.capturing)
+        precondition(remote.keys == ["remote-key"], "Only the saved dedicated speech key reaches Doubao")
+        remote.pending?.resume(throwing: SettingsError("远程鉴权失败")); remote.pending = nil
+        await VoiceTests.tick()
+        precondition(dictation.state == .failed && dictation.error == "远程鉴权失败"
+                     && localStarts == previousLocalStarts, "Configured remote failure must not switch providers")
+        settings.voiceAPIKey = ""; settings.saveVoice()
+        for (baseURL, model, modelKey) in [
+            ("https://api.deepseek.com", "deepseek-chat", "deepseek-text-key"),
+            ("http://localhost:11434/v1", "llama3", "ollama-placeholder"),
+            ("https://api.openai.com/v1", "text-model", "other-text-key"),
+            ("https://ark.cn-beijing.volces.com/api/v3", "doubao-model", "model-only-key")
+        ] {
+            settings.draft.baseURL = baseURL; settings.draft.model = model
+            settings.apiKey = modelKey; settings.save()
+            precondition(settings.notice == nil)
+            settings.apiKey = "unsaved-edit"
+            settings.voiceAPIKey = "unsaved-speech-key"
+            precondition((try? settings.savedDictationKey()) == nil, "Text provider and unsaved speech fields cannot supply a dictation key")
+            let localBefore = localStarts
+            let remoteBefore = remoteStarts, keysBefore = remote.keys
+            dictation.start(conversation: conversation); await VoiceTests.tick()
+            precondition(remoteStarts == remoteBefore && remote.keys == keysBefore && localStarts == localBefore + 1 && audio.capturing,
+                         "Without a saved dedicated speech key every text provider uses Apple STT")
+            dictation.cancel(discard: true)
+            settings.voiceAPIKey = "plan-speech-key"; settings.saveVoice()
+            dictation.start(conversation: conversation); await VoiceTests.tick()
+            precondition(remoteStarts == remoteBefore + 1 && remote.keys == keysBefore + ["plan-speech-key"] && localStarts == localBefore + 1,
+                         "Dedicated speech credentials select Doubao independently of the text provider")
+            dictation.cancel(discard: true)
+            settings.voiceAPIKey = ""; settings.saveVoice()
+        }
+
+        // An authorization prompt owns the dictation slot, but must never open the mic after cancellation.
+        var permissionReply: CheckedContinuation<Bool, Never>?
+        let delayedAudio = FakeAudio(), delayedRecognizer = DictationRecognizer()
+        let delayed = DictationController(audio: delayedAudio, localRecognizer: {
+            _ = await withCheckedContinuation { permissionReply = $0 }
+            return delayedRecognizer
+        }, permission: { true })
+        let delayedVoice = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() }, permission: { true })
+        let delayedWorkspace = WorkspaceStore(initialStore: TaskStore(source: FakeSource()), dictation: delayed, voice: delayedVoice)
+        let emptySettings = SettingsStore(secrets: FakeSecrets())
+        delayed.attach(workspace: delayedWorkspace, settings: emptySettings)
+        delayedVoice.attach(workspace: delayedWorkspace, settings: emptySettings)
+        defer { delayedWorkspace.shutdown() }
+        delayed.start(conversation: delayedWorkspace.selected!)
+        await VoiceTests.tick()
+        precondition(delayed.isActive && !delayedAudio.capturing && delayedVoice.isDictating)
+        precondition(!delayedVoice.start(conversation: delayedWorkspace.selected!, configuration: VoiceConfiguration(), key: "test"))
+        delayedVoice.test(configuration: VoiceConfiguration(), key: "test", preview: false)
+        precondition(!delayedVoice.testing)
+        delayed.cancel(discard: true)
+        permissionReply?.resume(returning: true); await VoiceTests.tick()
+        precondition(delayedRecognizer.cancelled && !delayedAudio.capturing && !delayed.isActive
+                     && delayedWorkspace.selected!.store.mainDraft.isEmpty)
     }
 }

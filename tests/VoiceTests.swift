@@ -169,6 +169,7 @@ actor PendingModelTester: ConnectionTesting {
         await probeTests()
         await speakerPreviewTests()
         try await captureDiagnosticsTests()
+        try await AppleSpeechTests.run()
         try await DictationTests.run()
         try await agentVoiceTests()
         print("Passed \(checks) voice checks (no network, keychain, microphone or playback used).")

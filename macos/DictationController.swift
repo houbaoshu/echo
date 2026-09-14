@@ -17,6 +17,7 @@ import Combine
     private weak var store: TaskStore?
     private let audio: any VoiceAudioHandling
     private let makeRecognizer: () -> any VoiceRecognizing
+    private let makeLocalRecognizer: () async throws -> any VoiceRecognizing
     private let permission: () async -> Bool
     private let finalizationTimeout: Duration
     private let captureTimeout: Duration
@@ -34,9 +35,11 @@ import Combine
 
     init(audio: any VoiceAudioHandling = VoiceAudio(),
          recognizer: @escaping () -> any VoiceRecognizing = { DoubaoRecognizer() },
+         localRecognizer: @escaping () async throws -> any VoiceRecognizing = { try await AppleSpeechRecognizer.prepare() },
          finalizationTimeout: Duration = .seconds(5), captureTimeout: Duration = .seconds(5),
          permission: @escaping () async -> Bool = { await AVCaptureDevice.requestAccess(for: .audio) }) {
         self.audio = audio; makeRecognizer = recognizer; self.permission = permission
+        makeLocalRecognizer = localRecognizer
         self.finalizationTimeout = finalizationTimeout; self.captureTimeout = captureTimeout
         super.init()
         audio.onFailure = { [weak self] error in
@@ -50,13 +53,15 @@ import Combine
     func clearError() { error = nil; if state == .failed { state = .idle } }
     func start(conversation: WorkspaceConversation) {
         guard !isActive, !retired else { return }
-        do {
-            guard let settings else { throw SettingsError("无法开始转写：缺少语音设置。") }
-            start(conversation: conversation, key: try settings.savedDictationKey())
-        } catch { self.error = error.localizedDescription; state = .failed }
+        guard let settings else { error = "无法开始转写：缺少语音设置。"; state = .failed; return }
+        // Configuration chooses one provider for this recording; runtime failures never switch it.
+        start(conversation: conversation, remoteKey: try? settings.savedDictationKey())
     }
     // Explicit credentials and injected interfaces keep lifecycle tests offline.
     func start(conversation: WorkspaceConversation, key: String) {
+        start(conversation: conversation, remoteKey: key)
+    }
+    private func start(conversation: WorkspaceConversation, remoteKey: String?) {
         guard !retired, !isActive else { return }
         guard workspace?.voice.isActive != true, workspace?.voice.testing != true else {
             error = "请先结束 Live Voice 或语音测试，再开始转写。"; state = .failed; return
@@ -65,7 +70,17 @@ import Combine
         conversationID = conversation.id; store = conversation.store
         confirmed = []; finalTranscript = nil; tracker = VoiceUtteranceTracker(); subtitle = ""; error = nil; state = .recording
         startup = Task { [weak self] in
-            guard let self else { return }
+            guard let self, self.generation == current, !Task.isCancelled else { return }
+            let recognizer: any VoiceRecognizing
+            do {
+                if remoteKey != nil { recognizer = self.makeRecognizer() }
+                else { recognizer = try await self.makeLocalRecognizer() }
+            } catch {
+                guard self.generation == current, !Task.isCancelled else { return }
+                self.complete(error: error.localizedDescription); return
+            }
+            guard self.generation == current, !Task.isCancelled else { recognizer.cancel(); return }
+            self.recognizer = recognizer
             let allowed = await self.permission()
             guard self.generation == current, !Task.isCancelled else { return }
             guard allowed else { self.complete(error: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。"); return }
@@ -73,23 +88,26 @@ import Combine
                 let captured = try self.audio.start(capture: true)
                 let (stream, input) = AsyncThrowingStream<Data, Error>.makeStream(bufferingPolicy: .bufferingOldest(10))
                 self.audioInput = input
-                let recognizer = self.makeRecognizer(); self.recognizer = recognizer
                 self.recognitionTask = Task { [weak self] in
+                    guard let self, self.generation == current, !Task.isCancelled else { return }
                     do {
-                        try await recognizer.run(key: key, audio: stream) { [weak self] result in
+                        try await recognizer.run(key: remoteKey ?? "", audio: stream) { [weak self] result in
                             guard let self, self.generation == current, self.isActive else { return }
                             let update = self.tracker.accept(result)
-                            self.subtitle = update.subtitle
+                            // Apple provides cumulative text, without Doubao utterance timestamps.
+                            self.subtitle = remoteKey == nil ? (result.result?.text ?? "") : update.subtitle
                             self.confirmed.append(contentsOf: update.committed)
                             if result.streamFinal, let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                                 self.finalTranscript = text
                             }
                         }
-                        guard let self, self.generation == current, !Task.isCancelled else { return }
-                        self.complete(error: self.state == .finalizing ? nil : "语音识别连接已结束，请重新开始转写。")
+                        guard self.generation == current, !Task.isCancelled else { return }
+                        let completed = self.state == .finalizing || (remoteKey == nil && self.finalTranscript != nil)
+                        self.complete(error: completed ? nil : "语音识别连接已结束，请重新开始转写。")
                     } catch {
-                        guard let self, self.generation == current, !Task.isCancelled else { return }
-                        self.complete(error: error is SettingsError ? error.localizedDescription : "语音识别失败，请检查网络后重试。")
+                        guard self.generation == current, !Task.isCancelled else { return }
+                        self.complete(error: error is SettingsError ? error.localizedDescription :
+                            (remoteKey == nil ? "Apple 本地语音识别失败，请重新开始转写。" : "语音识别失败，请检查网络后重试。"))
                     }
                 }
                 self.watchdog = Task { [weak self, captureTimeout] in

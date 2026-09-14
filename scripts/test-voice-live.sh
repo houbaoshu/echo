@@ -23,7 +23,7 @@ swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
     -I runtime/include -I agent-bridge/include "${sources[@]}" tests/VoiceLiveTests.swift \
     target/aarch64-apple-darwin/release/libecho_runtime.a \
     target/aarch64-apple-darwin/release/libecho_agent.a \
-    -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -lz \
+    -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -framework Speech -lz \
     -o "$probe_app/Contents/MacOS/Echo"
 /bin/zsh scripts/sign-app.sh --signing development "$probe_app"
 # A hard overall deadline also covers a service that accepts sockets but never finishes.

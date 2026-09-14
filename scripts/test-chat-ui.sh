@@ -13,6 +13,6 @@ swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
     -I runtime/include -I agent-bridge/include "${sources[@]}" tests/ConversationUITests.swift \
     target/aarch64-apple-darwin/release/libecho_runtime.a \
     target/aarch64-apple-darwin/release/libecho_agent.a \
-    -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -lz \
+    -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -framework Speech -lz \
     -o build/chat-ui-tests
 build/chat-ui-tests
