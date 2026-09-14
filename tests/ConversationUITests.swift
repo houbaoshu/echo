@@ -834,6 +834,74 @@ import SwiftUI
         try await settlePreviewLayout()
         assertMarkdownPreview()
         print("PASS: .md/.markdown rendered read-only preview, shared code blocks, expansion and switching back to plain text")
+        for (name, width, height) in [("small.png", 40, 20), ("large.png", 2048, 1024)] {
+            let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+                bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            bitmap.bitmapData!.initialize(repeating: 0, count: bitmap.bytesPerRow * height)
+            for y in 0..<height {
+                for x in 0..<width { bitmap.bitmapData![y * bitmap.bytesPerRow + x * 3] = 255 }
+            }
+            try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent(name))
+            workspace.fileBrowser.openFile(name)
+            try await settlePreviewLayout()
+            func assertImagePreview() {
+                guard let view = findAccessibility("projectFiles.image", in: inspector) as? NSImageView else {
+                    preconditionFailure("Image preview must appear")
+                }
+                precondition(!view.isEditable && findAccessibility("projectFiles.text", in: inspector) == nil)
+                precondition(view.bounds.width > 0 && view.bounds.height > 0)
+                // NSImageCell.imageRect reports the whole cell, so measure rendered pixels.
+                // Draw the native cell on a bitmap surface: the live inspector's
+                // glass/layer-backed hierarchy cannot be captured with cacheDisplay.
+                let rendered = NSBitmapImageRep(bitmapDataPlanes: nil,
+                    pixelsWide: Int(view.bounds.width), pixelsHigh: Int(view.bounds.height),
+                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rendered)
+                view.cell!.draw(withFrame: view.bounds, in: view)
+                NSGraphicsContext.restoreGraphicsState()
+                var minX = rendered.pixelsWide, minY = rendered.pixelsHigh, maxX = -1, maxY = -1
+                for y in 0..<rendered.pixelsHigh {
+                    for x in 0..<rendered.pixelsWide {
+                        if let color = rendered.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                           color.redComponent > 0.8, color.greenComponent < 0.2, color.blueComponent < 0.2 {
+                            minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y)
+                        }
+                    }
+                }
+                precondition(maxX >= minX && maxY >= minY, "Image must actually render")
+                let scale = CGFloat(rendered.pixelsWide) / view.bounds.width
+                let drawn = NSSize(width: CGFloat(maxX - minX + 1) / scale, height: CGFloat(maxY - minY + 1) / scale)
+                precondition(abs(drawn.width / drawn.height - 2) < 0.03, "Rendered image preserves aspect ratio")
+                precondition(drawn.width <= view.bounds.width + 1 && drawn.height <= view.bounds.height + 1,
+                             "Large image fits available area")
+                precondition(drawn.width <= CGFloat(width) + 1 && drawn.height <= CGFloat(height) + 1, "Small images are never enlarged")
+                if name == "small.png" { precondition(abs(drawn.width - 40) < 1 && abs(drawn.height - 20) < 1) }
+                precondition(conversation.store.mainDraft == savedDraft && editor(in: content) === composer)
+            }
+            assertImagePreview()
+            try await togglePreview()
+            assertImagePreview()
+            try await togglePreview()
+            assertImagePreview()
+        }
+        try Data("broken".utf8).write(to: root.appendingPathComponent("broken.png"))
+        workspace.fileBrowser.openFile("broken.png")
+        try await settlePreviewLayout()
+        precondition(findAccessibility("projectFiles.image", in: inspector) == nil)
+        guard case .information(let imageError) = workspace.fileBrowser.state.preview else {
+            preconditionFailure("Broken images must show an unavailable state")
+        }
+        precondition(imageError.contains("无法预览图片"))
+        workspace.fileBrowser.openFile("folder/child.txt")
+        try await settlePreviewLayout()
+        precondition((findAccessibility("projectFiles.text", in: inspector) as? NSTextView)?.string == "child")
+        workspace.fileBrowser.openFile("README.md")
+        try await settlePreviewLayout()
+        assertMarkdownPreview()
+        print("PASS: read-only image fit without enlargement, expanded image layout, decode failure, text/Markdown switching and composer preservation")
         // Native glass does not support cacheDisplay snapshots. Render the same
         // inspector content in a plain hosting surface for a reviewable artifact.
         let previewHost = NSHostingView(rootView: WorkspaceInspector(workspace: workspace)

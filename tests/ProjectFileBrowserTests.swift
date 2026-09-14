@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import AppKit
 
 @MainActor enum ProjectFileBrowserTests {
     static func wait(_ label: String, _ condition: () -> Bool) async throws {
@@ -60,6 +61,7 @@ import Darwin
         }
         precondition(permission.contains("权限"))
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.appendingPathComponent("dir/empty").path)
+        try testImages(root: root)
 
         let project = WorkspaceProject(name: "A", path: root.path)
         let browser = ProjectFileBrowserStore()
@@ -174,5 +176,57 @@ import Darwin
         try await Task.sleep(for: .milliseconds(250))
         precondition(slow.location == nil && slow.state.directories.isEmpty)
         print("PASS: file browser encodings, limits, links, permissions, lazy tree, memory navigation, filesystem watching and late-result isolation")
+    }
+
+    private static func testImages(root: URL) throws {
+        func preview(_ path: String, _ data: Data) throws -> ProjectFilePreview {
+            try data.write(to: root.appendingPathComponent(path))
+            return ProjectFileIO.preview(root: root.path, path: path)
+        }
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 768, pixelsHigh: 512,
+            bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        // Incompressible pixels produce a real PNG above the text size limit.
+        var seed: UInt32 = 42
+        for index in 0..<(bitmap.bytesPerRow * bitmap.pixelsHigh) {
+            seed = seed &* 1_664_525 &+ 1_013_904_223
+            bitmap.bitmapData![index] = UInt8(truncatingIfNeeded: seed >> 24)
+        }
+        for (ext, format) in [("PNG", NSBitmapImageRep.FileType.png), ("jpg", .jpeg), ("jpeg", .jpeg), ("gif", .gif)] {
+            let data = bitmap.representation(using: format, properties: [:])!
+            if ext == "PNG" { precondition(data.count > ProjectFileIO.previewLimit) }
+            guard case .image(let image) = try preview("sample.\(ext)", data) else {
+                preconditionFailure("Must decode \(ext), independently of the text limit")
+            }
+            precondition(image.width == 768 && image.height == 512)
+        }
+        let webp = try Data(contentsOf: URL(fileURLWithPath: "assets/pets/chiyan/spritesheet.webp"))
+        guard case .image = try preview("sample.webp", webp) else { preconditionFailure("System supports WebP") }
+        let wide = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8192, pixelsHigh: 16,
+            bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        wide.bitmapData!.initialize(repeating: 0, count: wide.bytesPerRow * wide.pixelsHigh)
+        guard case .image(let reduced) = try preview("wide.png", wide.representation(using: .png, properties: [:])!) else {
+            preconditionFailure("Large dimensions must be downsampled")
+        }
+        precondition(reduced.width == 4096 && reduced.height == 8)
+        for (name, data) in [("broken.png", Data("invalid image".utf8)), ("empty.jpg", Data()),
+                             ("unsupported.svg", Data("<svg></svg>".utf8))] {
+            guard case .information(let message) = try preview(name, data) else { preconditionFailure(name) }
+            precondition(message.contains("无法预览图片"))
+        }
+        let oversized = root.appendingPathComponent("large.png")
+        try Data().write(to: oversized)
+        let handle = try FileHandle(forWritingTo: oversized)
+        try handle.truncate(atOffset: UInt64(ProjectFileIO.imagePreviewLimit + 1))
+        try handle.close()
+        precondition(ProjectFileIO.preview(root: root.path, path: "large.png") == .information("图片超过 32 MiB，无法预览。"))
+        try FileManager.default.createSymbolicLink(atPath: root.appendingPathComponent("link.png").path,
+                                                 withDestinationPath: "sample.PNG")
+        guard case .information(let message) = ProjectFileIO.preview(root: root.path, path: "link.png") else {
+            preconditionFailure("Images must retain descriptor-relative link protection")
+        }
+        precondition(message.contains("符号链接"))
+        print("PASS: PNG above 1 MiB, JPEG/JPG, GIF, WebP, image downsampling, corrupt/unsupported images, image size limit and links")
     }
 }

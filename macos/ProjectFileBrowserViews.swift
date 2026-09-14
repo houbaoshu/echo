@@ -135,6 +135,10 @@ private struct ProjectFileBrowserView: View {
                         }
                     }.id(browser.state.selectedPath).accessibilityIdentifier("projectFiles.preview")
                 }
+            case .image(let image):
+                ProjectReadOnlyImage(image: image)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).padding(14)
+                    .accessibilityIdentifier("projectFiles.preview")
             case .information(let message), .failed(let message):
                 VStack(alignment: .leading, spacing: 12) {
                     Text(message).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
@@ -149,6 +153,24 @@ private struct ProjectFileBrowserView: View {
                 Spacer()
             }
         }
+    }
+}
+
+struct ProjectReadOnlyImage: NSViewRepresentable {
+    let image: CGImage
+    func makeNSView(context: Context) -> NSImageView {
+        let view = NSImageView()
+        view.imageScaling = .scaleProportionallyDown
+        view.imageAlignment = .alignCenter
+        view.isEditable = false
+        view.setAccessibilityIdentifier("projectFiles.image")
+        return view
+    }
+    func updateNSView(_ view: NSImageView, context: Context) {
+        view.image = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSImageView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
     }
 }
 

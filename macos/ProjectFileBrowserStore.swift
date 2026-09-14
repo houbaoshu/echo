@@ -1,6 +1,8 @@
 import Foundation
 import Combine
 import Darwin
+import ImageIO
+import UniformTypeIdentifiers
 
 struct ProjectFileEntry: Identifiable, Equatable, Sendable {
     enum Kind: Sendable { case directory, file, symbolicLink, other }
@@ -19,6 +21,7 @@ enum ProjectDirectoryState: Equatable, Sendable {
 enum ProjectFilePreview: Equatable, Sendable {
     case loading
     case text(String)
+    case image(CGImage)
     case information(String)
     case failed(String)
 }
@@ -139,6 +142,7 @@ enum ProjectFilePreview: Equatable, Sendable {
 // refuse links at every path component, including directories replaced after listing.
 enum ProjectFileIO {
     static let previewLimit = 1_048_576
+    static let imagePreviewLimit = 32 * 1_048_576
     private static func errorMessage(_ code: Int32) -> String {
         switch code {
         case ENOENT: return "文件或文件夹已删除或不可用。"
@@ -212,9 +216,14 @@ enum ProjectFileIO {
             defer { close(fd) }
             var info = stat()
             guard fstat(fd, &info) == 0 else { throw ReadError(message: errorMessage(errno)) }
-            guard info.st_mode & S_IFMT == S_IFREG else { return .information("仅支持预览普通文本文件。") }
-            guard info.st_size <= previewLimit else { return .information("文件超过 1 MiB，无法预览。") }
-            var bytes = [UInt8](repeating: 0, count: previewLimit + 1)
+            guard info.st_mode & S_IFMT == S_IFREG else { return .information("仅支持预览普通文本和图片文件。") }
+            let ext = (path as NSString).pathExtension.lowercased()
+            let isImage = UTType(filenameExtension: ext)?.conforms(to: .image) == true
+                || ["png", "jpg", "jpeg", "webp", "gif"].contains(ext)
+            let limit = isImage ? imagePreviewLimit : previewLimit
+            let sizeMessage = isImage ? "图片超过 32 MiB，无法预览。" : "文件超过 1 MiB，无法预览。"
+            guard info.st_size <= limit else { return .information(sizeMessage) }
+            var bytes = [UInt8](repeating: 0, count: limit + 1)
             var total = 0
             while total < bytes.count {
                 let count = bytes.withUnsafeMutableBytes { buffer in
@@ -227,8 +236,22 @@ enum ProjectFileIO {
                 if count == 0 { break }
                 total += count
             }
-            guard total <= previewLimit else { return .information("文件超过 1 MiB，无法预览。") }
+            guard total <= limit else { return .information(sizeMessage) }
             let data = Data(bytes.prefix(total))
+            if isImage {
+                // Decode off the main actor, apply orientation and bound decoded memory.
+                // GIFs use their first frame; no animation or editing state is needed.
+                guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                      let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                        kCGImageSourceThumbnailMaxPixelSize: 4096,
+                        kCGImageSourceShouldCacheImmediately: true
+                      ] as CFDictionary) else {
+                    return .information("无法预览图片：文件已损坏或格式不受支持。")
+                }
+                return .image(image)
+            }
             let text: String?
             if data.starts(with: [0xFF, 0xFE]) { text = String(data: data.dropFirst(2), encoding: .utf16LittleEndian) }
             else if data.starts(with: [0xFE, 0xFF]) { text = String(data: data.dropFirst(2), encoding: .utf16BigEndian) }
