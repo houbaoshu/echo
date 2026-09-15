@@ -120,6 +120,15 @@ struct ModelSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 0) {
+                row("Provider") {
+                    Picker("Provider", selection: Binding(get: { settings.selectedProvider }, set: { settings.selectProvider($0) })) {
+                        ForEach(ModelProvider.allCases, id: \.self) { provider in
+                            Text(provider.title).tag(provider)
+                        }
+                    }.pickerStyle(.menu).labelsHidden()
+                        .accessibilityLabel("Provider").accessibilityIdentifier("settings.provider")
+                }
+                Divider()
                 row("协议") {
                     Picker("协议", selection: $settings.draft.apiProtocol) {
                         ForEach(ModelAPIProtocol.allCases, id: \.self) { apiProtocol in
@@ -146,7 +155,7 @@ struct ModelSettingsView: View {
                         Button { settings.apiKey = "" } label: { Image(systemName: "xmark.circle") }
                             .buttonStyle(.plain).disabled(settings.apiKey.isEmpty).help("清除 API Key，保存后生效")
                             .accessibilityLabel("清除 API Key")
-                    }
+                    }.disabled(!settings.selectedProvider.requiresKey)
                 }
                 Divider()
                 row("默认模型") {
@@ -170,12 +179,13 @@ struct ModelSettingsView: View {
             }
         }
         .onDisappear { revealsKey = false }
+        .onChange(of: settings.selectedProvider) { _, _ in revealsKey = false }
     }
     private var saveActions: some View {
         HStack(spacing: 12) {
             Button("保存") { settings.save() }.buttonStyle(.borderedProminent).disabled(!settings.isDirty)
                 .accessibilityIdentifier("settings.save")
-            Button("还原修改") { settings.restore() }.disabled(!settings.isDirty)
+            Button("还原修改") { settings.restore() }.disabled(!settings.canRestoreModel)
         }
     }
     private var testAction: some View {
@@ -183,7 +193,7 @@ struct ModelSettingsView: View {
             if settings.testing { ProgressView().controlSize(.small) }
             Button(settings.testing ? "取消测试" : "测试连接") {
                 if settings.testing { settings.cancelTest() } else { settings.testConnection() }
-            }.help("使用当前配置发送一次简短请求，不会自动保存")
+            }.help("验证当前协议的工具调用能力，不执行命令，也不自动保存")
                 .accessibilityIdentifier("settings.test")
         }
     }

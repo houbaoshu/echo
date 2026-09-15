@@ -89,6 +89,7 @@ final class VoicePCMConverter: @unchecked Sendable {
     func resetCapture(epoch: Int, paused: Bool)
     func monitorCapture(epoch: Int)
     func setPlaybackPaused(_ paused: Bool)
+    func setOutputMuted(_ muted: Bool)
     func play(_ data: Data) async throws
     func drain() async throws
     func interruptPlayback()
@@ -130,6 +131,11 @@ extension VoiceAudioHandling {
         playbackPaused = paused
         if paused { player?.pause() }
         else if engine?.isRunning == true { player?.play() }
+    }
+
+    func setOutputMuted(_ muted: Bool) {
+        // Silence this Voice engine without pausing queued audio or changing system volume.
+        engine?.mainMixerNode.outputVolume = muted ? 0 : 1
     }
 
     func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {

@@ -1,0 +1,4 @@
+module EchoAgentBridge {
+    header "echo_agent.h"
+    export *
+}

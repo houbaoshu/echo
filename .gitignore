@@ -28,3 +28,6 @@
 # Xcode
 xcuserdata/
 *.xcuserstate
+
+# 文档与规划记录
+/docs/

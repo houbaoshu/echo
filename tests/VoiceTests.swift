@@ -44,6 +44,8 @@ actor PendingModelTester: ConnectionTesting {
     }
     func monitorCapture(epoch: Int) { captureEpoch = epoch; capturePaused = false; monitoring = true }
     func setPlaybackPaused(_ paused: Bool) { playbackPaused = paused }
+    var outputMuted = false
+    func setOutputMuted(_ muted: Bool) { outputMuted = muted }
     func play(_ data: Data) async throws {
         if let onPlay { try await onPlay(data) }
         else { played.append(data) }
@@ -149,6 +151,15 @@ actor PendingModelTester: ConnectionTesting {
     }
     @MainActor static func main() async throws {
         _ = NSApplication.shared
+        if CommandLine.arguments.contains("--dictation-only") {
+            try await AppleSpeechTests.run()
+            try await DictationTests.run()
+            return
+        }
+        if CommandLine.arguments.contains("--agent-integration") {
+            try await agentVoiceIntegrationTests()
+            return
+        }
         snapshotTests()
         try await captureWatchdogPauseTests()
         try await mutedPlaybackTailProtectionTests()
@@ -165,7 +176,9 @@ actor PendingModelTester: ConnectionTesting {
         await probeTests()
         await speakerPreviewTests()
         try await captureDiagnosticsTests()
+        try await AppleSpeechTests.run()
         try await DictationTests.run()
+        try await agentVoiceTests()
         print("Passed \(checks) voice checks (no network, keychain, microphone or playback used).")
     }
     @MainActor static func snapshotTests() {
@@ -252,6 +265,18 @@ actor PendingModelTester: ConnectionTesting {
         check(voice.snapshot.replyAudio == .playing(run) && voice.snapshot.recognition == .off(.currentReply)
               && voice.status == "正在播报 · 可打断" && voice.snapshot.bargeIn == .armed(run),
               "playback keeps ASR closed and arms local barge-in monitoring")
+        let beforeSpeakerMute = voice.snapshot
+        let interrupts = audio.stops
+        voice.toggleSpeakerMute()
+        check(voice.snapshot.speakerMuted && audio.outputMuted && !audio.playbackPaused
+              && !voice.isMuted && audio.stops == interrupts && store.isGenerating,
+              "speaker mute silences output without pausing playback, muting microphone or stopping the reply")
+        var expectedMuted = beforeSpeakerMute
+        expectedMuted.speakerMuted = true
+        check(voice.snapshot == expectedMuted, "speaker mute only changes output preference")
+        voice.toggleSpeakerMute()
+        check(!audio.outputMuted && voice.snapshot == beforeSpeakerMute, "speaker unmute restores output without restarting playback")
+        voice.toggleSpeakerMute()
         voice.toggleMute()
         check(voice.snapshot.microphone == .muted && voice.snapshot.recognition == .off(.muted)
               && voice.snapshot.replyAudio == .playing(run) && voice.status == "正在播报 · 麦克风已静音",
@@ -267,7 +292,9 @@ actor PendingModelTester: ConnectionTesting {
               "drain completion preserves user mute")
         voice.toggleMute(); await tick()
         check(voice.status == "正在聆听" && voice.snapshot.microphone == .enabled && voice.snapshot.recognition == .listening, "existing unmute resumes recognition")
+        check(voice.snapshot.speakerMuted && audio.outputMuted, "microphone toggles and reply drain preserve speaker mute")
         audio.onFailure?("设备变化")
+        check(!voice.snapshot.speakerMuted, "speaker mute belongs only to the ended Voice session")
         check(voice.snapshot.session == .inactive && voice.snapshot.recognition == .off(.idle)
               && voice.snapshot.replyAudio == .none && voice.snapshot.subtitle.isEmpty
               && voice.snapshot.error?.conversationID == conversation.id && voice.error == "设备变化",

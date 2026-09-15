@@ -113,6 +113,12 @@ enum VoiceWire {
 }
 
 struct ASRResult: Decodable, Sendable {
+    // Apple can finalize a phrase while isFinal remains false for the request.
+    // This metadata is never decoded from the remote ASR protocol.
+    struct LocalSegment: Sendable {
+        let start: TimeInterval
+        let duration: TimeInterval
+    }
     struct Result: Decodable, Sendable {
         struct Utterance: Decodable, Sendable {
             let text: String
@@ -126,7 +132,10 @@ struct ASRResult: Decodable, Sendable {
     let result: Result?
     // Transport metadata, not part of the service JSON payload.
     var streamFinal = false
-    init(result: Result?, streamFinal: Bool = false) { self.result = result; self.streamFinal = streamFinal }
+    var localSegment: LocalSegment? = nil
+    init(result: Result?, streamFinal: Bool = false, localSegment: LocalSegment? = nil) {
+        self.result = result; self.streamFinal = streamFinal; self.localSegment = localSegment
+    }
     private enum CodingKeys: String, CodingKey { case result }
 }
 

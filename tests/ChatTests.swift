@@ -103,6 +103,7 @@ import Foundation
         precondition(store.messages.last?.status == .failed)
         print("PASS: chat states, Stop, Retry, context and archive compatibility")
         try contextTests()
+        try SettingsTests.run()
         try await ModelTests.run()
     }
     @MainActor static func contextTests() throws {

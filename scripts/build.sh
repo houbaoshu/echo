@@ -42,11 +42,14 @@ mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources/pets/chiyan"
 # Include new app sources automatically, matching the test scripts' discovery.
 typeset -a sources=(macos/*.swift)
 swiftc -swift-version 6 -O -target arm64-apple-macosx26.0 \
-    -I runtime/include "${sources[@]}" \
+    -I runtime/include -I agent-bridge/include "${sources[@]}" \
     target/aarch64-apple-darwin/release/libecho_runtime.a \
-    -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -lz \
+    target/aarch64-apple-darwin/release/libecho_agent.a \
+    -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -framework Speech -lz \
     -o "$app_dir/Contents/MacOS/Echo"
 cp macos/Info.plist "$app_dir/Contents/Info.plist"
+mkdir -p "$app_dir/Contents/Resources/agent"
+cp "$project_dir/../mini-agent-agent-core-exp/config/prompts/conversation.md" "$app_dir/Contents/Resources/agent/conversation.md"
 rsync -a --delete --exclude .DS_Store assets/pets/ "$app_dir/Contents/Resources/pets/"
 /bin/zsh "$project_dir/scripts/sign-app.sh" --signing "$signing_mode" "$app_dir"
 echo "Built $app_dir (signing: $signing_mode)"

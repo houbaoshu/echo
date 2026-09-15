@@ -74,11 +74,14 @@ struct MainWindowLayout {
     let splitController = MainSplitController()
     private(set) var sidebarItem: NSSplitViewItem!
     private(set) var inspectorItem: NSSplitViewItem!
+    private(set) var conversationItem: NSSplitViewItem!
     private(set) var layout = MainWindowLayout()
     private let defaults: UserDefaults
     private var applyingLayout = false
     private var ready = false
     private var observation: AnyCancellable?
+    private var previewObservation: AnyCancellable?
+    private let projectIcon = NSImageView()
     private let titleField = NSTextField(labelWithString: "新会话")
     private var manualColumn: MainWindowLayout.Column?
     private static let leftID = NSToolbarItem.Identifier("chiyan.sidebar")
@@ -119,6 +122,8 @@ struct MainWindowLayout {
         sidebarItem.preferredThicknessFraction = 0.15; sidebarItem.isSpringLoaded = true
         let content = NSSplitViewItem(viewController: conversationHost)
         content.minimumThickness = 440; content.holdingPriority = .init(249)
+        content.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+        conversationItem = content
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspectorHost)
         inspectorItem.minimumThickness = 260; inspectorItem.maximumThickness = 380
         inspectorItem.canCollapse = true; inspectorItem.canCollapseFromWindowResize = true
@@ -170,6 +175,10 @@ struct MainWindowLayout {
         observation = workspace.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.refreshTitle() }
         }
+        previewObservation = workspace.fileBrowser.$isPreviewExpanded.removeDuplicates().sink { [weak self] _ in
+            // Published delivers before the stored value changes.
+            DispatchQueue.main.async { [weak self] in self?.applyLayout() }
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         refreshTitle()
         window.minSize = NSSize(width: 720, height: 520)
@@ -220,10 +229,34 @@ struct MainWindowLayout {
         workspace.select(owner.conversationID)
         workspace.requestComposerFocus(conversationID: owner.conversationID)
     }
-    func handleEscape() -> Bool {
+    private var composerPresentation: ComposerPresentation? {
+        guard let selected = workspace.selected else { return nil }
+        return ComposerPresentation(store: selected.store, voice: workspace.voice,
+                                    dictation: workspace.dictation, conversationID: selected.id)
+    }
+    var canToggleDictation: Bool {
+        guard let presentation = composerPresentation else { return false }
+        return presentation.microphoneEnabled || (presentation.mode == .dictationRecording && presentation.primaryEnabled)
+    }
+    func toggleDictation() {
+        guard canToggleDictation, let selected = workspace.selected else { return }
+        if workspace.dictation.isActive { workspace.dictation.finishRecording() }
+        else { workspace.dictation.start(conversation: selected) }
+    }
+    var canToggleVoice: Bool {
+        workspace.voice.snapshot.session.owner != nil ||
+            (workspace.selected != nil && workspace.voice.canStartCall && !workspace.dictation.isActive)
+    }
+    func toggleVoice() {
+        guard canToggleVoice else { return }
+        if let owner = workspace.voice.snapshot.session.owner { workspace.endVoice(owner: owner) }
+        else if let selected = workspace.selected { workspace.startVoice(conversationID: selected.id) }
+    }
+    var canHandleEscape: Bool {
         guard !isSettingsVisible else { return false }
         guard let window else { return false }
         if window.attachedSheet != nil { return false }
+        if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
         if let responder = window.firstResponder as? NSView {
             var current: NSView? = responder
             while let view = current {
@@ -233,14 +266,13 @@ struct MainWindowLayout {
                 current = view.superview
             }
         }
-        guard let selected = workspace.selected else { return false }
-        let isVoiceReplying = workspace.voice.conversationID == selected.id && workspace.voice.presentation.isReplyAudioActive
-        let canStop = selected.store.isGenerating || isVoiceReplying
-        if canStop {
-            workspace.stop(conversationID: selected.id)
-            return true
-        }
-        return false
+        guard let presentation = composerPresentation else { return false }
+        return presentation.canStop && presentation.stopEnabled
+    }
+    func handleEscape() -> Bool {
+        guard canHandleEscape, let selected = workspace.selected else { return false }
+        workspace.stop(conversationID: selected.id)
+        return true
     }
     func present() {
         guard let window else { return }
@@ -261,6 +293,7 @@ struct MainWindowLayout {
     }
     @objc func toggleInspector() {
         guard !isSettingsVisible else { return }
+        workspace.fileBrowser.collapsePreview()
         layout.inspectorPreferred = inspectorItem.isCollapsed
         manualColumn = .inspector; applyLayout(); saveLayout()
     }
@@ -273,13 +306,21 @@ struct MainWindowLayout {
         if !sidebar && !sidebarItem.isCollapsed { sidebarItem.isCollapsed = true }
         if !inspector && !inspectorItem.isCollapsed { inspectorItem.isCollapsed = true }
         if sidebar && sidebarItem.isCollapsed { sidebarItem.isCollapsed = false }
-        if inspector && inspectorItem.isCollapsed { inspectorItem.isCollapsed = false }
+        if inspector && inspectorItem.isCollapsed {
+            inspectorItem.isCollapsed = false
+            workspace.fileBrowser.select(project: workspace.selectedID.flatMap { workspace.project(for: $0) })
+            workspace.fileBrowser.refresh()
+        }
     }
     private func prepareResize(_ width: CGFloat) {
         guard !applyingLayout, !isSettingsVisible else { return }
         applyingLayout = true; defer { applyingLayout = false }
-        let visible = layout.visibleColumns(width: width)
+        let visible = visibleColumns(width: width)
         setVisibility(sidebar: visible.sidebar, inspector: visible.inspector)
+    }
+    private func visibleColumns(width: CGFloat, manual: MainWindowLayout.Column? = nil) -> (sidebar: Bool, inspector: Bool) {
+        if workspace.fileBrowser.isPreviewExpanded { return (layout.sidebarPreferred, true) }
+        return layout.visibleColumns(width: width, manual: manual)
     }
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
         prepareResize(frameSize.width)
@@ -289,7 +330,16 @@ struct MainWindowLayout {
         guard !applyingLayout, !isSettingsVisible, let window else { return }
         applyingLayout = true; defer { applyingLayout = false }
         let width = window.contentView?.bounds.width ?? window.frame.width
-        let visible = layout.visibleColumns(width: width, manual: manualColumn)
+        let expanded = workspace.fileBrowser.isPreviewExpanded
+        // Keep both hosting controllers mounted so preview scroll/selection and chat state survive.
+        if expanded {
+            inspectorItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
+            conversationItem.isCollapsed = true
+        } else {
+            conversationItem.isCollapsed = false
+            inspectorItem.maximumThickness = 380
+        }
+        let visible = visibleColumns(width: width, manual: manualColumn)
         setVisibility(sidebar: visible.sidebar, inspector: visible.inspector)
         // Reserve a footer when the sidebar is hidden, keeping the gear clear of the composer.
         workspaceBottomConstraint.constant = visible.sidebar ? 0 : -52
@@ -297,17 +347,18 @@ struct MainWindowLayout {
         splitController.splitView.layoutSubtreeIfNeeded()
         let available = splitController.splitView.bounds.width
         if visible.sidebar {
-            let maxWidth = available - 441 - (visible.inspector ? layout.inspectorWidth + 1 : 0)
+            let maxWidth = expanded ? available - 261 : available - 441 - (visible.inspector ? layout.inspectorWidth + 1 : 0)
             splitController.splitView.setPosition(min(layout.sidebarWidth, max(220, maxWidth)), ofDividerAt: 0)
         }
-        if visible.inspector {
+        if visible.inspector && !expanded {
             let maxWidth = available - 441 - (visible.sidebar ? layout.sidebarWidth + 1 : 0)
             splitController.splitView.setPosition(available - min(layout.inspectorWidth, max(260, maxWidth)) - 1, ofDividerAt: 1)
         }
         window.toolbar?.validateVisibleItems()
     }
     private func dividerChanged() {
-        guard !applyingLayout, !isSettingsVisible, window?.inLiveResize != true else { return }
+        guard !applyingLayout, !isSettingsVisible, !workspace.fileBrowser.isPreviewExpanded,
+              !conversationItem.isCollapsed, window?.inLiveResize != true else { return }
         if !sidebarItem.isCollapsed {
             layout.sidebarWidth = min(340, max(220, splitController.columnWidth(sidebarItem)))
         }
@@ -327,6 +378,7 @@ struct MainWindowLayout {
     private func refreshTitle() {
         guard !isSettingsVisible else { return }
         let title = workspace.selected?.title ?? "新会话"
+        projectIcon.isHidden = workspace.selected?.projectID == nil
         titleField.stringValue = title; titleField.toolTip = title; window?.title = title
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { hideMainWindow(); return false }
@@ -341,7 +393,7 @@ struct MainWindowLayout {
         guard let window else { return }
         window.setFrame(MainWindowLayout.constrain(window.frame, screens: NSScreen.screens.map(\.visibleFrame)), display: true)
     }
-    func shutdown() { workspace.flush(); saveLayout(); observation = nil; NotificationCenter.default.removeObserver(self); window?.orderOut(nil) }
+    func shutdown() { workspace.flush(); saveLayout(); observation = nil; previewObservation = nil; NotificationCenter.default.removeObserver(self); window?.orderOut(nil) }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -358,7 +410,7 @@ struct MainWindowLayout {
             item.label = "切换侧栏"; item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: item.label)
             item.action = #selector(toggleSidebar); item.isNavigational = true
         case Self.rightID:
-            item.label = "切换详情栏"; item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: item.label)
+            item.label = "切换项目文件"; item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: item.label)
             item.action = #selector(toggleInspector)
         case Self.titleID:
             item.label = "当前会话"; item.isBordered = false
@@ -367,7 +419,15 @@ struct MainWindowLayout {
             titleField.lineBreakMode = .byTruncatingTail
             titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             titleField.widthAnchor.constraint(lessThanOrEqualToConstant: 340).isActive = true
-            item.view = titleField
+            projectIcon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "项目聊天")
+            projectIcon.contentTintColor = WorkspaceStyle.secondaryTextColor
+            projectIcon.setAccessibilityIdentifier("conversation.projectIcon")
+            projectIcon.isHidden = workspace.selected?.projectID == nil
+            projectIcon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+            projectIcon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+            let title = NSStackView(views: [projectIcon, titleField])
+            title.orientation = .horizontal; title.alignment = .centerY; title.spacing = 7
+            item.view = title
         default: return nil
         }
         item.toolTip = item.label

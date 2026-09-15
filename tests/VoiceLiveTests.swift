@@ -72,41 +72,24 @@ import Foundation
         print("ASR PASS: \(transcript)")
 
         print("3/4 Model: replying to recognized text in a fresh conversation…")
-        let source = ModelTaskSource(settings: settings)
-        let (events, continuation) = AsyncThrowingStream<String, Error>.makeStream()
-        let (textStream, textInput) = AsyncThrowingStream<String, Error>.makeStream()
-        var delta = VoiceTextDelta(), deltaCount = 0
-        let synthesis = Task { @MainActor in
-            var response = Data()
-            try await DoubaoSynthesizer().run(configuration: credentials.configuration, key: credentials.key, text: textStream) { data in
-                guard response.count + data.count <= VoiceWire.limit else { throw SettingsError("测试音频超过限制。") }
-                response.append(data)
-            }
-            return response
+        let store = TaskStore(source: AgentTaskSource(settings: settings))
+        defer { store.shutdown() }
+        guard store.send(transcript) else { throw SettingsError("Agent 未接收转写。") }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(65))
+        while store.isGenerating {
+            guard !store.needsDirectory else { throw SettingsError("语音探针意外请求了工具，未执行命令。") }
+            guard ContinuousClock.now < deadline else { throw SettingsError("Agent 回复超时。") }
+            try await Task.sleep(for: .milliseconds(25))
         }
-        defer { textInput.finish(); synthesis.cancel() }
-        source.start(messages: [.init(role: .user, text: transcript)]) { event in
-            do {
-                switch event {
-                case .progress(let text), .completed(let text):
-                    let addition = try delta.append(text)
-                    if !addition.isEmpty { textInput.yield(addition); deltaCount += 1 }
-                    if case .completed = event { textInput.finish(); continuation.yield(text); continuation.finish() }
-                case .failed(let error): throw SettingsError(error)
-                }
-            } catch {
-                textInput.finish(throwing: error); continuation.finish(throwing: error)
-            }
+        guard store.task?.status == .completed,
+              let reply = store.messages.last(where: { $0.role == .assistant })?.content,
+              !reply.isEmpty, store.tools.isEmpty else {
+            throw SettingsError("Rust Agent 未完成普通语音回复。")
         }
-        defer { source.cancel() }
-        var reply = ""
-        for try await text in events { reply = text }
-        guard !reply.isEmpty else { throw SettingsError("文本模型没有回复。") }
-        print("Model PASS: \(reply.count) characters, \(deltaCount) TTS text chunks")
+        print("Model PASS: \(reply.count) characters via Rust Agent, no tools")
 
-        print("4/4 TTS: finishing streamed model reply…")
-        let response = try await synthesis.value
-        guard !response.isEmpty else { throw SettingsError("流式回复没有合成音频。") }
+        print("4/4 TTS: synthesizing the final Agent reply once…")
+        let response = try await synthesize(reply, configuration: credentials.configuration, key: credentials.key)
         if CommandLine.arguments.contains("--play") {
             let audio = VoiceAudio()
             defer { audio.stop() }
