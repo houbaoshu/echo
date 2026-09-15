@@ -120,3 +120,11 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 | UI/语音 | 现有 Chat/UI/Voice 回归入口保留 | generation/turn/message 去重及晚到终态跨层验证 |
 
 本阶段不以序列化测试代替运行器行为验收，不添加“通过”的假运行器或忽略测试。第 2 阶段按上述后续列编写真实运行器测试；第 3/4 阶段分别迁移 C 和 Swift；完整 feature 矩阵、应用包和跨层验收归第 5 阶段。
+
+## 6. 第 2 阶段落地说明
+
+核心契约已在 Mini Agent 主线工作区的 [`conversation::runner`](/Users/houbaoshu/workspace/mini-agent-rs/src/conversation/runner.rs) 实现，见 [运行器使用说明](/Users/houbaoshu/workspace/mini-agent-rs/docs/conversation-runner.md) 和 [计划第 2 阶段记录](mini-agent-mainline-bridge-v2-plan.md#7-第-2-阶段实施记录2026-09-15)。本文前述 wire 类型仍是后续 Bridge/Swift 迁移的规范，尚未接入生产 C ABI。
+
+具体 API 使用 `SessionParts { restored, model, executor }`；`restored` 由 `Conversation::restore(session_id, config, restore_input)` 返回。`SessionOptions::new(session_id, generation)` 设置默认队列容量，宿主为每次创建提供新 generation。初始化在 Stop/close 后继续 await，宿主初始化 future 必须等待其 blocking 工作结束，运行器不会把 abort blocking 任务视为清理完成。
+
+`SessionCompletion::wait()` 确认整个句柄 close/Drop 后完成清理；可复用句柄的普通 Stop 通过 `BatchKind::Cancelled` 确认本次操作清理完成。两者都要求宿主保持 runtime 存活。旧 `Environment` 仍可独立使用，只有显式实现 `ConversationExecutor` 的执行器提供可等待取消保证。

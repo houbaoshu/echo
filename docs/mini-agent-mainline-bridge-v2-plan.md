@@ -176,3 +176,37 @@ Mini Agent 对默认、无默认 feature、conversation、tdd、all-features 五
 首次集成运行受沙箱限制，无法监听 `127.0.0.1`；允许测试权限后重跑通过，未改测试来绕过端口失败。类型测试还捕获了 Serde 内部 tag 的 unit variant 会接受额外字段的问题；改为零字段 struct variant 后，未知字段拒绝测试通过。
 
 Mini Agent 主线和实验依赖工作区均未修改。完整主线 feature 矩阵、UI/语音全量跨层回归与最终应用包验收仍按原实施顺序执行。本阶段到此完成，未进入第 2 阶段。
+
+## 7. 第 2 阶段实施记录（2026-09-15）
+
+范围仅为实施顺序第 2 项：在 Mini Agent 主线实现运行器、可等待执行清理及历史恢复入口。开始时桌宠 `f75b8ce`、Mini Agent 主线 `b03cf72` 的工作区均干净，第 1 阶段已完成。
+
+### 交付
+
+改动已应用到 `/Users/houbaoshu/workspace/mini-agent-rs` 工作区，尚未提交 Git：
+
+- [运行器入口](/Users/houbaoshu/workspace/mini-agent-rs/src/conversation/runner.rs)：`SessionOptions`、异步初始化、`SessionParts`、`SessionHandle`、独立控制入口及 `SessionCompletion`；类型和驱动分别位于 `runner/types.rs`、`runner/worker.rs`。
+- 普通命令、事件及控制邮箱默认容量分别为 32、64、32。Stop/close 使用独立持久状态及通知；保存失败使用独立终止标志，满邮箱不会阻止取消或清理。事件背压期间暂停普通工作消费，销毁可放弃未消费批次。
+- 完整 checkpoint、累计保存水位和工具目录授权。模型 operation 在预算变更后先保留，保存确认后才派发；工具结果未保存前不得请求下一模型。旧 generation、未来 revision、失效提案和失效目录均不能放行。确认不产生新 checkpoint，导出和重复输入可重发当前 revision。
+- [会话执行器](/Users/houbaoshu/workspace/mini-agent-rs/src/conversation/runner/executor.rs)：显式 `ConversationExecutor`、`CancellationSignal` 和 `LocalConversationExecutor`。与 `LocalEnvironment` 复用 `environments.rs` 的进程实现；取消、超时及管道错误均尝试终止进程组并等待 shell 回收。保留已完成的真实工具结果，执行中取消记录 unknown。
+- [历史恢复](/Users/houbaoshu/workspace/mini-agent-rs/src/conversation/restore.rs)：v1/旧文本导入、待确认输入恢复、客户端 ID 去重与冲突校验、显式目录覆盖和显示投影。恢复保持 idle，不自动执行。额外拒绝跨 turn 工具结果和会耗尽内部 ID 的损坏历史，保留 Responses 元数据。
+- 原子 `SendMessage` 根据核心实际状态 submit/steer，输入回执提供核心 message/turn IDs。停止期间拒绝新输入，未处理的排队输入返回 `CancelledBeforeProcessing`。
+- [运行器使用契约](/Users/houbaoshu/workspace/mini-agent-rs/docs/conversation-runner.md) 和 19 项新增测试：运行器 11 项、真实协议 1 项（覆盖两种协议）、执行器 3 项、恢复 4 项。第 1 阶段固定 v1 样例原样复制到主线测试目录。
+
+### 实现边界与后续接入注意事项
+
+1. 仍使用 `conversation` feature，`default = []` 不变；没有新增 feature。纯 `Conversation`、Core/CLI、TDD 和旧 `Environment::execute` 入口保留。旧调用者继续从 PATH 查找 bash；桌宠在第 3 阶段显式配置 `/bin/bash`，30 秒和每流 64 KiB 已是新执行器默认限额。
+2. `spawn` 接收宿主 Tokio handle 与初始化 future。Stop/close 后仍等待初始化 future，避免把未完成的 blocking 初始化当成已经清理；宿主使用 `spawn_blocking` 时必须 await 该任务。新运行器不读取桌宠凭据或 Bundle 文件。
+3. generation 由宿主为每个句柄生成；重建同一会话也必须换 generation。正常 Stop 的 `Cancelled` 批次确认操作清理完毕且句柄可复用；`SessionCompletion::wait` 用于 close/Drop 后的整个会话清理，独立于事件消费。宿主必须保持 Tokio runtime 存活直到 completion。
+4. 自定义模型和执行器必须遵守资源所有权契约：模型 query future 不得分离需要清理的工作；执行器收到取消后必须完成清理再返回。没有为任意 `Environment` 添加丢弃 future 的取消适配。
+5. 桌宠测试目录中的第 1 阶段 v2 类型规范仍保留，待第 3 阶段依赖切换后与真实类型对接。本轮没有修改桌宠 `Cargo.toml`、`Cargo.lock`、Rust Bridge、Swift、构建脚本或资源路径；实验依赖工作区也未修改。
+
+### 验证
+
+- Mini Agent 的默认、`--no-default-features`、`--features conversation`、`--features tdd`、`--all-features` 五种组合均运行并通过 `cargo test --locked --offline`（含文档测试）及 `cargo clippy --locked --offline --all-targets … -- -D warnings`。共享进程代码影响 Core/TDD，因此本阶段已做这些兼容性检查；这不代表桌宠跨层验收完成。
+- feature 文档测试验证运行器仅在 `conversation` 开启时可见，以及 `Environment` 不自动实现 `ConversationExecutor`。
+- 新增真实运行器协议测试验证无目录聊天、绑定目录后真实写入/读取、工具结果进入后续请求、两种协议和 Responses reasoning 保留。最后补充的协议测试及 Stop 结果复核完成后，重新通过 all-features 的运行器定向测试与 conversation 的全目标 Clippy。
+- `cargo fmt --check`、两个仓库的 `git diff --check` 通过。
+- 首次原有协议集成测试受沙箱限制，无法监听 `127.0.0.1`；允许本地测试权限后全部通过。写入主线目录的首次审批因用量限制失败，用户要求继续后重试成功；最终改动已在主线工作区，不依赖临时副本交付。
+
+第 2 阶段到此完成。下一阶段是第 3 项：切换桌宠主线路径并替换 Rust Bridge 内部实现；本轮未开始。Swift 迁移、桌宠完整跨层回归及独立应用包验收仍分别留在第 4/5 阶段。
