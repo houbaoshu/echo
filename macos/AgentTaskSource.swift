@@ -83,10 +83,12 @@ import Foundation
                     batch["error"] = NSNull()
                 } else if request.0 == "start_tool", error.contains("stale") || error.contains("tool no longer") || error.contains("working directory required") {
                     batch["error"] = NSNull()
-                } else if request.0 == "steer", error.contains("no running turn") {
+                } else if (request.0 == "steer" && error.contains("no running turn"))
+                            || (request.0 == "submit" && error.contains("a turn is already active; use steer")) {
                     do {
-                        // A late receipt must not start a new turn after Stop.
-                        if !self.cancelled { try self.control("submit", fields: request.1) }
+                        // Concurrent follow-ups can race across the turn boundary.
+                        // A late receipt must not retry either command after Stop.
+                        if !self.cancelled { try self.control(request.0 == "steer" ? "submit" : "steer", fields: request.1) }
                         batch["error"] = NSNull()
                     }
                     catch { failure(error.localizedDescription) }
