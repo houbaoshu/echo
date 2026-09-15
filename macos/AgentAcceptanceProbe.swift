@@ -63,6 +63,20 @@ import AppKit
         NSApp.activate(ignoringOtherApps: true)
         defer { window.orderOut(nil) }
 
+        var heartbeats = 0
+        var longestHeartbeat = Duration.zero
+        let heartbeat = Task { @MainActor in
+            var previous = ContinuousClock.now
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+                let now = ContinuousClock.now
+                longestHeartbeat = max(longestHeartbeat, previous.duration(to: now))
+                previous = now
+                heartbeats += 1
+            }
+        }
+        defer { heartbeat.cancel() }
+
         for selected in ModelAPIProtocol.allCases {
             api = selected
             try await ModelConnectionTester().test(configuration:
@@ -119,6 +133,8 @@ import AppKit
         let quitting = workspace.newConversation(projectID: workspace.projects.first?.id)
         quitting.store.send("acceptance-quit-tool")
         try await wait("退出时执行中") { quitting.store.tools.first?.state == "执行中" }
+        try require(heartbeats > 20 && longestHeartbeat < .seconds(2), "Agent 执行期间主线程心跳停顿")
+        print("PASS: packaged main-actor heartbeat (\(heartbeats) ticks, longest gap \(longestHeartbeat))")
         print("PASS: bundled pets/prompt, restored full history; requesting normal AppKit termination during bash")
         print("Acceptance artifacts: \(root.path)")
         fflush(nil)

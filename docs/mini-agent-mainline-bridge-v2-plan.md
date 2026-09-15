@@ -269,3 +269,39 @@ Mini Agent 主线和实验依赖工作区均未修改。完整主线 feature 矩
 - 真实退出测试发现保存失败运行器只发送一次 `Cancelled`，不能在关闭时再次等待相同回执。Swift 现在记录已收到的清理确认并复用；多次 close 的回调等待同一退休句柄清理完成。修复后真实会话完整退出通过，相关竞态加入定向测试。
 
 第 4 阶段到此完成，改动保留在桌宠工作区，未提交 Git。下一阶段仅为第 5 项：完整跨层回归、独立应用包验证及最终文档收敛。本轮未运行全量 feature/UI/Voice 矩阵、真实服务或 Live Voice 发布抽验，也未构建、签名或启动独立桌宠应用包。
+
+
+## 10. 第 5 阶段实施记录（2026-09-15）
+
+范围仅为实施顺序第 5 项：完整跨层回归、独立应用包验证及最终文档收敛。开始时桌宠位于 `experiment/agent-integration` 的 `9c9d4f0`，Mini Agent 主线位于 `3127fa2`，两个工作区均干净。第 1–4 阶段已完成并提交；主线第 2 阶段运行器也已包含在 `3127fa2`，此前记录中的“尚未提交”仅描述当时状态。本轮没有修改 Mini Agent、Rust Bridge 或生产会话调度逻辑。
+
+### 交付
+
+- 补强现有 `AgentAcceptanceProbe.swift`：在独立应用实际执行会话时采样 MainActor 心跳，断言最长间隔小于 2 秒；保持现有两种协议的输入、目录选择、真实读改验、隐藏窗口、协议切换和 AppKit 退出场景。
+- 补强 `tests/packaged-app-test.py`：独立核对实际 sidecar 的 v1 历史、v2 checkpoint、完整客户端/核心 ID 映射、消息顺序、工具结果投影、最终回复去重 ID 和已清空的待确认输入。要求两份真实文件、4 个完成会话及 1 个退出时停止的会话；空白初始草稿单独验证为空。
+- 本地模型 fixture 仅在应用包验收的 Responses 工具场景加入合成 reasoning 元数据；验证 3 次工具调用的 opaque 内容在协议切换和落盘后全部保留。
+- 更新 README 与当前 v2 契约，收敛为已落地架构、当前依赖提交和可运行验收入口。历史阶段记录保留原样。
+- 构建产物：[Apple Silicon ad-hoc Echo.app](/Users/houbaoshu/workspace/desktop-pet-agent-exp/build/validation/Echo.app)。最终移包证据位于 `/private/tmp/echo-packaged-15_7_xxh/`，包含独立应用、空工作目录、模型及应用日志、sidecar、真实项目文件和 4 张截图。
+
+### 验证
+
+所有下列自动验收均已通过，日志保存在 `build/test-logs/bridge-v2-stage5/`：
+
+| 范围 | 执行与结果 |
+| --- | --- |
+| Mini Agent feature 矩阵 | 默认、`--no-default-features`、`--features conversation`、`--features tdd`、`--all-features` 均通过 `cargo test --locked --offline`（含文档测试）及 `cargo clippy --locked --offline --all-targets … -- -D warnings`。各组合测试与文档测试通过数分别为 70、70、111、111、152，失败/忽略均为 0；覆盖运行器、执行器、恢复以及 Core/CLI/TDD 和 feature API 边界。 |
+| 桌宠 Rust | `cargo test --locked --offline --workspace`、全目标 Clippy、Bridge fmt 和主线 fmt 通过；Bridge 12 项测试覆盖两种协议、v1 存档、v2 wire、保存屏障、输入/控制竞态及生命周期。 |
+| Bridge/会话适配 | `test-agent-bridge.sh`、`test-agent-task-source.sh`、`test-agent-session.sh` 全部通过，包括 Swift 主线程心跳、Unicode/字符串所有权、异步清理、输入与恢复、目录/符号链接租约、真实 bash、保存失败及 C ASan 500 次句柄压力检查。 |
+| 聊天/工作区/UI | `test-chat.sh`、`test-workspace.sh`、`test-chat-ui.sh` 全部通过；工作区 62 项、Workspace Voice 命令 57 项，UI 包含原生快捷键、输入法、追加/停止、语音归属、文件预览与显示交互。 |
+| Voice | `test-voice.sh` 通过 563 项模拟音频/ASR/TTS 检查；`test-voice.sh --agent-integration` 通过 58 项本地模型、真实 Rust/bash、模拟 ASR/TTS 的跨层检查，覆盖两种协议下模型/工具/目录/排队/Stop 中的输入和最终播报。 |
+| 独立应用 | `build.sh` 构建 arm64 ad-hoc 包；`test-packaged-app.sh build/validation/Echo.app` 在 `/private/tmp` 的空工作目录运行。签名严格验证、系统动态库、自包含 pets/prompt、两种协议真实读改验与协议切换、完整 sidecar、Responses 元数据和正常退出全部通过。最终心跳 209 次，最长间隔约 69 ms；退出后 shell 与子进程均不存在。4 张截图已逐张检查，目录等待及完成后的消息/工具展示可读。 |
+| 签名/静态检查 | `test-signing.sh` 默认离线签名回归通过；Python 语法、脚本语法和 `git diff --check` 通过。Cargo metadata 按 Apple Silicon 目标确认依赖为主线 `mini-agent-rs` 且仅启用 `conversation`，prompt 与该依赖匹配；有效代码/资源路径没有旧实验目录引用，Bridge 没有会话驱动或直接进程执行算法。 |
+
+### 实际差异与验收边界
+
+1. 首次 Rust 生命周期测试被沙箱禁止监听本机端口；申请测试执行权限后重跑通过。一次 UI 编译与本轮验收探针编辑重叠，Swift 报告源文件编译期间被修改；文件稳定后完整 UI 及后续回归通过，没有跳过用例。
+2. 第一次增强应用包验证中，应用行为、文件及退出清理通过，但新增的 sidecar 总数断言错误地将初始空草稿计作实际会话。检查留存证据后，改为严格验证空草稿并核对 5 个实际会话，完整重跑通过。未修改生产持久化行为。
+3. 通用、不指定目标的离线 Cargo metadata 会尝试解析未缓存的 Windows 依赖；改为与构建脚本一致的 `--filter-platform aarch64-apple-darwin` 后核对通过，无需下载或修改依赖。
+4. C ASan 不代表 Rust 内部全部访存已受 sanitizer 覆盖。Voice 自动检查使用模拟音频，不等于真实服务、真人麦克风或播放体验验收。按计划，真实模型服务及 Live Voice 保留为发布前抽验，本轮没有读取真实凭据、调用真实服务、执行开发证书签名或发布应用。
+
+第 5 阶段自动验收和文档收敛完成，计划五个实施阶段均已完成。本轮改动保留在桌宠工作区，未提交 Git；Mini Agent 工作区保持干净。后续发布前真实服务/Live Voice 抽验属于发布检查，本轮未扩展实施范围。

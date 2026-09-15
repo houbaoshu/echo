@@ -1,8 +1,8 @@
 # Echo
 
-Echo 是面向 Apple Silicon Mac 的桌面应用，将 macOS 桌宠、AI 对话与 Agent 工具执行整合在一个原生工作区中。Swift / AppKit / SwiftUI 负责界面和系统能力，Rust Agent Core 负责模型交互与会话决策。下述产品功能描述沿用迁移前 V1 基线；当前迁移边界见下一段。
+Echo 是面向 Apple Silicon Mac 的桌面应用，将 macOS 桌宠、AI 对话与 Agent 工具执行整合在一个原生工作区中。Swift / AppKit / SwiftUI 负责界面和系统能力，Rust Agent Core 负责模型交互与会话决策。
 
-Mini Agent 主线迁移已完成[第 4 阶段：Swift v2 适配](docs/mini-agent-mainline-bridge-v2-plan.md)。Swift 与 Rust/C 接口使用 [wire v2](docs/mini-agent-mainline-bridge-v2-contract.md)，核心存档仍为 v1；保存确认、输入回执和目录放行已接入。直接相关的 Bridge、会话与适配测试已通过；完整跨层回归和独立应用包验收留在第 5 阶段。
+Mini Agent 主线迁移已完成[第 5 阶段自动验收](docs/mini-agent-mainline-bridge-v2-plan.md)。Swift 与 Rust/C 接口使用 [wire v2](docs/mini-agent-mainline-bridge-v2-contract.md)，核心存档仍为 v1；保存确认、输入回执和目录放行已接入。主线 feature 矩阵、桌宠完整本地回归及独立 ad-hoc 应用包验收均已通过；真实模型服务与 Live Voice 仍需发布前抽验。
 
 ## 核心能力
 
@@ -27,11 +27,11 @@ Mini Agent 主线迁移已完成[第 4 阶段：Swift v2 适配](docs/mini-agent
 
 ```text
 workspace/
-├── desktop-pet-agent-exp/       # 本仓库
-└── mini-agent-rs/   # Rust Agent Core，Cargo 路径依赖
+├── desktop-pet-agent-exp/  # 本仓库
+└── mini-agent-rs/          # Rust Agent Core，Cargo 路径依赖
 ```
 
-相邻主线工作区须包含第 2 阶段的 `conversation::runner` 实现（当前尚未提交）。构建脚本通过 Cargo metadata 解析 `echo-agent` 的实际依赖目录，并打包其中的 `config/prompts/conversation.md`。构建后的应用运行时无需源码目录。
+相邻主线工作区须包含 `conversation::runner` 实现，本轮验收基线为主线提交 `3127fa2`。构建脚本通过 Cargo metadata 解析 `echo-agent` 的实际依赖目录，并打包其中的 `config/prompts/conversation.md`。构建后的应用运行时无需源码目录。
 
 在本仓库根目录执行：
 
@@ -142,7 +142,7 @@ cargo clippy --locked --workspace -- -D warnings
 /bin/zsh scripts/test-packaged-app.sh build/validation/Echo.app
 ```
 
-打包测试将应用复制到 `/private/tmp`，从空工作目录启动，使用本机模型服务和临时项目检查协议、历史恢复与退出清理，并保存窗口截图；需要 Python 3、桌面环境及屏幕录制权限。
+打包测试将应用复制到 `/private/tmp`，从空工作目录启动，使用本机模型服务和临时项目检查协议、历史恢复与退出清理，并保存窗口截图。验收还核对 sidecar 的 checkpoint、输入映射、显示顺序、最终回复去重及 Responses 元数据，检查主线程心跳和退出后的 shell/子进程清理；需要 Python 3、桌面环境及屏幕录制权限。
 
 可选的真实设备、服务和诊断入口：
 

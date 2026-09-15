@@ -1,10 +1,10 @@
 # Mini Agent Bridge v2：接入契约
 
-本文件最初是 [迁移计划](mini-agent-mainline-bridge-v2-plan.md) 第 1 阶段的类型规范；第 2 阶段实现主线运行器，第 3 阶段接入生产 Rust/C ABI v2，第 4 阶段接入 Swift v2。核心类型来自 `mini_agent::conversation::runner`，wire 类型位于 `agent-bridge/src/wire.rs`，Swift 类型位于 `macos/AgentWire.swift`。完整跨层回归及独立应用包验收仍属于第 5 阶段。
+本文件最初是 [迁移计划](mini-agent-mainline-bridge-v2-plan.md) 第 1 阶段的类型规范；第 2 阶段实现主线运行器，第 3 阶段接入生产 Rust/C ABI v2，第 4 阶段接入 Swift v2。核心类型来自 `mini_agent::conversation::runner`，wire 类型位于 `agent-bridge/src/wire.rs`，Swift 类型位于 `macos/AgentWire.swift`。第 5 阶段的跨层回归与应用包验收记录见计划末尾。
 
 ## 1. 类型归属与 API 边界
 
-| 类型 | 后续归属及语义 |
+| 类型 | 归属及语义 |
 | --- | --- |
 | `SessionCommand` | `conversation::runner`；`SendMessage` 原子决定 submit/steer。保留显式 Submit、Steer、Continue、ProvideDirectory、ExportHistory。 |
 | `SessionControl` | 独立控制入口；保存成功、保存失败、工具放行，不能进入普通命令队列。 |
@@ -68,7 +68,7 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 1. 初始化恢复完成或历史/输入映射发生实质变化后，产生完整 checkpoint。仅确认、导出、拒绝命令不得增加 revision；可重新发送同一 checkpoint。
 2. Swift 将原样 `history` 字符串、全部 `input_receipts`、投影/UI 快照及尚未确认的输入原子写入同一个 sidecar，然后确认该 checkpoint。UI 可先显示，但不能据此放行工作。
 3. 每个批次注明 generation；事件和输入回执属于该 generation。已发出 checkpoint 才能确认。确认是同一 generation 内的累计保存水位：保存 revision N 的完整快照可覆盖 ≤N 的变化；重复已确认水位为无操作，未来或其他 generation 返回 `stale_checkpoint`。
-4. 模型派发前必须先保存用户输入和模型预算变化。当前 `next_operation()` 会增加 `model_calls` 并改变状态：第 2 阶段应先取得/保留 operation、发 checkpoint，确认后才启动请求；等待期间仍处理 Stop、输入和目录变化。不能在每次收到确认时再次调用 `next_operation()` 重复计费。
+4. 模型派发前必须先保存用户输入和模型预算变化。当前 `next_operation()` 会增加 `model_calls` 并改变状态：运行器先取得/保留 operation、发 checkpoint，确认后才启动请求；等待期间仍处理 Stop、输入和目录变化。不能在每次收到确认时再次调用 `next_operation()` 重复计费。
 5. 工具提案批次包含 checkpoint、operation ID 和规范化目录。只有该提案仍有效、对应 revision 已保存且宿主持有该目录整轮租约时，才处理 `AuthorizeTool { checkpoint, operation_id, directory }`。授权可以先到，必须继续等待保存确认。
 6. 派发前先处理已经接收的控制，再检查 generation、operation、保存水位及真实目录，最后 `begin_tool`。steer、Stop、目录变更使旧授权失效；确认旧 revision 不能授权新提案。
 7. 工具结果产生新 checkpoint；该结果未保存前禁止下一次模型请求。保存失败返回 `persistence_failed`，停止并清理，不自动恢复调度；宿主修复存储后重新创建/显式继续。
@@ -87,7 +87,7 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 
 ## 4. Wire v2
 
-保留现有 C 符号、16 MiB 请求限制、字符串独立所有权和 panic 隔离。第 3 阶段 C ABI 已仅接受 v2 请求，v1 wire 返回 `unsupported_version`，**持久化历史仍为 v1**；Swift 调用方在第 4 阶段升级。版本在读取顶层 JSON 后先检查，再解码 payload；不要把一个合法 v1 请求误报为普通字段错误。generation、request ID、客户端 ID 必须非空；revision 和核心 IDs 必须为正整数。JSON 数字完整保留 u64，不经 Double。
+保留现有 C 符号、16 MiB 请求限制、字符串独立所有权和 panic 隔离。第 3 阶段 C ABI 已仅接受 v2 请求，v1 wire 返回 `unsupported_version`，**持久化历史仍为 v1**；Swift 调用方已在第 4 阶段升级。版本在读取顶层 JSON 后先检查，再解码 payload；不要把一个合法 v1 请求误报为普通字段错误。generation、request ID、客户端 ID 必须非空；revision 和核心 IDs 必须为正整数。JSON 数字完整保留 u64，不经 Double。
 
 普通输入示例：
 
@@ -105,21 +105,21 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 
 `WireCreate.restore.source = {"type":"v1","history":"…完整 v1 JSON…"}`，wire checkpoint 中 `history` 也为字符串。Swift Codable 只解码外围和 projection，按 UTF-8 原样保存内部字符串；不解析 `next_id`/turn/entry，不剥离 reasoning。核心仍使用 Rust 历史类型，只有 Bridge 做 JSON 字符串转换。这里的“原样”指保留核心输出 JSON 的完整内容；核心合法恢复可新增中断记录，不承诺恢复前后的空格/字段顺序相同。
 
-错误码枚举见编译规范。Swift 根据 code 决策、message 仅显示；不得把密钥、完整配置或模型服务响应拼入基础设施错误。未知 wire 字段/命令和缺失必要字段拒绝；未来历史扩展由核心存档版本契约负责。
+错误码枚举见主线 `runner/types.rs` 及 Swift `AgentErrorCode`。Swift 根据 code 决策、message 仅显示；不得把密钥、完整配置或模型服务响应拼入基础设施错误。未知 wire 字段/命令和缺失必要字段拒绝；未来历史扩展由核心存档版本契约负责。
 
-## 5. 测试边界与后续验收清单
+## 5. 验收入口与证据边界
 
-| 场景 | 第 1 阶段证据 | 后续新增验收 |
-| --- | --- | --- |
-| v1 存档 | `history_v1.rs`：完整聊天、重复文本、Responses 元数据、缺失工具结果恢复幂等、损坏历史 fail closed | 主线恢复入口使用相同样例，增加客户端映射恢复 |
-| 协议切换 | `lifecycle.rs`：固定 Responses 存档重建为两种协议，真实 loopback 请求保留结果、仅 Responses 发送 reasoning | 下一轮新配置和新 v2 适配保持语义 |
-| 工具/取消 | 已有 executor 单测和 lifecycle：超时/截断、执行前取消、过期提案、满队列取消/销毁、真实进程清理、已完成结果保留 | 保存等待/授权等待时 Stop；每会话 completion；模型与工具清理未完成不得重启 |
-| 发送竞态 | `AgentTaskSourceTests.swift`：完成边界连续追加，Stop 前后迟到回执；固定存档保留同文本不同 IDs | 原子 SendMessage，ID 去重及冲突，停止期间拒绝；删除文案重试后重写测试驱动 |
-| 保存/目录 | `AgentSessionTests.swift`：当前真实 sidecar、目录调度、存储失败；`session.rs`：已接收 steer 撤销工具授权 | checkpoint 未确认禁止模型/工具；结果保存失败禁止下一模型；符号链接租约；旧 generation/revision/operation 不放行 |
-| v2 编解码 | `v2_contract.rs`：类型 round-trip、必需关联 ID、控制/命令分离、wire v2 与 archive v1 分离、历史字节保留 | 实际 C v2 版本/大小/Unicode/队列回执、Swift Codable、C ASan |
-| UI/语音 | 现有 Chat/UI/Voice 回归入口保留 | generation/turn/message 去重及晚到终态跨层验证 |
+| 场景 | 当前验收入口与范围 |
+| --- | --- |
+| 主线 API、执行器与恢复 | Mini Agent 默认、无默认 feature、conversation、tdd、all-features 的 `cargo test`（含文档测试）和全目标 Clippy；运行器门控、可等待取消、超时/截断、v1 恢复及 feature API 边界 |
+| Rust/C v2 | `test-agent-bridge.sh` 中的 Rust `history_v1`、`lifecycle`、`v2_contract`、`wire_ffi`：两个协议、原样历史、保存屏障、输入去重、过期控制、满队列取消、进程清理、版本与大小限制；同时执行 C ASan 500 次句柄压力检查 |
+| Swift v2 与输入竞态 | `test-agent-task-source.sh`：生产适配配合可控 Bridge 验证 Codable/UInt64、客户端 ID、确认前后恢复、迟到终态、保存与目录门控、控制背压和重复关闭 |
+| 真实跨层会话 | `test-agent-session.sh`：Swift → Rust → 本地模型/真实 bash，验证配置重建、两种协议、目录与符号链接租约、并行/排队、追加、Stop/删除/退出、存档恢复和意图/结果保存失败 |
+| 聊天、工作区与 UI | `test-chat.sh`、`test-workspace.sh`、`test-chat-ui.sh`：状态、持久化、项目归属、隐藏窗口、输入法、原生快捷键及显示交互 |
+| Voice | `test-voice.sh` 全量模拟音频/ASR/TTS；`--agent-integration` 使用真实 Rust/bash 和本地模型，覆盖两种协议下模型/工具/目录/排队/Stop 中追加及最终回复只播报一次 |
+| 独立应用包 | `build.sh` 与 `test-packaged-app.sh`：Apple Silicon ad-hoc 包移至 `/private/tmp` 的空工作目录，核对资源、系统动态库、真实读改验、协议切换、原子 sidecar 的历史/映射/投影/去重 ID、Responses 元数据、主线程心跳及 AppKit 退出进程清理 |
 
-本阶段不以序列化测试代替运行器行为验收，不添加“通过”的假运行器或忽略测试。第 2 阶段按上述后续列编写真实运行器测试；第 3/4 阶段分别迁移 C 和 Swift；完整 feature 矩阵、应用包和跨层验收归第 5 阶段。
+运行结果与限制以[第 5 阶段记录](mini-agent-mainline-bridge-v2-plan.md)为准。C ASan 不覆盖 Rust 内部全部访存；模拟音频回归不代替真实服务或真人 Live Voice 发布前抽验。最终包验证使用本地模型服务及临时项目，不读取用户凭据或真实工作区。
 
 ## 6. 第 2 阶段落地说明
 
@@ -132,14 +132,14 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 
 ## 7. 第 3 阶段 Bridge 落地说明
 
-- `agent-bridge/Cargo.toml` 指向 `../../mini-agent-rs`，仅启用 `conversation`。运行器来自该主线工作区第 2 阶段的未提交实现；单独 checkout 主线 `b03cf72` 尚不包含所需 API。
+- `agent-bridge/Cargo.toml` 指向 `../../mini-agent-rs`，仅启用 `conversation`。运行器已包含在主线提交 `3127fa2`；旧基线 `b03cf72` 不包含所需 API。
 - `session.rs` 仅负责 prompt/模型后台初始化、主线 `Conversation::restore` 调用、`/bin/bash` 执行参数、共享 runtime 和 completion 计数。会话驱动、执行算法及门控均由主线负责。没有新增任何自动保存确认或 v1 兼容运行路径。
 - `WireCreate` 需要非空 session/generation、绝对 prompt 路径和完整 `restore`。`restore.directory` 必须显式出现，null 表示清除。generation 由宿主生成，每次重建必须更新。旧文本及待确认输入直接交给核心恢复。
 - `echo_agent_request` 解码嵌套 `WireCommand`，普通命令直接进入 `try_command`，三种控制直接进入 `try_control`。`echo_agent_cancel` 调用 `stop`，销毁通过 `SessionHandle::drop` 触发 close。
 - wire 历史仅在后台初始化时解码为核心历史，在 poll 时编码为完整 JSON 字符串；投影、输入映射和事件直接透传。Bridge 不编辑历史内部 IDs，也不解释错误消息。
 - poll 在观察到核心批次通道已断开且排空后返回 `closed:true`；若恰好取满请求上限，可能下一次 poll 才观察到关闭。初始化失败批次也会先交付，再报告关闭。Stop 的清理回执为 `kind.type=cancelled`；close/destroy 的全局退出水位由 `echo_agent_active_sessions` 提供。
 - `scripts/agent-prompt-path.sh` 根据 Cargo metadata 中 `echo-agent` 的实际解析依赖定位 prompt，构建和 Agent/Voice 资源复制入口复用该路径。
-- Rust/C 阶段验收使用 `scripts/test-agent-ffi.sh`。既有 Swift Bridge/Session/聊天/Voice 集成测试入口仍保留，待第 4 阶段迁移后执行；本阶段没有把旧客户端的版本拒绝当作跨层通过。
+- Rust/C 阶段验收使用 `scripts/test-agent-ffi.sh`。Swift Bridge/Session/聊天/Voice 集成入口已迁至 v2；Rust/C 独立通过不代表 Swift 跨层通过。
 
 ## 8. 第 4 阶段 Swift 落地说明
 

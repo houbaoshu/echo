@@ -56,6 +56,9 @@ class Handler(BaseHTTPRequestHandler):
             output = [{"type": "function_call", "call_id": "call-1", "name": "bash",
                        "arguments": json.dumps({"command": command})}] if command else [
                 {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": reply}]}]
+            if "acceptance-rwv" in text and command:
+                output.insert(0, {"type": "reasoning", "id": f"rs-acceptance-{len(results)}",
+                                  "summary": [], "encrypted_content": "acceptance-opaque-reasoning"})
             value = {"id": "resp-test", "status": "completed", "output": output}
         else:
             message = {"role": "assistant", "content": "我先检查文件。" if command else reply}
