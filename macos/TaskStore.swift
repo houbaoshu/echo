@@ -118,6 +118,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @Published private(set) var needsDirectory = false
     @Published private(set) var waitingForProject = false
     private var agentHistory: Data?
+    private var agentStored: Bool?
     private var agentTurnID: UInt64?
     private var pendingOperation: UInt64?
     private var agentGeneration = UUID()
@@ -153,7 +154,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var snapshot: Snapshot {
         Snapshot(task: task, messages: messages, mainDraft: mainDraft, followUpDraft: followUpDraft,
                  activityDismissed: activityDismissed, activitiesCollapsed: activitiesCollapsed,
-                 agentHistory: agentHistory, tools: usesAgent ? tools : nil, loadError: agentLoadError)
+                 agentHistory: agentHistory, tools: usesAgent ? tools : nil, agentStored: agentStored, loadError: agentLoadError)
     }
     convenience init(snapshot: Snapshot, source: (any TaskSource)?) {
         self.init(source: source)
@@ -165,6 +166,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         }
         messages = snapshot.messages
         agentHistory = snapshot.agentHistory; tools = snapshot.tools ?? []; agentLoadError = snapshot.loadError
+        agentStored = snapshot.agentStored
         if usesAgent, task?.status == .completed { task?.summary = "已完成" }
         for index in tools.indices where tools[index].result == nil { tools[index].state = "执行结果未知" }
         for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }

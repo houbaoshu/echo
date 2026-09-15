@@ -55,6 +55,61 @@ import Foundation
         await termination.value
         print("PASS: saved empty Model ID after completed chat fails cleanly, recovers, and permits termination")
     }
+    static func testHistoryReadRecovery(temp: URL, factory: @escaping () -> AgentTaskSource) async throws {
+        for failure in ["missing", "corrupt"] {
+            let persistence = WorkspacePersistence(url: temp.appendingPathComponent("history-\(failure)/workspace.json"))
+            let workspace = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+            let projectID = workspace.addProject(url: temp)
+            let chat = workspace.newConversation(projectID: projectID)
+            precondition(chat.store.send("tool"))
+            try await wait("seed history for \(failure)") { !chat.store.isGenerating }
+            precondition(chat.store.task?.status == .completed && !chat.store.tools.isEmpty)
+            let expected = chat.store.snapshot
+            workspace.shutdown()
+            let historyURL = persistence.sessionURL(chat.id)
+            let original = try Data(contentsOf: historyURL)
+            let corrupt = Data("{invalid history".utf8)
+            if failure == "missing" { try FileManager.default.removeItem(at: historyURL) }
+            else { try corrupt.write(to: historyURL, options: .atomic) }
+
+            // Saving and restarting while the file is unreadable must preserve
+            // its reference without replacing it with the empty fallback state.
+            for _ in 0..<2 {
+                let unreadable = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+                let blocked = unreadable.conversation(id: chat.id)!.store
+                precondition(blocked.agentLoadError != nil && !blocked.canSubmit && !blocked.canRetry)
+                precondition(!blocked.send("must not execute") && !blocked.retry())
+                unreadable.flush()
+                unreadable.shutdown()
+                let saved = persistence.load().0!.conversations.first { $0.id == chat.id }!
+                precondition(saved.state.agentStored == true,
+                             "Unreadable history must retain its external reference after saving: \(failure)")
+                if failure == "missing" {
+                    precondition(!FileManager.default.fileExists(atPath: historyURL.path),
+                                 "Saving must not recreate a missing history with empty state")
+                } else {
+                    let retained = try Data(contentsOf: historyURL)
+                    precondition(retained == corrupt, "Saving must not overwrite unreadable history")
+                }
+            }
+
+            try original.write(to: historyURL, options: .atomic)
+            let restored = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+            let recovered = restored.conversation(id: chat.id)!.store
+            precondition(recovered.agentLoadError == nil && recovered.canSubmit,
+                         "Restoring a valid history file must unblock the session after restart: \(failure)")
+            precondition(recovered.messages == expected.messages && recovered.tools == expected.tools
+                         && recovered.snapshot.agentHistory == expected.agentHistory,
+                         "Restoring history must retain messages, tools, and model context")
+            precondition(recovered.send("hello after history recovery"))
+            try await wait("continue after \(failure) history recovery") { !recovered.isGenerating }
+            precondition(recovered.task?.status == .completed)
+            precondition(recovered.messages.last?.content == "最终回复：已读取真实工具结果")
+            precondition(Array(recovered.messages.prefix(expected.messages.count)) == expected.messages)
+            restored.shutdown()
+        }
+        print("PASS: missing/corrupt history survives saves and restarts, then recovers and continues")
+    }
     static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("echo-session-\(UUID())")
@@ -95,6 +150,7 @@ import Foundation
         var protocolName = "chat_completions"
         let factory = { AgentTaskSource(model: ["base_url": "http://127.0.0.1:\(port)", "model": "fixture", "protocol": protocolName],
                                         resources: temp.appendingPathComponent("resources")) }
+        try await testHistoryReadRecovery(temp: temp, factory: factory)
         let persistence = WorkspacePersistence(url: temp.appendingPathComponent("workspace.json"))
         let workspace = WorkspaceStore(persistence: persistence, sourceFactory: factory)
         let chat = workspace.selected!
