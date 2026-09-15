@@ -465,7 +465,6 @@ struct ConversationView: View {
             .frame(maxWidth: .infinity)
         }
     }
-    private var canStop: Bool { store.isGenerating || (isVoiceOwner && voice.presentation.isReplyAudioActive) }
     private var voiceOwner: VoiceSessionSnapshot.Owner? { voice.snapshot.session.owner }
     private var isVoiceOwner: Bool { voiceOwner?.conversationID == conversationID }
     private var isBackgroundVoice: Bool {
@@ -480,8 +479,7 @@ struct ConversationView: View {
         send()
     }
     private func escape() -> Bool {
-        if presentation.isDictating { dictation.cancel(discard: true); return true }
-        if canStop { stop(); return true }
+        if presentation.canStop && presentation.stopEnabled { stop(); return true }
         return false
     }
     private var composer: some View {
@@ -727,10 +725,12 @@ final class ComposerTextView: NSTextView {
            !event.modifierFlags.contains(.shift), !event.modifierFlags.contains(.option) {
             onSend?(); return
         }
-        if event.keyCode == 53, !hasMarkedText() {
-            if let onEscape, onEscape() {
-                return
-            }
+        if event.keyCode == 53 {
+            if !hasMarkedText(), let onEscape, onEscape() { return }
+            // Recording suspends text edits, but unclaimed Escape still belongs
+            // to the input method / responder chain.
+            super.keyDown(with: event)
+            return
         }
         if !isSuspended { super.keyDown(with: event) }
     }

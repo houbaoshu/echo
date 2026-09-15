@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pets: PetCatalog?
     private var companion: CompanionController?
     private var acceptanceWorkspace: WorkspaceStore?
+    private var workspaceCommands: WorkspaceCommands?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let index = CommandLine.arguments.firstIndex(of: "--acceptance-test") {
@@ -49,7 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installMenus() {
-        let menu = NSMenu()
+        let commands = WorkspaceCommands(controller: { [weak self] in self?.companion?.mainController },
+                                         newConversation: { [weak self] in self?.newConversation() })
+        let menu = WorkspaceMenu(commands: commands)
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu(title: "Echo")
         applicationMenu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",").target = self
@@ -59,8 +62,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(applicationItem)
         let fileItem = NSMenuItem()
         let fileMenu = NSMenu(title: "文件")
-        fileMenu.addItem(withTitle: "新对话", action: #selector(newConversation), keyEquivalent: "n").target = self
-        fileMenu.addItem(withTitle: "添加项目文件夹…", action: #selector(addProject), keyEquivalent: "").target = self
         fileItem.submenu = fileMenu; menu.addItem(fileItem)
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "编辑")
@@ -78,13 +79,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "窗口")
         windowMenu.addItem(withTitle: "收起主窗口", action: #selector(hideConversation), keyEquivalent: "w").target = self
-        let sidebar = windowMenu.addItem(withTitle: "切换侧栏", action: #selector(toggleSidebar), keyEquivalent: "s")
-        sidebar.keyEquivalentModifierMask = [.command, .option]; sidebar.target = self
-        let inspector = windowMenu.addItem(withTitle: "切换项目文件", action: #selector(toggleInspector), keyEquivalent: "i")
-        inspector.keyEquivalentModifierMask = [.command, .option]; inspector.target = self
-        windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowItem.submenu = windowMenu
         menu.addItem(windowItem)
+        let conversationItem = NSMenuItem()
+        let conversationMenu = NSMenu(title: "对话")
+        conversationItem.submenu = conversationMenu
+        menu.addItem(conversationItem)
+        commands.install(fileMenu: fileMenu, windowMenu: windowMenu, conversationMenu: conversationMenu)
+        fileMenu.addItem(withTitle: "添加项目文件夹…", action: #selector(addProject), keyEquivalent: "").target = self
+        windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        workspaceCommands = commands
         NSApp.mainMenu = menu
     }
 
@@ -104,8 +108,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         companion?.workspace.isMainWindowVisible = true; companion?.synchronize(animated: false)
         companion?.mainController?.focusSearch()
     }
-    @objc private func toggleSidebar() { companion?.mainController?.toggleSidebar() }
-    @objc private func toggleInspector() { companion?.mainController?.toggleInspector() }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let workspace = companion?.workspace ?? acceptanceWorkspace else { return .terminateNow }

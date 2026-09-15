@@ -1,6 +1,16 @@
 import AppKit
 import SwiftUI
 
+@MainActor private final class ComposerSecrets: SecretStore {
+    var values: [String: String] = [:]
+    func read(_ account: String) throws -> String {
+        guard let value = values[account] else { throw SettingsError("Missing test key") }
+        return value
+    }
+    func write(_ value: String, account: String) throws { values[account] = value }
+    func remove(_ account: String) throws { values[account] = nil }
+}
+
 @MainActor private final class PreviewSource: TaskSource {
     var histories: [[ConversationMessage]] = []
     var receive: (@MainActor (TaskEvent) -> Void)?
@@ -54,8 +64,25 @@ import SwiftUI
 }
 
 @main struct ConversationUITests {
+    #if NATIVE_SHORTCUT_TESTS
+    @MainActor static func main() {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        // Native menu routing needs AppKit's event loop and a real key window.
+        Task { @MainActor in
+            do { try await testNativeMenuShortcuts(); exit(0) }
+            catch { print("FAIL: \(error)"); exit(1) }
+        }
+        app.run()
+    }
+    #else
     @MainActor static func main() async throws {
         _ = NSApplication.shared
+        try await run()
+    }
+    #endif
+
+    @MainActor private static func run() async throws {
         try await testConsecutiveDictationAppends()
         try await testComposerActionMatrix()
         try await testStoppingAndDictationEscape()
@@ -262,8 +289,9 @@ import SwiftUI
         precondition(node("conversation.stop") != nil)
         precondition(node("conversation.send")?.accessibilityPerformPress?() == true)
         precondition(source.controls.contains("steer") && agentStore.mainDraft.isEmpty)
-        agentStore.stopTask()
+        precondition(main.handleEscape(), "Escape dispatches the existing Agent Stop action")
         precondition(agentStore.task?.status == .stopping)
+        precondition(!main.handleEscape(), "Escape does not repeat Stop while cleanup is pending")
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversation.id)
         voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
         try await refresh()
@@ -281,14 +309,18 @@ import SwiftUI
         window.makeFirstResponder(nil)
         window.cancelOperation(nil)
         try await refresh()
-        precondition(!dictation.isActive && agentStore.mainDraft == "原草稿" && agentStore.task?.status == .stopping)
-        precondition(window.firstResponder is ComposerTextView, "Window Escape restores composer focus")
+        precondition(dictation.isActive && agentStore.mainDraft == "原草稿" && agentStore.task?.status == .stopping,
+                     "Escape neither cancels dictation nor repeats Stop while stopping")
+        precondition(node("dictation.cancel")?.accessibilityPerformPress?() == true)
+        try await refresh()
+        precondition(window.firstResponder is ComposerTextView, "Explicit cancel restores composer focus")
         dictation.start(conversation: conversation, key: "test")
         try await refresh()
         recognizer.emit("定稿中也丢弃")
         dictation.finishRecording()
         try await refresh()
-        precondition(main.handleEscape())
+        precondition(!main.handleEscape() && dictation.isActive, "Escape preserves finalizing dictation")
+        precondition(node("dictation.cancel")?.accessibilityPerformPress?() == true)
         precondition(!dictation.isActive && agentStore.mainDraft == "原草稿")
         try await refresh()
 
@@ -437,6 +469,8 @@ import SwiftUI
         original.setSelectedRange(selection)
         press("dictation.start"); try await refresh()
         key(original, 53); try await refresh()
+        precondition(dictation.isActive, "Escape preserves ordinary dictation")
+        press("dictation.cancel")
         permissionReply?.resume(returning: true); permissionReply = nil
         try await refresh()
         precondition(!dictation.isActive && store.mainDraft == draft && original.selectedRange() == selection)
@@ -667,6 +701,151 @@ import SwiftUI
             precondition(store.mainDraft == "Still unsent")
         }
         print("PASS: hosted Enter, assistant progress/completed/failed/stopped, explicit Retry and user input isolation")
+    }
+
+    @MainActor private static func testNativeMenuShortcuts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("menu-tests-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: ComposerSecrets())
+        settings.draft.model = "test-model"
+        settings.apiKey = "test-model"; settings.save()
+        settings.voiceAPIKey = "test-voice"; settings.saveVoice()
+        let recognizer = ComposerRecognizer()
+        var permissionReply: CheckedContinuation<Bool, Never>?
+        let dictation = DictationController(audio: ComposerAudio(), recognizer: { recognizer }, permission: {
+            await withCheckedContinuation { permissionReply = $0 }
+        })
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let workspace = WorkspaceStore(dictation: dictation, voice: voice, sourceFactory: { PreviewSource() })
+        dictation.attach(workspace: workspace, settings: settings)
+        voice.attach(workspace: workspace, settings: settings)
+        let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "menu-\(UUID())")!, settings: settings)
+        let window = main.window!
+        let commands = WorkspaceCommands(controller: { main }, newConversation: {
+            main.showWorkspace()
+            workspace.newConversation(projectID: workspace.selected?.projectID)
+        })
+        let menu = WorkspaceMenu(commands: commands), file = NSMenu(title: "文件"), columns = NSMenu(title: "窗口"), chat = NSMenu(title: "对话")
+        for submenu in [file, columns, chat] {
+            let item = NSMenuItem(); item.submenu = submenu; menu.addItem(item)
+        }
+        commands.install(fileMenu: file, windowMenu: columns, conversationMenu: chat)
+        let oldMenu = NSApp.mainMenu
+        NSApp.mainMenu = menu
+        main.present()
+        defer { NSApp.mainMenu = oldMenu; main.shutdown(); workspace.shutdown() }
+        func refresh() async throws {
+            try await Task.sleep(for: .milliseconds(100)); window.contentView?.layoutSubtreeIfNeeded()
+        }
+        func findEditor(_ view: NSView) -> ComposerTextView? {
+            if let editor = view as? ComposerTextView { return editor }
+            return view.subviews.lazy.compactMap { findEditor($0) }.first
+        }
+        func focus() -> ComposerTextView {
+            let editor = findEditor(window.contentView!)!
+            precondition(window.makeFirstResponder(editor))
+            return editor
+        }
+        func event(_ key: String, _ code: UInt16, _ modifiers: NSEvent.ModifierFlags) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: modifiers.contains(.shift) ? key.uppercased() : key,
+                charactersIgnoringModifiers: key, isARepeat: false, keyCode: code)!
+        }
+        func press(_ key: String, _ code: UInt16, _ modifiers: NSEvent.ModifierFlags) {
+            _ = focus()
+            NSApp.sendEvent(event(key, code, modifiers))
+        }
+        try await refresh()
+        let items = file.items + columns.items + chat.items
+        precondition(items.count == 6)
+        let shortcuts: [(String, NSEvent.ModifierFlags)] = [
+            ("n", .command), ("b", .command), ("b", [.command, .option]),
+            ("d", [.control, .shift]), ("v", [.control, .shift]), ("\u{1b}", [])
+        ]
+        for (item, shortcut) in zip(items, shortcuts) {
+            precondition(item.keyEquivalent == shortcut.0 && item.keyEquivalentModifierMask == shortcut.1)
+        }
+        let projectID = workspace.addProject(url: root)
+        workspace.newConversation(projectID: projectID)
+        let original = workspace.selected!
+        _ = original.store.send("已有对话")
+        original.store.stopTask()
+        original.store.mainDraft = "保留草稿"
+        try await refresh()
+        press("n", 45, .command)
+        precondition(workspace.selectedID != original.id && workspace.selected?.projectID == projectID)
+        precondition(workspace.selected?.store.mainDraft == "" && original.store.mainDraft == "保留草稿")
+        try await refresh()
+        for _ in 0..<2 {
+            let left = main.sidebarItem.isCollapsed
+            press("b", 11, .command)
+            precondition(main.sidebarItem.isCollapsed != left, "Command+B works with composer focus")
+            let right = main.inspectorItem.isCollapsed
+            press("b", 11, [.command, .option])
+            precondition(main.inspectorItem.isCollapsed != right, "Command+Option+B works with composer focus")
+        }
+        let selected = workspace.selected!
+        selected.store.mainDraft = "未发送"
+        press("d", 2, [.control, .shift])
+        precondition(dictation.isActive && dictation.conversationID == selected.id)
+        try await refresh()
+        chat.update()
+        precondition(!chat.items[0].isEnabled && !chat.items[1].isEnabled, "Preparing capture disables finish and Live Voice")
+        precondition(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])), "Idle Escape passes through the menu during dictation")
+        precondition(dictation.isActive)
+        permissionReply?.resume(returning: true); permissionReply = nil
+        try await refresh()
+        recognizer.emit("追加听写")
+        _ = selected.store.send("generate during dictation")
+        press("\u{1b}", 53, [])
+        precondition(!selected.store.isGenerating && dictation.isActive, "Stop preserves ordinary recording")
+        press("d", 2, [.control, .shift])
+        precondition(dictation.state == .finalizing)
+        chat.update()
+        precondition(!chat.items[0].isEnabled && !chat.items[1].isEnabled, "Finalization cannot restart dictation or start Voice")
+        recognizer.finish()
+        try await refresh()
+        precondition(selected.store.mainDraft == "未发送\n追加听写" && !dictation.isActive)
+        precondition(window.firstResponder is ComposerTextView && !selected.store.isGenerating)
+
+        press("v", 9, [.control, .shift])
+        precondition(voice.isActive && voice.conversationID == selected.id, "Live Voice starts despite a nonempty draft")
+        chat.update()
+        precondition(!chat.items[0].isEnabled && chat.items[1].isEnabled, "Live Voice excludes dictation")
+        precondition(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])) && voice.isActive)
+        _ = selected.store.send("generate")
+        let editor = focus()
+        editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        chat.update()
+        precondition(!chat.items[2].isEnabled)
+        precondition(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])), "Menu leaves Escape to marked text")
+        NSApp.sendEvent(event("\u{1b}", 53, []))
+        precondition(selected.store.isGenerating && voice.isActive, "IME Escape does not Stop or End Voice")
+        editor.unmarkText()
+        let panel = NSPanel(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        panel.makeKeyAndOrderFront(nil)
+        precondition(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])) && selected.store.isGenerating,
+                     "An independent panel keeps its default Escape")
+        panel.orderOut(nil); window.makeKeyAndOrderFront(nil)
+        try await refresh()
+        press("\u{1b}", 53, [])
+        precondition(!selected.store.isGenerating && voice.isActive, "Escape performs Stop and preserves Live Voice")
+        precondition(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])), "Unclaimed Escape retains default behavior")
+        precondition(selected.store.send("stop from menu"))
+        window.makeKey()
+        precondition(NSApp.keyWindow === window, "Main window is key for the Stop menu: active=\(NSApp.isActive), key=\(window.isKeyWindow), actual=\(String(describing: NSApp.keyWindow))")
+        precondition(main.canHandleEscape, "Stop menu has a stoppable task without marked text")
+        chat.update()
+        precondition(chat.items[2].isEnabled, "Native Stop item validates as enabled")
+        precondition(menu.performKeyEquivalent(with: event("\u{1b}", 53, [])))
+        precondition(!selected.store.isGenerating && voice.isActive, "The native Stop menu uses the same action")
+        // End Voice addresses the existing owner even after navigating elsewhere.
+        workspace.newConversation()
+        try await refresh()
+        press("v", 9, [.control, .shift])
+        precondition(!voice.isActive && !dictation.isActive)
+        print("PASS: six native menu shortcuts, composer focus, draft/project preservation, dictation/Voice exclusion and IME Escape")
     }
 
     @MainActor private static func testEscapeAndKeyboardCommands() async throws {

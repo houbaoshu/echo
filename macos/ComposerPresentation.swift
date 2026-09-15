@@ -30,6 +30,7 @@ struct ComposerPresentation {
     let primary: Action
     let primaryEnabled: Bool
     let showsStop: Bool
+    let canStop: Bool
     let stopEnabled: Bool
     let microphoneEnabled: Bool
     let muteEnabled: Bool
@@ -40,7 +41,7 @@ struct ComposerPresentation {
         let ownsVoice = voice.conversationID == conversationID
         let recording = dictation.isActive && dictation.conversationID == conversationID
         let empty = store.mainDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let canStop = store.isGenerating || (ownsVoice && voice.presentation.isReplyAudioActive)
+        canStop = store.isGenerating || (ownsVoice && voice.presentation.isReplyAudioActive)
         stopEnabled = store.task?.status != .stopping
         microphoneEnabled = !voice.isActive && !voice.testing && !dictation.isActive
         if case .active = voice.snapshot.session { muteEnabled = ownsVoice } else { muteEnabled = false }

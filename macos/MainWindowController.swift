@@ -229,11 +229,34 @@ struct MainWindowLayout {
         workspace.select(owner.conversationID)
         workspace.requestComposerFocus(conversationID: owner.conversationID)
     }
-    func handleEscape() -> Bool {
+    private var composerPresentation: ComposerPresentation? {
+        guard let selected = workspace.selected else { return nil }
+        return ComposerPresentation(store: selected.store, voice: workspace.voice,
+                                    dictation: workspace.dictation, conversationID: selected.id)
+    }
+    var canToggleDictation: Bool {
+        guard let presentation = composerPresentation else { return false }
+        return presentation.microphoneEnabled || (presentation.mode == .dictationRecording && presentation.primaryEnabled)
+    }
+    func toggleDictation() {
+        guard canToggleDictation, let selected = workspace.selected else { return }
+        if workspace.dictation.isActive { workspace.dictation.finishRecording() }
+        else { workspace.dictation.start(conversation: selected) }
+    }
+    var canToggleVoice: Bool {
+        workspace.voice.snapshot.session.owner != nil ||
+            (workspace.selected != nil && workspace.voice.canStartCall && !workspace.dictation.isActive)
+    }
+    func toggleVoice() {
+        guard canToggleVoice else { return }
+        if let owner = workspace.voice.snapshot.session.owner { workspace.endVoice(owner: owner) }
+        else if let selected = workspace.selected { workspace.startVoice(conversationID: selected.id) }
+    }
+    var canHandleEscape: Bool {
         guard !isSettingsVisible else { return false }
         guard let window else { return false }
         if window.attachedSheet != nil { return false }
-        if let editor = window.firstResponder as? NSTextView, editor.hasMarkedText() { return false }
+        if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
         if let responder = window.firstResponder as? NSView {
             var current: NSView? = responder
             while let view = current {
@@ -243,18 +266,13 @@ struct MainWindowLayout {
                 current = view.superview
             }
         }
-        guard let selected = workspace.selected else { return false }
-        if workspace.dictation.isActive, workspace.dictation.conversationID == selected.id {
-            workspace.dictation.cancel(discard: true)
-            return true
-        }
-        let isVoiceReplying = workspace.voice.conversationID == selected.id && workspace.voice.presentation.isReplyAudioActive
-        let canStop = selected.store.isGenerating || isVoiceReplying
-        if canStop {
-            workspace.stop(conversationID: selected.id)
-            return true
-        }
-        return false
+        guard let presentation = composerPresentation else { return false }
+        return presentation.canStop && presentation.stopEnabled
+    }
+    func handleEscape() -> Bool {
+        guard canHandleEscape, let selected = workspace.selected else { return false }
+        workspace.stop(conversationID: selected.id)
+        return true
     }
     func present() {
         guard let window else { return }

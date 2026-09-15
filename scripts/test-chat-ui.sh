@@ -9,10 +9,20 @@ typeset -a sources=()
 for source_file in macos/*.swift; do
     if [[ "$source_file" != macos/main.swift ]]; then sources+=("$source_file"); fi
 done
-swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
-    -I runtime/include -I agent-bridge/include "${sources[@]}" tests/ConversationUITests.swift \
-    target/aarch64-apple-darwin/release/libecho_runtime.a \
-    target/aarch64-apple-darwin/release/libecho_agent.a \
-    -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -framework Speech -lz \
-    -o build/chat-ui-tests
-build/chat-ui-tests "$@"
+# Keep the native event loop isolated from hosted-view tests' undo grouping.
+compile_ui_tests() {
+    local output="$1"
+    shift
+    swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
+        "$@" -I runtime/include -I agent-bridge/include "${sources[@]}" tests/ConversationUITests.swift \
+        target/aarch64-apple-darwin/release/libecho_runtime.a \
+        target/aarch64-apple-darwin/release/libecho_agent.a \
+        -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -framework Speech -lz \
+        -o "$output"
+}
+compile_ui_tests build/shortcut-ui-tests -D NATIVE_SHORTCUT_TESTS
+build/shortcut-ui-tests
+if [[ " ${*} " != *" --shortcuts-only "* ]]; then
+    compile_ui_tests build/chat-ui-tests
+    build/chat-ui-tests "$@"
+fi
