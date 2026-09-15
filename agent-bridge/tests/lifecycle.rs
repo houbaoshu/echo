@@ -215,6 +215,53 @@ async fn c_abi_lifecycle() {
         shutdown().await;
     }
 
+    // Fixed v1 archives survive a protocol switch. The provider-specific
+    // reasoning stays in storage but is sent only to the Responses endpoint.
+    for protocol in ["chat_completions", "responses"] {
+        let history: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/agent-v1/responses-tool.json"
+        ))
+        .unwrap();
+        let requests_before = server.requests.lock().unwrap().len();
+        let handle = create(&base, &prompt, protocol, Some(history.clone()));
+        let ready = until(&handle, |f| f["type"] == "ready").await;
+        assert_eq!(ready.last().unwrap()["history"], history);
+        accepted(&handle, "export_history", json!({}));
+        until(&handle, |f| f["request_id"] == "export_history").await;
+        assert_eq!(server.requests.lock().unwrap().len(), requests_before);
+        server.reply(answer(protocol, "restored context"));
+        accepted(&handle, "submit", json!({"text":"继续聊 🌱"}));
+        let frames = until(&handle, |f| event(f, "finished")).await;
+        assert!(
+            frames.last().unwrap()["history"]
+                .to_string()
+                .contains("synthetic-opaque-fixture")
+        );
+        let body = server.requests.lock().unwrap().last().unwrap().clone();
+        assert!(body.to_string().contains("fixture-output"));
+        assert_eq!(
+            body.to_string().contains("synthetic-opaque-fixture"),
+            protocol == "responses"
+        );
+        assert_eq!(body["model"], "test");
+        drop(handle);
+        shutdown().await;
+    }
+
+    // A corrupt but syntactically valid v1 archive fails during initialization
+    // and never reaches the model or tool dispatcher.
+    let requests_before = server.requests.lock().unwrap().len();
+    let history = serde_json::from_str(include_str!(
+        "../../tests/fixtures/agent-v1/invalid-duplicate-id.json"
+    ))
+    .unwrap();
+    let handle = create(&base, &prompt, "chat_completions", Some(history));
+    let frames = until(&handle, |f| f["type"] == "initialization_failed").await;
+    assert!(!frames.iter().any(|f| f["type"] == "ready"));
+    assert_eq!(server.requests.lock().unwrap().len(), requests_before);
+    drop(handle);
+    shutdown().await;
+
     // Steering during a held model request invalidates its proposed command.
     let handle = create(&base, &prompt, "chat_completions", None);
     until(&handle, |f| f["type"] == "ready").await;

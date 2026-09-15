@@ -30,4 +30,6 @@ xcuserdata/
 *.xcuserstate
 
 # 文档与规划记录
-/docs/
+/docs/*
+!/docs/mini-agent-mainline-bridge-v2-plan.md
+!/docs/mini-agent-mainline-bridge-v2-contract.md

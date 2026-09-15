@@ -1,6 +1,9 @@
 use mini_agent::{
-    conversation::{Conversation, ConversationConfig, ConversationHistory, Operation},
-    models::{ApiProtocol, ConversationMessage, Model, OpenAiConfig, OpenAiModel},
+    conversation::{
+        Conversation, ConversationConfig, ConversationHistory, ConversationMessage,
+        ConversationModel, Operation,
+    },
+    models::{ApiProtocol, OpenAiConfig, OpenAiModel},
     types::CommandOutput,
 };
 use serde::Deserialize;

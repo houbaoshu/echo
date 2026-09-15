@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-mini-agent-rs = { path = "../../mini-agent-agent-core-exp" }
+mini-agent-rs = { path = "../../mini-agent-agent-core-exp", default-features = false, features = ["conversation"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "process", "io-util", "time"] }

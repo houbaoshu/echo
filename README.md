@@ -2,6 +2,8 @@
 
 Echo 是面向 Apple Silicon Mac 的桌面应用，将 macOS 桌宠、AI 对话与 Agent 工具执行整合在一个原生工作区中。Swift / AppKit / SwiftUI 负责界面和系统能力，Rust Agent Core 负责模型交互与会话决策。以下说明以当前 V1 实现为准。
 
+Mini Agent 主线迁移已完成[第 1 阶段：行为基线与 v2 契约](docs/mini-agent-mainline-bridge-v2-plan.md)。当前运行时仍使用下述 v1 依赖与协议；新增的[类型规范和运行器契约](docs/mini-agent-mainline-bridge-v2-contract.md)尚未接入生产流程。
+
 ## 核心能力
 
 - **桌宠**：内置赤焰和沧沧，支持待机、悬停、拖动和适配素材的注视动画。点击桌宠打开聊天，浮层显示活动摘要；设置中可导入包含 `pet.json` 和 WebP 精灵图的 v1/v2 素材。
