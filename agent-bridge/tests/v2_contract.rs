@@ -1,8 +1,5 @@
-//! Serialization/shape checks, not evidence of a working v2 runner or ABI.
-#[path = "support/v2_contract.rs"]
-pub mod contract;
-
-use contract::*;
+//! Serialization checks against the production wire and Mini Agent types.
+use echo_agent::wire::*;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 

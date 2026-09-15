@@ -6,7 +6,7 @@ cd "$project_dir"
 source scripts/swift-env.sh
 # The saved-settings source resolves its prompt through Bundle.main.
 mkdir -p build/agent
-cp ../mini-agent-agent-core-exp/config/prompts/conversation.md build/agent/conversation.md
+cp "$(/bin/zsh "$project_dir/scripts/agent-prompt-path.sh")" build/agent/conversation.md
 cargo build --locked --release --target aarch64-apple-darwin
 typeset -a sources=()
 for source_file in macos/*.swift; do

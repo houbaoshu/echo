@@ -7,16 +7,18 @@
 int main(int argc, char **argv) {
     assert(argc == 2);
     char request[8192];
-    snprintf(request, sizeof(request),
-        "{\"version\":1,\"session_id\":\"memory\",\"prompt_path\":\"%s\","
-        "\"model\":{\"base_url\":\"http://127.0.0.1:1\",\"model\":\"test\",\"protocol\":\"responses\"}}", argv[1]);
     for (int i = 0; i < 500; ++i) {
+        int size = snprintf(request, sizeof(request),
+        "{\"version\":2,\"session_id\":\"memory\",\"generation\":\"memory-%d\",\"prompt_path\":\"%s\","
+        "\"model\":{\"base_url\":\"http://127.0.0.1:1\",\"model\":\"test\",\"protocol\":\"responses\"},"
+        "\"restore\":{\"source\":{\"type\":\"empty\"},\"input_receipts\":[],\"pending_inputs\":[],\"directory\":null}}", i, argv[1]);
+        assert(size > 0 && (size_t)size < sizeof(request));
         char *error = NULL;
         EchoAgent *handle = echo_agent_create(request, &error);
         assert(handle && !error);
         char *batch = echo_agent_poll_events(handle, 1);
         char *invalid = echo_agent_submit(handle, "{}");
-        assert(strstr(invalid, "false"));
+        assert(strstr(invalid, "rejected"));
         echo_agent_cancel(handle);
         echo_agent_destroy(handle);
         assert(strstr(batch, "version"));

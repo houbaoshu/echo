@@ -14,7 +14,7 @@ cargo build --locked --release --target aarch64-apple-darwin
 probe_app="$project_dir/build/voice-live-probe/Echo.app"
 mkdir -p "$probe_app/Contents/MacOS" "$probe_app/Contents/Resources/agent"
 cp macos/Info.plist "$probe_app/Contents/Info.plist"
-cp ../mini-agent-agent-core-exp/config/prompts/conversation.md "$probe_app/Contents/Resources/agent/conversation.md"
+cp "$(/bin/zsh "$project_dir/scripts/agent-prompt-path.sh")" "$probe_app/Contents/Resources/agent/conversation.md"
 typeset -a sources=()
 for source_file in macos/*.swift; do
     if [[ "$source_file" != macos/main.swift ]]; then sources+=("$source_file"); fi

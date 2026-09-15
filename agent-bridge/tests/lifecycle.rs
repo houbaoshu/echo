@@ -23,8 +23,9 @@ fn owned(pointer: *mut c_char) -> Value {
 }
 fn create(base: &str, prompt: &std::path::Path, protocol: &str, history: Option<Value>) -> Handle {
     let request = CString::new(
-        json!({"version":1,"session_id":"session-一","prompt_path":prompt,
-        "model":{"base_url":base,"model":"test","protocol":protocol}, "history":history})
+        json!({"version":2,"session_id":"session-一","generation":format!("generation-{}", next_id()),"prompt_path":prompt,
+        "model":{"base_url":base,"model":"test","protocol":protocol},
+        "restore":{"source": history.map(|h| json!({"type":"v1","history":h.to_string()})).unwrap_or(json!({"type":"empty"})), "directory":null,"input_receipts":[],"pending_inputs":[]}})
         .to_string(),
     )
     .unwrap();
@@ -39,12 +40,20 @@ fn create(base: &str, prompt: &std::path::Path, protocol: &str, history: Option<
     );
     Handle(handle)
 }
+fn next_id() -> usize {
+    static ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+}
 fn send(handle: &Handle, kind: &str, fields: Value) -> Value {
     let mut request = fields;
-    request["version"] = json!(1);
-    request["request_id"] = json!(kind);
     request["type"] = json!(kind);
-    let request = CString::new(request.to_string()).unwrap();
+    if ["submit", "steer", "send_message"].contains(&kind) && request.get("input").is_none() {
+        request["input"] =
+            json!({"client_message_id":format!("ui-{}",next_id()), "text":request["text"]});
+        request.as_object_mut().unwrap().remove("text");
+    }
+    let request =
+        CString::new(json!({"version":2,"request_id":kind,"command":request}).to_string()).unwrap();
     owned(unsafe {
         match kind {
             "submit" => echo_agent_submit(handle.0, request.as_ptr()),
@@ -55,7 +64,7 @@ fn send(handle: &Handle, kind: &str, fields: Value) -> Value {
     })
 }
 fn accepted(handle: &Handle, kind: &str, fields: Value) {
-    assert_eq!(send(handle, kind, fields)["accepted"], true);
+    assert_eq!(send(handle, kind, fields)["admission"]["status"], "queued");
 }
 fn poll(handle: &Handle) -> Vec<Value> {
     let start = Instant::now();
@@ -64,10 +73,23 @@ fn poll(handle: &Handle) -> Vec<Value> {
     value["batches"].as_array().unwrap().clone()
 }
 async fn until(handle: &Handle, predicate: impl Fn(&Value) -> bool) -> Vec<Value> {
+    collect_until(handle, true, predicate).await
+}
+async fn collect_until(
+    handle: &Handle,
+    ack: bool,
+    predicate: impl Fn(&Value) -> bool,
+) -> Vec<Value> {
     let start = Instant::now();
     let mut all = Vec::new();
     loop {
-        all.extend(poll(handle));
+        let frames = poll(handle);
+        if ack {
+            for frame in &frames {
+                acknowledge(handle, frame);
+            }
+        }
+        all.extend(frames);
         if all.iter().any(&predicate) {
             return all;
         }
@@ -77,6 +99,34 @@ async fn until(handle: &Handle, predicate: impl Fn(&Value) -> bool) -> Vec<Value
         );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+}
+fn acknowledge(handle: &Handle, frame: &Value) {
+    if frame["checkpoint"].is_object() {
+        accepted(
+            handle,
+            "acknowledge_checkpoint",
+            json!({"checkpoint":frame["checkpoint"]["id"]}),
+        );
+    }
+}
+fn authorize(handle: &Handle, frame: &Value) {
+    accepted(
+        handle,
+        "authorize_tool",
+        json!({
+            "checkpoint":frame["checkpoint"]["id"],
+            "operation_id":frame["kind"]["operation_id"],
+            "directory":frame["kind"]["directory"],
+        }),
+    );
+}
+fn history(frames: &[Value]) -> Value {
+    let raw = frames
+        .iter()
+        .rev()
+        .find_map(|f| f["checkpoint"]["history"].as_str())
+        .unwrap();
+    serde_json::from_str(raw).unwrap()
 }
 fn event(frame: &Value, kind: &str) -> bool {
     frame["events"]
@@ -157,30 +207,186 @@ async fn c_abi_lifecycle() {
     // Invalid ABI input, safe null operations and independent allocated errors.
     let mut error = std::ptr::null_mut();
     assert!(unsafe { echo_agent_create(std::ptr::null(), &mut error) }.is_null());
-    assert_eq!(owned(error)["accepted"], false);
+    assert_eq!(owned(error)["admission"]["status"], "rejected");
     unsafe {
         echo_agent_destroy(std::ptr::null_mut());
         echo_agent_cancel(std::ptr::null_mut());
         echo_agent_string_free(std::ptr::null_mut());
     }
     assert_eq!(
-        owned(unsafe { echo_agent_poll_events(std::ptr::null_mut(), 1) })["accepted"],
-        false
+        owned(unsafe { echo_agent_poll_events(std::ptr::null_mut(), 1) })["admission"]["status"],
+        "rejected"
     );
+
+    // Real C v2 save gates: neither a queued input nor a tool lease is a save.
+    for fail_save in [false, true] {
+        let handle = create(&base, &prompt, "chat_completions", None);
+        let ready = collect_until(&handle, false, |f| f["kind"]["type"] == "ready").await;
+        let before = server.requests.lock().unwrap().len();
+        accepted(
+            &handle,
+            "provide_directory",
+            json!({"directory":temp.path()}),
+        );
+        let input = json!({"input":{"client_message_id":"stable-一", "text":"save first 🌱"}});
+        accepted(&handle, "send_message", input.clone());
+        let frames = collect_until(&handle, false, |f| {
+            f["kind"]["request_id"] == "send_message"
+        })
+        .await;
+        let receipt = frames
+            .iter()
+            .find(|f| f["kind"]["request_id"] == "send_message")
+            .unwrap()["kind"]["result"]["input_receipt"]
+            .clone();
+        // Re-delivery uses the same IDs; identical text with another ID remains separate.
+        accepted(&handle, "send_message", input.clone());
+        let duplicate = collect_until(&handle, false, |f| {
+            f["kind"]["request_id"] == "send_message"
+        })
+        .await;
+        assert_eq!(
+            duplicate.last().unwrap()["kind"]["result"]["input_receipt"],
+            receipt
+        );
+        accepted(
+            &handle,
+            "send_message",
+            json!({"input":{"client_message_id":"stable-二", "text":"save first 🌱"}}),
+        );
+        let second = collect_until(&handle, false, |f| {
+            f["kind"]["request_id"] == "send_message"
+        })
+        .await;
+        assert_ne!(
+            second.last().unwrap()["kind"]["result"]["input_receipt"]["message_id"],
+            receipt["message_id"]
+        );
+        accepted(
+            &handle,
+            "send_message",
+            json!({"input":{"client_message_id":"stable-一", "text":"conflict"}}),
+        );
+        let conflict = collect_until(&handle, false, |f| {
+            f["kind"]["request_id"] == "send_message"
+        })
+        .await;
+        assert_eq!(
+            conflict.last().unwrap()["kind"]["result"]["error"]["code"],
+            "client_message_conflict"
+        );
+        acknowledge(&handle, ready.last().unwrap()); // Old saved waterline cannot dispatch this input.
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert_eq!(server.requests.lock().unwrap().len(), before);
+        // The largest u64 revision survives decoding and is rejected as stale,
+        // rather than being rounded or truncated by the wire adapter.
+        let mut future = second.last().unwrap()["checkpoint"]["id"].clone();
+        future["revision"] = json!(u64::MAX);
+        accepted(
+            &handle,
+            "acknowledge_checkpoint",
+            json!({"checkpoint":future}),
+        );
+        let rejected = collect_until(&handle, false, |f| {
+            f["kind"]["result"]["error"]["code"] == "stale_checkpoint"
+        })
+        .await;
+        assert!(rejected.iter().all(|f| f["checkpoint"].is_null()));
+        acknowledge(&handle, second.last().unwrap());
+        let budget = collect_until(&handle, false, |f| event(f, "model_started")).await;
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert_eq!(server.requests.lock().unwrap().len(), before); // Budget checkpoint is another gate.
+        server.reply(tool("chat_completions", "printf durable > gated.txt"));
+        acknowledge(&handle, budget.last().unwrap());
+        let proposal = collect_until(&handle, false, |f| f["kind"]["type"] == "tool_pending").await;
+        let proposal = proposal
+            .iter()
+            .find(|f| f["kind"]["type"] == "tool_pending")
+            .unwrap();
+        authorize(&handle, proposal); // Lease granted before save acknowledgement.
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert!(!temp.path().join("gated.txt").exists());
+        let mut wrong_generation = proposal["checkpoint"]["id"].clone();
+        wrong_generation["generation"] = json!("previous-handle");
+        accepted(
+            &handle,
+            "acknowledge_checkpoint",
+            json!({"checkpoint":wrong_generation}),
+        );
+        collect_until(&handle, false, |f| {
+            f["kind"]["result"]["error"]["code"] == "stale_checkpoint"
+        })
+        .await;
+        assert!(!temp.path().join("gated.txt").exists());
+        acknowledge(&handle, proposal);
+        let result = collect_until(&handle, false, |f| event(f, "tool_result")).await;
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("gated.txt")).unwrap(),
+            "durable"
+        );
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert_eq!(server.requests.lock().unwrap().len(), before + 1); // Result not saved => no next query.
+        if fail_save {
+            // Saturate normal admission and event output first. Persistence
+            // failure still enters through its independent terminal latch.
+            let mut full = false;
+            for _ in 0..160 {
+                full |= send(&handle, "export_history", json!({}))["admission"]["error"]["code"]
+                    == "queue_full";
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            assert!(full);
+            accepted(
+                &handle,
+                "checkpoint_failed",
+                json!({"checkpoint":result.last().unwrap()["checkpoint"]["id"]}),
+            );
+            let stopped = collect_until(&handle, false, |f| f["kind"]["type"] == "cancelled").await;
+            assert!(
+                stopped
+                    .iter()
+                    .any(|f| f["kind"]["result"]["error"]["code"] == "persistence_failed")
+            );
+            assert_eq!(
+                send(&handle, "send_message", input)["admission"]["error"]["code"],
+                "persistence_failed"
+            );
+            assert_eq!(server.requests.lock().unwrap().len(), before + 1);
+        } else {
+            // Stop also works while waiting to persist a result; the known
+            // result remains intact and cannot accidentally dispatch a model.
+            unsafe { echo_agent_cancel(handle.0) };
+            let stopped = collect_until(&handle, false, |f| f["kind"]["type"] == "cancelled").await;
+            assert!(stopped.iter().any(|f| {
+                f["checkpoint"]["history"]
+                    .as_str()
+                    .is_some_and(|h| h.contains("gated.txt"))
+            }));
+            assert_eq!(server.requests.lock().unwrap().len(), before + 1);
+        }
+        drop(handle);
+        shutdown().await;
+        std::fs::remove_file(temp.path().join("gated.txt")).unwrap();
+    }
 
     for protocol in ["chat_completions", "responses"] {
         let handle = create(&base, &prompt, protocol, None);
-        until(&handle, |f| f["type"] == "ready").await;
+        until(&handle, |f| f["kind"]["type"] == "ready").await;
         server.reply(answer(protocol, "你好 🌱"));
         accepted(&handle, "submit", json!({"text":"hello"}));
         let finished = until(&handle, |f| event(f, "finished")).await;
         assert!(finished.iter().any(|f| f.to_string().contains("你好 🌱")));
-        let history = finished.last().unwrap()["history"].clone();
+        let history = history(&finished);
         drop(handle);
         shutdown().await;
         let handle = create(&base, &prompt, protocol, Some(history));
-        until(&handle, |f| f["type"] == "ready").await;
-        assert!(poll(&handle).is_empty()); // import never auto-executes
+        until(&handle, |f| f["kind"]["type"] == "ready").await;
+        let extra = poll(&handle);
+        assert!(
+            extra
+                .iter()
+                .all(|f| f["checkpoint"].is_null() && f["events"].as_array().unwrap().is_empty())
+        ); // only ack receipts, never auto-execution
 
         server.reply(tool(
             protocol,
@@ -195,10 +401,9 @@ async fn c_abi_lifecycle() {
             "provide_directory",
             json!({"directory":temp.path()}),
         );
-        let frames = until(&handle, |f| f["type"] == "tool_pending").await;
-        let id = frames.last().unwrap()["operation_id"].clone();
+        let frames = until(&handle, |f| f["kind"]["type"] == "tool_pending").await;
         assert!(!temp.path().join("result.txt").exists());
-        accepted(&handle, "start_tool", json!({"operation_id":id}));
+        authorize(&handle, frames.last().unwrap());
         let frames = until(&handle, |f| event(f, "finished")).await;
         assert_eq!(
             std::fs::read_to_string(temp.path().join("result.txt")).unwrap(),
@@ -218,22 +423,22 @@ async fn c_abi_lifecycle() {
     // Fixed v1 archives survive a protocol switch. The provider-specific
     // reasoning stays in storage but is sent only to the Responses endpoint.
     for protocol in ["chat_completions", "responses"] {
-        let history: Value = serde_json::from_str(include_str!(
+        let fixture: Value = serde_json::from_str(include_str!(
             "../../tests/fixtures/agent-v1/responses-tool.json"
         ))
         .unwrap();
         let requests_before = server.requests.lock().unwrap().len();
-        let handle = create(&base, &prompt, protocol, Some(history.clone()));
-        let ready = until(&handle, |f| f["type"] == "ready").await;
-        assert_eq!(ready.last().unwrap()["history"], history);
+        let handle = create(&base, &prompt, protocol, Some(fixture.clone()));
+        let ready = until(&handle, |f| f["kind"]["type"] == "ready").await;
+        assert_eq!(history(&ready), fixture);
         accepted(&handle, "export_history", json!({}));
-        until(&handle, |f| f["request_id"] == "export_history").await;
+        until(&handle, |f| f["kind"]["request_id"] == "export_history").await;
         assert_eq!(server.requests.lock().unwrap().len(), requests_before);
         server.reply(answer(protocol, "restored context"));
         accepted(&handle, "submit", json!({"text":"继续聊 🌱"}));
         let frames = until(&handle, |f| event(f, "finished")).await;
         assert!(
-            frames.last().unwrap()["history"]
+            history(&frames)
                 .to_string()
                 .contains("synthetic-opaque-fixture")
         );
@@ -256,15 +461,40 @@ async fn c_abi_lifecycle() {
     ))
     .unwrap();
     let handle = create(&base, &prompt, "chat_completions", Some(history));
-    let frames = until(&handle, |f| f["type"] == "initialization_failed").await;
-    assert!(!frames.iter().any(|f| f["type"] == "ready"));
+    let frames = until(&handle, |f| f["kind"]["type"] == "initialization_failed").await;
+    assert!(!frames.iter().any(|f| f["kind"]["type"] == "ready"));
+    assert_eq!(
+        frames.last().unwrap()["kind"]["error"]["code"],
+        "invalid_history"
+    );
     assert_eq!(server.requests.lock().unwrap().len(), requests_before);
+    shutdown().await; // Failed initialization completes even while the C handle remains alive.
+    assert_eq!(
+        owned(unsafe { echo_agent_poll_events(handle.0, 1) })["closed"],
+        true
+    );
+    drop(handle);
+
+    let private_prompt = temp.path().join("private-missing-prompt.md");
+    let handle = create(&base, &private_prompt, "responses", None);
+    let frames = until(&handle, |f| f["kind"]["type"] == "initialization_failed").await;
+    assert_eq!(
+        frames.last().unwrap()["kind"]["error"]["code"],
+        "initialization_failed"
+    );
+    assert!(
+        !frames
+            .last()
+            .unwrap()
+            .to_string()
+            .contains("private-missing-prompt")
+    );
     drop(handle);
     shutdown().await;
 
     // Steering during a held model request invalidates its proposed command.
     let handle = create(&base, &prompt, "chat_completions", None);
-    until(&handle, |f| f["type"] == "ready").await;
+    until(&handle, |f| f["kind"]["type"] == "ready").await;
     server
         .block
         .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -281,13 +511,13 @@ async fn c_abi_lifecycle() {
             .iter()
             .any(|f| f.to_string().contains("not_executed"))
     );
-    assert!(!frames.iter().any(|f| f["type"] == "tool_pending"));
+    assert!(!frames.iter().any(|f| f["kind"]["type"] == "tool_pending"));
     drop(handle);
     shutdown().await;
 
     // A follow-up at the host's persistence/lock gate rejects stale permission.
     let handle = create(&base, &prompt, "chat_completions", None);
-    until(&handle, |f| f["type"] == "ready").await;
+    until(&handle, |f| f["kind"]["type"] == "ready").await;
     accepted(
         &handle,
         "provide_directory",
@@ -296,15 +526,18 @@ async fn c_abi_lifecycle() {
     server.reply(tool("chat_completions", "touch obsolete"));
     server.reply(answer("chat_completions", "reconsidered"));
     accepted(&handle, "submit", json!({"text":"old tool"}));
-    let frames = until(&handle, |f| f["type"] == "tool_pending").await;
-    let stale = frames.last().unwrap()["operation_id"].clone();
+    let frames = until(&handle, |f| f["kind"]["type"] == "tool_pending").await;
+    let stale = frames.last().unwrap().clone();
     accepted(&handle, "steer", json!({"text":"do not execute"}));
-    accepted(&handle, "start_tool", json!({"operation_id":stale}));
+    // Let the serial runner process steering before delivering obsolete permission.
+    until(&handle, |f| f["kind"]["request_id"] == "steer").await;
+    authorize(&handle, &stale);
     let frames = until(&handle, |f| event(f, "finished")).await;
     assert!(
         frames
             .iter()
-            .any(|f| f["request_id"] == "start_tool" && f["error"].is_string())
+            .any(|f| f["kind"]["request_id"] == "authorize_tool"
+                && f["kind"]["result"]["error"]["code"] == "stale_operation")
     );
     assert!(!temp.path().join("obsolete").exists());
     drop(handle);
@@ -312,7 +545,7 @@ async fn c_abi_lifecycle() {
 
     // A known completed tool result survives cancellation behind a full queue.
     let handle = create(&base, &prompt, "chat_completions", None);
-    until(&handle, |f| f["type"] == "ready").await;
+    until(&handle, |f| f["kind"]["type"] == "ready").await;
     accepted(
         &handle,
         "provide_directory",
@@ -323,12 +556,8 @@ async fn c_abi_lifecycle() {
         "while [ ! -e release ]; do sleep 0.01; done; printf preserved-output",
     ));
     accepted(&handle, "submit", json!({"text":"wait for release"}));
-    let frames = until(&handle, |f| f["type"] == "tool_pending").await;
-    accepted(
-        &handle,
-        "start_tool",
-        json!({"operation_id":frames.last().unwrap()["operation_id"]}),
-    );
+    let frames = until(&handle, |f| f["kind"]["type"] == "tool_pending").await;
+    authorize(&handle, frames.last().unwrap());
     for _ in 0..160 {
         send(&handle, "export_history", json!({}));
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -336,7 +565,7 @@ async fn c_abi_lifecycle() {
     std::fs::write(temp.path().join("release"), "go").unwrap();
     tokio::time::sleep(Duration::from_millis(150)).await;
     unsafe { echo_agent_cancel(handle.0) };
-    let frames = until(&handle, |f| f["type"] == "cancelled").await;
+    let frames = collect_until(&handle, false, |f| f["kind"]["type"] == "cancelled").await;
     assert!(
         frames
             .iter()
@@ -348,7 +577,7 @@ async fn c_abi_lifecycle() {
     // Tool cancellation and destruction kill a real shell and its child.
     for destroy in [false, true] {
         let handle = create(&base, &prompt, "chat_completions", None);
-        until(&handle, |f| f["type"] == "ready").await;
+        until(&handle, |f| f["kind"]["type"] == "ready").await;
         accepted(
             &handle,
             "provide_directory",
@@ -359,12 +588,8 @@ async fn c_abi_lifecycle() {
             "echo $$ > shell.pid; sleep 20 & echo $! > child.pid; wait; touch survived",
         ));
         accepted(&handle, "submit", json!({"text":"work"}));
-        let frames = until(&handle, |f| f["type"] == "tool_pending").await;
-        accepted(
-            &handle,
-            "start_tool",
-            json!({"operation_id":frames.last().unwrap()["operation_id"]}),
-        );
+        let frames = until(&handle, |f| f["kind"]["type"] == "tool_pending").await;
+        authorize(&handle, frames.last().unwrap());
         let start = Instant::now();
         while !temp.path().join("child.pid").exists() {
             assert!(start.elapsed() < Duration::from_secs(5));
@@ -373,7 +598,8 @@ async fn c_abi_lifecycle() {
         // Fill the event queue without polling, then saturate command admission.
         let mut rejected = false;
         for _ in 0..160 {
-            rejected |= send(&handle, "export_history", json!({}))["accepted"] == false;
+            rejected |=
+                send(&handle, "export_history", json!({}))["admission"]["status"] == "rejected";
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         assert!(rejected);
@@ -397,7 +623,7 @@ async fn c_abi_lifecycle() {
                 )
                 .is_err()
             );
-            let frames = until(&handle, |f| f["type"] == "cancelled").await;
+            let frames = collect_until(&handle, false, |f| f["kind"]["type"] == "cancelled").await;
             assert!(frames.iter().any(|f| event(f, "stopping")));
             assert!(frames.iter().any(|f| event(f, "finished")));
             assert!(frames.iter().any(|f| f.to_string().contains("unknown")));
@@ -435,7 +661,7 @@ async fn c_abi_lifecycle() {
         .store(true, std::sync::atomic::Ordering::SeqCst);
     server.reply(answer("chat_completions", "late"));
     let handle = create(&base, &prompt, "chat_completions", None);
-    until(&handle, |f| f["type"] == "ready").await;
+    until(&handle, |f| f["kind"]["type"] == "ready").await;
     accepted(&handle, "submit", json!({"text":"wait"}));
     until(&handle, |f| event(f, "model_started")).await;
     drop(handle);
@@ -445,7 +671,7 @@ async fn c_abi_lifecycle() {
         let handle = create(&base, &prompt, "chat_completions", None);
         let pointer = unsafe { echo_agent_poll_events(handle.0, 1) };
         drop(handle);
-        assert_eq!(owned(pointer)["version"], 1);
+        assert_eq!(owned(pointer)["version"], 2);
     }
     shutdown().await;
     http.abort();

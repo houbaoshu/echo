@@ -1,6 +1,6 @@
-# Mini Agent Bridge v2：第 1 阶段契约
+# Mini Agent Bridge v2：接入契约
 
-本文件是 [迁移计划](mini-agent-mainline-bridge-v2-plan.md) 第 1 阶段的交付。`agent-bridge/tests/support/v2_contract.rs` 是随测试编译的类型规范，**没有接入生产库、没有实现运行器、没有启用 C ABI v2**。当前 C ABI、Swift 和依赖路径继续遵循 [现有 v1 契约](agent-integration-stage2.md)。
+本文件最初是 [迁移计划](mini-agent-mainline-bridge-v2-plan.md) 第 1 阶段的类型规范；第 2 阶段实现主线运行器，第 3 阶段已接入生产 Rust/C ABI v2。核心类型来自 `mini_agent::conversation::runner`，wire 类型位于 `agent-bridge/src/wire.rs`，原测试副本已删除。**Swift 仍遵循 [旧 v1 契约](agent-integration-stage2.md)，尚不能调用当前 Bridge；Swift 迁移属于第 4 阶段。**
 
 ## 1. 类型归属与 API 边界
 
@@ -15,11 +15,11 @@
 | `DisplayEntry` | 有序消息/工具投影；以核心 ID 定位。工具 result 保留原始结果字符串及其中的退出码、超时、截断和 unknown/not_executed 信息。 |
 | `WireCreate` / `WireRequest` / `WireReply` / `WirePoll` | Bridge 所有；JSON 版本、模型凭据、Bundle prompt 文件路径及传输封装。 |
 
-编译规范暂时复用当前依赖的 `ConversationHistory` / `ConversationEvent`；切换依赖后应使用主线 `conversation` 导出的类型。泛型 `H` 只表达核心历史与 wire 原样 JSON 字符串之间的编码边界，不要求公共运行器 API 本身泛型化。v2 顶层批次不再复用 v1 的任意 JSON 字典。
+生产 Bridge 直接使用主线 `conversation` 导出的 `ConversationHistory` / `ConversationEvent` 和运行器类型。泛型 `H` 只表达核心历史与 wire 原样 JSON 字符串之间的编码边界，不要求公共运行器 API 本身泛型化。v2 顶层批次不再复用 v1 的任意 JSON 字典。
 
-### 第 2 阶段的 SessionHandle 接口约束
+### SessionHandle 接口约束（第 2 阶段已实现）
 
-以下是待实现接口的签名约束，不提供空实现或模拟运行循环：
+以下是运行器的核心接口；具体类型和初始化参数见第 6 节：
 
 ```rust,ignore
 // conversation::runner，所有 Result 使用类型化 SessionError。
@@ -87,7 +87,7 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 
 ## 4. Wire v2
 
-保留现有 C 符号、16 MiB 请求限制、字符串独立所有权和 panic 隔离。升级发生于第 3/4 阶段；届时仅接受 v2 请求，v1 wire 返回 `unsupported_version`，**持久化历史仍为 v1**。版本在读取顶层 JSON 后先检查，再解码 payload；不要把一个合法 v1 请求误报为普通字段错误。generation、request ID、客户端 ID 必须非空；revision 和核心 IDs 必须为正整数。JSON 数字完整保留 u64，不经 Double。
+保留现有 C 符号、16 MiB 请求限制、字符串独立所有权和 panic 隔离。第 3 阶段 C ABI 已仅接受 v2 请求，v1 wire 返回 `unsupported_version`，**持久化历史仍为 v1**；Swift 调用方在第 4 阶段升级。版本在读取顶层 JSON 后先检查，再解码 payload；不要把一个合法 v1 请求误报为普通字段错误。generation、request ID、客户端 ID 必须非空；revision 和核心 IDs 必须为正整数。JSON 数字完整保留 u64，不经 Double。
 
 普通输入示例：
 
@@ -123,8 +123,20 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 
 ## 6. 第 2 阶段落地说明
 
-核心契约已在 Mini Agent 主线工作区的 [`conversation::runner`](/Users/houbaoshu/workspace/mini-agent-rs/src/conversation/runner.rs) 实现，见 [运行器使用说明](/Users/houbaoshu/workspace/mini-agent-rs/docs/conversation-runner.md) 和 [计划第 2 阶段记录](mini-agent-mainline-bridge-v2-plan.md#7-第-2-阶段实施记录2026-09-15)。本文前述 wire 类型仍是后续 Bridge/Swift 迁移的规范，尚未接入生产 C ABI。
+核心契约已在 Mini Agent 主线工作区的 [`conversation::runner`](/Users/houbaoshu/workspace/mini-agent-rs/src/conversation/runner.rs) 实现，见 [运行器使用说明](/Users/houbaoshu/workspace/mini-agent-rs/docs/conversation-runner.md) 和 [计划第 2 阶段记录](mini-agent-mainline-bridge-v2-plan.md#7-第-2-阶段实施记录2026-09-15)。本文前述 wire 类型已在第 3 阶段接入 C ABI；Swift 适配仍留待第 4 阶段。
 
 具体 API 使用 `SessionParts { restored, model, executor }`；`restored` 由 `Conversation::restore(session_id, config, restore_input)` 返回。`SessionOptions::new(session_id, generation)` 设置默认队列容量，宿主为每次创建提供新 generation。初始化在 Stop/close 后继续 await，宿主初始化 future 必须等待其 blocking 工作结束，运行器不会把 abort blocking 任务视为清理完成。
 
 `SessionCompletion::wait()` 确认整个句柄 close/Drop 后完成清理；可复用句柄的普通 Stop 通过 `BatchKind::Cancelled` 确认本次操作清理完成。两者都要求宿主保持 runtime 存活。旧 `Environment` 仍可独立使用，只有显式实现 `ConversationExecutor` 的执行器提供可等待取消保证。
+
+
+## 7. 第 3 阶段 Bridge 落地说明
+
+- `agent-bridge/Cargo.toml` 指向 `../../mini-agent-rs`，仅启用 `conversation`。运行器来自该主线工作区第 2 阶段的未提交实现；单独 checkout 主线 `b03cf72` 尚不包含所需 API。
+- `session.rs` 仅负责 prompt/模型后台初始化、主线 `Conversation::restore` 调用、`/bin/bash` 执行参数、共享 runtime 和 completion 计数。会话驱动、执行算法及门控均由主线负责。没有新增任何自动保存确认或 v1 兼容运行路径。
+- `WireCreate` 需要非空 session/generation、绝对 prompt 路径和完整 `restore`。`restore.directory` 必须显式出现，null 表示清除。generation 由宿主生成，每次重建必须更新。旧文本及待确认输入直接交给核心恢复。
+- `echo_agent_request` 解码嵌套 `WireCommand`，普通命令直接进入 `try_command`，三种控制直接进入 `try_control`。`echo_agent_cancel` 调用 `stop`，销毁通过 `SessionHandle::drop` 触发 close。
+- wire 历史仅在后台初始化时解码为核心历史，在 poll 时编码为完整 JSON 字符串；投影、输入映射和事件直接透传。Bridge 不编辑历史内部 IDs，也不解释错误消息。
+- poll 在观察到核心批次通道已断开且排空后返回 `closed:true`；若恰好取满请求上限，可能下一次 poll 才观察到关闭。初始化失败批次也会先交付，再报告关闭。Stop 的清理回执为 `kind.type=cancelled`；close/destroy 的全局退出水位由 `echo_agent_active_sessions` 提供。
+- `scripts/agent-prompt-path.sh` 根据 Cargo metadata 中 `echo-agent` 的实际解析依赖定位 prompt，构建和 Agent/Voice 资源复制入口复用该路径。
+- Rust/C 阶段验收使用 `scripts/test-agent-ffi.sh`。既有 Swift Bridge/Session/聊天/Voice 集成测试入口仍保留，待第 4 阶段迁移后执行；本阶段没有把旧客户端的版本拒绝当作跨层通过。

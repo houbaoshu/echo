@@ -1,43 +1,72 @@
-//! Version 1 JSON C ABI. See include/echo_agent.h and docs/agent-integration-stage2.md.
-mod executor;
+//! Version 2 JSON C ABI. Persistent conversation archives remain version 1.
+//! See include/echo_agent.h and docs/mini-agent-mainline-bridge-v2-contract.md.
 mod session;
+pub mod wire;
 
-use serde::de::DeserializeOwned;
-use serde_json::json;
-use session::{Channels, Create, Request};
+use mini_agent::conversation::runner::{SessionHandle, SessionResult};
+use serde::Serialize;
+use serde_json::Value;
 use std::{
     ffi::{CStr, CString, c_char},
     panic::{AssertUnwindSafe, catch_unwind},
     ptr,
-    sync::Arc,
+    sync::Mutex,
 };
+use wire::*;
 
 pub struct EchoAgent {
-    channels: Arc<Channels>,
+    session: Mutex<SessionHandle>,
 }
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 
-unsafe fn parse<T: DeserializeOwned>(request: *const c_char) -> Result<T, String> {
+fn invalid() -> SessionError {
+    SessionError::new(ErrorCode::InvalidRequest, "invalid JSON request")
+}
+fn internal() -> SessionError {
+    SessionError::new(ErrorCode::Internal, "agent bridge failed")
+}
+unsafe fn parse(request: *const c_char) -> SessionResult<Value> {
     if request.is_null() {
-        return Err("missing JSON request".into());
+        return Err(invalid());
     }
     let bytes = unsafe { CStr::from_ptr(request) }.to_bytes();
     if bytes.len() > MAX_REQUEST_BYTES {
-        return Err("JSON request exceeds 16 MiB".into());
+        return Err(SessionError::new(
+            ErrorCode::RequestTooLarge,
+            "JSON request exceeds 16 MiB",
+        ));
     }
-    serde_json::from_slice(bytes).map_err(|_| "invalid JSON request".into())
-}
-fn string(value: serde_json::Value) -> *mut c_char {
-    CString::new(value.to_string()).unwrap().into_raw()
-}
-fn reply(result: Result<(), String>) -> *mut c_char {
-    match result {
-        Ok(()) => string(json!({"version":1,"accepted":true})),
-        Err(error) => string(json!({"version":1,"accepted":false,"error":error})),
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    // Inspect version before decoding the payload, including old v1 envelopes.
+    let version = value
+        .get("version")
+        .and_then(Value::as_u64)
+        .ok_or_else(invalid)?;
+    if version != u64::from(WIRE_VERSION) {
+        return Err(SessionError::new(
+            ErrorCode::UnsupportedVersion,
+            "wire version 2 required",
+        ));
     }
+    Ok(value)
+}
+fn string(value: &impl Serialize) -> *mut c_char {
+    CString::new(serde_json::to_string(value).expect("wire serialization"))
+        .expect("JSON escapes NUL")
+        .into_raw()
+}
+fn reply(request_id: Option<String>, result: SessionResult<()>) -> *mut c_char {
+    string(&WireReply {
+        version: WIRE_VERSION,
+        request_id,
+        admission: match result {
+            Ok(()) => Admission::Queued {},
+            Err(error) => Admission::Rejected { error },
+        },
+    })
 }
 
-/// Returns a handle immediately; initialization success/failure arrives as an event.
+/// Returns a handle immediately; initialization success/failure arrives in a batch.
 /// # Safety
 /// request is a NUL-terminated UTF-8 JSON string. error is null or writable for one
 /// pointer. Free any returned error with echo_agent_string_free. Serialize handle
@@ -52,25 +81,34 @@ pub unsafe extern "C" fn echo_agent_create(
             *error = ptr::null_mut();
         }
     }
-    let result = catch_unwind(AssertUnwindSafe(|| -> Result<_, String> {
-        let config: Create = unsafe { parse(request) }?;
-        if config.version != 1
-            || config.session_id.trim().is_empty()
+    let result = catch_unwind(AssertUnwindSafe(|| -> SessionResult<_> {
+        let value = unsafe { parse(request) }?;
+        // An omitted override must not accidentally erase a persisted directory.
+        if value
+            .get("restore")
+            .and_then(|v| v.get("directory"))
+            .is_none()
+        {
+            return Err(invalid());
+        }
+        let config: WireCreate = serde_json::from_value(value).map_err(|_| invalid())?;
+        if config.session_id.trim().is_empty()
+            || config.generation.trim().is_empty()
             || !config.prompt_path.is_absolute()
         {
-            return Err("version 1, session ID and absolute prompt_path required".into());
+            return Err(invalid());
         }
         Ok(Box::into_raw(Box::new(EchoAgent {
-            channels: session::spawn(config)?,
+            session: Mutex::new(session::spawn(config)?),
         })))
     }))
-    .unwrap_or_else(|_| Err("agent initialization panicked".into()));
+    .unwrap_or_else(|_| Err(internal()));
     match result {
         Ok(handle) => handle,
         Err(message) => {
             if !error.is_null() {
                 unsafe {
-                    *error = reply(Err(message));
+                    *error = reply(None, Err(message));
                 }
             }
             ptr::null_mut()
@@ -83,37 +121,41 @@ unsafe fn enqueue(
     request: *const c_char,
     expected: Option<&str>,
 ) -> *mut c_char {
-    reply(
-        catch_unwind(AssertUnwindSafe(|| {
-            let handle = unsafe { handle.as_ref() }.ok_or("missing handle")?;
-            let value: serde_json::Value = unsafe { parse(request) }?;
-            if expected.is_some_and(|kind| value["type"] != kind) {
-                return Err("wrong request type".into());
-            }
-            let mut request: Request =
-                serde_json::from_value(value).map_err(|_| "invalid request".to_string())?;
-            if request.version != 1 || request.request_id.trim().is_empty() {
-                return Err("version 1 and request_id required".into());
-            }
-            request.cancel_generation = *handle.channels.cancel.borrow();
-            handle
-                .channels
-                .commands
-                .try_send(request)
-                .map_err(|error| match error {
-                    tokio::sync::mpsc::error::TrySendError::Full(_) => {
-                        "command queue full; request not accepted".into()
-                    }
-                    tokio::sync::mpsc::error::TrySendError::Closed(_) => "session closed".into(),
-                })
-        }))
-        .unwrap_or_else(|_| Err("agent request panicked".into())),
-    )
+    let mut request_id = None;
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let value = unsafe { parse(request) }?;
+        request_id = value
+            .get("request_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if expected.is_some_and(|kind| value["command"]["type"] != kind) {
+            return Err(invalid());
+        }
+        // directory:null is an explicit command; absence is malformed.
+        if value["command"]["type"] == "provide_directory"
+            && value["command"].get("directory").is_none()
+        {
+            return Err(invalid());
+        }
+        let request: WireRequest = serde_json::from_value(value).map_err(|_| invalid())?;
+        request
+            .validate_envelope()
+            .map_err(|code| SessionError::new(code, "invalid request envelope"))?;
+        request.command.validate()?;
+        let handle = unsafe { handle.as_ref() }.ok_or_else(invalid)?;
+        let session = handle.session.try_lock().map_err(|_| internal())?;
+        match request.command {
+            WireCommand::Command(command) => session.try_command(request.request_id, command),
+            WireCommand::Control(control) => session.try_control(request.request_id, control),
+        }
+    }))
+    .unwrap_or_else(|_| Err(internal()));
+    reply(request_id, result)
 }
 
 macro_rules! request_api {
     ($name:ident, $kind:expr) => {
-        /// Nonblocking enqueue. Accepted means queued; command_result reports validation.
+        /// Nonblocking admission. Queued means enqueued; command_result reports application.
         /// # Safety
         /// handle must be live; request must be a NUL-terminated string. Free the
         /// returned string exactly once with echo_agent_string_free.
@@ -133,17 +175,43 @@ request_api!(echo_agent_request, None);
 
 /// Out-of-band stop; never waits for queue space or process cleanup.
 /// # Safety
-/// handle is null or live and not concurrently destroyed.
+/// handle is null or live and not concurrently destroyed. Serialize handle calls.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echo_agent_cancel(handle: *mut EchoAgent) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         if let Some(handle) = unsafe { handle.as_ref() } {
+            // Calls are serialized by the C ownership contract; recover poison
+            // so a previous FFI panic cannot disable cleanup.
             handle
-                .channels
-                .cancel
-                .send_modify(|sequence| *sequence = sequence.wrapping_add(1));
+                .session
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .stop();
         }
     }));
+}
+
+fn encode_batch(batch: SessionBatch) -> SessionResult<SessionBatch<String>> {
+    let checkpoint = batch
+        .checkpoint
+        .map(|checkpoint| -> SessionResult<_> {
+            Ok(Checkpoint {
+                id: checkpoint.id,
+                history: serde_json::to_string(&checkpoint.history).map_err(|_| internal())?,
+                input_receipts: checkpoint.input_receipts,
+                projection: checkpoint.projection,
+            })
+        })
+        .transpose()?;
+    Ok(SessionBatch {
+        session_id: batch.session_id,
+        generation: batch.generation,
+        turn_id: batch.turn_id,
+        operation_id: batch.operation_id,
+        kind: batch.kind,
+        events: batch.events,
+        checkpoint,
+    })
 }
 
 /// Drain up to max_batches (1..64), without waiting. Returned JSON owns all bytes.
@@ -154,28 +222,47 @@ pub unsafe extern "C" fn echo_agent_poll_events(
     handle: *mut EchoAgent,
     max_batches: usize,
 ) -> *mut c_char {
-    catch_unwind(AssertUnwindSafe(|| {
-        let Some(handle) = (unsafe { handle.as_ref() }) else { return reply(Err("missing handle".into())); };
-        let Ok(mut receiver) = handle.channels.events.try_lock() else { return reply(Err("concurrent poll".into())); };
-        let mut events = Vec::new();
-        for _ in 0..max_batches.clamp(1, session::EVENT_CAPACITY) {
-            match receiver.try_recv() { Ok(event) => events.push(event), Err(_) => break }
+    let result = catch_unwind(AssertUnwindSafe(|| -> SessionResult<_> {
+        let handle = unsafe { handle.as_ref() }.ok_or_else(invalid)?;
+        let mut session = handle.session.try_lock().map_err(|_| internal())?;
+        let mut batches = Vec::new();
+        let mut closed = false;
+        for _ in 0..max_batches.clamp(1, EVENT_CAPACITY) {
+            match session.try_next_batch() {
+                Ok(Some(batch)) => batches.push(encode_batch(batch)?),
+                Ok(None) => break,
+                Err(error) if error.code == ErrorCode::SessionClosed => {
+                    closed = true;
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
         }
-        string(json!({"version":1,"batches":events,"closed":receiver.is_closed() && receiver.is_empty()}))
-    })).unwrap_or_else(|_| reply(Err("agent poll panicked".into())))
+        // If exactly max_batches were drained, closure is reported on the next
+        // poll; never consume or drop a batch merely to inspect channel status.
+        Ok(WirePoll {
+            version: WIRE_VERSION,
+            batches,
+            closed,
+        })
+    }))
+    .unwrap_or_else(|_| Err(internal()));
+    match result {
+        Ok(poll) => string(&poll),
+        Err(error) => reply(None, Err(error)),
+    }
 }
 
-/// Releases the handle immediately and asks its worker to cancel and clean up.
-/// Unread events are discarded on destruction. active_sessions reaches zero only
-/// after workers finish cleanup; keep the process alive until then during shutdown.
+/// Releases the handle immediately and asks Mini Agent to close and clean up.
+/// Unread batches are discarded. active_sessions reaches zero only after each
+/// runner completion; keep the process alive until then during shutdown.
 /// # Safety
 /// handle is null or a live handle, destroyed once, with no concurrent calls.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echo_agent_destroy(handle: *mut EchoAgent) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         if !handle.is_null() {
-            let handle = unsafe { Box::from_raw(handle) };
-            let _ = handle.channels.destroy.send(true);
+            drop(unsafe { Box::from_raw(handle) });
         }
     }));
 }

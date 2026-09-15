@@ -210,3 +210,34 @@ Mini Agent 主线和实验依赖工作区均未修改。完整主线 feature 矩
 - 首次原有协议集成测试受沙箱限制，无法监听 `127.0.0.1`；允许本地测试权限后全部通过。写入主线目录的首次审批因用量限制失败，用户要求继续后重试成功；最终改动已在主线工作区，不依赖临时副本交付。
 
 第 2 阶段到此完成。下一阶段是第 3 项：切换桌宠主线路径并替换 Rust Bridge 内部实现；本轮未开始。Swift 迁移、桌宠完整跨层回归及独立应用包验收仍分别留在第 4/5 阶段。
+
+## 8. 第 3 阶段实施记录（2026-09-15）
+
+范围仅为实施顺序第 3 项：切换桌宠主线路径和 feature 配置，替换 Rust Bridge 内部实现，接入 C ABI v2。开始时桌宠位于 `experiment/agent-integration` 的 `3084ded`，工作区干净；第 1/2 阶段已完成。Mini Agent 主线仍为 `b03cf72`，工作区包含第 2 阶段未提交的运行器、执行器及恢复实现；本阶段直接使用这些改动，未修改或提交该仓库。
+
+### 交付
+
+- `agent-bridge/Cargo.toml` 改用 `../../mini-agent-rs`，继续 `default-features = false, features = ["conversation"]`。移除 Bridge 生产代码的直接进程依赖，`rustix` 仅供生命周期测试使用，Tokio 直接 feature 收敛为 runtime/sync。
+- `session.rs` 删除自有 Worker、命令/事件队列、操作调度和取消循环，仅保留后台初始化、共享 Tokio runtime 及 `SessionCompletion::wait()` 到关闭计数的适配。初始化 future 始终 await `spawn_blocking`，没有在关闭时遗留初始化工作。
+- 删除 `agent-bridge/src/executor.rs`。执行统一交给主线 `LocalConversationExecutor`，显式配置 `/bin/bash`、30 秒及 stdout/stderr 各 64 KiB；Bridge 不再调用 `next_operation`、`begin_tool` 或直接创建进程。
+- 新增生产 `wire.rs`：wire v2 信封类型与严格字段校验，直接复用主线核心类型；删除第 1 阶段 `tests/support/v2_contract.rs` 的类型副本，原序列化测试改为验证生产类型。
+- C 符号及字符串所有权保持不变。版本先于 payload 校验；v1 请求返回 `unsupported_version`。普通命令/控制分别直达主线邮箱，原子 `send_message`、输入回执、保存确认/失败及工具授权均通过 v2 暴露，没有自动确认保存的兼容层。
+- 恢复通过主线 `Conversation::restore`，内部历史只在 Bridge 边界解析/编码为 JSON 字符串，存档版本仍为 1；核心投影、输入映射和事件随 checkpoint 透传。初始化错误不泄漏凭据或路径，非法存档明确返回 `invalid_history`。
+- prompt 资源使用 `scripts/agent-prompt-path.sh`，从 Cargo metadata 中 `echo-agent` 的实际解析依赖定位。构建及已有 Agent/Voice 脚本仅替换资源复制来源，避免主线代码搭配旧实验资源；未迁移这些脚本调用的 Swift 客户端。
+- 新增 `scripts/test-agent-ffi.sh`，独立运行 Rust/C v2 阶段验收；C 内存压力测试迁至 v2。更新 C 头文件、README 和当前 v2 契约，明确阶段边界。
+
+### 验证与实际差异
+
+- Rust 工作区测试通过。Bridge 共 12 项测试：3 项固定 v1 存档、1 项多场景真实 C ABI 生命周期、5 项生产类型契约、3 项真实 wire 解析检查；doc-test 入口通过，当前无可执行文档测试。
+- 生命周期测试覆盖两种协议和 Unicode、Responses reasoning 存档保留、真实工具读写、目录门控、过期授权、模型追加、满队列取消/销毁、shell/子进程清理及已完成工具结果保留。新增 v2 验证覆盖输入/模型预算/工具提案/工具结果保存屏障、独立保存失败通道、旧 generation/未来 revision 拒绝、稳定客户端 ID 去重/冲突、相同文本独立消息、初始化失败及关闭回执。
+- 真实 C 解析检查覆盖 v1/未来版本优先拒绝、未知及缺失字段、嵌套命令类型、空 ID/零 revision、Unicode/转义 NUL/大输入、16 MiB 上限、request ID 关联和字符串跨句柄生命周期。`u64::MAX` revision 通过 wire 完整解码，并由核心以 `stale_checkpoint` 拒绝。
+- `scripts/test-agent-ffi.sh` 完成 Apple Silicon release 静态库构建，以及 C AddressSanitizer 500 次创建/取消/销毁/字符串释放检查；探针在复制 prompt 后的临时目录运行。该检查不等于对 Rust 内部访存的完整 sanitizer 覆盖，也不等于独立应用包验收。
+- `cargo fmt -p echo-agent --check`、`cargo clippy --locked --offline --workspace --all-targets -- -D warnings`、脚本语法与 `git diff --check` 通过。Cargo feature 树确认主线仅启用 `conversation`；有效依赖、脚本资源来源及 README 不再引用旧实验目录。
+- `Cargo.lock` 无需改动：两个路径依赖的包名、版本和外部依赖解析一致，路径位置不写入此 lock entry；`--locked` 构建和测试已验证。
+- 一次测试重跑因沙箱禁止监听 `127.0.0.1` 失败，允许本地测试权限后通过。首次 C 验收虽通过，但出现 macOS 27/26 SDK 链接警告；新脚本改为复用已有 `scripts/swift-env.sh` 的 macOS 26 SDK/部署目标后重跑通过，链接警告消除。
+
+### 下一阶段边界
+
+第 3 阶段完成，改动保留在桌宠工作区，未提交 Git。Swift 源码、TaskStore/WorkspaceStore、连接探针和 Swift 测试替身均未迁移。当前新构建的应用仍发送 wire v1，会被新 Bridge 拒绝，因此本阶段没有运行或宣称通过 Swift Bridge/Session/聊天/语音跨层回归。
+
+下一阶段仅为第 4 项：迁移 Swift 类型、保存确认、目录放行、输入回执和恢复逻辑，删除旧历史修补与错误文案重试。完整跨层回归、发布前抽验及独立应用包验证仍留在第 5 阶段，本轮未提前实施。

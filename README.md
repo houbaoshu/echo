@@ -1,8 +1,8 @@
 # Echo
 
-Echo 是面向 Apple Silicon Mac 的桌面应用，将 macOS 桌宠、AI 对话与 Agent 工具执行整合在一个原生工作区中。Swift / AppKit / SwiftUI 负责界面和系统能力，Rust Agent Core 负责模型交互与会话决策。以下说明以当前 V1 实现为准。
+Echo 是面向 Apple Silicon Mac 的桌面应用，将 macOS 桌宠、AI 对话与 Agent 工具执行整合在一个原生工作区中。Swift / AppKit / SwiftUI 负责界面和系统能力，Rust Agent Core 负责模型交互与会话决策。下述产品功能描述沿用迁移前 V1 基线；当前迁移边界见下一段。
 
-Mini Agent 主线迁移已完成[第 1 阶段：行为基线与 v2 契约](docs/mini-agent-mainline-bridge-v2-plan.md)。当前运行时仍使用下述 v1 依赖与协议；新增的[类型规范和运行器契约](docs/mini-agent-mainline-bridge-v2-contract.md)尚未接入生产流程。
+Mini Agent 主线迁移已完成[第 3 阶段：Rust Bridge 接入主线运行器](docs/mini-agent-mainline-bridge-v2-plan.md)。Rust/C 接口仅接受 [wire v2](docs/mini-agent-mainline-bridge-v2-contract.md)，存档仍为 v1。**Swift 仍使用 wire v1，待第 4 阶段迁移；当前新构建的应用不能完成 Agent 聊天、工具任务和连接探针。** 第 3 阶段验收入口为 `/bin/zsh scripts/test-agent-ffi.sh`；完整应用验收留在第 5 阶段。
 
 ## 核心能力
 
@@ -23,15 +23,15 @@ Mini Agent 主线迁移已完成[第 1 阶段：行为基线与 v2 契约](docs/
 
 需要 Apple Silicon Mac、macOS 26 或更新版本、Rust/Cargo，以及支持 Swift 6 的 Xcode Command Line Tools 和 macOS 26 SDK。脚本默认选择 macOS 26 SDK，也可通过 `SDKROOT` 指定兼容 SDK；首次构建需要下载 Rust 依赖。
 
-当前构建还依赖相邻目录中的 `mini-agent-agent-core-exp`：
+当前构建还依赖相邻目录中的 `mini-agent-rs`：
 
 ```text
 workspace/
 ├── desktop-pet-agent-exp/       # 本仓库
-└── mini-agent-agent-core-exp/   # Rust Agent Core，Cargo 路径依赖
+└── mini-agent-rs/   # Rust Agent Core，Cargo 路径依赖
 ```
 
-构建脚本会编译该依赖，并打包其中的 `config/prompts/conversation.md`。构建后的应用运行时无需源码目录。
+相邻主线工作区须包含第 2 阶段的 `conversation::runner` 实现（当前尚未提交）。构建脚本通过 Cargo metadata 解析 `echo-agent` 的实际依赖目录，并打包其中的 `config/prompts/conversation.md`。构建后的应用运行时无需源码目录。
 
 在本仓库根目录执行：
 
@@ -102,8 +102,8 @@ workspace/
 | 模块 | 职责 |
 | --- | --- |
 | `macos/` | Swift 前端：桌宠和窗口、聊天与文件预览、项目调度、设置与钥匙串、会话落盘、麦克风采集、ASR/TTS 和音频播放 |
-| `../mini-agent-agent-core-exp/` | Rust Agent Core：模型协议、会话历史与状态、直接回复或工具调用决策、追加指令处理 |
-| `agent-bridge/`、`macos/AgentBridge.swift` | C ABI 桥接、Tokio 后台任务、事件传递、bash 执行和取消清理，将 Swift 工作区接入 Core |
+| `../mini-agent-rs/` | Rust Agent Core：模型协议、会话状态和恢复、异步运行器、保存门控、工具执行和取消清理 |
+| `agent-bridge/`、`macos/AgentBridge.swift` | Rust 负责 v2 编解码、FFI 所有权、后台初始化、共享 Tokio runtime 与清理计数；Swift 适配待第 4 阶段迁移 |
 | `runtime/` | Rust 桌宠运行时：素材清单解析、WebP 解码与切帧、动画状态和交互优先级 |
 | `assets/pets/`、`scripts/`、`tests/` | 内置桌宠素材、构建与诊断脚本、回归测试 |
 

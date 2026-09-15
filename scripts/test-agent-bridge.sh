@@ -10,7 +10,7 @@ cargo build --locked --release --target aarch64-apple-darwin -p echo-agent
 probe_root="$(mktemp -d /private/tmp/echo-agent-probe.XXXXXX)"
 probe_app="$probe_root/BridgeProbe.app"
 mkdir -p "$probe_app/Contents/MacOS" "$probe_app/Contents/Resources/agent"
-cp ../mini-agent-agent-core-exp/config/prompts/conversation.md "$probe_app/Contents/Resources/agent/conversation.md"
+cp "$(/bin/zsh "$project_dir/scripts/agent-prompt-path.sh")" "$probe_app/Contents/Resources/agent/conversation.md"
 cp macos/Info.plist "$probe_app/Contents/Info.plist"
 swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
     -I agent-bridge/include macos/AgentBridge.swift tests/AgentBridgeTests.swift \
