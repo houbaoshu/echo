@@ -29,6 +29,8 @@ import Foundation
     func resetCapture(epoch: Int, paused: Bool) {}
     func monitorCapture(epoch: Int) {}
     func setPlaybackPaused(_ paused: Bool) {}
+    var outputMuted = false
+    func setOutputMuted(_ muted: Bool) { outputMuted = muted }
     func play(_ data: Data) async throws {}
     func drain() async throws { await onDrain?() }
     func interruptPlayback() { interruptions += 1 }
@@ -170,10 +172,10 @@ import Foundation
         check(voice.conversationID == nil, "End never implicitly starts B")
         check(workspace.startVoice(conversationID: a.id), "A can explicitly start a fresh Session")
         let nextOwner = voice.snapshot.session.owner!
-        workspace.endVoice(owner: firstOwner); workspace.toggleVoiceMute(owner: firstOwner); workspace.stopVoiceReply(owner: firstOwner)
+        workspace.endVoice(owner: firstOwner); workspace.toggleVoiceMute(owner: firstOwner); workspace.toggleVoiceSpeakerMute(owner: firstOwner); workspace.stopVoiceReply(owner: firstOwner)
         voice.reveal(owner: firstOwner)
         check(workspace.selectedID == b.id, "Old reveal controls cannot navigate to a fresh Session")
-        check(voice.snapshot.session.owner == nextOwner && !voice.isMuted, "Old same-conversation controls cannot affect a new Session")
+        check(voice.snapshot.session.owner == nextOwner && !voice.isMuted && !voice.snapshot.speakerMuted, "Old same-conversation controls cannot affect a new Session")
         check(workspace.send("during permission", conversationID: a.id), "Starting Session accepts text")
         sa.emit(.progress("startup partial"))
         check(workspace.send("replace during permission", conversationID: a.id), "Starting Session can replace its text run")

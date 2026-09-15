@@ -83,6 +83,7 @@ struct WorkspaceSidebar: View {
     @State private var recentExpanded = true
     @State private var projectHeaderHovered = false
     @State private var recentHeaderHovered = false
+    @State private var hoveredProject: UUID?
     @FocusState private var newConversationFocused: Bool
     @FocusState private var addProjectFocused: Bool
     @State private var selectedRow: RowID?
@@ -205,6 +206,7 @@ struct WorkspaceSidebar: View {
         !collapsedProjects.contains(project.id) || !workspace.searchText.isEmpty
     }
     private func projectRow(_ project: WorkspaceProject) -> some View {
+        HStack(spacing: 0) {
         Button {
             if collapsedProjects.contains(project.id) { collapsedProjects.remove(project.id) }
             else { collapsedProjects.insert(project.id) }
@@ -222,7 +224,16 @@ struct WorkspaceSidebar: View {
             .accessibilityValue(projectExpanded(project) ? "已展开聊天" : "已收起聊天")
             .accessibilityHint("点击展开或收起项目聊天")
             .accessibilityIdentifier("workspace.project.\(project.id)")
+            ProjectRowNewConversation(visible: hoveredProject == project.id) {
+                newProjectConversation(project.id)
+            }.accessibilityIdentifier("workspace.project.newConversation.\(project.id)")
+                .padding(.trailing, 8)
+        }.onHover { hoveredProject = $0 ? project.id : nil }
             .contextMenu { projectMenu(project) }
+    }
+    private func newProjectConversation(_ id: UUID) {
+        projectsExpanded = true; collapsedProjects.remove(id)
+        workspace.newConversation(projectID: id)
     }
     @ViewBuilder private func rows(_ conversations: [WorkspaceConversation], projectID: UUID? = nil) -> some View {
         ForEach(conversations) { conversation in
@@ -249,7 +260,7 @@ struct WorkspaceSidebar: View {
         }
     }
     @ViewBuilder private func projectMenu(_ project: WorkspaceProject) -> some View {
-        Button("新对话") { workspace.newConversation(projectID: project.id) }
+        Button("新对话") { newProjectConversation(project.id) }
         Button("重命名") { WorkspaceActions.rename(project.name) { workspace.renameProject(project.id, to: $0) } }
         Button("在 Finder 中显示") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
             .disabled(!project.isAvailable)
@@ -297,7 +308,7 @@ private struct SidebarRowHighlight: ViewModifier {
 }
 
 // SF Symbols supplies the closed folder; the open flap makes expansion visible without a chevron.
-private struct ProjectFolderIcon: View {
+struct ProjectFolderIcon: View {
     let isExpanded: Bool
     let isAvailable: Bool
     var body: some View {
@@ -381,7 +392,11 @@ struct ConversationView: View {
                                     retry: store.canRetry && message.id == store.messages.last?.id ? retry : nil)
                                 if message.role == .assistant { Spacer(minLength: 0) }
                             }.id(message.id)
+                            ForEach(store.tools.filter { $0.afterMessageID == message.id }) { tool in
+                                AgentToolView(tool: tool).id("tool.\(tool.turnID).\(tool.id)")
+                            }
                         }
+                        ForEach(store.tools.filter { $0.afterMessageID == nil }) { tool in AgentToolView(tool: tool) }
                         Color.clear.frame(height: 1).id("conversation.bottom")
                     }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
                         .frame(maxWidth: .infinity)
@@ -405,12 +420,44 @@ struct ConversationView: View {
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { proxy.scrollTo("conversation.bottom", anchor: .bottom) }
                     }
                 }
+                .onChange(of: store.tools.count) { _, _ in
+                    if followTail { proxy.scrollTo("conversation.bottom", anchor: .bottom) }
+                }
             }
             VStack(spacing: 8) {
-                if isBackgroundVoice, let owner = voiceOwner, let ws = workspace {
-                    VoiceAttributionBar(workspace: ws, voice: voice, owner: owner) {
-                        ws.revealVoice(owner: owner)
+                if store.usesAgent, let task = store.task {
+                    HStack {
+                        if store.isGenerating { ProgressView().controlSize(.small) }
+                        Text(task.summary).font(WorkspaceStyle.caption).textSelection(.enabled)
+                        Spacer()
+                        if store.canRetry { Button("继续处理", action: retry) }
                     }
+                }
+                if let notice = store.notice ?? store.agentLoadError {
+                    Text(notice).font(WorkspaceStyle.caption).foregroundStyle(.orange).textSelection(.enabled)
+                }
+                if store.needsDirectory, let workspace {
+                    HStack {
+                        Text("执行命令需要项目文件夹").font(WorkspaceStyle.caption)
+                        Menu("关联项目") {
+                            ForEach(workspace.projects.filter(\.isAvailable)) { project in
+                                Button(project.name) { workspace.provideDirectory(URL(fileURLWithPath: project.path), conversationID: conversationID) }
+                            }
+                        }.disabled(workspace.projects.filter(\.isAvailable).isEmpty)
+                        Button("选择文件夹…") {
+                            let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
+                            panel.allowsMultipleSelection = false
+                            panel.begin { response in
+                                MainActor.assumeIsolated {
+                                    workspace.provideDirectory(response == .OK ? panel.url : nil, conversationID: conversationID)
+                                }
+                            }
+                        }
+                        Button("取消执行") { workspace.provideDirectory(nil, conversationID: conversationID) }
+                    }
+                }
+                if let workspace, workspace.canAssociateProject(conversationID: conversationID) {
+                    ConversationProjectPicker(workspace: workspace, conversationID: conversationID)
                 }
                 composer
             }
@@ -418,29 +465,42 @@ struct ConversationView: View {
             .frame(maxWidth: .infinity)
         }
     }
-    private var draftEmpty: Bool { store.mainDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    private var canStop: Bool { store.isGenerating || (isVoiceOwner && voice.presentation.isReplyAudioActive) }
     private var voiceOwner: VoiceSessionSnapshot.Owner? { voice.snapshot.session.owner }
     private var isVoiceOwner: Bool { voiceOwner?.conversationID == conversationID }
     private var isBackgroundVoice: Bool {
         guard let owner = voiceOwner else { return false }
         return owner.conversationID != conversationID
     }
-    private var primaryStops: Bool {
-        if isVoiceOwner {
-            return canStop && draftEmpty
-        } else {
-            return canStop
-        }
+    private var presentation: ComposerPresentation {
+        ComposerPresentation(store: store, voice: voice, dictation: dictation, conversationID: conversationID)
+    }
+    private func sendText() {
+        guard presentation.canSend else { return }
+        send()
+    }
+    private func escape() -> Bool {
+        if presentation.canStop && presentation.stopEnabled { stop(); return true }
+        return false
     }
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            NativeComposer(text: $store.mainDraft, focusRequest: focusRequest, onEscape: {
-                if canStop { stop(); return true }
-                return false
-            }) { send() }
+            NativeComposer(text: $store.mainDraft, focusRequest: focusRequest,
+                           isSuspended: presentation.isDictating,
+                           diagnostics: !voice.isActive && !voice.testing && dictation.diagnosticTrace?.conversationID == conversationID
+                               ? dictation.diagnosticTrace : nil,
+                           onEscape: escape, onSend: sendText)
+                .opacity(presentation.isDictating ? 0 : 1)
+                .allowsHitTesting(!presentation.isDictating)
+                .accessibilityHidden(presentation.isDictating)
                 .overlay(alignment: .topLeading) {
-                    if store.mainDraft.isEmpty {
+                    if presentation.isDictating {
+                        Text(presentation.mode == .dictationFinalizing ? "正在完成转写…" :
+                             presentation.mode == .dictationPreparing ? "正在准备麦克风…" :
+                             dictation.subtitle.isEmpty ? "正在聆听…" : dictation.subtitle)
+                            .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.secondary)
+                            .lineLimit(3).padding(.top, 4)
+                            .accessibilityIdentifier("dictation.subtitle")
+                    } else if store.mainDraft.isEmpty {
                         Text("随心输入").font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.tertiary)
                             .padding(.top, 4).allowsHitTesting(false).accessibilityHidden(true)
                     }
@@ -469,14 +529,6 @@ struct ConversationView: View {
                 }
                 .padding(8).background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             }
-            if dictation.isActive {
-                HStack(alignment: .top) {
-                    Text(dictation.state == .finalizing ? "正在完成转写…" : dictation.subtitle.isEmpty ? "正在聆听…" : dictation.subtitle)
-                        .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).lineLimit(3)
-                    Spacer()
-                    Button("取消") { dictation.cancel(discard: true) }.buttonStyle(.plain).font(WorkspaceStyle.caption)
-                }.accessibilityIdentifier("dictation.subtitle")
-            }
             if let error = dictation.error {
                 HStack(alignment: .top) {
                     Text(error).font(WorkspaceStyle.caption).textSelection(.enabled)
@@ -485,104 +537,174 @@ struct ConversationView: View {
                 }
             }
             HStack(spacing: 12) {
-                if isVoiceOwner, let owner = voiceOwner {
-                    HStack(spacing: 6) {
-                        VoiceWaveform().frame(width: 14, height: 14)
-                            .foregroundStyle(voice.isMuted ? .orange : Color.accentColor)
-                        Text(voice.status)
-                            .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).lineLimit(1)
-                            .accessibilityIdentifier("voice.status")
-                    }
-                    Spacer(minLength: 8)
-                    Button {
-                        if let ws = workspace { ws.toggleVoiceMute(owner: owner) } else { voice.toggleMute() }
-                    } label: {
-                        Image(systemName: voice.isMuted ? "mic.slash.fill" : "mic.fill")
-                            .font(.system(size: 15))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(voice.snapshot.session == .starting(owner))
-                    .foregroundStyle(voice.isMuted ? .orange : WorkspaceStyle.secondary)
-                    .help(voice.isMuted ? "取消静音" : "静音麦克风")
-                    .accessibilityLabel(voice.isMuted ? "取消静音" : "静音麦克风")
-                    .accessibilityIdentifier("voice.mute")
-                    Button {
-                        if let ws = workspace { ws.endVoice(owner: owner) } else { voice.end() }
-                    } label: {
-                        Image(systemName: "waveform.slash")
-                            .font(.system(size: 15))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(WorkspaceStyle.secondary)
-                    .help("结束语音")
-                    .accessibilityLabel("结束语音")
-                    .accessibilityIdentifier("voice.end")
-                    if canStop && !draftEmpty {
-                        Button {
-                            stop()
-                        } label: {
-                            Image(systemName: "stop.circle.fill")
-                                .font(.system(size: 22))
-                                .foregroundStyle(WorkspaceStyle.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("停止回复")
-                        .accessibilityLabel("停止回复")
-                        .accessibilityIdentifier("conversation.stop")
-                    }
+                if presentation.isDictating {
+                    Button { dictation.cancel(discard: true) } label: {
+                        Image(systemName: "xmark").frame(width: 28, height: 32)
+                    }.buttonStyle(.plain).help("取消转写").accessibilityLabel("取消转写")
+                        .accessibilityIdentifier("dictation.cancel")
+                    RecordingWaveform(levels: dictation.levels, active: presentation.mode == .dictationRecording)
+                        .frame(maxWidth: .infinity).frame(height: 32)
                 } else {
-                    Spacer(minLength: 0)
-                    Button {
-                        if dictation.isActive { dictation.finishRecording() } else { startDictation() }
-                    } label: { Image(systemName: dictation.isActive ? "mic.fill" : "mic").font(.system(size: 16)) }
-                        .buttonStyle(.plain).foregroundStyle(dictation.isActive ? Color.accentColor : .secondary)
-                        .disabled(voice.isActive || voice.testing || dictation.state == .finalizing)
-                        .help(voice.isActive ? "麦克风正在被 Live Voice 占用" : dictation.isActive ? "结束录音并填入输入框" : "语音转文字")
-                        .accessibilityLabel(voice.isActive ? "语音转文字（麦克风被占用）" : dictation.isActive ? "结束录音并填入输入框" : "语音转文字")
-                        .accessibilityIdentifier("dictation.start")
-                    if !isBackgroundVoice {
+                    if isBackgroundVoice, let owner = voiceOwner, let ws = workspace {
+                        Button { ws.revealVoice(owner: owner) } label: {
+                            HStack(spacing: 4) {
+                                VoiceWaveform().frame(width: 14, height: 14)
+                                Text("\(ws.conversations.first { $0.id == owner.conversationID }?.title ?? "会话") 的 Live Voice")
+                                    .font(WorkspaceStyle.caption).lineLimit(1).truncationMode(.middle)
+                                Image(systemName: "arrow.right").font(.system(size: 9))
+                            }
+                        }.buttonStyle(.plain).help("返回语音会话")
+                            .accessibilityLabel("返回语音会话").accessibilityIdentifier("voice.reveal")
+                    }
+                    if presentation.mode == .voice, let owner = voiceOwner {
+                        HStack(spacing: 6) {
+                            VoiceWaveform().frame(width: 14, height: 14)
+                                .foregroundStyle(voice.isMuted ? .orange : Color.accentColor)
+                            Text(voice.status).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                                .lineLimit(1).accessibilityIdentifier("voice.status")
+                        }
+                        Spacer(minLength: 0)
                         Button {
-                            startVoice()
-                        } label: { VoiceWaveform().frame(width: 16, height: 16) }
-                            .buttonStyle(.plain).foregroundStyle(Color.secondary)
-                            .help("开始 Live Voice")
-                            .accessibilityLabel("开始 Live Voice")
-                            .accessibilityIdentifier("voice.start")
-                            .disabled(!voice.canStartCall)
+                            if let ws = workspace { ws.toggleVoiceSpeakerMute(owner: owner) } else { voice.toggleSpeakerMute() }
+                        } label: {
+                            Image(systemName: voice.snapshot.speakerMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                .frame(width: 28, height: 32)
+                        }.buttonStyle(.plain).disabled(!presentation.muteEnabled)
+                            .foregroundStyle(voice.snapshot.speakerMuted ? .orange : WorkspaceStyle.secondary)
+                            .help(voice.snapshot.speakerMuted ? "开启扬声器" : "静音扬声器")
+                            .accessibilityLabel(voice.snapshot.speakerMuted ? "开启扬声器" : "静音扬声器")
+                            .accessibilityIdentifier("voice.speaker")
+                        Button {
+                            if let ws = workspace { ws.toggleVoiceMute(owner: owner) } else { voice.toggleMute() }
+                        } label: {
+                            Image(systemName: voice.isMuted ? "mic.slash.fill" : "mic.fill")
+                                .frame(width: 28, height: 32)
+                        }.buttonStyle(.plain).disabled(!presentation.muteEnabled)
+                            .foregroundStyle(voice.isMuted ? .orange : WorkspaceStyle.secondary)
+                            .help(voice.isMuted ? "开启麦克风" : "关闭麦克风")
+                            .accessibilityLabel(voice.isMuted ? "开启麦克风" : "关闭麦克风")
+                            .accessibilityIdentifier("voice.mute")
+                    } else {
+                        Spacer(minLength: 0)
+                        Button(action: startDictation) {
+                            Image(systemName: "mic").frame(width: 28, height: 32)
+                        }.buttonStyle(.plain).disabled(!presentation.microphoneEnabled)
+                            .help(presentation.microphoneEnabled ? "语音转文字" : "麦克风正在被占用")
+                            .accessibilityLabel("语音转文字").accessibilityIdentifier("dictation.start")
+                    }
+                    if presentation.showsStop {
+                        Button(action: stop) {
+                            Image(systemName: "stop.circle.fill").font(.system(size: 22))
+                                .frame(width: 28, height: 32)
+                        }.buttonStyle(.plain).disabled(!presentation.stopEnabled)
+                            .help("停止回复").accessibilityLabel("停止回复")
+                            .accessibilityIdentifier("conversation.stop")
                     }
                 }
-                Button {
-                    if primaryStops { stop() } else { send() }
-                } label: {
-                    Image(systemName: primaryStops ? "stop.fill" : "arrow.up")
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                Button(action: performPrimary) {
+                    Group {
+                        switch presentation.primary {
+                        case .startVoice: VoiceWaveform().frame(width: 16, height: 16)
+                        case .send: Image(systemName: "arrow.up")
+                        case .stop, .finishRecording: Image(systemName: "stop.fill")
+                        case .endVoice: Image(systemName: "xmark")
+                        case .progress: Image(systemName: "ellipsis")
+                        }
+                    }.font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
                         .frame(width: 32, height: 32)
-                        .background(draftEmpty && !primaryStops ? Color.secondary.opacity(0.4) : Color.accentColor, in: Circle())
-                }.buttonStyle(.plain).disabled(draftEmpty && !primaryStops)
-                    .accessibilityLabel(primaryStops ? "停止回复" : "发送消息")
-                    .accessibilityIdentifier(primaryStops ? "conversation.stop" : "conversation.send")
-            }
+                        .background(presentation.primaryEnabled ? Color.accentColor : Color.secondary.opacity(0.4), in: Circle())
+                        .contentShape(Circle())
+                }.buttonStyle(.plain).disabled(!presentation.primaryEnabled)
+                    .help(presentation.primary.label).accessibilityLabel(presentation.primary.label)
+                    .accessibilityIdentifier(presentation.primary.identifier)
+            }.accessibilityElement(children: .contain).accessibilityIdentifier("conversation.actions")
         }.padding(16)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 22))
             .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.primary.opacity(0.08), lineWidth: 1))
             .shadow(color: .black.opacity(0.05), radius: 10, y: 3)
-            .onDisappear { dictation.cancel() }
+            .onDisappear {
+                if dictation.conversationID == conversationID { dictation.cancel() }
+            }
     }
+    private func performPrimary() {
+        guard presentation.primaryEnabled else { return }
+        switch presentation.primary {
+        case .send: sendText()
+        case .stop: stop()
+        case .startVoice: startVoice()
+        case .finishRecording: dictation.finishRecording()
+        case .progress: break
+        case .endVoice:
+            guard let owner = voiceOwner else { return }
+            if let workspace { workspace.endVoice(owner: owner) } else { voice.end() }
+        }
+    }
+
 }
 
-struct WorkspaceInspector: View {
-    @ObservedObject var workspace: WorkspaceStore
-
+struct AgentToolView: View {
+    let tool: AgentToolRecord
     var body: some View {
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(tool.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                if let directory = tool.directory { Text(directory).font(.caption).foregroundStyle(.secondary) }
+                if let result = tool.result {
+                    if let data = result.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        Text(resultSummary(json)).font(.caption).foregroundStyle(.secondary)
+                        if let stdout = json["stdout"] as? String, !stdout.isEmpty {
+                            Text(stdout).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        }
+                        if let stderr = json["stderr"] as? String, !stderr.isEmpty {
+                            Text(stderr).font(.system(.caption, design: .monospaced)).foregroundStyle(.orange).textSelection(.enabled)
+                        }
+                        if let detail = json["detail"] as? String ?? json["message"] as? String {
+                            Text(detail).font(.caption).textSelection(.enabled)
+                        }
+                    } else { Text(result).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
+                } else if tool.state == "执行结果未知" {
+                    Text("中断前可能已产生修改；继续处理时需先检查现场。").font(.caption)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
+        } label: {
+            Label("\(tool.state) · \(tool.command.prefix(90))", systemImage: "terminal")
+                .font(.caption).lineLimit(2)
+        }.padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+    private func resultSummary(_ json: [String: Any]) -> String {
+        var parts = [tool.state]
+        if let code = json["exit_code"] as? Int { parts.append("退出码 \(code)") }
+        if json["timed_out"] as? Bool == true { parts.append("超时") }
+        if json["stdout_truncated"] as? Bool == true { parts.append("stdout 已截断") }
+        if json["stderr_truncated"] as? Bool == true { parts.append("stderr 已截断") }
+        return parts.joined(separator: " · ")
     }
 }
 
 final class ComposerTextView: NSTextView {
+    var isSuspended = false
     var onSend: (() -> Void)?
     var onEscape: (() -> Bool)?
     private var focusPending = false
+    override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        guard !isSuspended else { return false }
+        return super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
+    }
+    var onCompositionEnded: (() -> Void)?
+    override func unmarkText() {
+        super.unmarkText()
+        // Candidate insertion can still be on the stack when AppKit unmarks.
+        DispatchQueue.main.async { [weak self] in self?.onCompositionEnded?() }
+    }
+    override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        guard !isSuspended else { return }
+        super.insertText(insertString, replacementRange: replacementRange)
+    }
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        guard !isSuspended else { return }
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+    }
     func requestFocus() {
         focusPending = true
         applyPendingFocus()
@@ -603,18 +725,22 @@ final class ComposerTextView: NSTextView {
            !event.modifierFlags.contains(.shift), !event.modifierFlags.contains(.option) {
             onSend?(); return
         }
-        if event.keyCode == 53, !hasMarkedText() {
-            if let onEscape, onEscape() {
-                return
-            }
+        if event.keyCode == 53 {
+            if !hasMarkedText(), let onEscape, onEscape() { return }
+            // Recording suspends text edits, but unclaimed Escape still belongs
+            // to the input method / responder chain.
+            super.keyDown(with: event)
+            return
         }
-        super.keyDown(with: event)
+        if !isSuspended { super.keyDown(with: event) }
     }
 }
 
 struct NativeComposer: NSViewRepresentable {
     @Binding var text: String
     var focusRequest = 0
+    var isSuspended = false
+    var diagnostics: DictationTrace?
     var onEscape: (() -> Bool)?
     let onSend: () -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -633,21 +759,49 @@ struct NativeComposer: NSViewRepresentable {
         editor.delegate = context.coordinator; editor.onSend = onSend; editor.onEscape = onEscape
         scroll.documentView = editor
         editor.string = text
+        diagnostics?.record("editor.created", context.coordinator.diagnosticState(editor))
         return scroll
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? ComposerTextView else { return }
+        diagnostics?.snapshot("editor.update.before", context.coordinator.diagnosticState(editor))
+        defer { diagnostics?.snapshot("editor.update.after", context.coordinator.diagnosticState(editor)) }
         editor.onSend = onSend
         editor.onEscape = onEscape
+        editor.onCompositionEnded = { [weak coordinator = context.coordinator, weak editor] in
+            guard let editor else { return }
+            coordinator?.applyPendingAppend(to: editor)
+        }
+        let wasSuspended = editor.isSuspended
+        if isSuspended && !wasSuspended { context.coordinator.suspendedDraft = text }
+        editor.isSuspended = isSuspended
+        // Changing isEditable commits marked text. Keep that input context alive;
+        // shouldChangeText and keyDown still reject edits beneath the preview.
+        editor.isEditable = !isSuspended || editor.hasMarkedText()
+        if wasSuspended && !isSuspended { editor.requestFocus() }
         if focusRequest > 0, context.coordinator.handledFocusRequest != focusRequest {
             context.coordinator.handledFocusRequest = focusRequest
             editor.requestFocus()
         }
-        if editor.string != text, !editor.hasMarkedText() {
-            editor.string = text
+        if wasSuspended, !isSuspended, editor.hasMarkedText(),
+           let original = context.coordinator.suspendedDraft, text.hasPrefix(original) {
+            // NSTextStorage edits also commit marked text. Defer this suffix until
+            // candidate confirmation, while the store already retains the transcript.
+            context.coordinator.pendingAppend += String(text.dropFirst(original.count))
+        } else if editor.string != text, !editor.hasMarkedText(), !isSuspended {
+            let selection = editor.selectedRanges
+            // Dictation appends through native editing so prior undo actions survive.
+            if wasSuspended, text.hasPrefix(editor.string) {
+                let suffix = String(text.dropFirst(editor.string.count))
+                editor.insertText(suffix, replacementRange: NSRange(location: editor.string.utf16.count, length: 0))
+                editor.selectedRanges = selection
+            } else {
+                editor.string = text
+            }
             if text.isEmpty { editor.undoManager?.removeAllActions() }
         }
+        if !isSuspended { context.coordinator.suspendedDraft = nil }
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
         let width = proposal.width ?? 400
@@ -659,14 +813,40 @@ struct NativeComposer: NSViewRepresentable {
         let height = min(ceil(lineHeight * 6) + 8, max(44, layout.usedRect(for: container).height + 8))
         return CGSize(width: width, height: height)
     }
-    final class Coordinator: NSObject, NSTextViewDelegate {
+    @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: NativeComposer
         var handledFocusRequest = 0
+        var suspendedDraft: String?
+        var pendingAppend = ""
         init(_ parent: NativeComposer) { self.parent = parent }
+        func diagnosticState(_ editor: NSTextView) -> [String: Any] {
+            ["boundDraft": parent.text, "editorText": editor.string, "pendingAppend": pendingAppend,
+             "suspendedDraft": suspendedDraft as Any? ?? NSNull(), "requestedSuspension": parent.isSuspended,
+             "editorSuspended": (editor as? ComposerTextView)?.isSuspended ?? false,
+             "editable": editor.isEditable, "markedText": editor.hasMarkedText(),
+             "selectionLocation": editor.selectedRange().location, "selectionLength": editor.selectedRange().length]
+        }
         func textDidChange(_ notification: Notification) {
             guard let editor = notification.object as? NSTextView else { return }
-            parent.text = editor.string
+            parent.diagnostics?.record("editor.textDidChange.before", diagnosticState(editor))
+            defer { parent.diagnostics?.record("editor.textDidChange.after", diagnosticState(editor)) }
+            if !editor.hasMarkedText(), !pendingAppend.isEmpty {
+                applyPendingAppend(to: editor)
+            } else {
+                parent.text = editor.string + pendingAppend
+            }
             editor.enclosingScrollView?.invalidateIntrinsicContentSize()
+        }
+        func applyPendingAppend(to editor: NSTextView) {
+            guard !editor.hasMarkedText(), !pendingAppend.isEmpty else { return }
+            parent.diagnostics?.record("editor.pendingAppend.before", diagnosticState(editor))
+            defer { parent.diagnostics?.record("editor.pendingAppend.after", diagnosticState(editor)) }
+            let suffix = pendingAppend
+            pendingAppend = ""
+            let selection = editor.selectedRanges
+            editor.insertText(suffix, replacementRange: NSRange(location: editor.string.utf16.count, length: 0))
+            editor.selectedRanges = selection
+            parent.text = editor.string
         }
     }
 }

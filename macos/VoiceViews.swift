@@ -15,6 +15,35 @@ struct VoiceWaveform: Shape {
     }
 }
 
+struct RecordingWaveform: View {
+    let levels: [Double]
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        GeometryReader { geometry in
+            let count = min(80, max(1, Int(geometry.size.width / 7)))
+            let visible = Array(levels.suffix(80))
+            let spacing = count > 1 ? max(0, (geometry.size.width - CGFloat(count) * 3) / CGFloat(count - 1)) : 0
+            HStack(spacing: spacing) {
+                ForEach(0..<count, id: \.self) { index in
+                    // Fit the bounded history to the row instead of leaving a wide
+                    // window mostly empty. Keep quiet speech visible on a dB scale.
+                    let start = index * 80 / count
+                    let end = (index + 1) * 80 / count
+                    let padding = 80 - visible.count
+                    let samples = visible[max(0, start - padding)..<max(0, end - padding)]
+                    let level = samples.max() ?? 0
+                    let height = level > 0 ? max(0, min(1, (log10(level) + 2.4) / 2.4)) : 0
+                    Capsule().fill(active ? WorkspaceStyle.primary : WorkspaceStyle.secondary)
+                        .frame(width: 3, height: 4 + max(0, geometry.size.height - 4) * height)
+                }
+            }.frame(width: geometry.size.width, height: geometry.size.height)
+                .animation(reduceMotion || !active ? nil : .linear(duration: 0.12), value: levels)
+        }.accessibilityLabel(active ? "录音音量" : "录音已暂停")
+            .accessibilityIdentifier("dictation.waveform")
+    }
+}
+
 struct VoiceAttributionBar: View {
     @ObservedObject var workspace: WorkspaceStore
     @ObservedObject var voice: VoiceSessionController

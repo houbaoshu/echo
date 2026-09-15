@@ -144,7 +144,7 @@ struct PetControls: View {
                 if let owner { endVoice(owner) } else { startVoice() }
             } label: {
                 Group {
-                    if voice.isActive { Image(systemName: "waveform.slash") }
+                    if voice.isActive { Image(systemName: "xmark") }
                     else { VoiceWaveform().frame(width: 12, height: 12) }
                 }
                     .font(.system(size: 11, weight: .medium))

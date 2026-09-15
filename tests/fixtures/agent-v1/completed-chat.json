@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "session_id": "session-一",
+  "entries": [
+    {
+      "id": 1,
+      "turn_id": 0,
+      "value": {
+        "message": {
+          "role": "system",
+          "content": "Answer directly or use bash."
+        }
+      }
+    },
+    {
+      "id": 3,
+      "turn_id": 2,
+      "value": {
+        "message": {
+          "role": "user",
+          "content": "再说一次 🌱"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "turn_id": 2,
+      "value": {
+        "message": {
+          "role": "assistant",
+          "content": "你好 🌱"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "turn_id": 6,
+      "value": {
+        "message": {
+          "role": "user",
+          "content": "再说一次 🌱"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "turn_id": 6,
+      "value": {
+        "message": {
+          "role": "assistant",
+          "content": "你好，再见面了。"
+        }
+      }
+    }
+  ],
+  "turns": [
+    {
+      "id": 2,
+      "model_calls": 1,
+      "outcome": {
+        "status": "completed",
+        "reply": "你好 🌱"
+      }
+    },
+    {
+      "id": 6,
+      "model_calls": 1,
+      "outcome": {
+        "status": "completed",
+        "reply": "你好，再见面了。"
+      }
+    }
+  ],
+  "directory": null,
+  "next_id": 10
+}

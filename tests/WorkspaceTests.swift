@@ -178,9 +178,88 @@ import Foundation
         let oldSnapshot = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONSerialization.data(withJSONObject: legacy))
         check(oldSnapshot.drafts == nil && oldSnapshot.conversations.count == 4, "Archives from before draft staging remain readable")
         workspace.shutdown()
+        try await projectAssociationTests()
+        try await ProjectFileBrowserTests.run()
         checks += try await streamingPersistenceTests()
         print("PASS: \(checks) workspace checks")
         await WorkspaceVoiceCommandTests.run()
+    }
+
+    @MainActor private static func projectAssociationTests() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-association-\(UUID())")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("A"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("B"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
+        let source = WorkspaceTestSource()
+        let ws = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        defer { ws.shutdown() }
+        let a = ws.addProject(url: root.appendingPathComponent("A")), b = ws.addProject(url: root.appendingPathComponent("B"))
+        let first = ws.selected!
+        first.store.mainDraft = "first draft"
+        precondition(ws.associateProject(a, conversationID: first.id))
+        precondition(first.store.mainDraft == "first draft" && ws.project(for: first.id)?.id == a)
+        precondition(ws.fileBrowser.location?.projectID == a)
+        let second = ws.newConversation(projectID: b)
+        second.store.mainDraft = "second draft"
+        precondition(ws.associateProject(a, conversationID: second.id))
+        precondition(ws.snapshot.drafts?.filter { $0.projectID == a }.count == 2)
+        let tiedDate = Date(timeIntervalSince1970: 100)
+        first.lastUsed = tiedDate; second.lastUsed = tiedDate
+        ws.flush()
+        let collisionReload = WorkspaceStore(persistence: persistence)
+        let expectedID = [first.id, second.id].sorted { $0.uuidString < $1.uuidString }.first!
+        precondition(collisionReload.newConversation(projectID: a).id == expectedID, "Equal recency uses stable UUID order after restart")
+        precondition(collisionReload.conversation(id: first.id)?.store.mainDraft == "first draft"
+                     && collisionReload.conversation(id: second.id)?.store.mainDraft == "second draft")
+        collisionReload.shutdown()
+        second.lastUsed = Date()
+        precondition(ws.newConversation(projectID: a).id == second.id, "Most recent draft wins")
+        ws.select(first.id)
+        precondition(ws.newConversation(projectID: a).id == first.id, "Selecting a draft updates reuse priority")
+        // Simulate a folder chooser returning after navigation, then after first send.
+        ws.select(second.id)
+        precondition(!ws.associateFolder(root, conversationID: first.id))
+        precondition(ws.projects.count == 2 && first.projectID == a && second.projectID == a)
+        ws.select(first.id)
+        precondition(ws.sendMainMessage(conversationID: first.id))
+        precondition(!ws.associateProject(b, conversationID: first.id))
+        source.receive?(.failed("offline"))
+        precondition(!ws.canAssociateProject(conversationID: first.id))
+        precondition(!ws.associateFolder(root, conversationID: first.id))
+        precondition(first.projectID == a && ws.projects.count == 2)
+        precondition(ws.retry(conversationID: first.id)); ws.stop(conversationID: first.id)
+        precondition(!ws.associateProject(nil, conversationID: first.id), "Stop does not unlock project")
+        precondition(ws.associateProject(nil, conversationID: second.id))
+        precondition(second.store.mainDraft == "second draft")
+        let missing = ws.addProject(url: root.appendingPathComponent("missing"))
+        precondition(!ws.associateProject(missing, conversationID: second.id))
+        precondition(!ws.associateProject(UUID(), conversationID: second.id))
+        ws.select(second.id)
+        precondition(ws.associateFolder(root.appendingPathComponent("B/../A"), conversationID: second.id))
+        precondition(second.projectID == a && ws.projects.count == 3, "Folder paths are deduplicated")
+        ws.flush()
+        let reload = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        precondition(reload.conversation(id: first.id)?.projectID == a && !reload.canAssociateProject(conversationID: first.id))
+        precondition(reload.newConversation(projectID: a).id == second.id)
+        precondition(reload.selected?.store.mainDraft == "second draft")
+        reload.shutdown()
+        ws.renameProject(a, to: "renamed")
+        precondition(ws.project(for: second.id)?.name == "renamed")
+        ws.relocateProject(a, to: root)
+        precondition(ws.fileBrowser.location?.root == root.resolvingSymlinksInPath().path)
+        ws.removeProject(a)
+        precondition(first.projectID == nil && second.projectID == nil && ws.fileBrowser.location == nil)
+        precondition(!ws.canAssociateProject(conversationID: first.id), "Removing project retains history lock")
+
+        // Tool-only archives remain fixed even if no messages were retained.
+        var snapshot = second.store.snapshot
+        snapshot.tools = [.init(callID: "tool", entryID: 1, turnID: 1, command: "pwd", result: "done", state: "已完成")]
+        let toolStore = TaskStore(snapshot: snapshot, source: source)
+        let toolWorkspace = WorkspaceStore(initialStore: toolStore)
+        precondition(!toolWorkspace.canAssociateProject(conversationID: toolWorkspace.selectedID!))
+        toolWorkspace.shutdown()
+        print("PASS: project locking, late folder choices, draft collisions, persistence, relocation and removal")
     }
 
     @MainActor private static func streamingPersistenceTests() async throws -> Int {

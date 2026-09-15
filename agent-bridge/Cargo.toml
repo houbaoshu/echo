@@ -1,0 +1,18 @@
+[package]
+name = "echo-agent"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+mini-agent-rs = { path = "../../mini-agent-rs", default-features = false, features = ["conversation"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+rustix = { version = "1", features = ["process"] }
+axum = "0.8"
+tempfile = "3"
