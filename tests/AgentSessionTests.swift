@@ -8,6 +8,53 @@ import Foundation
             try await Task.sleep(for: .milliseconds(10))
         }
     }
+    static func testReopenAfterInvalidSettings(temp: URL, port: String) async throws {
+        let settings = SettingsStore(url: temp.appendingPathComponent("reopen-settings.json"))
+        settings.selectProvider(.ollama)
+        settings.draft = ModelConfiguration(baseURL: "http://127.0.0.1:\(port)", model: "fixture")
+        settings.save()
+        precondition(settings.notice == nil)
+        let workspace = WorkspaceStore(
+            persistence: WorkspacePersistence(url: temp.appendingPathComponent("reopen/workspace.json")),
+            sourceFactory: { AgentTaskSource(settings: settings) })
+        let chat = workspace.selected!
+        precondition(chat.store.send("hello before settings change"))
+        try await wait("chat completes before invalid settings") { !chat.store.isGenerating }
+        precondition(chat.store.task?.status == .completed)
+        let originalMessages = chat.store.messages
+
+        // Repeat after recovery so termination is tested directly from the
+        // failed-open state, with no successful reopen masking a stale bridge.
+        for attempt in 1...2 {
+            settings.draft.model = ""
+            settings.save()
+            precondition(settings.notice == nil && settings.snapshot.model.model.isEmpty,
+                         "Saving an empty Model ID must remain a legal settings operation")
+            precondition(chat.store.send("hello after invalid settings \(attempt)"))
+            try await wait("failed reopen leaves stopping") { !chat.store.isGenerating }
+            precondition(chat.store.task?.status == .failed && chat.store.canSubmit)
+            precondition(chat.store.notice == "请先在设置中配置并保存默认模型。")
+            precondition(Array(chat.store.messages.prefix(originalMessages.count)) == originalMessages,
+                         "Failed reopen must preserve the completed conversation")
+            if attempt == 1 {
+                settings.draft.model = "fixture"
+                settings.save()
+                precondition(settings.notice == nil)
+                precondition(chat.store.send("hello after restoring settings"))
+                try await wait("same session recovers after valid settings") { !chat.store.isGenerating }
+                precondition(chat.store.task?.status == .completed)
+                precondition(chat.store.messages.last?.content == "最终回复：hello after restoring settings")
+            }
+        }
+        var terminated = false
+        let termination = Task { @MainActor in
+            await workspace.prepareForTermination()
+            terminated = true
+        }
+        try await wait("termination after failed reopen") { terminated }
+        await termination.value
+        print("PASS: saved empty Model ID after completed chat fails cleanly, recovers, and permits termination")
+    }
     static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("echo-session-\(UUID())")
@@ -21,6 +68,7 @@ import Foundation
         try server.run(); defer { server.terminate(); server.waitUntilExit() }
         let port = String(decoding: pipe.fileHandleForReading.availableData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         precondition(Int(port) != nil, "fixture failed to start")
+        try await testReopenAfterInvalidSettings(temp: temp, port: port)
         let tester = ModelConnectionTester(resources: temp.appendingPathComponent("resources"))
         let forbidden = temp.appendingPathComponent("probe-must-not-execute")
         for api in ModelAPIProtocol.allCases {

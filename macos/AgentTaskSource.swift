@@ -7,6 +7,7 @@ import Foundation
     private let resources: URL?
     private var bridge: AgentBridge?
     private var ready = false
+    private var cancelled = false
     private var queued: [(String, [String: Any])] = []
     private var requests: [String: (String, [String: Any])] = [:]
     init(settings: SettingsStore) {
@@ -25,7 +26,9 @@ import Foundation
     }
     func open(sessionID: String, history: Data?, messages: [ConversationMessage], directory: URL?,
               receive: @escaping ([String: Any]) -> Void, failure: @escaping (String) -> Void) throws {
-        bridge?.close(); ready = false; queued = []; requests = [:]
+        bridge?.close(); bridge = nil
+        // A failed reopen must not wait for cleanup from a closed bridge.
+        ready = false; cancelled = false; queued = []; requests = [:]
         var imported: [String: Any]?
         if let history {
             guard let decoded = try JSONSerialization.jsonObject(with: history) as? [String: Any] else {
@@ -81,7 +84,11 @@ import Foundation
                 } else if request.0 == "start_tool", error.contains("stale") || error.contains("tool no longer") || error.contains("working directory required") {
                     batch["error"] = NSNull()
                 } else if request.0 == "steer", error.contains("no running turn") {
-                    do { try self.control("submit", fields: request.1); batch["error"] = NSNull() }
+                    do {
+                        // A late receipt must not start a new turn after Stop.
+                        if !self.cancelled { try self.control("submit", fields: request.1) }
+                        batch["error"] = NSNull()
+                    }
                     catch { failure(error.localizedDescription) }
                 }
             }
@@ -110,7 +117,7 @@ import Foundation
         let id = try bridge.send(type, fields: fields)
         requests[id] = (type, fields)
     }
-    func cancel() { queued = []; bridge?.cancel() }
+    func cancel() { cancelled = true; queued = []; bridge?.cancel() }
     func close(afterCleanup: @escaping () -> Void) {
         queued = []; ready = false
         guard let current = bridge else { afterCleanup(); return }

@@ -4,6 +4,9 @@ setopt ERR_EXIT NO_UNSET PIPE_FAIL
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 source scripts/swift-env.sh
+# The saved-settings source resolves its prompt through Bundle.main.
+mkdir -p build/agent
+cp ../mini-agent-agent-core-exp/config/prompts/conversation.md build/agent/conversation.md
 cargo build --locked --release --target aarch64-apple-darwin
 typeset -a sources=()
 for source_file in macos/*.swift; do
