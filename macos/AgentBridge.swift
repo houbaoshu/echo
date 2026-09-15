@@ -1,11 +1,6 @@
 import Foundation
 import EchoAgentBridge
 
-struct AgentBridgeError: LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
-}
-
 // Keeps pointer lifetime separate from main-actor polling. Never transfers a
 // borrowed Rust buffer into Swift; returned JSON is copied and freed immediately.
 private final class AgentHandle {
@@ -19,26 +14,26 @@ final class AgentBridge {
     private var handle: AgentHandle?
     private var polling: Task<Void, Never>?
     let sessionID: String
-    var onBatch: (([String: Any]) -> Void)?
+    let generation: String
+    var onBatch: ((AgentBatch) -> Void)?
     var onFailure: ((Error) -> Void)?
     var onClosed: (() -> Void)?
 
     /// model uses the ABI names base_url, model, api_key and protocol. The caller
     /// supplies saved settings/keychain credentials; this adapter never stores keys.
-    init(sessionID: String, model: [String: Any], history: [String: Any]? = nil,
-         directory: URL? = nil, resources: URL? = Bundle.main.resourceURL) throws {
+    init(sessionID: String, generation: String = UUID().uuidString, model: AgentModel,
+         restore: AgentRestore = AgentRestore(), resources: URL? = Bundle.main.resourceURL) throws {
         guard let resources else { throw AgentBridgeError(message: "缺少 Agent 应用资源。") }
-        var config: [String: Any] = ["version": 1, "session_id": sessionID,
-            "prompt_path": resources.appendingPathComponent("agent/conversation.md").path, "model": model]
-        if let history { config["history"] = history }
-        if let directory { config["directory"] = directory.path }
+        let config = AgentWireCreate(session_id: sessionID, generation: generation,
+            prompt_path: resources.appendingPathComponent("agent/conversation.md").path, model: model, restore: restore)
         let json = try Self.encode(config)
         var error: UnsafeMutablePointer<CChar>?
         let pointer = json.withCString { echo_agent_create($0, &error) }
-        let failure = error.map { String(cString: $0) }
+        let failure = error.flatMap { try? JSONDecoder().decode(AgentWireReply.self, from: Data(String(cString: $0).utf8)) }
         echo_agent_string_free(error)
-        guard let pointer else { throw AgentBridgeError(message: failure ?? "无法创建 Agent 会话。") }
+        guard let pointer else { throw failure?.admission.error ?? AgentBridgeError(message: "无法创建 Agent 会话。") }
         self.sessionID = sessionID
+        self.generation = generation
         self.handle = AgentHandle(pointer)
     }
 
@@ -53,15 +48,17 @@ final class AgentBridge {
     }
 
     @discardableResult
-    func send(_ type: String, fields: [String: Any] = [:]) throws -> String {
+    func send(_ command: AgentCommand) throws -> String {
         guard let handle else { throw AgentBridgeError(message: "Agent 会话已关闭。") }
         let id = UUID().uuidString
-        var request = fields
-        request["version"] = 1; request["request_id"] = id; request["type"] = type
+        let request = AgentWireRequest(request_id: id, command: command)
         let json = try Self.encode(request)
-        let response = try json.withCString { try Self.decode(echo_agent_request(handle.pointer, $0)) }
-        guard response["accepted"] as? Bool == true else {
-            throw AgentBridgeError(message: response["error"] as? String ?? "Agent 请求未接收。")
+        let response: AgentWireReply = try json.withCString { try Self.decode(echo_agent_request(handle.pointer, $0)) }
+        guard response.version == 2, response.request_id == id else {
+            throw AgentBridgeError(message: "Agent 返回不匹配的请求回执。")
+        }
+        guard response.admission.status == .queued else {
+            throw response.admission.error ?? AgentBridgeError(message: "Agent 请求未接收。")
         }
         return id
     }
@@ -87,27 +84,25 @@ final class AgentBridge {
     func poll() -> Bool {
         guard let handle else { return false }
         do {
-            let result = try Self.decode(echo_agent_poll_events(handle.pointer, 8))
-            for batch in result["batches"] as? [[String: Any]] ?? [] {
-                guard batch["version"] as? Int == 1, batch["session_id"] as? String == sessionID else { continue }
+            let result: AgentWirePoll = try Self.decode(echo_agent_poll_events(handle.pointer, 8))
+            guard result.version == 2 else { throw AgentBridgeError(code: .unsupported_version, message: "Agent 协议版本不匹配。") }
+            for batch in result.batches {
+                guard batch.session_id == sessionID, batch.generation == generation else { continue }
                 onBatch?(batch)
                 if self.handle == nil { return false }
             }
-            if result["closed"] as? Bool == true { polling = nil; onClosed?(); return false }
+            if result.closed { polling = nil; onClosed?(); return false }
             return true
         } catch { polling = nil; onFailure?(error); return false }
     }
 
-    private static func encode(_ value: [String: Any]) throws -> String {
-        String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self)
+    private static func encode(_ value: some Encodable) throws -> String {
+        String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     }
-    private static func decode(_ pointer: UnsafeMutablePointer<CChar>?) throws -> [String: Any] {
+    private static func decode<T: Decodable>(_ pointer: UnsafeMutablePointer<CChar>?) throws -> T {
         guard let pointer else { throw AgentBridgeError(message: "Agent 返回空数据。") }
         defer { echo_agent_string_free(pointer) }
         let data = Data(String(cString: pointer).utf8)
-        guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw AgentBridgeError(message: "Agent 返回无效数据。")
-        }
-        return value
+        return try JSONDecoder().decode(T.self, from: data)
     }
 }

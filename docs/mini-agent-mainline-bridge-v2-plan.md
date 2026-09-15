@@ -241,3 +241,31 @@ Mini Agent 主线和实验依赖工作区均未修改。完整主线 feature 矩
 第 3 阶段完成，改动保留在桌宠工作区，未提交 Git。Swift 源码、TaskStore/WorkspaceStore、连接探针和 Swift 测试替身均未迁移。当前新构建的应用仍发送 wire v1，会被新 Bridge 拒绝，因此本阶段没有运行或宣称通过 Swift Bridge/Session/聊天/语音跨层回归。
 
 下一阶段仅为第 4 项：迁移 Swift 类型、保存确认、目录放行、输入回执和恢复逻辑，删除旧历史修补与错误文案重试。完整跨层回归、发布前抽验及独立应用包验证仍留在第 5 阶段，本轮未提前实施。
+
+## 9. 第 4 阶段实施记录（2026-09-15）
+
+范围仅为实施顺序第 4 项。开始时桌宠位于 `experiment/agent-integration` 的 `3e28753`，工作区干净；第 1/2/3 阶段均已完成，第 3 阶段改动已包含在该提交中。Mini Agent 主线仍保留第 2 阶段未提交的实现，本阶段未修改该仓库或 Rust Bridge。
+
+### 交付
+
+- `macos/AgentWire.swift`：类型化模型配置、恢复输入、命令、批次、错误码、checkpoint、输入回执与显示投影。核心 ID 和 revision 使用 `UInt64`，历史作为完整 UTF-8 字符串传递，保留原 v1 存档及 Responses 元数据。
+- `AgentBridge` 使用 v2 Codable 信封，校验 poll/reply 版本、session/generation 和同步 request ID。保留 MainActor 句柄所有权、50 ms 轮询、字符串复制释放及异步退出等待。
+- `AgentTaskSource` 删除所有历史内部 ID/entry/turn 修补、错误文案匹配、submit/steer 重试及终态事件删改。每轮继续读取已保存模型配置、重建 generation；正常发送统一使用 `SendMessage`。
+- `TaskStore` 在发送前持久化消息 UUID 和待确认输入；checkpoint 将原样历史、完整输入映射、投影、UI 快照、待确认输入及最终回复去重 ID 一起原子保存后才确认。恢复直接传已有映射、待确认输入和显式目录覆盖，旧文本交给核心导入。
+- 工具授权等待目录租约和保存成功，并携带 proposal checkpoint、operation ID 与规范化目录；授权排队期间追加或 Stop 会撤销本地待放行状态。失效目录按 `invalid_directory` 错误码回到目录选择。
+- 控制邮箱满时保留并重试确认/授权；Stop 撤销尚未发送的授权，保存失败走独立失败控制并取消。目录调度仍按真实路径整轮持有租约，停止和删除等待该句柄的清理确认。
+- 最终回复通过 generation、turn ID、待确认输入和核心 message ID 选择与去重，在终态快照保存后才发出生命周期通知。旧终态不能结束仍有新输入等待确认的任务。
+- `WorkspaceStore` 的 sidecar 沿用原子写入，新增映射/投影等字段与历史一起保存；manifest 仅保留 sidecar 引用。连接探针与 Bridge/Session/Voice/UI 测试替身已迁为 v2；无目录的临时连接探针只在内存保留 checkpoint 并确认，不授权任何命令。
+- Session/Voice 测试中的两处旧实验 prompt 路径改为使用脚本从实际 Cargo 依赖复制到 `build/agent` 的资源。新增 `test-voice.sh --agent-only` 定向入口；README 和当前契约仅更新本阶段状态及接入说明。
+
+### 验证与实际差异
+
+- `/bin/zsh scripts/test-agent-task-source.sh` 通过：生产 Swift 适配配合可控 Bridge，覆盖先保存 ID 再发送、重复文本独立映射、完成边界连续输入、Stop 前后迟到拒绝、generation/最终回复去重、工具租约门控、保存失败、控制背压及重复关闭。新增 Codable 检查验证 `UInt64.max`、原样历史和显式 null 目录；序列化完整 Snapshot 后恢复验证历史、映射及未确认输入共同保留，恢复只发 Continue。
+- `/bin/zsh scripts/test-agent-session.sh` 通过：真实 Rust/Swift、本地模型服务和临时项目，覆盖两种协议、连接探针不执行命令、聊天/配置重建、真实工具执行、目录排队/失效恢复、追加、Stop/删除/退出清理、继续处理、旧文本与损坏/缺失 sidecar 恢复、执行意图及工具结果保存失败。结果保存失败时保留真实输出、没有后续模型最终回复。
+- `/bin/zsh scripts/test-agent-bridge.sh` 通过：Swift v2 编解码、主线程心跳、Unicode/字符串生命周期、异步关闭及临时 Bundle prompt；脚本同时重跑既有 12 项 Rust Bridge 测试和 C AddressSanitizer 500 次句柄压力检查。该探针不是独立桌宠应用包验收，也不代表 Rust 内部完整 sanitizer 覆盖。
+- `/bin/zsh scripts/test-voice.sh --agent-only` 通过 56 项 Agent 语音适配检查，使用模拟 ASR/TTS，未调用真实语音服务。生产 Swift 与已迁移 `ConversationUITests.swift` 的 Swift 6、warnings-as-errors 类型检查通过；没有运行全量 UI/Voice 回归。
+- 变更脚本语法检查和 `git diff --check` 通过。最终主线 Git 状态与本轮开始一致，未触及 Mini Agent 第 2 阶段的已有改动。
+- 首次真实会话测试因沙箱禁止监听 `127.0.0.1` 失败，允许本地测试权限后重跑。新增保存屏障使旧测试的固定 100 ms 延迟可能落在模型派发之前；模型执行期间追加测试改为先等预算 checkpoint 保存，再覆盖网络请求中的追加。
+- 真实退出测试发现保存失败运行器只发送一次 `Cancelled`，不能在关闭时再次等待相同回执。Swift 现在记录已收到的清理确认并复用；多次 close 的回调等待同一退休句柄清理完成。修复后真实会话完整退出通过，相关竞态加入定向测试。
+
+第 4 阶段到此完成，改动保留在桌宠工作区，未提交 Git。下一阶段仅为第 5 项：完整跨层回归、独立应用包验证及最终文档收敛。本轮未运行全量 feature/UI/Voice 矩阵、真实服务或 Live Voice 发布抽验，也未构建、签名或启动独立桌宠应用包。

@@ -114,7 +114,7 @@ import Foundation
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("echo-session-\(UUID())")
         try FileManager.default.createDirectory(at: temp.appendingPathComponent("resources/agent"), withIntermediateDirectories: true)
-        try FileManager.default.copyItem(at: root.deletingLastPathComponent().appendingPathComponent("mini-agent-agent-core-exp/config/prompts/conversation.md"),
+        try FileManager.default.copyItem(at: root.appendingPathComponent("build/agent/conversation.md"),
             to: temp.appendingPathComponent("resources/agent/conversation.md"))
         defer { try? FileManager.default.removeItem(at: temp) }
         let server = Process(); server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -148,7 +148,7 @@ import Foundation
         precondition(!FileManager.default.fileExists(atPath: forbidden.path), "Connection probe executed a command")
         print("PASS: Rust connection probe, both protocols, text-only/malformed rejection, cancellation, no command execution")
         var protocolName = "chat_completions"
-        let factory = { AgentTaskSource(model: ["base_url": "http://127.0.0.1:\(port)", "model": "fixture", "protocol": protocolName],
+        let factory = { AgentTaskSource(model: AgentModel(base_url: "http://127.0.0.1:\(port)", model: "fixture", protocol: AgentModel.ProtocolName(rawValue: protocolName)!),
                                         resources: temp.appendingPathComponent("resources")) }
         try await testHistoryReadRecovery(temp: temp, factory: factory)
         let persistence = WorkspacePersistence(url: temp.appendingPathComponent("workspace.json"))
@@ -202,6 +202,7 @@ import Foundation
 
         let modelSteer = workspace.newConversation(projectID: projectID)
         modelSteer.store.send("slow-model tool")
+        try await wait("model budget persisted") { (modelSteer.store.snapshot.savedCheckpoint?.revision ?? 0) >= 3 }
         try await Task.sleep(for: .milliseconds(100))
         modelSteer.store.send("skip old model call")
         try await wait("model steering") { !modelSteer.store.isGenerating }
@@ -278,6 +279,20 @@ import Foundation
         try await wait("storage failure stops") { !failed.store.isGenerating }
         precondition(failed.store.task?.status == .failed && failed.store.notice?.contains("保存失败") == true)
         precondition(failed.store.tools.first?.state != "执行结束")
+
+        // A completed tool result must survive Stop, but cannot feed a new
+        // model request until Swift has successfully saved that result.
+        let resultFailure = workspace.newConversation(projectID: projectID)
+        resultFailure.store.checkpoint = { state in
+            if state.tools?.contains(where: { $0.result != nil }) == true { throw CocoaError(.fileWriteNoPermission) }
+        }
+        resultFailure.store.send("tool")
+        try await wait("result save failure stops") { !resultFailure.store.isGenerating }
+        precondition(resultFailure.store.task?.status == .failed)
+        precondition(resultFailure.store.tools.first?.result?.contains("stdout") == true)
+        precondition(resultFailure.store.responseMessage == nil)
+        precondition(resultFailure.store.snapshot.agentProjection?.contains(where: { $0.final_reply == true }) == false,
+                     "An unsaved result must never reach the next model request")
 
         // Distinct real paths proceed while another directory is leased. A
         // symlink alias, however, must queue behind the original owner.

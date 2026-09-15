@@ -6,6 +6,8 @@ cd "$project_dir"
 export CLANG_MODULE_CACHE_PATH="$project_dir/build/module-cache"
 export SWIFT_MODULECACHE_PATH="$CLANG_MODULE_CACHE_PATH"
 source scripts/swift-env.sh
+mkdir -p build/agent
+cp "$(/bin/zsh "$project_dir/scripts/agent-prompt-path.sh")" build/agent/conversation.md
 cargo build --locked --release --target aarch64-apple-darwin
 typeset -a sources=()
 for source_file in macos/*.swift; do

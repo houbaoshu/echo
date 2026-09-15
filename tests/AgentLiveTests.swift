@@ -35,8 +35,8 @@ import Foundation
             var config = saved; config.apiProtocol = api
             print("START: \(api.title) tool capability, direct answer, read/edit/verify"); fflush(nil)
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
-                sourceFactory: { AgentTaskSource(model: ["base_url": config.baseURL, "model": config.model,
-                    "api_key": key, "protocol": api == .responses ? "responses" : "chat_completions"], resources: resources) })
+                sourceFactory: { AgentTaskSource(model: AgentModel(base_url: config.baseURL, model: config.model,
+                    api_key: key, protocol: api == .responses ? .responses : .chat_completions), resources: resources) })
             do {
                 try await ModelConnectionTester().test(configuration: config, key: key)
                 let chat = workspace.selected!

@@ -21,15 +21,18 @@ struct AgentBridgeTests {
         let port = String(decoding: output.fileHandleForReading.availableData, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         precondition(Int(port) != nil)
-        let model: [String: Any] = ["base_url": "http://127.0.0.1:\(port)", "model": "fixture", "protocol": "chat_completions"]
+        let model = AgentModel(base_url: "http://127.0.0.1:\(port)", model: "fixture", protocol: .chat_completions)
         let bridge = try AgentBridge(sessionID: "swift-session", model: model)
-        var batches: [[String: Any]] = []
-        bridge.onBatch = { batches.append($0) }
+        var batches: [AgentBatch] = []
+        bridge.onBatch = {
+            batches.append($0)
+            if let cp = $0.checkpoint { try! bridge.send(.acknowledgeCheckpoint(cp.id)) }
+        }
         bridge.onFailure = { fatalError("bridge error: \($0)") }
         bridge.startPolling()
-        try await wait { batches.contains { $0["type"] as? String == "ready" } }
+        try await wait { batches.contains { $0.kind.type == .ready } }
         let start = ContinuousClock.now
-        try bridge.send("submit", fields: ["text": "hello"])
+        try bridge.send(.sendMessage(AgentInput(client_message_id: "hello", text: "hello")))
         precondition(start.duration(to: .now) < .milliseconds(100))
         var heartbeats = 0
         let heartbeat = Task { @MainActor in
@@ -40,14 +43,12 @@ struct AgentBridgeTests {
         }
         try await wait {
             batches.contains { frame in
-                (frame["events"] as? [[String: Any]] ?? []).contains { event in
-                    (event["kind"] as? [String: Any])?["type"] as? String == "finished"
-                }
+                frame.events.contains { $0.kind.type == .finished }
             }
         }
         heartbeat.cancel()
         precondition(heartbeats >= 20, "main actor stalled during model request")
-        let serialized = try JSONSerialization.data(withJSONObject: batches)
+        let serialized = try JSONEncoder().encode(batches)
         precondition(String(decoding: serialized, as: UTF8.self).contains("你好，bridge 🌱"))
         let retained = batches
         bridge.close()
@@ -57,10 +58,13 @@ struct AgentBridgeTests {
         // Destruction while a request is in flight must suspend shutdown, not block UI.
         let stopping = try AgentBridge(sessionID: "stop-session", model: model)
         var ready = false
-        stopping.onBatch = { if $0["type"] as? String == "ready" { ready = true } }
+        stopping.onBatch = {
+            if $0.kind.type == .ready { ready = true }
+            if let cp = $0.checkpoint { try! stopping.send(.acknowledgeCheckpoint(cp.id)) }
+        }
         stopping.startPolling()
         try await wait { ready }
-        try stopping.send("submit", fields: ["text": "wait"])
+        try stopping.send(.sendMessage(AgentInput(client_message_id: "wait", text: "wait")))
         try await Task.sleep(for: .milliseconds(100))
         let closeStart = ContinuousClock.now
         stopping.close()

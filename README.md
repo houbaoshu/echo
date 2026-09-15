@@ -2,7 +2,7 @@
 
 Echo 是面向 Apple Silicon Mac 的桌面应用，将 macOS 桌宠、AI 对话与 Agent 工具执行整合在一个原生工作区中。Swift / AppKit / SwiftUI 负责界面和系统能力，Rust Agent Core 负责模型交互与会话决策。下述产品功能描述沿用迁移前 V1 基线；当前迁移边界见下一段。
 
-Mini Agent 主线迁移已完成[第 3 阶段：Rust Bridge 接入主线运行器](docs/mini-agent-mainline-bridge-v2-plan.md)。Rust/C 接口仅接受 [wire v2](docs/mini-agent-mainline-bridge-v2-contract.md)，存档仍为 v1。**Swift 仍使用 wire v1，待第 4 阶段迁移；当前新构建的应用不能完成 Agent 聊天、工具任务和连接探针。** 第 3 阶段验收入口为 `/bin/zsh scripts/test-agent-ffi.sh`；完整应用验收留在第 5 阶段。
+Mini Agent 主线迁移已完成[第 4 阶段：Swift v2 适配](docs/mini-agent-mainline-bridge-v2-plan.md)。Swift 与 Rust/C 接口使用 [wire v2](docs/mini-agent-mainline-bridge-v2-contract.md)，核心存档仍为 v1；保存确认、输入回执和目录放行已接入。直接相关的 Bridge、会话与适配测试已通过；完整跨层回归和独立应用包验收留在第 5 阶段。
 
 ## 核心能力
 
@@ -103,7 +103,7 @@ workspace/
 | --- | --- |
 | `macos/` | Swift 前端：桌宠和窗口、聊天与文件预览、项目调度、设置与钥匙串、会话落盘、麦克风采集、ASR/TTS 和音频播放 |
 | `../mini-agent-rs/` | Rust Agent Core：模型协议、会话状态和恢复、异步运行器、保存门控、工具执行和取消清理 |
-| `agent-bridge/`、`macos/AgentBridge.swift` | Rust 负责 v2 编解码、FFI 所有权、后台初始化、共享 Tokio runtime 与清理计数；Swift 适配待第 4 阶段迁移 |
+| `agent-bridge/`、`macos/AgentBridge.swift`、`macos/AgentWire.swift` | Rust 负责 v2 编解码、FFI 所有权、后台初始化、共享 Tokio runtime 与清理计数；Swift 使用类型化请求、批次与错误 |
 | `runtime/` | Rust 桌宠运行时：素材清单解析、WebP 解码与切帧、动画状态和交互优先级 |
 | `assets/pets/`、`scripts/`、`tests/` | 内置桌宠素材、构建与诊断脚本、回归测试 |
 

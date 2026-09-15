@@ -85,9 +85,9 @@ struct ActivityTask: Codable {
 }
 
 @MainActor protocol AgentSessionSource: TaskSource {
-    func open(sessionID: String, history: Data?, messages: [ConversationMessage], directory: URL?,
-              receive: @escaping ([String: Any]) -> Void, failure: @escaping (String) -> Void) throws
-    func control(_ type: String, fields: [String: Any]) throws
+    func open(sessionID: String, generation: String, restore: AgentRestore,
+              receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws
+    func control(_ command: AgentCommand) throws
     func close(afterCleanup: @escaping () -> Void)
 }
 
@@ -119,6 +119,12 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @Published private(set) var waitingForProject = false
     private var agentHistory: Data?
     private var agentStored: Bool?
+    private var inputReceipts: [AgentInputReceipt] = []
+    private var pendingInputs: [AgentInput] = []
+    private var agentProjection: [AgentDisplayEntry] = []
+    private var savedCheckpoint: AgentCheckpointID?
+    private var deliveredReplies: Set<UInt64> = []
+    private var importingLegacy = false
     private var agentTurnID: UInt64?
     private var pendingOperation: UInt64?
     private var agentGeneration = UUID()
@@ -150,11 +156,19 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         var tools: [AgentToolRecord]? = nil
         var agentStored: Bool? = nil
         var loadError: String? = nil
+        var inputReceipts: [AgentInputReceipt]? = nil
+        var pendingInputs: [AgentInput]? = nil
+        var agentProjection: [AgentDisplayEntry]? = nil
+        var savedCheckpoint: AgentCheckpointID? = nil
+        var deliveredReplies: Set<UInt64>? = nil
     }
     var snapshot: Snapshot {
         Snapshot(task: task, messages: messages, mainDraft: mainDraft, followUpDraft: followUpDraft,
                  activityDismissed: activityDismissed, activitiesCollapsed: activitiesCollapsed,
-                 agentHistory: agentHistory, tools: usesAgent ? tools : nil, agentStored: agentStored, loadError: agentLoadError)
+                 agentHistory: agentHistory, tools: usesAgent ? tools : nil, agentStored: agentStored, loadError: agentLoadError,
+                 inputReceipts: usesAgent ? inputReceipts : nil, pendingInputs: usesAgent ? pendingInputs : nil,
+                 agentProjection: usesAgent ? agentProjection : nil, savedCheckpoint: savedCheckpoint,
+                 deliveredReplies: usesAgent ? deliveredReplies : nil)
     }
     convenience init(snapshot: Snapshot, source: (any TaskSource)?) {
         self.init(source: source)
@@ -167,6 +181,13 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         messages = snapshot.messages
         agentHistory = snapshot.agentHistory; tools = snapshot.tools ?? []; agentLoadError = snapshot.loadError
         agentStored = snapshot.agentStored
+        inputReceipts = snapshot.inputReceipts ?? []
+        pendingInputs = snapshot.pendingInputs ?? snapshot.messages.filter { $0.role == .user && $0.coreID == nil }.map {
+            AgentInput(client_message_id: $0.id.uuidString, text: $0.content)
+        }
+        agentProjection = snapshot.agentProjection ?? []
+        savedCheckpoint = snapshot.savedCheckpoint
+        deliveredReplies = snapshot.deliveredReplies ?? []
         if usesAgent, task?.status == .completed { task?.summary = "已完成" }
         for index in tools.indices where tools[index].result == nil { tools[index].state = "执行结果未知" }
         for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
@@ -349,16 +370,27 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         onUserAction = nil; onVisibilityChange = nil
     }
 
+    private func appendInput(_ text: String) -> AgentInput {
+        var message = ConversationMessage(role: .user, content: text)
+        message.steering = "待处理"; messages.append(message)
+        let input = AgentInput(client_message_id: message.id.uuidString, text: text)
+        pendingInputs.append(input)
+        return input
+    }
     private func sendAgent(_ text: String) -> Bool {
         guard canSubmit, !text.isEmpty else { return false }
         if isGenerating {
-            do {
-                try agent?.control("steer", fields: ["text": text])
-                pendingOperation = nil; cancelDirectoryWait?(); waitingForProject = false; needsDirectory = false
-                var message = ConversationMessage(role: .user, content: text)
-                message.steering = "待处理"; messages.append(message)
-                onUserAction?(); _ = saveAgent(); return true
-            } catch { notice = error.localizedDescription; return false }
+            let input = appendInput(text)
+            pendingOperation = nil; cancelDirectoryWait?(); waitingForProject = false; needsDirectory = false
+            onUserAction?()
+            guard saveAgent() else { return false }
+            do { try agent?.control(.sendMessage(input)); return true }
+            catch {
+                // An admission rejection has not reached the core. Keep its stable
+                // ID in the saved pending inputs so explicit recovery cannot lose it.
+                notice = error.localizedDescription
+                failAgent(error.localizedDescription); return false
+            }
         }
         beginAgent(text: text); return true
     }
@@ -366,29 +398,49 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     private func beginAgent(text: String?) {
         guard let agent else { return }
         let prior = requestMessages
+        let source: AgentHistoryInput
+        if let agentHistory {
+            guard let history = String(data: agentHistory, encoding: .utf8) else {
+                failAgent("Agent 历史格式无效。"); return
+            }
+            source = AgentHistoryInput(type: .v1, history: history)
+        } else {
+            source = AgentHistoryInput(type: .legacy_text, messages: prior.map {
+                AgentLegacyMessage(role: $0.role == .user ? .user : .assistant,
+                    input: AgentInput(client_message_id: $0.id.uuidString, text: $0.content))
+            })
+        }
+        let restore = AgentRestore(source: source, input_receipts: inputReceipts,
+                                   pending_inputs: pendingInputs, directory: projectDirectory?()?.path)
+        importingLegacy = agentHistory == nil
         storageFailure = nil; notice = nil; agentTurnID = nil; pendingOperation = nil; responseMessageID = nil
+        savedCheckpoint = nil
         agentGeneration = UUID(); let generation = agentGeneration
         if task == nil { task = .init(id: UUID(), runID: UUID(), title: String((text ?? "继续处理").prefix(80)), summary: "", status: .running) }
         task?.runID = UUID(); task?.status = .running; task?.summary = "正在请求模型…"
-        if let text { messages.append(.init(role: .user, content: text)) }
+        let input = text.map { appendInput($0) }
         activityDismissed = false; onUserAction?(); lifecycle.send(.started(task!.runID))
         guard saveAgent() else { task?.status = .failed; return }
         do {
-            try agent.open(sessionID: sessionID.uuidString, history: agentHistory, messages: prior,
-                directory: projectDirectory?(), receive: { [weak self] batch in
+            try agent.open(sessionID: sessionID.uuidString, generation: generation.uuidString, restore: restore,
+                receive: { [weak self] batch in
                     guard let self, !self.retired, self.agentGeneration == generation else { return }
                     self.receiveAgent(batch)
-                }, failure: { [weak self] error in self?.failAgent(error) })
-            try agent.control(text == nil ? "continue" : "submit", fields: text.map { ["text": $0] } ?? [:])
+                }, failure: { [weak self] error in
+                    guard let self, !self.retired, self.agentGeneration == generation else { return }
+                    self.failAgent(error)
+                })
+            try agent.control(input.map { .sendMessage($0) } ?? .continue)
         } catch { failAgent(error.localizedDescription) }
     }
 
-    @discardableResult private func saveAgent() -> Bool {
+    @discardableResult private func saveAgent(checkpointID: AgentCheckpointID? = nil) -> Bool {
         do { try checkpoint?(snapshot); return true }
         catch {
             storageFailure = "会话保存失败，已停止后续执行：\(error.localizedDescription)"
             notice = storageFailure; pendingOperation = nil; cancelDirectoryWait?()
             task?.summary = storageFailure!
+            if let checkpointID { try? agent?.control(.checkpointFailed(checkpointID)) }
             if isGenerating { task?.status = .stopping; agent?.cancel() }
             else { task?.status = .failed }
             return false
@@ -398,8 +450,9 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         notice = error; task?.summary = error
         pendingOperation = nil; cancelDirectoryWait?()
         task?.status = .stopping
+        let generation = agentGeneration
         agent?.close { [weak self] in
-            guard let self else { return }
+            guard let self, !self.retired, self.agentGeneration == generation else { return }
             self.releaseDirectory?(); self.task?.status = .failed
             if let runID = self.task?.runID { self.lifecycle.send(.reply(runID, .failed(error))) }
             _ = self.saveAgent()
@@ -409,140 +462,165 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     func provideDirectory(_ url: URL?) {
         guard needsDirectory, task?.status == .running else { return }
         do {
-            try agent?.control("provide_directory", fields: ["directory": url?.path ?? (NSNull() as Any)])
+            try agent?.control(.provideDirectory(url?.path))
             needsDirectory = false; task?.summary = url == nil ? "正在取消未执行的调用…" : "正在准备工具…"
         } catch { notice = error.localizedDescription }
     }
 
-    private func receiveAgent(_ batch: [String: Any]) {
-        guard batch["session_id"] as? String == sessionID.uuidString else { return }
-        if batch["type"] as? String == "initialization_failed" { failAgent("Agent 初始化失败，请检查模型配置、资源和历史。"); return }
-        let events = batch["events"] as? [[String: Any]] ?? []
-        if let turn = batch["turn_id"] as? UInt64, let current = agentTurnID, turn < current { return }
-        if let history = batch["history"] as? [String: Any] {
-            agentHistory = try? JSONSerialization.data(withJSONObject: history, options: [.sortedKeys])
-            projectHistory(history)
+    private func receiveAgent(_ batch: AgentBatch) {
+        guard batch.session_id == sessionID.uuidString, batch.generation == agentGeneration.uuidString else { return }
+        if batch.kind.type == .initialization_failed {
+            failAgent(batch.error?.message ?? "Agent 初始化失败，请检查模型配置、资源和历史。"); return
         }
-        for event in events {
-            guard event["version"] as? Int == 1, event["session_id"] as? String == sessionID.uuidString,
-                  let kind = event["kind"] as? [String: Any], let type = kind["type"] as? String else { continue }
-            let turn = event["turn_id"] as? UInt64
-            if type == "turn_started" { agentTurnID = turn }
-            if let current = agentTurnID, turn != current { continue }
-            switch type {
-            case "assistant":
-                // History owns visible text. The final event only identifies which
-                // projected message supplies completion notifications and speech.
-                if kind["final_reply"] as? Bool == true, let id = kind["message_id"] as? UInt64 {
+        if let cp = batch.checkpoint {
+            guard cp.id.generation == batch.generation,
+                  savedCheckpoint.map({ cp.id.revision >= $0.revision }) ?? true else { return }
+            agentHistory = Data(cp.history.utf8)
+            inputReceipts = cp.input_receipts
+            pendingInputs.removeAll { input in cp.input_receipts.contains { $0.client_message_id == input.client_message_id } }
+            agentProjection = cp.projection
+            projectEntries(cp.projection)
+            savedCheckpoint = cp.id
+        }
+        if let receipt = batch.kind.result?.input_receipt {
+            agentTurnID = max(agentTurnID ?? 0, receipt.turn_id)
+        }
+        var terminal: AgentOutcome?
+        for event in batch.events {
+            guard event.version == 1, event.session_id == sessionID.uuidString else { continue }
+            let kind = event.kind
+            if kind.type == .turn_started { agentTurnID = max(agentTurnID ?? 0, event.turn_id) }
+            if let current = agentTurnID, event.turn_id != current { continue }
+            switch kind.type {
+            case .assistant:
+                if kind.final_reply == true, pendingInputs.isEmpty, let id = kind.message_id {
                     responseMessageID = messages.first { $0.coreID == id && $0.role == .assistant }?.id
                 }
-            case "steering_queued", "steering_accepted":
-                if let id = kind["message_id"] as? UInt64, let index = messages.firstIndex(where: { $0.coreID == id }) {
-                    messages[index].steering = type == "steering_queued" ? "待处理" : "已接收"
+            case .steering_queued, .steering_accepted:
+                if let id = kind.message_id, let index = messages.firstIndex(where: { $0.coreID == id }) {
+                    messages[index].steering = kind.type == .steering_queued ? "待处理" : "已接收"
                 }
-            case "model_started":
+            case .model_started:
                 needsDirectory = false; waitingForProject = false; pendingOperation = nil
                 if task?.status != .stopping { task?.summary = "正在请求模型…" }
-            case "directory_required":
+            case .directory_required:
                 if task?.status != .stopping { needsDirectory = true; task?.summary = "等待选择项目文件夹" }
-            case "tool_started":
-                if let call = kind["call"] as? [String: Any], let id = call["id"] as? String,
-                   let index = tools.lastIndex(where: { $0.callID == id && $0.turnID == turn && $0.result == nil }) {
-                    tools[index].state = "执行中"; tools[index].directory = kind["directory"] as? String
+            case .tool_started:
+                if let id = kind.call?.id,
+                   let index = tools.lastIndex(where: { $0.callID == id && $0.turnID == event.turn_id && $0.result == nil }) {
+                    tools[index].state = "执行中"; tools[index].directory = kind.directory
                     if task?.status != .stopping { task?.summary = "正在执行：\(tools[index].command.prefix(120))" }
                 }
-            case "finished":
-                // Stop only becomes terminal when Rust confirms process cleanup.
-                if task?.status == .stopping && batch["type"] as? String != "cancelled" { continue }
-                finishAgent(kind["outcome"] as? [String: Any] ?? [:])
+            case .finished:
+                if pendingInputs.isEmpty && task?.status != .stopping { terminal = kind.outcome }
             default: break
             }
         }
-        if let error = batch["error"] as? String, task?.status != .stopping { failAgent(error); return }
-        if batch["type"] as? String == "cancelled", task?.status == .stopping {
-            finishAgent(["status": "interrupted"])
+        if let error = batch.error, task?.status == .running {
+            switch error.code {
+            case .cancelled_before_processing, .stopping, .stale_checkpoint, .stale_operation, .directory_required: break
+            case .invalid_directory:
+                pendingOperation = nil; cancelDirectoryWait?(); waitingForProject = false
+                needsDirectory = true; task?.summary = "等待选择项目文件夹"
+            default: failAgent(error.message); return
+            }
         }
-        guard saveAgent(), task?.status == .running,
-              batch["type"] as? String == "tool_pending", let operation = batch["operation_id"] as? UInt64,
-              let history = batch["history"] as? [String: Any], let path = history["directory"] as? String else { return }
+        if batch.kind.type == .cancelled {
+            terminal = AgentOutcome(status: .interrupted)
+        }
+        // Final state and deduplication IDs join the checkpoint before notification.
+        let notification = terminal.flatMap { finishAgent($0) }
+        let saved = saveAgent(checkpointID: batch.checkpoint?.id)
+        if terminal != nil { releaseDirectory?() }
+        guard saved else { return }
+        if let cp = batch.checkpoint, storageFailure == nil {
+            do { try agent?.control(.acknowledgeCheckpoint(cp.id)) }
+            catch { failAgent(error.localizedDescription); return }
+        }
+        if let notification { lifecycle.send(notification) }
+        guard task?.status == .running, pendingInputs.isEmpty, batch.kind.type == .tool_pending,
+              let operation = batch.kind.operation_id, let path = batch.kind.directory,
+              let cp = batch.checkpoint else { return }
         pendingOperation = operation; waitingForProject = true; task?.summary = "等待项目空闲…"
         let generation = agentGeneration
         let ready = { [weak self] in
             guard let self, self.agentGeneration == generation, self.pendingOperation == operation,
-                  self.task?.status == .running else { return }
+                  self.task?.status == .running, self.pendingInputs.isEmpty else { return }
             self.waitingForProject = false
-            guard self.saveAgent() else { return }
-            do { try self.agent?.control("start_tool", fields: ["operation_id": operation]) }
+            guard self.saveAgent(checkpointID: cp.id) else { return }
+            do { try self.agent?.control(.authorizeTool(cp.id, operationID: operation, directory: path)) }
             catch { self.failAgent(error.localizedDescription) }
         }
         if let acquireDirectory { acquireDirectory(path, ready) } else { ready() }
     }
 
-    private func finishAgent(_ outcome: [String: Any]) {
-        guard isGenerating else { return }
-        needsDirectory = false; waitingForProject = false; pendingOperation = nil; releaseDirectory?()
+    private func finishAgent(_ outcome: AgentOutcome) -> TaskLifecycleEvent? {
+        guard isGenerating, let runID = task?.runID else { return nil }
+        needsDirectory = false; waitingForProject = false; pendingOperation = nil
         for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
-        let status = outcome["status"] as? String
         if let storageFailure {
             task?.status = .failed; task?.summary = storageFailure
-            if let runID = task?.runID { lifecycle.send(.reply(runID, .failed(storageFailure))) }
+            return .reply(runID, .failed(storageFailure))
         }
-        else if status == "completed" {
-            guard let response = responseMessage, !response.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                finishAgent(["status": "failed", "error": "Agent 未返回最终回复，请继续处理。"]); return
+        switch outcome.status {
+        case .completed:
+            guard let response = responseMessage, let coreID = response.coreID,
+                  !response.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return finishAgent(AgentOutcome(status: .failed, error: "Agent 未返回最终回复，请继续处理。"))
             }
             task?.status = .completed; task?.summary = "已完成"
-            if let runID = task?.runID { lifecycle.send(.reply(runID, .completed(response.content))) }
-        } else if status == "interrupted" {
+            guard deliveredReplies.insert(coreID).inserted else { return nil }
+            return .reply(runID, .completed(response.content))
+        case .interrupted:
             task?.status = .stopped; task?.summary = "已停止 · 可继续处理"
-            if let runID = task?.runID { lifecycle.send(.stopped(runID)) }
-        } else {
-            let error = outcome["error"] as? String ?? (status == "step_limit" ? "已达到本轮 30 次模型请求限制。" : "模型连续返回无效工具格式，已停止。")
+            return .stopped(runID)
+        default:
+            let error = outcome.error ?? (outcome.status == .step_limit ? "已达到本轮 30 次模型请求限制。" : "模型连续返回无效工具格式，已停止。")
             task?.status = .failed; task?.summary = error
-            if let runID = task?.runID { lifecycle.send(.reply(runID, .failed(error))) }
+            return .reply(runID, .failed(error))
         }
     }
 
-    private func projectHistory(_ history: [String: Any]) {
+    private func projectEntries(_ entries: [AgentDisplayEntry]) {
         var anchor: UUID?
-        var pendingTools: [String: Int] = [:]
-        for entry in history["entries"] as? [[String: Any]] ?? [] {
-            guard let id = entry["id"] as? UInt64, let turn = entry["turn_id"] as? UInt64,
-                  let value = entry["value"] as? [String: Any], let message = value["message"] as? [String: Any],
-                  let role = message["role"] as? String else { continue }
-            if role == "user" || role == "assistant" {
-                let content = message["content"] as? String ?? ""
-                if !content.isEmpty {
-                    let matching = messages.firstIndex { $0.coreID == id }
-                        ?? messages.firstIndex { $0.coreID == nil && $0.role.rawValue == role && $0.content == content }
-                    if let index = matching { messages[index].coreID = id; anchor = messages[index].id }
-                    else {
-                        var visible = ConversationMessage(role: role == "user" ? .user : .assistant, content: content)
-                        visible.coreID = id; messages.append(visible); anchor = visible.id
+        var projectedMessages: [ConversationMessage] = []
+        var projectedTools: [AgentToolRecord] = []
+        // Legacy assistant messages have no input receipt. Import preserves their
+        // order; transfer their UI identity once, without examining history JSON.
+        var legacyAssistants = importingLegacy ? requestMessages.filter { $0.role == .assistant && $0.coreID == nil } : []
+        for entry in entries {
+            let id = entry.message_id
+            if entry.type == .message, let role = entry.role, let text = entry.text {
+                let receipt = inputReceipts.first { $0.message_id == id }
+                var visible = messages.first { $0.coreID == id }
+                    ?? messages.first { $0.id.uuidString == receipt?.client_message_id }
+                if visible == nil && role == .assistant && !legacyAssistants.isEmpty {
+                    visible = legacyAssistants.removeFirst()
+                }
+                var message = visible ?? ConversationMessage(role: role == .user ? .user : .assistant, content: text)
+                message.coreID = id; message.content = text
+                if role == .user && message.steering == "待处理" { message.steering = "已接收" }
+                projectedMessages.append(message); anchor = message.id
+            } else if entry.type == .tool, let call = entry.call_id, let command = entry.command {
+                var tool = tools.first { $0.entryID == id && $0.callID == call }
+                    ?? AgentToolRecord(callID: call, entryID: id, turnID: entry.turn_id, afterMessageID: anchor, command: command)
+                tool.afterMessageID = anchor; tool.result = entry.result
+                if let result = entry.result {
+                    struct ResultStatus: Decodable { var status: String? }
+                    switch (try? JSONDecoder().decode(ResultStatus.self, from: Data(result.utf8)))?.status {
+                    case "not_executed": tool.state = "未执行"
+                    case "unknown": tool.state = "执行结果未知"
+                    default: tool.state = "执行结束"
                     }
                 }
-                for call in message["tool_calls"] as? [[String: Any]] ?? [] {
-                    guard let callID = call["id"] as? String else { continue }
-                    if let index = tools.firstIndex(where: { $0.callID == callID && $0.entryID == id }) {
-                        pendingTools[callID] = index; continue
-                    }
-                    let function = call["function"] as? [String: Any] ?? [:]
-                    let arguments = function["arguments"] as? String ?? ""
-                    let parsed = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) as? [String: Any]
-                    tools.append(.init(callID: callID, entryID: id, turnID: turn, afterMessageID: anchor,
-                                       command: parsed?["command"] as? String ?? arguments))
-                    pendingTools[callID] = tools.count - 1
-                }
-            } else if role == "tool", let callID = message["tool_call_id"] as? String,
-                      let index = pendingTools.removeValue(forKey: callID) {
-                tools[index].result = message["content"] as? String
-                let result = (try? JSONSerialization.jsonObject(with: Data((tools[index].result ?? "").utf8))) as? [String: Any]
-                switch result?["status"] as? String {
-                case "not_executed": tools[index].state = "未执行"
-                case "unknown": tools[index].state = "执行结果未知"
-                default: tools[index].state = "执行结束"
-                }
+                projectedTools.append(tool)
             }
         }
+        let unresolved = messages.filter { message in
+            pendingInputs.contains { $0.client_message_id == message.id.uuidString }
+        }
+        messages = projectedMessages + unresolved
+        tools = projectedTools
+        importingLegacy = false
     }
 }

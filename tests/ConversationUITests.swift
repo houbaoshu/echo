@@ -21,12 +21,12 @@ import SwiftUI
 }
 
 @MainActor private final class ComposerAgent: AgentSessionSource {
-    var controls: [String] = []
+    var controls: [AgentCommand] = []
     func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {}
     func cancel() {}
-    func open(sessionID: String, history: Data?, messages: [ConversationMessage], directory: URL?,
-              receive: @escaping ([String: Any]) -> Void, failure: @escaping (String) -> Void) throws {}
-    func control(_ type: String, fields: [String: Any]) throws { controls.append(type) }
+    func open(sessionID: String, generation: String, restore: AgentRestore,
+              receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws {}
+    func control(_ command: AgentCommand) throws { controls.append(command) }
     func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
 }
 
@@ -288,7 +288,7 @@ import SwiftUI
         precondition(node("conversation.send")?.isAccessibilityEnabled?() == true)
         precondition(node("conversation.stop") != nil)
         precondition(node("conversation.send")?.accessibilityPerformPress?() == true)
-        precondition(source.controls.contains("steer") && agentStore.mainDraft.isEmpty)
+        precondition(source.controls.contains { if case .sendMessage = $0 { return true }; return false } && agentStore.mainDraft.isEmpty)
         precondition(main.handleEscape(), "Escape dispatches the existing Agent Stop action")
         precondition(agentStore.task?.status == .stopping)
         precondition(!main.handleEscape(), "Escape does not repeat Stop while cleanup is pending")

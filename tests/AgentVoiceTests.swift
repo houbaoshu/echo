@@ -1,43 +1,63 @@
 import Foundation
 
 @MainActor final class ScriptedVoiceAgent: AgentSessionSource {
-    var receive: (([String: Any]) -> Void)?
+    var receive: ((AgentBatch) -> Void)?
     var sessionID = ""
+    var generation = ""
     var commands: [(String, String?)] = []
     var cancels = 0
-    private var entries: [[String: Any]] = []
+    private var entries: [AgentDisplayEntry] = []
+    private var receipts: [AgentInputReceipt] = []
     private var turnID: UInt64 = 0
+    private var nextID: UInt64 = 1
+    private var revision: UInt64 = 0
     private var finalID: UInt64?
+    private var newTurn = false
     func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
         preconditionFailure("Voice must use the unified Agent session")
     }
-    func open(sessionID: String, history: Data?, messages: [ConversationMessage], directory: URL?,
-              receive: @escaping ([String: Any]) -> Void, failure: @escaping (String) -> Void) throws {
-        self.sessionID = sessionID; self.receive = receive
+    func open(sessionID: String, generation: String, restore: AgentRestore,
+              receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws {
+        self.sessionID = sessionID; self.generation = generation; self.receive = receive
+        revision = 0; newTurn = true
     }
-    func control(_ type: String, fields: [String: Any]) throws {
-        commands.append((type, fields["text"] as? String))
-        if type == "submit" || type == "continue" { turnID += 1; finalID = nil }
+    func control(_ command: AgentCommand) throws {
+        if command.isControl { return }
+        switch command {
+        case .sendMessage(let input):
+            commands.append(("send_message", input.text))
+            if newTurn { turnID = nextID; nextID += 1; finalID = nil; newTurn = false }
+            let id = nextID; nextID += 1
+            receipts.append(.init(client_message_id: input.client_message_id, message_id: id, turn_id: turnID))
+            entries.append(.init(type: .message, message_id: id, turn_id: turnID, role: .user, text: input.text))
+        case .continue:
+            commands.append(("continue", nil)); turnID = nextID; nextID += 1; finalID = nil
+        default: break
+        }
     }
     func cancel() { cancels += 1 }
     func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
-    func emit(_ kind: [String: Any], batchType: String = "events") {
-        receive?(["session_id": sessionID, "type": batchType,
-                  "events": [["version": 1, "session_id": sessionID, "turn_id": turnID, "kind": kind]]])
+    func emit(_ kind: AgentEvent.Kind, cancelled: Bool = false) {
+        receive?(AgentBatch(session_id: sessionID, generation: generation, turn_id: turnID,
+            kind: .init(type: cancelled ? .cancelled : .update),
+            events: [AgentEvent(version: 1, session_id: sessionID, turn_id: turnID, kind: kind)]))
     }
     func complete(_ text: String, rawReply: String? = nil) {
         if finalID == nil {
-            finalID = UInt64(entries.count + 1)
-            entries.append(["id": finalID!, "turn_id": turnID,
-                            "value": ["message": ["role": "assistant", "content": text]]])
+            finalID = nextID; nextID += 1
+            entries.append(.init(type: .message, message_id: finalID!, turn_id: turnID,
+                                 role: .assistant, text: text, final_reply: true))
         }
-        let kinds: [[String: Any]] = [
-            ["type": "assistant", "message_id": finalID!, "content": text, "final_reply": true],
-            ["type": "finished", "outcome": ["status": "completed", "reply": rawReply ?? text]]
+        revision += 1
+        let kinds: [AgentEvent.Kind] = [
+            .init(type: .assistant, message_id: finalID!, final_reply: true),
+            .init(type: .finished, outcome: AgentOutcome(status: .completed, reply: rawReply ?? text))
         ]
-        receive?(["session_id": sessionID, "type": "events", "turn_id": turnID,
-                  "history": ["entries": entries],
-                  "events": kinds.map { ["version": 1, "session_id": sessionID, "turn_id": turnID, "kind": $0] }])
+        receive?(AgentBatch(session_id: sessionID, generation: generation, turn_id: turnID,
+            kind: .init(type: .update),
+            events: kinds.map { AgentEvent(version: 1, session_id: sessionID, turn_id: turnID, kind: $0) },
+            checkpoint: AgentCheckpoint(id: .init(generation: generation, revision: revision), history: "{}",
+                                        input_receipts: receipts, projection: entries)))
     }
 }
 
@@ -90,7 +110,7 @@ extension VoiceTests {
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-voice-\(UUID())")
         let resources = temp.appendingPathComponent("resources")
         try FileManager.default.createDirectory(at: resources.appendingPathComponent("agent"), withIntermediateDirectories: true)
-        try FileManager.default.copyItem(at: root.deletingLastPathComponent().appendingPathComponent("mini-agent-agent-core-exp/config/prompts/conversation.md"),
+        try FileManager.default.copyItem(at: root.appendingPathComponent("build/agent/conversation.md"),
             to: resources.appendingPathComponent("agent/conversation.md"))
         defer { try? FileManager.default.removeItem(at: temp) }
         let server = Process(); server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -101,7 +121,7 @@ extension VoiceTests {
         guard Int(port) != nil else { throw SettingsError("Local Agent voice fixture failed to start") }
         for apiProtocol in ["chat_completions", "responses"] {
             for scenario in ["tool", "model", "directory", "queue", "stop"] {
-                let makeSource = { AgentTaskSource(model: ["base_url": "http://127.0.0.1:\(port)", "model": "fixture", "protocol": apiProtocol], resources: resources) }
+                let makeSource = { AgentTaskSource(model: AgentModel(base_url: "http://127.0.0.1:\(port)", model: "fixture", protocol: AgentModel.ProtocolName(rawValue: apiProtocol)!), resources: resources) }
                 let f = AgentVoiceFixture(source: makeSource()); f.sourceFactory = makeSource
                 defer { f.shutdown() }
                 let project = temp.appendingPathComponent("\(apiProtocol)-\(scenario)")
@@ -121,7 +141,9 @@ extension VoiceTests {
                 f.speak(scenario == "model" ? "slow-model tool" : scenario == "tool" ? "slow-tool" : scenario == "stop" ? "cancel-tool" : "tool")
                 let run = f.store.task!.runID
                 switch scenario {
-                case "model": try await Task.sleep(for: .milliseconds(120))
+                case "model":
+                    try await waitForAgentVoice("model budget persisted") { (f.store.snapshot.savedCheckpoint?.revision ?? 0) >= 3 }
+                    try await Task.sleep(for: .milliseconds(120))
                 case "directory":
                     try await waitForAgentVoice("voice waits for directory") { f.store.needsDirectory }
                     check(f.voice.status.contains("等待选择项目文件夹") && f.synths.isEmpty, "directory pause does not speak assistant explanation")
@@ -188,18 +210,18 @@ extension VoiceTests {
             f.store.mainDraft = "保留草稿"
             f.speak("开始检查")
             let run = f.store.task!.runID, recognizer = f.recognizers[0]
-            check(source.commands.map(\.0) == ["submit"] && f.voice.snapshot.recognition == .listening,
+            check(source.commands.map(\.0) == ["send_message"] && f.voice.snapshot.recognition == .listening,
                   "Agent voice submits once and keeps recognition during the model request")
             f.speak("补充一", start: 300); f.speak("补充二", start: 600); f.speak("补充二", start: 600)
-            check(source.commands.map(\.0) == ["submit", "steer", "steer"] && source.cancels == 0,
+            check(source.commands.map(\.0) == ["send_message", "send_message", "send_message"] && source.cancels == 0,
                   "ordered voice follow-ups steer without cancellation or duplicate ASR finals")
             check(f.store.task?.runID == run && f.store.messages.suffix(2).allSatisfy { $0.steering == "待处理" },
                   "voice follow-ups retain the active run and pending markers")
-            source.emit(["type": "directory_required"])
+            source.emit(.init(type: .directory_required))
             check(f.voice.status == "等待选择项目文件夹 · 可补充语音" && f.store.needsDirectory,
                   "directory wait remains visible while voice input stays enabled")
             f.speak("先回答问题", start: 900)
-            check(!f.store.needsDirectory && source.commands.last?.0 == "steer" && !recognizer.cancelled,
+            check(!f.store.needsDirectory && source.commands.last?.0 == "send_message" && !recognizer.cancelled,
                   "directory-wait follow-up uses the same Core steering path")
             f.voice.toggleMute()
             f.speak("静音不能提交", start: 1200)
@@ -216,7 +238,7 @@ extension VoiceTests {
                   && source.commands.last?.1 == "原会话补充" && other.store.messages.count == 1,
                   "navigation and parallel conversation activity do not move voice ownership")
             check(f.workspace.send("文字补充", conversationID: f.conversation.id) && f.store.task?.runID == run
-                  && source.commands.last?.0 == "steer" && source.cancels == 0,
+                  && source.commands.last?.0 == "send_message" && source.cancels == 0,
                   "workspace text uses steering even when Live Voice owns the conversation")
             await tick()
             check(f.voice.snapshot.recognition == .listening && f.store.mainDraft == "保留草稿",
@@ -235,7 +257,7 @@ extension VoiceTests {
                   "late voice and text cannot start a run during cleanup")
             source.complete("停止后旧回复")
             check(f.synths.isEmpty && f.store.task?.status == .stopping, "Stop suppresses an unconfirmed old completion")
-            source.emit(["type": "finished", "outcome": ["status": "interrupted"]], batchType: "cancelled")
+            source.emit(.init(type: .finished, outcome: .init(status: .interrupted)), cancelled: true)
             await tick()
             check(f.voice.isActive && f.voice.snapshot.recognition == .listening && f.store.canSubmit,
                   "cleanup acknowledgement restores listening without ending the call")
@@ -325,7 +347,7 @@ extension VoiceTests {
                 f.speak("再看看明天")
             }
             f.speak("再看看明天")
-            check(source.commands.map(\.0) == ["submit", "submit"] && f.store.task?.runID != run
+            check(source.commands.map(\.0) == ["send_message", "send_message"] && f.store.task?.runID != run
                   && f.voice.snapshot.recognition == .listening, "one final starts the next round after completed playback")
             do { try await oldAudio(Data([1, 2])); check(false, "old audio must be rejected") }
             catch is CancellationError { checks += 1 }
@@ -354,7 +376,7 @@ extension VoiceTests {
             let run = f.store.task?.runID
             await f.start()
             check(f.workspace.send("权限等待期间补充", conversationID: f.conversation.id)
-                  && source.commands.last?.0 == "steer" && source.cancels == 0,
+                  && source.commands.last?.0 == "send_message" && source.cancels == 0,
                   "voice startup preserves an existing task and allows text steering")
             allowed?.resume(returning: true); allowed = nil; await tick()
             check(f.voice.snapshot.recognition == .listening && f.store.task?.runID == run,
@@ -366,7 +388,7 @@ extension VoiceTests {
                       "audio failure ends voice and reports its owner without cancelling tools")
             } else {
                 f.voice.toggleMute(); f.workspace.stop(conversationID: f.conversation.id)
-                source.emit(["type": "finished", "outcome": ["status": "interrupted"]], batchType: "cancelled")
+                source.emit(.init(type: .finished, outcome: .init(status: .interrupted)), cancelled: true)
                 await tick()
                 check(f.voice.isMuted && f.voice.snapshot.recognition == .off(.muted), "cleanup preserves microphone mute")
                 f.voice.toggleMute(); await tick()

@@ -1,6 +1,6 @@
 # Mini Agent Bridge v2：接入契约
 
-本文件最初是 [迁移计划](mini-agent-mainline-bridge-v2-plan.md) 第 1 阶段的类型规范；第 2 阶段实现主线运行器，第 3 阶段已接入生产 Rust/C ABI v2。核心类型来自 `mini_agent::conversation::runner`，wire 类型位于 `agent-bridge/src/wire.rs`，原测试副本已删除。**Swift 仍遵循 [旧 v1 契约](agent-integration-stage2.md)，尚不能调用当前 Bridge；Swift 迁移属于第 4 阶段。**
+本文件最初是 [迁移计划](mini-agent-mainline-bridge-v2-plan.md) 第 1 阶段的类型规范；第 2 阶段实现主线运行器，第 3 阶段接入生产 Rust/C ABI v2，第 4 阶段接入 Swift v2。核心类型来自 `mini_agent::conversation::runner`，wire 类型位于 `agent-bridge/src/wire.rs`，Swift 类型位于 `macos/AgentWire.swift`。完整跨层回归及独立应用包验收仍属于第 5 阶段。
 
 ## 1. 类型归属与 API 边界
 
@@ -123,7 +123,7 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 
 ## 6. 第 2 阶段落地说明
 
-核心契约已在 Mini Agent 主线工作区的 [`conversation::runner`](/Users/houbaoshu/workspace/mini-agent-rs/src/conversation/runner.rs) 实现，见 [运行器使用说明](/Users/houbaoshu/workspace/mini-agent-rs/docs/conversation-runner.md) 和 [计划第 2 阶段记录](mini-agent-mainline-bridge-v2-plan.md#7-第-2-阶段实施记录2026-09-15)。本文前述 wire 类型已在第 3 阶段接入 C ABI；Swift 适配仍留待第 4 阶段。
+核心契约已在 Mini Agent 主线工作区的 [`conversation::runner`](/Users/houbaoshu/workspace/mini-agent-rs/src/conversation/runner.rs) 实现，见 [运行器使用说明](/Users/houbaoshu/workspace/mini-agent-rs/docs/conversation-runner.md) 和 [计划第 2 阶段记录](mini-agent-mainline-bridge-v2-plan.md#7-第-2-阶段实施记录2026-09-15)。本文前述 wire 类型已在第 3 阶段接入 C ABI，第 4 阶段接入 Swift。
 
 具体 API 使用 `SessionParts { restored, model, executor }`；`restored` 由 `Conversation::restore(session_id, config, restore_input)` 返回。`SessionOptions::new(session_id, generation)` 设置默认队列容量，宿主为每次创建提供新 generation。初始化在 Stop/close 后继续 await，宿主初始化 future 必须等待其 blocking 工作结束，运行器不会把 abort blocking 任务视为清理完成。
 
@@ -140,3 +140,13 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 - poll 在观察到核心批次通道已断开且排空后返回 `closed:true`；若恰好取满请求上限，可能下一次 poll 才观察到关闭。初始化失败批次也会先交付，再报告关闭。Stop 的清理回执为 `kind.type=cancelled`；close/destroy 的全局退出水位由 `echo_agent_active_sessions` 提供。
 - `scripts/agent-prompt-path.sh` 根据 Cargo metadata 中 `echo-agent` 的实际解析依赖定位 prompt，构建和 Agent/Voice 资源复制入口复用该路径。
 - Rust/C 阶段验收使用 `scripts/test-agent-ffi.sh`。既有 Swift Bridge/Session/聊天/Voice 集成测试入口仍保留，待第 4 阶段迁移后执行；本阶段没有把旧客户端的版本拒绝当作跨层通过。
+
+## 8. 第 4 阶段 Swift 落地说明
+
+- `AgentWire.swift` 定义模型、恢复输入、命令、checkpoint、投影、事件和错误类型。`AgentBridge` 校验 v2 poll/reply、session/generation 及 request ID，所有核心 ID/revision 使用 `UInt64`；历史以 UTF-8 字符串原样保存在 sidecar 的 `agentHistory` 中。
+- `TaskStore` 在发送前原子保存消息 UUID 作为客户端 ID。恢复时传入已有映射和待确认输入，旧文本交给核心导入；Swift 不解析历史的 `next_id`、turn 或 entry，不按文本匹配输入。
+- checkpoint 的历史、完整映射、投影、待确认输入、UI 状态和最终回复去重 ID 一起保存后才确认。工具授权额外等待规范化目录租约，并携带提案 checkpoint、operation 和目录。失效目录按错误码回到目录选择。
+- `AgentTaskSource` 不再重试 submit/steer 或删除终态事件。普通输入使用 `SendMessage`；控制队列满时保留并定时重试，Stop 丢弃未发送的授权，保存失败走独立控制并取消调度。
+- 正常终态用 generation、turn ID、未确认输入和最终消息 ID 过滤与去重；停止终态等待 `Cancelled`。保存失败会话的清理确认只发一次，Swift 记录该确认用于关闭；重复 close 的回调等待同一个退休句柄完成清理。
+- 连接探针是无存档、无目录的临时会话：在内存保留 checkpoint 并确认以允许模型请求，只验证工具提案，绝不发送工具授权。
+- 直接验证入口为 `test-agent-task-source.sh`、`test-agent-bridge.sh`、`test-agent-session.sh` 和 `test-voice.sh --agent-only`。后者仅运行 Agent 语音适配测试替身，不等于全量 Voice、Live Voice 或应用包验收。

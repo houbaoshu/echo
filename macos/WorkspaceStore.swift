@@ -106,6 +106,8 @@ struct WorkspaceSnapshot: Codable {
             if saved.state.tools != nil && saved.state.loadError == nil {
                 try saveSession(saved.state, id: saved.id)
                 result.state.messages = []; result.state.tools = nil; result.state.agentHistory = nil
+                result.state.inputReceipts = nil; result.state.pendingInputs = nil
+                result.state.agentProjection = nil; result.state.savedCheckpoint = nil; result.state.deliveredReplies = nil
                 result.state.agentStored = true
             }
             return result

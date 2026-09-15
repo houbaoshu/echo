@@ -160,6 +160,11 @@ actor PendingModelTester: ConnectionTesting {
             try await agentVoiceIntegrationTests()
             return
         }
+        if CommandLine.arguments.contains("--agent-only") {
+            try await agentVoiceTests()
+            print("Passed \(checks) Agent voice adapter checks (simulated ASR/TTS).")
+            return
+        }
         snapshotTests()
         try await captureWatchdogPauseTests()
         try await mutedPlaybackTailProtectionTests()

@@ -48,8 +48,8 @@ import AppKit
         petPanel.orderFrontRegardless()
         defer { petPanel.orderOut(nil) }
         var api = ModelAPIProtocol.chatCompletions
-        let factory = { AgentTaskSource(model: ["base_url": config.baseURL, "model": "fixture",
-            "protocol": api == .responses ? "responses" : "chat_completions"], resources: resources) }
+        let factory = { AgentTaskSource(model: AgentModel(base_url: config.baseURL, model: "fixture",
+            protocol: api == .responses ? .responses : .chat_completions), resources: resources) }
         let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
         let workspace = WorkspaceStore(persistence: persistence, sourceFactory: factory)
         register(workspace)
