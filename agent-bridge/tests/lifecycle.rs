@@ -574,7 +574,8 @@ async fn c_abi_lifecycle() {
     drop(handle);
     shutdown().await;
 
-    // Tool cancellation and destruction kill a real shell and its child.
+    // Tool cancellation and destruction kill a real shell, its child, and a
+    // descendant that left the shell's process group and session.
     for destroy in [false, true] {
         let handle = create(&base, &prompt, "chat_completions", None);
         until(&handle, |f| f["kind"]["type"] == "ready").await;
@@ -585,7 +586,7 @@ async fn c_abi_lifecycle() {
         );
         server.reply(tool(
             "chat_completions",
-            "echo $$ > shell.pid; sleep 20 & echo $! > child.pid; wait; touch survived",
+            "echo $$ > shell.pid; python3 -c 'import subprocess as s; p = s.Popen([\"/bin/sh\", \"-c\", \"sleep 1; touch survived\"], start_new_session=True, stdin=s.DEVNULL, stdout=s.DEVNULL, stderr=s.DEVNULL); open(\"detached.pid\", \"w\").write(str(p.pid))'; sleep 20 & echo $! > child.pid; wait; touch survived",
         ));
         accepted(&handle, "submit", json!({"text":"work"}));
         let frames = until(&handle, |f| f["kind"]["type"] == "tool_pending").await;
@@ -631,7 +632,7 @@ async fn c_abi_lifecycle() {
         }
         assert!(start.elapsed() < Duration::from_secs(3));
         shutdown().await;
-        for name in ["shell.pid", "child.pid"] {
+        for name in ["shell.pid", "child.pid", "detached.pid"] {
             let pid: i32 = std::fs::read_to_string(temp.path().join(name))
                 .unwrap()
                 .trim()

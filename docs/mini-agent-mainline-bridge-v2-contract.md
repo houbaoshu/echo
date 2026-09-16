@@ -61,7 +61,7 @@ trait ConversationExecutor: Send {
 enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 ```
 
-`CancellationSignal` 为持久化停止状态加异步通知；执行前检查已取消，执行中持续监听。返回任何结果（包括错误/取消）前完成子进程清理；不为任意 `Environment` 提供“丢弃 future 即已取消”的默认实现。内置实现复用主线底层进程执行代码，保留旧 `Environment::execute`，桌宠参数为 `/bin/bash`、30 秒、stdout/stderr 各 64 KiB。停止杀进程组并等待 shell 回收；模型任务取消后同样 await 结束。完成的真实工具结果优先保留，执行中取消由状态机记录 unknown。
+`CancellationSignal` 为持久化停止状态加异步通知；执行前检查已取消，执行中持续监听。返回任何结果（包括错误/取消）前完成子进程清理；不为任意 `Environment` 提供“丢弃 future 即已取消”的默认实现。内置实现复用主线底层进程执行代码，保留旧 `Environment::execute`，桌宠参数为 `/bin/bash`、30 秒、stdout/stderr 各 64 KiB。停止杀进程组并等待 shell 回收；macOS 上还按内核进程血缘终止并有界等待脱离进程组/会话的后代（由 mini-agent-rs 执行器负责，Swift 侧不做进程管理）；模型任务取消后同样 await 结束。完成的真实工具结果优先保留，执行中取消由状态机记录 unknown。
 
 ## 2. 保存及工具放行顺序
 
