@@ -179,6 +179,7 @@ import Foundation
         check(oldSnapshot.drafts == nil && oldSnapshot.conversations.count == 4, "Archives from before draft staging remain readable")
         workspace.shutdown()
         try await projectAssociationTests()
+        try sessionCleanupTests()
         try await ProjectFileBrowserTests.run()
         checks += try await streamingPersistenceTests()
         print("PASS: \(checks) workspace checks")
@@ -260,6 +261,77 @@ import Foundation
         precondition(!toolWorkspace.canAssociateProject(conversationID: toolWorkspace.selectedID!))
         toolWorkspace.shutdown()
         print("PASS: project locking, late folder choices, draft collisions, persistence, relocation and removal")
+    }
+
+    @MainActor private static func sessionCleanupTests() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-session-cleanup-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
+        let source = WorkspaceTestSource()
+        let ws = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        let kept = ws.selected!
+        kept.store.send("保留的会话")
+        let deleted = ws.newConversation()
+        deleted.store.send("将被删除的会话")
+        ws.flush()
+        try persistence.saveSession(kept.store.snapshot, id: kept.id)
+        try persistence.saveSession(deleted.store.snapshot, id: deleted.id)
+        ws.deleteConversation(deleted.id)
+        precondition(!FileManager.default.fileExists(atPath: persistence.sessionURL(deleted.id).path),
+                     "Deleting a conversation removes its history sidecar")
+        precondition(FileManager.default.fileExists(atPath: persistence.sessionURL(kept.id).path),
+                     "Deleting one conversation leaves other sidecars in place")
+        let backup = try String(contentsOf: persistence.backupURL, encoding: .utf8)
+        precondition(!backup.contains(deleted.id.uuidString),
+                     "Backup recovery cannot resurrect a deleted conversation without its history")
+
+        // A manifest that cannot be saved still references the sidecar, so it must stay.
+        let unsaved = ws.newConversation()
+        unsaved.store.send("保存失败时删除")
+        ws.flush()
+        try persistence.saveSession(unsaved.store.snapshot, id: unsaved.id)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+        ws.deleteConversation(unsaved.id)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        precondition(ws.persistenceNotice?.contains("会话保存失败") == true
+                     && FileManager.default.fileExists(atPath: persistence.sessionURL(unsaved.id).path)
+                     && persistence.load().0?.conversations.contains { $0.id == unsaved.id } == true,
+                     "A failed manifest save keeps the sidecar it still references")
+        ws.shutdown()
+
+        let orphan = UUID()
+        try persistence.saveSession(kept.store.snapshot, id: orphan)
+        let unrelated = persistence.sessionsDirectory.appendingPathComponent("notes.json")
+        try Data("{}".utf8).write(to: unrelated)
+        WorkspaceStore(persistence: persistence).shutdown()
+        precondition(!FileManager.default.fileExists(atPath: persistence.sessionURL(orphan).path),
+                     "A clean launch prunes sidecars left by earlier deletions")
+        precondition(FileManager.default.fileExists(atPath: persistence.sessionURL(kept.id).path)
+                     && FileManager.default.fileExists(atPath: unrelated.path),
+                     "Pruning keeps referenced sidecars and files it does not own")
+
+        try persistence.saveSession(kept.store.snapshot, id: orphan)
+        try Data("not json".utf8).write(to: persistence.url)
+        WorkspaceStore(persistence: persistence).shutdown()
+        precondition(FileManager.default.fileExists(atPath: persistence.sessionURL(orphan).path),
+                     "A recovered or unreadable manifest never prunes sidecars")
+
+        // Opening a blank workspace replaces the manifest, but the preserved original
+        // still references its histories on every later clean launch.
+        let archived = UUID(), unreferenced = UUID()
+        try persistence.saveSession(kept.store.snapshot, id: archived)
+        try persistence.saveSession(kept.store.snapshot, id: unreferenced)
+        try FileManager.default.removeItem(at: persistence.backupURL)
+        try Data(#"{"version":2,"conversations":[{"id":"\#(archived.uuidString)"}]}"#.utf8).write(to: persistence.url)
+        let blank = WorkspaceStore(persistence: persistence)
+        precondition(blank.persistenceNotice?.contains("空白工作区") == true)
+        blank.shutdown()
+        for _ in 0..<2 { WorkspaceStore(persistence: persistence).shutdown() }
+        precondition(FileManager.default.fileExists(atPath: persistence.sessionURL(archived).path),
+                     "Later clean launches keep sidecars referenced by a preserved archive")
+        precondition(!FileManager.default.fileExists(atPath: persistence.sessionURL(unreferenced).path),
+                     "Later clean launches still prune sidecars nothing references")
+        print("PASS: conversation deletion and launch pruning remove only unreferenced history sidecars")
     }
 
     @MainActor private static func streamingPersistenceTests() async throws -> Int {

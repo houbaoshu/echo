@@ -118,6 +118,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @Published private(set) var needsDirectory = false
     @Published private(set) var waitingForProject = false
     private var agentHistory: Data?
+    private var historyContinuable = true
     private var agentStored: Bool?
     private var inputReceipts: [AgentInputReceipt] = []
     private var pendingInputs: [AgentInput] = []
@@ -179,7 +180,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             task?.summary = "已中断 · 可继续跟进"
         }
         messages = snapshot.messages
-        agentHistory = snapshot.agentHistory; tools = snapshot.tools ?? []; agentLoadError = snapshot.loadError
+        agentHistory = snapshot.agentHistory; historyContinuable = Self.continuable(agentHistory); tools = snapshot.tools ?? []; agentLoadError = snapshot.loadError
         agentStored = snapshot.agentStored
         inputReceipts = snapshot.inputReceipts ?? []
         pendingInputs = snapshot.pendingInputs ?? snapshot.messages.filter { $0.role == .user && $0.coreID == nil }.map {
@@ -250,10 +251,33 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var isActivityVisible: Bool { activityCount > 0 && !activitiesCollapsed }
 
     var canRetry: Bool {
-        if usesAgent { return !retired && agentLoadError == nil && [.failed, .stopped, .interrupted].contains(task?.status) }
+        if usesAgent {
+            return !retired && agentLoadError == nil && [.failed, .stopped, .interrupted].contains(task?.status) && agentContinuable
+        }
         guard !retired, [.failed, .stopped, .interrupted].contains(task?.status),
               messages.contains(where: { $0.role == .user }), let last = messages.last else { return false }
         return last.role == .assistant && [.failed, .stopped, .interrupted].contains(last.status)
+    }
+    /// Mirrors the core's `continue_turn` precondition after restore: unreceipted
+    /// inputs become interrupted turns, and an unfinished last turn restores as interrupted.
+    private var agentContinuable: Bool {
+        // Legacy import receipts every visible message, so those inputs add no turn of their own.
+        let receipted = Set(inputReceipts.map(\.client_message_id))
+            .union(agentHistory == nil ? requestMessages.map(\.id.uuidString) : [])
+        if pendingInputs.contains(where: { !receipted.contains($0.client_message_id) }) { return true }
+        if agentHistory != nil { return historyContinuable }
+        guard let last = requestMessages.last else { return false }
+        return last.role == .user
+    }
+    private static func continuable(_ history: Data?) -> Bool {
+        struct History: Decodable {
+            struct Turn: Decodable { struct Outcome: Decodable { var status: String }; var outcome: Outcome? }
+            var turns: [Turn]
+        }
+        // Unreadable history is left for the core to reject with its own error.
+        guard let history, let decoded = try? JSONDecoder().decode(History.self, from: history) else { return true }
+        guard let last = decoded.turns.last else { return false }
+        return last.outcome?.status != "completed"
     }
     var isGenerating: Bool { task?.status == .running || task?.status == .stopping }
     var canSubmit: Bool { !retired && task?.status != .stopping && agentLoadError == nil }
@@ -475,7 +499,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         if let cp = batch.checkpoint {
             guard cp.id.generation == batch.generation,
                   savedCheckpoint.map({ cp.id.revision >= $0.revision }) ?? true else { return }
-            agentHistory = Data(cp.history.utf8)
+            agentHistory = Data(cp.history.utf8); historyContinuable = Self.continuable(agentHistory)
             inputReceipts = cp.input_receipts
             pendingInputs.removeAll { input in cp.input_receipts.contains { $0.client_message_id == input.client_message_id } }
             agentProjection = cp.projection
@@ -566,13 +590,15 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         case .completed:
             guard let response = responseMessage, let coreID = response.coreID,
                   !response.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                return finishAgent(AgentOutcome(status: .failed, error: "Agent 未返回最终回复，请继续处理。"))
+                return finishAgent(AgentOutcome(status: .failed,
+                    error: agentContinuable ? "Agent 未返回最终回复，请继续处理。" : "Agent 未返回最终回复，请重新发送消息。"))
             }
             task?.status = .completed; task?.summary = "已完成"
             guard deliveredReplies.insert(coreID).inserted else { return nil }
             return .reply(runID, .completed(response.content))
         case .interrupted:
-            task?.status = .stopped; task?.summary = "已停止 · 可继续处理"
+            // A Stop can land after the core already completed the turn; nothing is left to continue.
+            task?.status = .stopped; task?.summary = agentContinuable ? "已停止 · 可继续处理" : "已停止"
             return .stopped(runID)
         default:
             let error = outcome.error ?? (outcome.status == .step_limit ? "已达到本轮 30 次模型请求限制。" : "模型连续返回无效工具格式，已停止。")

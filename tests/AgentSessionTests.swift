@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 @main @MainActor struct AgentSessionTests {
     static func wait(_ label: String, _ condition: () -> Bool) async throws {
@@ -160,6 +161,84 @@ import Foundation
         precondition(chat.store.messages.filter { $0.role == .assistant }.count == 1)
         precondition(chat.store.responseMessage == chat.store.messages.last && chat.store.task?.summary == "已完成")
         precondition(!workspace.canAssociateProject(conversationID: chat.id))
+
+        var stoppedAfterCompletion = chat.store.snapshot
+        stoppedAfterCompletion.task?.status = .stopped
+        let lateStop = TaskStore(snapshot: stoppedAfterCompletion, source: factory())
+        precondition(!lateStop.canRetry && !lateStop.retry(),
+                     "A Stop that lands after the core completed the turn offers no continue")
+        lateStop.shutdown()
+        let completedSaveFailure = workspace.newConversation()
+        completedSaveFailure.store.checkpoint = { state in
+            if state.agentProjection?.contains(where: { $0.final_reply == true }) == true { throw CocoaError(.fileWriteNoPermission) }
+        }
+        completedSaveFailure.store.send("hello")
+        try await wait("completed save failure") { !completedSaveFailure.store.isGenerating }
+        precondition(completedSaveFailure.store.task?.status == .failed && !completedSaveFailure.store.canRetry,
+                     "A save failure after a completed turn does not offer a continue the core would reject")
+
+        // Stop admitted while the completed turn's batch is being applied: the real race path.
+        let raced = workspace.newConversation()
+        let raceStop = raced.store.$messages.sink { [store = raced.store] messages in
+            MainActor.assumeIsolated {
+                if store.isGenerating, messages.contains(where: { $0.role == .assistant && $0.coreID != nil }) { store.stopTask() }
+            }
+        }
+        raced.store.send("hello race")
+        try await wait("stop after completion") { !raced.store.isGenerating }
+        raceStop.cancel()
+        precondition(raced.store.task?.status == .stopped && raced.store.task?.summary == "已停止"
+                     && !raced.store.canRetry && !raced.store.retry(),
+                     "A Stop racing a completed turn neither offers nor sends a continue")
+
+        // Continue stays available, and is accepted by the core, whenever restore adds an interrupted turn.
+        var pendingAfterCompletion = chat.store.snapshot
+        let followUp = ConversationMessage(role: .user, content: "hello pending")
+        pendingAfterCompletion.messages.append(followUp)
+        pendingAfterCompletion.pendingInputs = [AgentInput(client_message_id: followUp.id.uuidString, text: followUp.content)]
+        pendingAfterCompletion.task?.status = .failed
+        let pendingContinue = TaskStore(snapshot: pendingAfterCompletion, source: factory())
+        pendingContinue.sessionID = chat.id
+        precondition(pendingContinue.canRetry && pendingContinue.retry())
+        try await wait("pending input continues") { !pendingContinue.isGenerating }
+        precondition(pendingContinue.task?.status == .completed && pendingContinue.messages.last?.content == "最终回复：hello pending",
+                     pendingContinue.task?.summary ?? "missing task")
+        pendingContinue.shutdown()
+
+        // Legacy import receipts every visible message, including a stopped partial reply.
+        func legacyStore(_ messages: [ConversationMessage]) -> TaskStore {
+            TaskStore(snapshot: .init(task: .init(id: UUID(), runID: UUID(), title: "old", summary: "", status: .stopped),
+                messages: messages, mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false),
+                source: factory())
+        }
+        let legacyReplied = legacyStore([.init(role: .user, content: "old user"), .init(role: .assistant, content: "old partial", status: .stopped)])
+        precondition(!legacyReplied.canRetry && !legacyReplied.retry(),
+                     "A legacy conversation ending in a reply offers no continue the core would reject")
+        legacyReplied.shutdown()
+        let legacyUnanswered = legacyStore([.init(role: .user, content: "old unanswered")])
+        precondition(legacyUnanswered.canRetry && legacyUnanswered.retry())
+        try await wait("legacy continue") { !legacyUnanswered.isGenerating }
+        precondition(legacyUnanswered.task?.status == .completed, legacyUnanswered.task?.summary ?? "missing task")
+        legacyUnanswered.shutdown()
+
+        // A binding that cannot be saved is rolled back and its pending call never runs.
+        let bindPersistence = WorkspacePersistence(url: temp.appendingPathComponent("bind-failure/workspace.json"))
+        let bindWorkspace = WorkspaceStore(persistence: bindPersistence, sourceFactory: factory)
+        let unbound = bindWorkspace.selected!
+        unbound.store.send("tool")
+        try await wait("bind failure directory pause") { unbound.store.needsDirectory }
+        let bindTarget = temp.appendingPathComponent("bind-target")
+        try FileManager.default.createDirectory(at: bindTarget, withIntermediateDirectories: true)
+        let bindRoot = bindPersistence.url.deletingLastPathComponent().path
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: bindRoot)
+        bindWorkspace.provideDirectory(bindTarget, conversationID: unbound.id)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bindRoot)
+        precondition(unbound.projectID == nil && bindWorkspace.projects.isEmpty && bindWorkspace.persistenceNotice != nil,
+                     "A failed binding save leaves no unsaved project association")
+        try await wait("bind failure stops") { !unbound.store.isGenerating }
+        precondition(unbound.store.task?.status == .stopped
+                     && !FileManager.default.fileExists(atPath: bindTarget.appendingPathComponent("trace").path))
+        bindWorkspace.shutdown()
 
         let first = workspace.newConversation()
         first.store.send("slow-tool")

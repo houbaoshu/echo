@@ -61,8 +61,9 @@ struct WorkspaceSnapshot: Codable {
         }
         return result
     }
+    var sessionsDirectory: URL { url.deletingLastPathComponent().appendingPathComponent("agent-sessions") }
     func sessionURL(_ id: UUID) -> URL {
-        url.deletingLastPathComponent().appendingPathComponent("agent-sessions/\(id.uuidString).json")
+        sessionsDirectory.appendingPathComponent("\(id.uuidString).json")
     }
     func saveSession(_ state: TaskStore.Snapshot, id: UUID) throws {
         let target = sessionURL(id)
@@ -71,6 +72,36 @@ struct WorkspaceSnapshot: Codable {
         if (try? Data(contentsOf: target)) == data { return }
         try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: target, options: .atomic)
+    }
+    func removeSession(_ id: UUID) throws {
+        do { try FileManager.default.removeItem(at: sessionURL(id)) }
+        catch CocoaError.fileNoSuchFile {}
+    }
+    /// Deletes sidecars no manifest conversation references, such as those left by deletions before
+    /// sessions were removed. Only call after the manifest itself loaded cleanly.
+    func pruneSessions(keeping ids: Set<UUID>) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: sessionsDirectory, includingPropertiesForKeys: nil),
+              let siblings = try? fm.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil) else { return }
+        // The backup and archives preserved by `load` may be the only way back to a history.
+        // They need not decode, so any UUID text in them counts as a reference.
+        let archivePrefix = url.deletingPathExtension().lastPathComponent + ".corrupt-"
+        var referenced = ids
+        for archive in siblings where archive.lastPathComponent == backupURL.lastPathComponent
+                                   || archive.lastPathComponent.hasPrefix(archivePrefix) {
+            guard let data = try? Data(contentsOf: archive) else { return }
+            let pattern = /[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/
+            referenced.formUnion(String(decoding: data, as: UTF8.self).matches(of: pattern).compactMap { UUID(uuidString: String($0.output)) })
+        }
+        for file in files where file.pathExtension == "json" {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent), !referenced.contains(id) else { continue }
+            try? fm.removeItem(at: file)
+        }
+    }
+    /// Aligns the backup with the manifest just saved, so recovery cannot restore what it dropped.
+    func refreshBackup() throws {
+        _ = try decode(url)
+        try Data(contentsOf: url).write(to: backupURL, options: .atomic)
     }
     func restoreSession(_ saved: WorkspaceSnapshot.Conversation) -> TaskStore.Snapshot {
         guard saved.state.agentStored == true else { return saved.state }
@@ -183,6 +214,9 @@ struct WorkspaceSnapshot: Codable {
             // A failed preservation must never be followed by overwriting the original archive.
             saveBlocked = notice?.hasPrefix("无法备份损坏") == true
             if let snapshot {
+                if notice == nil {
+                    persistence.pruneSessions(keeping: Set((snapshot.conversations + (snapshot.drafts ?? [])).map(\.id)))
+                }
                 projects = snapshot.projects
                 conversations = snapshot.conversations.map { saved in
                     let restored = persistence.restoreSession(saved)
@@ -417,7 +451,11 @@ struct WorkspaceSnapshot: Codable {
         if activityID == id { activityID = nil }
         if selectedID == id { selectedID = (conversations + drafts).max(by: { $0.lastUsed < $1.lastUsed })?.id }
         if conversations.isEmpty && drafts.isEmpty { _ = newConversation() }
-        flush()
+        // Remove the history sidecar only once neither the manifest nor its backup references it.
+        guard flush(), let persistence else { return }
+        persistedAgentIDs.remove(id)
+        do { try persistence.refreshBackup(); try persistence.removeSession(id) }
+        catch { persistenceNotice = "会话记录删除失败：\(error.localizedDescription)" }
     }
     var recentConversations: [WorkspaceConversation] { filteredAndSorted(conversations) }
     func filteredConversations(projectID: UUID?) -> [WorkspaceConversation] {
@@ -486,11 +524,21 @@ struct WorkspaceSnapshot: Codable {
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
                 persistenceNotice = "所选文件夹不可用，请重新选择。"; return
             }
+            guard !saveBlocked else {
+                persistenceNotice = Self.saveBlockedNotice; conversation.store.stopTask(); return
+            }
+            let previousProject = conversation.projectID, knownProjects = Set(projects.map(\.id))
             objectWillChange.send(); conversation.projectID = addProject(url: url)
             synchronizeFileBrowser()
             // Persist the binding before letting the pending call proceed.
             do { try persistence?.save(snapshot) }
-            catch { persistenceNotice = error.localizedDescription; conversation.store.stopTask(); return }
+            catch {
+                // A call that will not run leaves no unsaved binding behind.
+                conversation.projectID = previousProject
+                projects.removeAll { !knownProjects.contains($0.id) }
+                synchronizeFileBrowser()
+                persistenceNotice = error.localizedDescription; conversation.store.stopTask(); return
+            }
         }
         conversation.store.provideDirectory(url?.resolvingSymlinksInPath().standardizedFileURL)
     }
@@ -514,20 +562,21 @@ struct WorkspaceSnapshot: Codable {
         let deadline = saveDeadline ?? (now + 2)
         saveDeadline = deadline
         saveWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.flush() } }
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { _ = self?.flush() } }
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: min(now + 0.4, deadline), execute: work)
     }
-    func flush() {
+    @discardableResult func flush() -> Bool {
         saveWork?.cancel(); saveWork = nil; saveDeadline = nil
-        guard let persistence else { return }
+        guard let persistence else { return false }
         guard !saveBlocked else {
-            persistenceNotice = "无法备份损坏的会话文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。"
-            return
+            persistenceNotice = Self.saveBlockedNotice
+            return false
         }
-        do { try persistence.save(snapshot) }
-        catch { persistenceNotice = "会话保存失败：\(error.localizedDescription)" }
+        do { try persistence.save(snapshot); return true }
+        catch { persistenceNotice = "会话保存失败：\(error.localizedDescription)"; return false }
     }
+    private static let saveBlockedNotice = "无法备份损坏的会话文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。"
     func shutdown() {
         fileBrowser.select(project: nil)
         dictation.shutdown()
