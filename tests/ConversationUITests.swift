@@ -70,7 +70,7 @@ import SwiftUI
         app.setActivationPolicy(.accessory)
         // Native menu routing needs AppKit's event loop and a real key window.
         Task { @MainActor in
-            do { try await testNativeMenuShortcuts(); exit(0) }
+            do { try await testNativeMenuShortcuts(); try await testProjectDetachPointer(); exit(0) }
             catch { print("FAIL: \(error)"); exit(1) }
         }
         app.run()
@@ -848,6 +848,63 @@ import SwiftUI
         print("PASS: six native menu shortcuts, composer focus, draft/project preservation, dictation/Voice exclusion and IME Escape")
     }
 
+    // The detach action is hover-revealed; SwiftUI hover ignores synthesized NSEvents, so drive the real pointer.
+    @MainActor private static func testProjectDetachPointer() async throws {
+        precondition(CGPreflightPostEventAccess(), "Pointer detach test needs Accessibility permission to post mouse events")
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("detach-tests-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let voice = VoiceSessionController(), dictation = DictationController()
+        let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
+        let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "detach-\(UUID())")!)
+        let window = main.window!, content = window.contentView!
+        let conversation = workspace.selected!
+        conversation.store.mainDraft = "保留输入草稿"
+        precondition(workspace.associateProject(workspace.addProject(url: root), conversationID: conversation.id))
+        main.present()
+        let restoreCursor = NSEvent.mouseLocation
+        func move(_ type: CGEventType, to point: NSPoint) {
+            let flipped = CGPoint(x: point.x, y: NSScreen.screens[0].frame.maxY - point.y)
+            CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: flipped, mouseButton: .left)!.post(tap: .cghidEventTap)
+        }
+        defer { move(.mouseMoved, to: restoreCursor); main.shutdown(); workspace.shutdown(); voice.shutdown() }
+        func refresh(_ ms: Int = 300) async throws {
+            try await Task.sleep(for: .milliseconds(ms)); content.layoutSubtreeIfNeeded()
+        }
+        func findEditor(_ view: NSView) -> ComposerTextView? {
+            if let editor = view as? ComposerTextView { return editor }
+            return view.subviews.lazy.compactMap { findEditor($0) }.first
+        }
+        try await refresh()
+        guard let picker = findAccessibility("conversation.project", in: content), let composer = findEditor(content) else {
+            preconditionFailure("Project picker or composer missing")
+        }
+        let pickerFrame = picker.accessibilityFrame?() ?? .zero
+        move(.mouseMoved, to: NSPoint(x: pickerFrame.minX - 40, y: pickerFrame.midY))
+        try await refresh()
+        precondition(findAccessibility("conversation.project.detach", in: content) == nil, "Detach stays hidden without hover")
+        move(.mouseMoved, to: NSPoint(x: pickerFrame.midX, y: pickerFrame.midY))
+        try await refresh()
+        precondition(NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber,
+                     "Main window is under the pointer")
+        guard let detach = findAccessibility("conversation.project.detach", in: content) else {
+            preconditionFailure("Pointer hover reveals project detach action")
+        }
+        let detachFrame = detach.accessibilityFrame?() ?? .zero
+        let target = NSPoint(x: detachFrame.midX, y: detachFrame.midY)
+        move(.mouseMoved, to: target)
+        try await refresh(150)
+        move(.leftMouseDown, to: target)
+        try await Task.sleep(for: .milliseconds(50))
+        move(.leftMouseUp, to: target)
+        try await refresh()
+        precondition(conversation.projectID == nil && conversation.store.mainDraft == "保留输入草稿",
+                     "Pointer detach preserves the draft")
+        precondition(window.firstResponder === composer, "Pointer detach returns composer focus")
+        print("PASS: pointer hover reveals project detach; click detaches, preserves draft and returns composer focus")
+    }
+
     @MainActor private static func testEscapeAndKeyboardCommands() async throws {
         let sourceA = PreviewSource(), sourceB = PreviewSource()
         let storeA = TaskStore(source: sourceA)
@@ -1288,17 +1345,23 @@ import SwiftUI
         var panel = try await openPicker()
         key(panel, code: 53, characters: "\u{1b}")
         try await Task.sleep(for: .milliseconds(150))
-        // Keyboard focus also exposes the hover action for accessibility users.
-        picker.setAccessibilityFocused?(true)
-        try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
-        guard let detach = findAccessibility("conversation.project.detach", in: content) else {
-            preconditionFailure("Draft project detach action missing")
+        if NSApp.isFullKeyboardAccessEnabled {
+            // Keyboard focus also exposes the hover action for accessibility users.
+            picker.setAccessibilityFocused?(true)
+            try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
+            guard let detach = findAccessibility("conversation.project.detach", in: content) else {
+                preconditionFailure("Draft project detach action missing")
+            }
+            precondition(detach.accessibilityPerformPress?() == true)
+            try await Task.sleep(for: .milliseconds(150))
+            precondition(conversation.projectID == nil && conversation.store.mainDraft == "保留输入草稿",
+                         "Detach preserves the draft")
+            precondition(window.firstResponder === composer, "Detach returns composer focus")
+        } else {
+            // With macOS Keyboard Navigation off, plain buttons never take focus, and this hosted
+            // view has no event loop for real hover; testProjectDetachPointer covers that path.
+            precondition(workspace.associateProject(nil, conversationID: conversation.id))
         }
-        precondition(detach.accessibilityPerformPress?() == true)
-        try await Task.sleep(for: .milliseconds(150))
-        precondition(conversation.projectID == nil && conversation.store.mainDraft == "保留输入草稿",
-                     "Detach preserves the draft")
-        precondition(window.firstResponder === composer, "Detach returns composer focus")
         panel = try await openPicker()
         guard let projectOption = findAccessibility("projectPicker.project.\(projectID)", in: panel.contentView!) else {
             preconditionFailure("Existing project menu item missing")
