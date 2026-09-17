@@ -115,10 +115,13 @@ struct SpokenReply: Equatable {
     /// Once playback stopped: `.infinity` when it finished, otherwise where it was interrupted.
     var stoppedAt: TimeInterval?
 
-    /// The words heard by `position` seconds into this reply's audio; `nil` once all of it was played.
+    /// Text is revealed about this much faster than it is spoken, so reading stays slightly ahead of the voice.
+    static let displayRate = 1.5
+
+    /// The words shown by `position` seconds into this reply's audio, paced at `displayRate`; `nil` once all of it was played.
     func heard(at position: TimeInterval) -> String? {
         if stoppedAt == .infinity { return nil }
-        let position = min(position, stoppedAt ?? position)
+        let position = min(position, stoppedAt ?? position) * Self.displayRate
         return words.prefix { $0.startTime <= position }.map(\.word).joined()
     }
 

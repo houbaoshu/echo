@@ -402,7 +402,7 @@ import SwiftUI
             startDictation: { dictation.start(conversation: conversation, key: "test") },
             startVoice: { voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test") },
             conversationID: conversation.id, send: { workspace.sendMainMessage(conversationID: conversation.id) },
-            stop: { workspace.stop(conversationID: conversation.id) }, retry: {})
+            stop: { workspace.stop(conversationID: conversation.id) }, retry: { workspace.retry(conversationID: conversation.id) })
             .background(Color(nsColor: .textBackgroundColor)))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
@@ -469,13 +469,16 @@ import SwiftUI
         precondition(source.histories.count == 1 && store.mainDraft == "supplement", "Legacy generation retains unsent text")
         try await snapshot("generating-draft")
         press("conversation.stop"); try await refresh()
+        check("conversation.send", present: ["conversation.resume", "dictation.start"], absent: ["conversation.stop", "voice.start"])
         original.insertText("!", replacementRange: NSRange(location: original.string.utf16.count, length: 0))
         original.setSelectedRange(NSRange(location: 2, length: 3))
         let draft = store.mainDraft, selection = original.selectedRange()
         precondition(original.undoManager?.canUndo == true)
         press("dictation.start"); try await refresh()
-        check("dictation.finish", present: ["dictation.cancel", "dictation.waveform", "dictation.subtitle"],
-              absent: ["dictation.start", "voice.start", "conversation.send", "conversation.stop", "voice.end"], enabled: false)
+        check("dictation.send", present: ["dictation.finish", "dictation.cancel", "dictation.waveform", "dictation.subtitle"],
+              absent: ["dictation.start", "voice.start", "conversation.send", "conversation.stop", "conversation.resume", "voice.end"],
+              enabled: false)
+        precondition(node("dictation.finish")?.isAccessibilityEnabled?() == false, "Recording cannot finish before capture starts")
         precondition(!dictation.captureReady && !original.isEditable && original.string == draft)
         key(original, 36); precondition(source.histories.count == 1)
         try await snapshot("preparing")
@@ -494,11 +497,13 @@ import SwiftUI
         }
         recognizer.emit(String(repeating: "这是录音中的长字幕。", count: 30))
         try await refresh()
-        check("dictation.finish", present: ["dictation.cancel"], absent: ["conversation.send", "dictation.start"])
+        check("dictation.send", present: ["dictation.finish", "dictation.cancel"], absent: ["conversation.send", "dictation.start"])
+        precondition(node("dictation.finish")?.isAccessibilityEnabled?() == true)
         precondition(dictation.captureReady && dictation.levels.contains { $0 > 0 })
         try await snapshot("recording", narrow: true)
         press("dictation.finish"); try await refresh()
-        check("dictation.progress", present: ["dictation.cancel"], absent: ["dictation.finish", "conversation.stop"], enabled: false)
+        check("dictation.send", present: ["dictation.finish", "dictation.cancel"], absent: ["conversation.stop"], enabled: false)
+        precondition(node("dictation.finish")?.isAccessibilityEnabled?() == false, "Finalizing cannot finish twice")
         try await snapshot("finalizing")
         recognizer.finish(); try await refresh()
         precondition(original.isEditable && original.selectedRange() == selection && window.firstResponder === original)
@@ -526,6 +531,15 @@ import SwiftUI
         voice.end()
         store.mainDraft = ""
         try await refresh()
+        // Output controls are independent of recording: a stopped reply resumes from the primary.
+        check("conversation.resume", present: ["dictation.start"], absent: ["voice.start", "conversation.stop", "conversation.send"])
+        try await snapshot("stopped")
+        let resumed = source.histories.count
+        press("conversation.resume"); try await refresh()
+        precondition(source.histories.count == resumed + 1, "Resume continues the stopped reply")
+        check("conversation.stop", present: ["dictation.start"], absent: ["conversation.resume", "voice.start"])
+        source.receive?(.completed("继续后的回复")); try await refresh()
+        check("voice.start", present: ["dictation.start"], absent: ["conversation.resume", "conversation.stop"])
         press("voice.start"); try await refresh()
         let liveOwner = voice.snapshot.session.owner!
         check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "dictation.start", "voice.start", "conversation.stop"])
@@ -582,7 +596,25 @@ import SwiftUI
         press("voice.reveal"); precondition(workspace.selectedID == other.id)
         try await snapshot("background-voice", narrow: true)
         voice.end()
-        print("PASS: actual Composer actions, stable primary frame, Voice text cycle/failure, dictation preview/cancel/focus/undo, IME, background ownership; light/dark screenshots")
+
+        // Send while recording ends it and sends the final transcript without leaving it in the draft.
+        store.mainDraft = ""
+        try await refresh()
+        let sent = source.histories.count
+        press("dictation.start"); try await refresh()
+        permissionReply?.resume(returning: true); permissionReply = nil
+        try await refresh()
+        recognizer.emit("直接发送的转写"); try await refresh()
+        check("dictation.send", present: ["dictation.finish"], absent: ["conversation.send"])
+        press("dictation.send"); try await refresh()
+        check("dictation.send", present: ["dictation.finish"], absent: ["conversation.send"], enabled: false)
+        precondition(source.histories.count == sent && store.mainDraft.isEmpty, "Nothing is sent before the final transcript")
+        recognizer.finish(); try await refresh()
+        precondition(source.histories.count == sent + 1 && source.histories.last?.last?.content == "直接发送的转写"
+                     && store.mainDraft.isEmpty && !dictation.isActive, "Send ends recording and sends the transcript")
+        check("conversation.stop", present: ["dictation.start"], absent: ["dictation.send", "conversation.send"])
+        store.stopTask()
+        print("PASS: actual Composer actions, stable primary frame, stop/resume output, Voice text cycle/failure, dictation send/finish/preview/cancel/focus/undo, IME, background ownership; light/dark screenshots")
     }
 
     @MainActor private static func testCodeCopyAndSyntaxPreview() async throws {
@@ -1647,11 +1679,11 @@ import SwiftUI
         voice.replyAudio = .playing(UUID())
         precondition(bubble(voice, at: 0) == .reply("今天**天气**好。", heard: "今") && shown(voice),
                      "The first played character opens the bubble")
-        precondition(bubble(voice, at: 0.5) == .reply("今天**天气**好。", heard: "今天天"), "Heard text follows playback")
+        precondition(bubble(voice, at: 0.5) == .reply("今天**天气**好。", heard: "今天天气"), "Text leads playback at 1.5×")
         precondition(bubble(voice, at: 10) == .reply("今天**天气**好。", heard: "今天天气好。"), "All words once played")
         var stopped = spoken; stopped.stoppedAt = 0.3
-        precondition(bubble(voice, spoken: stopped, at: 10) == .reply("今天**天气**好。", heard: "今天"),
-                     "An interrupted reply keeps what was heard")
+        precondition(bubble(voice, spoken: stopped, at: 10) == .reply("今天**天气**好。", heard: "今天天"),
+                     "An interrupted reply keeps what was shown")
         stopped.stoppedAt = .infinity
         precondition(bubble(voice, spoken: stopped, at: 0) == .reply("今天**天气**好。", heard: nil) && shown(voice, spoken: stopped),
                      "A finished reply stays whole")

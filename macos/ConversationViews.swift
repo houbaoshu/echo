@@ -382,6 +382,7 @@ struct ConversationView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var followTail = true
     @State private var userScrolling = false
+    @State private var microphoneHovered = false
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -546,6 +547,12 @@ struct ConversationView: View {
                         .accessibilityIdentifier("dictation.cancel")
                     RecordingWaveform(levels: dictation.levels, active: presentation.mode == .dictationRecording)
                         .frame(maxWidth: .infinity).frame(height: 32)
+                    Button { dictation.finishRecording() } label: {
+                        Image(systemName: "stop.fill").font(.system(size: 14)).foregroundStyle(WorkspaceStyle.primary)
+                            .frame(width: 28, height: 32).contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(presentation.mode != .dictationRecording)
+                        .help("结束录音").accessibilityLabel("结束录音")
+                        .accessibilityIdentifier("dictation.finish")
                 } else {
                     if isBackgroundVoice, let owner = voiceOwner, let ws = workspace {
                         Button { ws.revealVoice(owner: owner) } label: {
@@ -590,31 +597,40 @@ struct ConversationView: View {
                         Spacer(minLength: 0)
                         Button(action: startDictation) {
                             Image(systemName: "mic").frame(width: 28, height: 32)
+                                .background {
+                                    Circle().fill(WorkspaceStyle.primary.opacity(microphoneHovered && presentation.microphoneEnabled ? 0.06 : 0))
+                                        .frame(width: 28, height: 28)
+                                }
+                                .contentShape(Rectangle())
                         }.buttonStyle(.plain).disabled(!presentation.microphoneEnabled)
+                            .onHover { microphoneHovered = $0 }
                             .help(presentation.microphoneEnabled ? "语音转文字" : "麦克风正在被占用")
                             .accessibilityLabel("语音转文字").accessibilityIdentifier("dictation.start")
                     }
-                    if presentation.showsStop {
-                        Button(action: stop) {
-                            Image(systemName: "stop.circle.fill").font(.system(size: 22))
-                                .frame(width: 28, height: 32)
-                        }.buttonStyle(.plain).disabled(!presentation.stopEnabled)
-                            .help("停止回复").accessibilityLabel("停止回复")
-                            .accessibilityIdentifier("conversation.stop")
+                    if let output = presentation.output {
+                        Button { output == .stop ? stop() : retry() } label: {
+                            Image(systemName: output == .stop ? "stop.fill" : "play.fill")
+                                .font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
+                                .offset(x: output == .stop ? 0 : 1)
+                                .frame(width: 22, height: 22).background(Color.blue, in: Circle())
+                                .frame(width: 28, height: 32).contentShape(Rectangle())
+                        }.buttonStyle(.plain).disabled(output == .stop && !presentation.stopEnabled)
+                            .help(output.label).accessibilityLabel(output.label)
+                            .accessibilityIdentifier(output.identifier)
                     }
                 }
                 Button(action: performPrimary) {
                     Group {
                         switch presentation.primary {
                         case .startVoice: VoiceWaveform().frame(width: 16, height: 16)
-                        case .send: Image(systemName: "arrow.up")
-                        case .stop, .finishRecording: Image(systemName: "stop.fill")
+                        case .send, .sendRecording: Image(systemName: "arrow.up")
+                        case .stop: Image(systemName: "stop.fill")
+                        case .resume: Image(systemName: "play.fill").offset(x: 1)
                         case .endVoice: Image(systemName: "xmark")
-                        case .progress: Image(systemName: "ellipsis")
                         }
                     }.font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
                         .frame(width: 32, height: 32)
-                        .background(presentation.primaryEnabled ? Color.accentColor : Color.secondary.opacity(0.4), in: Circle())
+                        .background(presentation.primaryEnabled ? Color.blue : Color.secondary.opacity(0.4), in: Circle())
                         .contentShape(Circle())
                 }.buttonStyle(.plain).disabled(!presentation.primaryEnabled)
                     .help(presentation.primary.label).accessibilityLabel(presentation.primary.label)
@@ -633,9 +649,9 @@ struct ConversationView: View {
         switch presentation.primary {
         case .send: sendText()
         case .stop: stop()
+        case .resume: retry()
         case .startVoice: startVoice()
-        case .finishRecording: dictation.finishRecording()
-        case .progress: break
+        case .sendRecording: dictation.finishRecording(thenSend: sendText)
         case .endVoice:
             guard let owner = voiceOwner else { return }
             if let workspace { workspace.endVoice(owner: owner) } else { voice.end() }

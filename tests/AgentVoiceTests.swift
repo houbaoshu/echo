@@ -420,12 +420,12 @@ extension VoiceTests {
         synth.subtitle([("##", 0), ("天", 0.1), ("气。", 0.3), ("今", 0.9), ("天", 1.1), ("天", 1.3), ("气", 1.5), ("很", 1.7), ("好，", 1.9)])
         check(shown() && f.voice.spoken?.source == reply, "the first subtitle makes the bubble take its place")
         f.audio.playbackFrames = 4800 + 21600
-        check(bubble() == .reply(reply, heard: "##天气。今"), "0.9 seconds in, the bubble shows what was heard")
-        f.audio.playbackFrames = 4800 + 48000
-        check(bubble() == .reply(reply, heard: "##天气。今天天气很好，"), "two seconds in, the heard text follows the audio")
+        check(bubble() == .reply(reply, heard: "##天气。今天天"), "0.9 seconds in, the bubble shows 1.35 seconds of text")
+        f.audio.playbackFrames = 4800 + 28800
+        check(bubble() == .reply(reply, heard: "##天气。今天天气很"), "1.2 seconds in, the text stays 1.5× ahead of the audio")
         synth.subtitle([("适", 2.3), ("合", 2.5), ("散", 2.7), ("步。", 2.9)])
-        f.audio.playbackFrames = 4800 + 60000
-        check(bubble() == .reply(reply, heard: "##天气。今天天气很好，适合"), "later sentences extend the timeline")
+        f.audio.playbackFrames = 4800 + 43200
+        check(bubble() == .reply(reply, heard: "##天气。今天天气很好，适合散"), "later sentences extend the timeline")
         f.releasePlayback(); await tick()
         check(f.voice.spoken?.stoppedAt == .infinity && bubble() == .reply(reply, heard: nil) && shown(),
               "finished playback shows the whole reply and keeps it")

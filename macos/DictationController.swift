@@ -34,6 +34,8 @@ import Combine
     private var captureTask: Task<Void, Never>?
     private var recognitionTask: Task<Void, Never>?
     private var watchdog: Task<Void, Never>?
+    /// Set when recording was finished with Send; runs once the final transcript is in the draft.
+    private var sendWhenFinished: (() -> Void)?
     private(set) var diagnosticTrace: DictationTrace?
 
     private var diagnosticState: [String: Any] {
@@ -176,7 +178,7 @@ import Combine
                         trace?.record("recognizer.return", self.diagnosticState)
                         guard self.generation == current, !Task.isCancelled else { return }
                         let completed = self.state == .finalizing || (remoteKey == nil && self.finalTranscript != nil)
-                        self.complete(error: completed ? nil : "语音识别连接已结束，请重新开始转写。")
+                        self.complete(error: completed ? nil : "语音识别连接已结束，请重新开始转写。", finished: completed)
                     } catch {
                         trace?.record("recognizer.error", self.diagnosticState.merging([
                             "errorDomain": (error as NSError).domain, "errorCode": (error as NSError).code,
@@ -213,9 +215,11 @@ import Combine
             } catch { self.complete(error: "无法启动麦克风，请检查输入设备。") }
         }
     }
-    func finishRecording() {
+    /// Ends this recording. With `send`, the final transcript is sent once recognized instead of left for editing.
+    func finishRecording(thenSend send: (() -> Void)? = nil) {
         diagnosticTrace?.record("recording.finishRequested", diagnosticState)
         guard state == .recording, captureReady else { return }
+        sendWhenFinished = send
         state = .finalizing; captureReady = false; watchdog?.cancel()
         // Drain captured PCM, send the ASR final packet, then await its final response.
         audio.finishCapture()
@@ -231,11 +235,13 @@ import Combine
         guard isActive else { return }
         complete(discard: discard)
     }
-    private func complete(error: String? = nil, discard: Bool = false) {
+    private func complete(error: String? = nil, discard: Bool = false, finished: Bool = false) {
         diagnosticTrace?.record("completion.before", diagnosticState.merging([
             "discard": discard, "hasError": error != nil
         ]) { _, new in new })
         generation = UUID() // Invalidate callbacks before touching any resource.
+        let send = finished ? sendWhenFinished : nil
+        sendWhenFinished = nil
         startup?.cancel(); startup = nil; watchdog?.cancel(); watchdog = nil
         captureTask?.cancel(); captureTask = nil
         audioInput?.finish(); audioInput = nil
@@ -256,6 +262,7 @@ import Combine
         confirmed = []; finalTranscript = nil; store = nil; conversationID = nil; subtitle = ""
         self.error = error; state = error == nil ? .idle : .failed
         diagnosticTrace?.record("completion.after", diagnosticState.merging(["draft": completedDraft as Any? ?? NSNull()]) { _, new in new })
+        send?()
     }
     private func appendLevels(_ data: Data) {
         // Existing 16 kHz signed little-endian PCM, one RMS envelope per 20 ms.

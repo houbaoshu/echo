@@ -4,14 +4,14 @@ import Foundation
 struct ComposerPresentation {
     enum Mode { case normal, dictationPreparing, dictationRecording, dictationFinalizing, voice }
     enum Action {
-        case startVoice, send, stop, finishRecording, progress, endVoice
+        case startVoice, send, stop, resume, sendRecording, endVoice
         var label: String {
             switch self {
             case .startVoice: "开始 Live Voice"
             case .send: "发送消息"
             case .stop: "停止回复"
-            case .finishRecording: "结束录音并填入输入框"
-            case .progress: "正在完成转写…"
+            case .resume: "继续回复"
+            case .sendRecording: "结束录音并发送"
             case .endVoice: "结束语音"
             }
         }
@@ -20,8 +20,8 @@ struct ComposerPresentation {
             case .startVoice: "voice.start"
             case .send: "conversation.send"
             case .stop: "conversation.stop"
-            case .finishRecording: "dictation.finish"
-            case .progress: "dictation.progress"
+            case .resume: "conversation.resume"
+            case .sendRecording: "dictation.send"
             case .endVoice: "voice.end"
             }
         }
@@ -29,8 +29,11 @@ struct ComposerPresentation {
     let mode: Mode
     let primary: Action
     let primaryEnabled: Bool
-    let showsStop: Bool
+    /// The model output control beside a non-empty draft: stop while generating, resume once stopped.
+    let output: Action?
     let canStop: Bool
+    /// The last reply was stopped by the user and can be continued.
+    let canResume: Bool
     let stopEnabled: Bool
     let microphoneEnabled: Bool
     let muteEnabled: Bool
@@ -43,24 +46,32 @@ struct ComposerPresentation {
         let empty = store.mainDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         canStop = store.isGenerating || (ownsVoice && voice.presentation.isReplyAudioActive)
         stopEnabled = store.task?.status != .stopping
+        canResume = store.task?.status == .stopped && store.canRetry
         microphoneEnabled = !voice.isActive && !voice.testing && !dictation.isActive
         if case .active = voice.snapshot.session { muteEnabled = ownsVoice } else { muteEnabled = false }
         canSend = !recording && !empty && store.canSubmit && (store.usesAgent || !store.isGenerating)
             && (!ownsVoice || voice.canSubmit)
         if recording {
             mode = dictation.state == .finalizing ? .dictationFinalizing : dictation.captureReady ? .dictationRecording : .dictationPreparing
-            primary = dictation.state == .finalizing ? .progress : .finishRecording
+            // Recording and model output are independent: the row only offers finishing this recording.
+            primary = .sendRecording
             primaryEnabled = mode == .dictationRecording
-            showsStop = false
+            output = nil
         } else if ownsVoice {
             mode = .voice; primary = empty ? .endVoice : .send
             primaryEnabled = empty || canSend
-            showsStop = false
+            output = nil
         } else {
             mode = .normal
-            primary = !empty ? .send : canStop ? .stop : .startVoice
-            primaryEnabled = primary == .send ? canSend : primary == .stop ? stopEnabled : voice.canStartCall && !dictation.isActive
-            showsStop = canStop && !empty
+            let outputAction: Action? = canStop ? .stop : canResume ? .resume : nil
+            primary = !empty ? .send : outputAction ?? .startVoice
+            switch primary {
+            case .send: primaryEnabled = canSend
+            case .stop: primaryEnabled = stopEnabled
+            case .resume: primaryEnabled = true
+            default: primaryEnabled = voice.canStartCall && !dictation.isActive
+            }
+            output = empty ? nil : outputAction
         }
     }
 }
