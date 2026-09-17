@@ -1378,7 +1378,7 @@ actor PendingModelTester: ConnectionTesting {
             await tick()
             audio.onFailure?("主窗口可见时的错误")
             await tick()
-            check(companion.noticePanel == nil, "error is not duplicated to companion panel when main window is visible")
+            check(companion.bubbleState.notice == nil, "error is not duplicated to the companion bubble when main window is visible")
             voice.clearError()
 
             // Case B: Main window is HIDDEN -> voice error MUST show notice panel
@@ -1387,7 +1387,7 @@ actor PendingModelTester: ConnectionTesting {
             await tick()
             audio.onFailure?("主窗口隐藏时的错误")
             await tick()
-            check(companion.noticePanel != nil, "error is presented on companion panel when main window is hidden")
+            check(companion.bubbleState.notice == "主窗口隐藏时的错误" && companion.bubblePanel.isVisible, "error is presented in the companion bubble when main window is hidden")
         }
     }
 }

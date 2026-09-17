@@ -31,6 +31,8 @@ import Combine
     let petPanel: PetPanel
     let activityPanel: CompanionSurface
     let controlsPanel: CompanionSurface
+    let bubblePanel: CompanionSurface
+    let bubbleState = CompanionBubbleState()
     private let activityPlacement: ActivityPlacement
     private(set) var mainController: MainWindowController?
     var mainWindow: NSWindow? { mainController?.window }
@@ -39,11 +41,15 @@ import Combine
     private var layingOut = false
     private var visibilityRevision = 0
     private var activityShown = false
-    private(set) var noticePanel: NSPanel?
     private var noticeTimer: Timer?
+    private var bubbleObservation: AnyCancellable?
     let controlsPresentation: PetControlsPresentation
     private var composerObservation: AnyCancellable?
+    private var projectPickerObservation: AnyCancellable?
     private var outsideClickMonitor: Any?
+    private var hotKey: GlobalHotKey?
+    private var hotKeyObservation: AnyCancellable?
+    var isHotKeyRegistered: Bool { hotKey?.isRegistered == true }
 
     init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore? = nil, pets: PetCatalog? = nil) {
         self.workspace = workspace
@@ -62,6 +68,11 @@ import Combine
         controlsPanel = CompanionSurface(title: "活动控件", acceptsKeyboard: true,
                                          content: WorkspacePetControls(workspace: workspace, presentation: controlsPresentation,
                                                                        placement: placement))
+        bubblePanel = CompanionSurface(title: "语音气泡",
+                                       content: WorkspaceCompanionBubble(workspace: workspace, voice: workspace.voice,
+                                                                         state: bubbleState, placement: placement))
+        // The bubble only reports; clicks pass through to whatever is behind it.
+        bubblePanel.ignoresMouseEvents = true
         super.init()
         self.pets.onActivate = { [weak self] store in
             self?.petPanel.replacePet(with: store)
@@ -80,16 +91,32 @@ import Combine
             // @Published delivers before the value is stored; act once the new state is visible.
             DispatchQueue.main.async { [weak self] in self?.composerDidChange(open: open) }
         }
+        projectPickerObservation = controlsPresentation.$isProjectPickerOpen.removeDuplicates().dropFirst().sink { [weak self] open in
+            guard !open else { return }
+            // Typing returns to the composer once the + menu closes over it.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.controlsPresentation.isComposerOpen, !self.controlsPresentation.isProjectPickerOpen else { return }
+                self.controlsPanel.makeKey()
+                self.controlsPresentation.refocusComposer()
+            }
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(controlsResignedKey),
                                                name: NSWindow.didResignKeyNotification, object: controlsPanel)
         observation = workspace.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.synchronize() }
+        }
+        // A voice session reserves the bubble between the pet and its card.
+        bubbleObservation = workspace.voice.$snapshot.map { $0.session.owner != nil }.removeDuplicates().dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in self?.layout() }
         }
         voiceObservation = workspace.voice.$snapshot.map(\.error).removeDuplicates().compactMap { $0 }.sink { [weak self] error in
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.workspace.isMainWindowVisible else { return }
                 self.showNotice(error.message)
             }
+        }
+        hotKeyObservation = settings.$snapshot.map(\.quickComposerHotKey).removeDuplicates().sink { [weak self] enabled in
+            self?.setHotKeyEnabled(enabled)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -142,7 +169,7 @@ import Combine
         guard presentation.isHovered != hovered else { return }
         presentation.isHovered = hovered
         // An empty composer follows the idle strip, unless the user is still typing in it.
-        if !hovered, presentation.isComposerOpen,
+        if !hovered, presentation.isComposerOpen, !presentation.isProjectPickerOpen,
            presentation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            presentation.collapsesOnExit || !controlsPanel.isKeyWindow {
             presentation.closeComposer()
@@ -176,15 +203,38 @@ import Combine
     }
     @objc private func controlsResignedKey() {
         // Clicking elsewhere collapses the composer; its draft is kept for next time.
+        // The + menu's popover takes the keyboard while it is open.
+        guard !controlsPresentation.isProjectPickerOpen else { return }
         controlsPresentation.closeComposer()
     }
-    func openQuickComposer() { controlsPresentation.openComposer() }
+    /// ⌥ Space: opens and focuses the quick composer, or closes it when it already has focus.
+    func openQuickComposer() {
+        if controlsPresentation.isComposerOpen && controlsPresentation.isComposerFocused && controlsPanel.isKeyWindow {
+            controlsPresentation.closeComposer(); return
+        }
+        petPanel.orderFrontRegardless()
+        controlsPresentation.openComposer()
+        // Already open: the observer does not fire again, so claim the keyboard here.
+        controlsPanel.orderFrontRegardless(); controlsPanel.makeKey()
+    }
+    private func setHotKeyEnabled(_ enabled: Bool) {
+        guard enabled else {
+            hotKey?.invalidate(); hotKey = nil; settings.hotKeyNotice = nil
+            return
+        }
+        let hotKey = hotKey ?? GlobalHotKey(.quickComposer) { [weak self] in self?.openQuickComposer() }
+        self.hotKey = hotKey
+        let status = hotKey.register()
+        settings.hotKeyNotice = status == noErr ? nil : GlobalHotKey.message(for: status, shortcut: hotKey.shortcut)
+    }
 
     func layout() {
         guard !layingOut, let screen = CompanionLayout.screen(for: petPanel.frame, screens: NSScreen.screens.map(\.visibleFrame)) else { return }
         layingOut = true
         defer { layingOut = false }
-        let frames = CompanionLayout.place(pet: petPanel.frame, in: screen, expanded: taskStore.isFollowUpExpanded)
+        let reservesBubble = workspace.voice.snapshot.session.owner != nil || bubbleState.notice != nil
+        let frames = CompanionLayout.place(pet: petPanel.frame, in: screen, expanded: taskStore.isFollowUpExpanded,
+                                           bubble: reservesBubble)
         if activityPlacement.isBelowPet != frames.isActivityBelowPet {
             activityPlacement.isBelowPet = frames.isActivityBelowPet
         }
@@ -196,18 +246,18 @@ import Combine
         controlsPanel.setFrame(frames.controls, display: true)
         let petCenterX = frames.pet.midX - frames.controls.minX
         if controlsPresentation.petCenterX != petCenterX { controlsPresentation.petCenterX = petCenterX }
-        if let noticePanel {
-            let noticeY = frames.isActivityBelowPet ? frames.activityCanvas.minY - 62
-                                                   : frames.activityCanvas.maxY + 2
-            noticePanel.setFrameOrigin(NSPoint(x: min(max(frames.pet.midX - 150, screen.minX + 8), screen.maxX - 308),
-                                               y: min(max(noticeY, screen.minY + 8), screen.maxY - 68)))
+        if frames.bubble.isEmpty {
+            bubblePanel.orderOut(nil)
+        } else {
+            if bubblePanel.frame != frames.bubble { bubblePanel.setFrame(frames.bubble, display: true) }
+            let petCenterX = frames.pet.midX - frames.bubble.minX
+            if bubbleState.petCenterX != petCenterX { bubbleState.petCenterX = petCenterX }
+            bubblePanel.orderFrontRegardless()
         }
     }
 
     func showMainWindow() {
-        noticeTimer?.invalidate()
-        noticePanel?.close()
-        noticePanel = nil
+        clearNotice()
         if workspace.voice.isActive { workspace.voice.reveal() }
         else { workspace.revealActivity() }
         taskStore.showMainWindow()
@@ -224,33 +274,34 @@ import Combine
     }
     @objc private func screensChanged() { layout() }
 
+    /// Voice errors and task notices appear in the bubble for 3 seconds.
     private func showNotice(_ text: String) {
         noticeTimer?.invalidate()
-        noticePanel?.close()
-        let view = Text(text).font(.system(size: 12)).foregroundStyle(.primary)
-            .padding(12).frame(width: 300, height: 60)
-            .background { CompanionBackground(shape: RoundedRectangle(cornerRadius: 16)) }
-        let panel = CompanionSurface(title: "语音提示", content: view)
-        panel.setContentSize(NSSize(width: 300, height: 60))
-        noticePanel = panel
+        bubbleState.notice = text
         layout()
-        panel.orderFrontRegardless()
         let timer = Timer(timeInterval: 3, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.noticePanel?.close(); self?.noticePanel = nil }
+            MainActor.assumeIsolated { self?.clearNotice() }
         }
         noticeTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
+    private func clearNotice() {
+        noticeTimer?.invalidate(); noticeTimer = nil
+        guard bubbleState.notice != nil else { return }
+        bubbleState.notice = nil
+        layout()
+    }
     func shutdown() {
-        workspace.voice.shutdown(); voiceObservation = nil
+        workspace.voice.shutdown(); voiceObservation = nil; bubbleObservation = nil
         settings.cancelTest(); pets.stop(); pets.onActivate = nil
-        observation = nil; composerObservation = nil
+        observation = nil; composerObservation = nil; projectPickerObservation = nil
+        hotKeyObservation = nil; hotKey?.invalidate(); hotKey = nil
         if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor); self.outsideClickMonitor = nil }
         NotificationCenter.default.removeObserver(self)
         noticeTimer?.invalidate()
         mainController?.shutdown()
         workspace.shutdown()
-        petPanel.close(); activityPanel.close(); controlsPanel.close(); noticePanel?.close()
+        petPanel.close(); activityPanel.close(); controlsPanel.close(); bubblePanel.close()
         mainWindow?.orderOut(nil)
     }
 }

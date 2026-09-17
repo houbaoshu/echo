@@ -131,6 +131,8 @@ struct SettingsSnapshot: Codable {
     var selectedPetID = "builtin:chiyan"
     var voice: VoiceConfiguration?
     var voiceSecretAccount: String?
+    /// ⌥ Space opens the pet's quick composer from anywhere.
+    var quickComposerHotKey = true
 
     var model: ModelConfiguration { settings(for: activeProvider).model }
     var secretAccount: String? { settings(for: activeProvider).secretAccount }
@@ -138,7 +140,7 @@ struct SettingsSnapshot: Codable {
         providers[provider.rawValue] ?? ProviderSettings(model: provider.defaults)
     }
     private enum CodingKeys: String, CodingKey {
-        case version, activeProvider, providers, selectedPetID, voice, voiceSecretAccount
+        case version, activeProvider, providers, selectedPetID, voice, voiceSecretAccount, quickComposerHotKey
     }
     private enum LegacyKeys: String, CodingKey { case model, secretAccount }
     init() {}
@@ -149,6 +151,7 @@ struct SettingsSnapshot: Codable {
         selectedPetID = try values.decode(String.self, forKey: .selectedPetID)
         voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
         voiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .voiceSecretAccount)
+        quickComposerHotKey = try values.decodeIfPresent(Bool.self, forKey: .quickComposerHotKey) ?? true
         if version == 1 {
             let legacy = try decoder.container(keyedBy: LegacyKeys.self)
             let model = try legacy.decode(ModelConfiguration.self, forKey: .model)
@@ -182,6 +185,8 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     private var savedVoiceKey = ""
     private var voiceKeyLoaded = true
     var isVoiceDirty: Bool { voiceDraft != (snapshot.voice ?? VoiceConfiguration()) || voiceAPIKey != savedVoiceKey }
+    /// Why the enabled quick composer shortcut is not working, reported by its owner.
+    @Published var hotKeyNotice: String?
     @Published var selectedSection = "模型"
     @Published var presentationRevision = 0
     @Published private(set) var selectedProvider: ModelProvider = .openAI
@@ -371,6 +376,12 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
                 catch { notice = "配置已保存，但旧密钥清理失败，请检查钥匙串访问权限。" }
             }
         } catch { notice = error is SettingsError ? error.localizedDescription : "保存失败，请检查设置目录的写入权限后重试。" }
+    }
+    func setQuickComposerHotKey(_ enabled: Bool) {
+        guard enabled != snapshot.quickComposerHotKey else { return }
+        var next = snapshot; next.quickComposerHotKey = enabled
+        do { try persist(next); snapshot = next }
+        catch { hotKeyNotice = error is SettingsError ? error.localizedDescription : "快捷键设置保存失败，请检查目录写入权限。" }
     }
     func selectPet(_ id: String) throws {
         var next = snapshot; next.selectedPetID = id

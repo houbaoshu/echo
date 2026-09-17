@@ -29,6 +29,7 @@ enum SettingsTests {
         precondition(settings.selectedProvider == .deepSeek && settings.apiKey == "deepseek-secret")
         precondition(settings.snapshot.secretAccount == "legacy" && settings.draft.model == "existing-deepseek")
         precondition(settings.draft.apiProtocol == .chatCompletions && !settings.isDirty)
+        precondition(settings.snapshot.quickComposerHotKey, "Settings saved before the quick composer shortcut enable it")
         precondition(secrets.values.count == 2, "Migration adopts the original reference without touching Keychain")
         settings.selectProvider(.openAI)
         precondition(settings.apiKey.isEmpty && settings.draft == ModelProvider.openAI.defaults && settings.isDirty)
@@ -47,6 +48,9 @@ enum SettingsTests {
         let reopened = SettingsStore(url: url, secrets: secrets)
         precondition(reopened.selectedProvider == .openAI && reopened.apiKey == "openai-secret", "Explicit provider identity survives custom URLs")
         precondition(reopened.draft.baseURL == "https://gateway.example/v1" && reopened.draft.model == "custom-openai")
+        reopened.setQuickComposerHotKey(false)
+        precondition(!reopened.snapshot.quickComposerHotKey && reopened.hotKeyNotice == nil
+                     && !SettingsStore(url: url, secrets: secrets).snapshot.quickComposerHotKey, "Turning the shortcut off persists")
         reopened.selectProvider(.deepSeek)
         precondition(reopened.apiKey == "deepseek-secret" && reopened.draft.model == "existing-deepseek")
         reopened.apiKey = "rotated-deepseek"; reopened.save()

@@ -9,6 +9,7 @@ struct ConversationProjectPicker: View {
     @FocusState private var focused: Bool
     private var project: WorkspaceProject? { workspace.project(for: conversationID) }
     private var editable: Bool { workspace.canAssociateProject(conversationID: conversationID) }
+    private var canChoose: Bool { workspace.selectedID == conversationID && editable }
     @FocusState private var detachFocused: Bool
     var body: some View {
         HStack {
@@ -18,7 +19,20 @@ struct ConversationProjectPicker: View {
                     .popover(isPresented: $isPresented,
                              attachmentAnchor: .rect(.rect(CGRect(x: 0, y: 0, width: 320, height: 28))),
                              arrowEdge: .bottom) {
-                        ProjectSelectionPanel(workspace: workspace, conversationID: conversationID,
+                        ProjectSelectionPanel(workspace: workspace,
+                            selectedProjectID: workspace.conversation(id: conversationID)?.projectID,
+                            select: { id in
+                                guard canChoose else { return }
+                                workspace.associateProject(id, conversationID: conversationID)
+                            },
+                            addFolder: {
+                                guard canChoose else { return }
+                                WorkspaceActions.chooseFolder {
+                                    if workspace.associateFolder($0, conversationID: conversationID) {
+                                        workspace.requestComposerFocus(conversationID: conversationID)
+                                    }
+                                }
+                            },
                             close: { isPresented = false })
                     }
                     .help(project?.isAvailable == false ? "项目不可用" : "选择项目文件夹")
@@ -72,9 +86,13 @@ enum ProjectPickerOption: Hashable {
     }
 }
 
+/// Project search and selection, shared by a conversation's picker and the pet's quick composer.
 struct ProjectSelectionPanel: View {
     @ObservedObject var workspace: WorkspaceStore
-    let conversationID: UUID
+    let selectedProjectID: UUID?
+    let select: (UUID) -> Void
+    /// Runs after the panel has dismissed, so a folder dialog does not belong to it.
+    let addFolder: () -> Void
     let close: () -> Void
     @State private var query = ""
     @State private var highlighted: ProjectPickerOption = .add
@@ -87,7 +105,7 @@ struct ProjectSelectionPanel: View {
     private func enabled(_ option: ProjectPickerOption) -> Bool { project(option)?.isAvailable ?? true }
     private func selected(_ option: ProjectPickerOption) -> Bool {
         switch option {
-        case .project(let id): return workspace.conversation(id: conversationID)?.projectID == id
+        case .project(let id): return selectedProjectID == id
         case .add: return false
         }
     }
@@ -120,7 +138,7 @@ struct ProjectSelectionPanel: View {
             }
         }.padding(12).frame(width: 320).font(WorkspaceStyle.body)
             .onAppear {
-                highlighted = workspace.conversation(id: conversationID)?.projectID.map(ProjectPickerOption.project) ?? options.first(where: enabled) ?? .add
+                highlighted = selectedProjectID.map(ProjectPickerOption.project) ?? options.first(where: enabled) ?? .add
                 searchFocused = true
             }
             .onChange(of: query) { _, _ in highlighted = options.first(where: enabled) ?? .add }
@@ -135,19 +153,13 @@ struct ProjectSelectionPanel: View {
         highlighted = selectable[(index + delta + selectable.count) % selectable.count]
     }
     private func choose(_ option: ProjectPickerOption) {
-        guard workspace.selectedID == conversationID, workspace.canAssociateProject(conversationID: conversationID), enabled(option) else { close(); return }
+        guard enabled(option) else { close(); return }
         switch option {
-        case .project(let id): workspace.associateProject(id, conversationID: conversationID); close()
+        case .project(let id): select(id); close()
         case .add:
             close()
-            // Let the popover dismiss so the sheet belongs to the main window.
-            DispatchQueue.main.async {
-                WorkspaceActions.chooseFolder {
-                    if workspace.associateFolder($0, conversationID: conversationID) {
-                        workspace.requestComposerFocus(conversationID: conversationID)
-                    }
-                }
-            }
+            // Let the popover dismiss so a sheet belongs to the main window.
+            DispatchQueue.main.async { addFolder() }
         }
     }
 }

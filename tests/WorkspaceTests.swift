@@ -276,6 +276,16 @@ import Foundation
         check(ws.unseenCompletedCount == 1, "A background conversation's completion is counted")
         other.store.send("再继续")
         check(ws.unseenCompletedCount == 0 && !other.store.hasUnseenCompletion, "Starting a new run supersedes its unseen completion")
+
+        // The + menu's project goes with the quick conversation; an unknown project is dropped.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("quick-project-\(UUID())")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let projectID = ws.addProject(url: folder)
+        check(ws.sendQuickMessage("在项目里提问", projectID: projectID) && ws.activity?.projectID == projectID
+              && ws.selectedID == quick.id, "A quick message starts in the chosen project without changing the selection")
+        check(ws.sendQuickMessage("未知项目", projectID: UUID()) && ws.activity?.projectID == nil,
+              "A quick message ignores a project that no longer exists")
         check(TaskStore.toolSummary("ls -la\necho done") == "正在运行命令 · ls -la"
               && TaskStore.toolSummary(String(repeating: "a", count: 70)) == "正在运行命令 · " + String(repeating: "a", count: 60) + "…"
               && TaskStore.toolSummary("  ") == "正在运行命令", "Tool steps are short single-line summaries")

@@ -48,6 +48,8 @@ struct ActivityCapsule: View {
     var canStop: Bool = false
     let send: () -> Void
     let stop: () -> Void
+    /// Clicking the title opens the conversation in the main window, e.g. to choose its project folder.
+    var open: () -> Void = {}
     @ObservedObject var placement: ActivityPlacement
     @State private var hovered = false
     @State private var followUpFocusRequest = 0
@@ -68,6 +70,7 @@ struct ActivityCapsule: View {
                 }
                 .lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle()).onTapGesture(perform: open)
                 .mask {
                     HStack(spacing: 0) {
                         Rectangle()
@@ -78,6 +81,8 @@ struct ActivityCapsule: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton).accessibilityAction { open() }
+                .accessibilityIdentifier("activity.open")
                 if let outcome {
                     Image(systemName: outcome == .completed ? "checkmark" : "exclamationmark")
                         .font(.system(size: 11, weight: .bold))
@@ -159,6 +164,10 @@ struct ActivityCapsule: View {
     func setComposerFocused(_ focused: Bool) { if isComposerFocused != focused { isComposerFocused = focused } }
     /// The pet's horizontal center inside the fixed canvas; the content clamps itself to the canvas.
     @Published var petCenterX = PetSurfacePresentation.canvasWidth / 2
+    /// The project the next quick send starts in; it stays selected across sends.
+    @Published var projectID: UUID?
+    /// While the + menu is open the composer keeps itself open even though its panel is not key.
+    @Published var isProjectPickerOpen = false
     /// After a send the empty composer collapses once the pointer leaves, like the idle strip.
     private(set) var collapsesOnExit = false
     func openComposer() {
@@ -168,6 +177,7 @@ struct ActivityCapsule: View {
     }
     func closeComposer() {
         setComposerFocused(false)
+        if isProjectPickerOpen { isProjectPickerOpen = false }
         if isComposerOpen { isComposerOpen = false }
     }
     /// Asks the open editor for focus again, e.g. once its panel has become key.
@@ -181,6 +191,8 @@ struct PetControlActions {
     var toggleMute: (VoiceSessionSnapshot.Owner) -> Void = { _ in }
     var toggleSpeaker: (VoiceSessionSnapshot.Owner) -> Void = { _ in }
     var send: (String) -> Bool = { _ in false }
+    /// The + menu's "添加项目文件夹…", run after the menu has closed.
+    var addProjectFolder: () -> Void = {}
     /// The bell and ⌃; without a workspace it toggles the shown store's card.
     var toggleTray: (() -> Void)?
 }
@@ -245,6 +257,8 @@ struct PetControls: View {
     @ObservedObject var placement: ActivityPlacement
     var unseenCompleted = 0
     var runningTasks = 0
+    /// Supplies the composer's + project menu; without it the composer has no + button.
+    var workspace: WorkspaceStore?
     var actions = PetControlActions()
     private var surface: PetSurfacePresentation {
         PetSurfacePresentation(hovered: presentation.isHovered, composerOpen: presentation.isComposerOpen,
@@ -368,6 +382,10 @@ struct PetControls: View {
 
     private func composerField(_ surface: PetSurfacePresentation) -> some View {
         HStack(spacing: 6) {
+            if let workspace {
+                projectButton(workspace)
+                if let project = workspace.projects.first(where: { $0.id == presentation.projectID }) { projectChip(project) }
+            }
             NativeComposer(text: $presentation.draft, focusRequest: presentation.focusRequest,
                            onEscape: { presentation.closeComposer(); return true },
                            fontSize: 13, minHeight: 20, maxLines: 1,
@@ -389,9 +407,45 @@ struct PetControls: View {
             .buttonStyle(.plain).disabled(!surface.canSend)
             .help("发送").accessibilityLabel("发送").accessibilityIdentifier("pet.send")
         }
-        .padding(.leading, 14).padding(.trailing, 5)
+        .padding(.leading, workspace == nil ? 14 : 5).padding(.trailing, 5)
         .frame(width: PetSurfacePresentation.composerWidth, height: PetSurfacePresentation.circle)
         .background { PetControlBackground(hovered: false) }
+    }
+
+    private func projectButton(_ workspace: WorkspaceStore) -> some View {
+        Button { presentation.isProjectPickerOpen.toggle() } label: {
+            Image(systemName: "plus").font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
+                .frame(width: 22, height: 22)
+                .background { Circle().fill(.primary.opacity(presentation.isProjectPickerOpen ? 0.12 : 0.06)) }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $presentation.isProjectPickerOpen, arrowEdge: .bottom) {
+            ProjectSelectionPanel(workspace: workspace, selectedProjectID: presentation.projectID,
+                                  select: { presentation.projectID = $0 }, addFolder: actions.addProjectFolder,
+                                  close: { presentation.isProjectPickerOpen = false })
+        }
+        .help("关联项目").accessibilityLabel("关联项目").accessibilityIdentifier("pet.project")
+    }
+
+    private func projectChip(_ project: WorkspaceProject) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: project.isAvailable ? "folder" : "folder.badge.questionmark").accessibilityHidden(true)
+            Text(project.name).lineLimit(1).truncationMode(.middle)
+                .accessibilityLabel(project.isAvailable ? project.name : "\(project.name)（不可用）")
+                .accessibilityIdentifier("pet.project.name")
+            Button {
+                presentation.projectID = nil; presentation.refocusComposer()
+            } label: {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).frame(width: 12, height: 20).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).help("取消关联项目").accessibilityLabel("取消关联项目")
+            .accessibilityIdentifier("pet.project.detach")
+        }
+        .font(.system(size: 11)).foregroundStyle(project.isAvailable ? Color.secondary : .orange)
+        .padding(.leading, 6).padding(.trailing, 2).frame(height: 20).frame(maxWidth: 104)
+        .background(.primary.opacity(0.06), in: Capsule())
+        .help(project.isAvailable ? project.path : "项目不可用：\(project.path)")
     }
 
     private func send() {
@@ -461,7 +515,11 @@ struct WorkspaceActivityCapsule: View {
         let canStop = workspace.activityStore.isGenerating || isVoiceReplying
         ActivityCapsule(store: workspace.activityStore, canStop: canStop,
             send: { if let targetID { workspace.sendFollowUp(conversationID: targetID) } },
-            stop: { if let targetID { workspace.stop(conversationID: targetID) } }, placement: placement)
+            stop: { if let targetID { workspace.stop(conversationID: targetID) } },
+            open: {
+                workspace.revealActivity()
+                workspace.activityStore.showMainWindow()
+            }, placement: placement)
             .id(workspace.activityID)
     }
 }
@@ -475,12 +533,149 @@ struct WorkspacePetControls: View {
         // No identity reset on activity changes: a quick send must keep the composer's focus.
         PetControls(store: workspace.activityStore, voice: workspace.voice, presentation: presentation,
                     placement: placement, unseenCompleted: workspace.unseenCompletedCount,
-                    runningTasks: workspace.runningTaskCount, actions: PetControlActions(
+                    runningTasks: workspace.runningTaskCount, workspace: workspace, actions: PetControlActions(
             startVoice: { if let targetID { workspace.startVoice(conversationID: targetID) } },
             endVoice: { workspace.endVoice(owner: $0) },
             toggleMute: { workspace.toggleVoiceMute(owner: $0) },
             toggleSpeaker: { workspace.toggleVoiceSpeakerMute(owner: $0) },
-            send: { workspace.sendQuickMessage($0) },
+            send: { [presentation] in workspace.sendQuickMessage($0, projectID: presentation.projectID) },
+            addProjectFolder: { [presentation] in
+                // The pet's panels cannot host a sheet; the dialog activates the app instead.
+                WorkspaceActions.chooseFolder(asSheet: false) { url in
+                    presentation.projectID = workspace.addProject(url: url)
+                    presentation.openComposer()
+                }
+            },
             toggleTray: { workspace.toggleActivityTray() }))
+    }
+}
+
+@MainActor final class CompanionBubbleState: ObservableObject {
+    /// A transient error, e.g. from Live Voice, shown in place of the muted reply.
+    @Published var notice: String?
+    /// The pet's horizontal center inside the bubble canvas.
+    @Published var petCenterX = CGFloat(CompanionLayout.capsuleWidth + 24) / 2
+}
+
+/// A rounded bubble whose tail points at the pet from the top or bottom edge.
+struct CompanionBubbleShape: InsettableShape {
+    static let tail: CGFloat = 7
+    var tailX: CGFloat
+    var tailOnTop: Bool
+    var insetAmount: CGFloat = 0
+    func path(in rect: CGRect) -> Path {
+        let rect = rect.insetBy(dx: insetAmount, dy: insetAmount)
+        let tail = max(0, Self.tail - insetAmount)
+        let body = CGRect(x: rect.minX, y: rect.minY + (tailOnTop ? tail : 0), width: rect.width, height: rect.height - tail)
+        let radius = max(0, min(14, body.height / 2, body.width / 2))
+        let x = min(max(tailX, body.minX + radius + tail), body.maxX - radius - tail)
+        // One continuous outline, so the border runs around the tail instead of across its base.
+        var path = Path()
+        path.move(to: CGPoint(x: body.minX + radius, y: body.minY))
+        if tailOnTop {
+            path.addLine(to: CGPoint(x: x - tail, y: body.minY))
+            path.addLine(to: CGPoint(x: x, y: rect.minY))
+            path.addLine(to: CGPoint(x: x + tail, y: body.minY))
+        }
+        path.addArc(tangent1End: CGPoint(x: body.maxX, y: body.minY), tangent2End: CGPoint(x: body.maxX, y: body.maxY), radius: radius)
+        path.addArc(tangent1End: CGPoint(x: body.maxX, y: body.maxY), tangent2End: CGPoint(x: body.minX, y: body.maxY), radius: radius)
+        if !tailOnTop {
+            path.addLine(to: CGPoint(x: x + tail, y: body.maxY))
+            path.addLine(to: CGPoint(x: x, y: rect.maxY))
+            path.addLine(to: CGPoint(x: x - tail, y: body.maxY))
+        }
+        path.addArc(tangent1End: CGPoint(x: body.minX, y: body.maxY), tangent2End: CGPoint(x: body.minX, y: body.minY), radius: radius)
+        path.addArc(tangent1End: CGPoint(x: body.minX, y: body.minY), tangent2End: CGPoint(x: body.maxX, y: body.minY), radius: radius)
+        path.closeSubpath()
+        return path
+    }
+    func inset(by amount: CGFloat) -> Self {
+        var shape = self; shape.insetAmount += amount; return shape
+    }
+}
+
+struct CompanionBubble: View {
+    let content: CompanionBubbleContent
+    let tailOnTop: Bool
+    let petCenterX: CGFloat
+    var canvasWidth = CompanionLayout.capsuleWidth + 24
+
+    var body: some View {
+        // A fixed-size bubble appears at once and stays put while its content is shown.
+        let width = CompanionBubbleContent.width
+        let center = min(max(petCenterX, width / 2 + 4), canvasWidth - width / 2 - 4)
+        ZStack {
+            if content != .none {
+                text
+                    .font(.system(size: 12)).foregroundStyle(.primary)
+                    .lineLimit(3).truncationMode(.tail).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .padding(tailOnTop ? .top : .bottom, CompanionBubbleShape.tail)
+                    .frame(width: width)
+                    .background {
+                        CompanionBackground(shape: CompanionBubbleShape(tailX: petCenterX - (center - width / 2), tailOnTop: tailOnTop))
+                    }
+                    .shadow(color: .black.opacity(0.14), radius: 5, y: 2)
+                    .offset(x: center - canvasWidth / 2)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(accessibilityText)
+                    .accessibilityIdentifier("companion.bubble")
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(width: canvasWidth, height: CompanionBubbleContent.canvasHeight, alignment: tailOnTop ? .top : .bottom)
+    }
+
+    @ViewBuilder private var text: some View {
+        switch content {
+        case .none: EmptyView()
+        case .notice(let message): Text(message)
+        case .reply(let markdown): Text(Self.renderedReply(markdown))
+        }
+    }
+
+    /// The assistant's Markdown through the chat's parser, flattened for a compact bubble:
+    /// inline styles and code keep their formatting, headings turn bold, list items keep their markers.
+    static func renderedReply(_ markdown: String) -> AttributedString {
+        var result = AttributedString()
+        for block in MarkdownBlock.parse(markdown, codeSize: 11) {
+            var text = block.text
+            while text.characters.last?.isNewline == true { text.characters.removeLast() }
+            guard !text.characters.isEmpty else { continue }
+            if block.heading != nil { text.font = .system(size: 12, weight: .semibold) }
+            if block.code { text.font = .system(size: 11, design: .monospaced) }
+            if block.quote { text.foregroundColor = .secondary }
+            if !result.characters.isEmpty { result += AttributedString("\n") }
+            if let marker = block.marker {
+                result += AttributedString(String(repeating: "  ", count: max(0, block.listDepth - 1)) + marker + " ")
+            }
+            result += text
+        }
+        return result
+    }
+
+    private var accessibilityText: String {
+        switch content {
+        case .none: ""
+        case .notice(let text): text
+        case .reply(let markdown): String(Self.renderedReply(markdown).characters)
+        }
+    }
+}
+
+struct WorkspaceCompanionBubble: View {
+    @ObservedObject var workspace: WorkspaceStore
+    @ObservedObject var voice: VoiceSessionController
+    @ObservedObject var state: CompanionBubbleState
+    @ObservedObject var placement: ActivityPlacement
+    var body: some View {
+        let snapshot = voice.snapshot
+        let store = snapshot.session.owner.flatMap { workspace.conversation(id: $0.conversationID)?.store }
+        let runID = snapshot.replyAudio.runID
+        // Only the run being spoken supplies its reply; a newer run has already interrupted its audio.
+        let reply = runID != nil && store?.task?.runID == runID ? store?.responseMessage?.content : nil
+        CompanionBubble(content: CompanionBubbleContent(voice: snapshot, replyText: reply, notice: state.notice),
+                        tailOnTop: placement.isBelowPet, petCenterX: state.petCenterX)
     }
 }

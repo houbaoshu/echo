@@ -27,11 +27,13 @@ enum WorkspaceStyle {
 }
 
 @MainActor enum WorkspaceActions {
-    static func chooseFolder(completion: @escaping (URL) -> Void) {
+    /// `asSheet: false` runs a standalone dialog, e.g. from the pet, whose panels cannot host a sheet.
+    static func chooseFolder(asSheet: Bool = true, completion: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.allowsMultipleSelection = false; panel.prompt = "选择文件夹"
-        if let window = NSApp.keyWindow {
+        if !asSheet { NSApp.activate(ignoringOtherApps: true) }
+        if asSheet, let window = NSApp.keyWindow {
             panel.beginSheetModal(for: window) { response in
                 if response == .OK, let url = panel.url { completion(url) }
             }

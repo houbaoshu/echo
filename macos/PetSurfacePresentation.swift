@@ -97,3 +97,26 @@ struct PetSurfacePresentation: Equatable {
         }
     }
 }
+
+/// The bubble between the pet and its activity card. Live Voice is spoken: the bubble shows no
+/// transcript, progress or reply text, except errors and, while the speaker is muted, the reply
+/// that stands in for the audio.
+enum CompanionBubbleContent: Equatable {
+    case none
+    case notice(String)
+    case reply(String)
+
+    static let width: CGFloat = 236
+    static let canvasHeight: CGFloat = 80
+
+    /// `replyText` is the text of the run whose audio is playing, when the voice conversation still shows that run.
+    init(voice snapshot: VoiceSessionSnapshot, replyText: String?, notice: String?) {
+        if let notice, !notice.isEmpty { self = .notice(notice); return }
+        let reply = replyText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard case .active = snapshot.session, snapshot.speakerMuted, !reply.isEmpty else { self = .none; return }
+        switch snapshot.replyAudio {
+        case .playing, .draining: self = .reply(reply)
+        case .none, .preparing: self = .none
+        }
+    }
+}

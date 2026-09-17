@@ -28,7 +28,7 @@ struct SettingsView: View {
                         Text(section).font(WorkspaceStyle.pageTitle)
                         if section == "模型" { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
                         else if section == "语音" { VoiceSettingsView(settings: settings, voice: voice) }
-                        else { PetSettingsView(pets: pets) }
+                        else { PetSettingsView(pets: pets, settings: settings) }
                     }.frame(maxWidth: 820, alignment: .leading).padding(32).frame(maxWidth: .infinity, alignment: .topLeading)
                 }.background(Color(nsColor: .textBackgroundColor))
             }
@@ -214,8 +214,18 @@ struct ModelSettingsView: View {
 
 struct PetSettingsView: View {
     @ObservedObject var pets: PetCatalog
+    @ObservedObject var settings: SettingsStore
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框",
+                       isOn: Binding(get: { settings.snapshot.quickComposerHotKey }, set: { settings.setQuickComposerHotKey($0) }))
+                    .toggleStyle(.switch).accessibilityIdentifier("settings.quickComposerHotKey")
+                if let notice = settings.hotKeyNotice {
+                    Label(notice, systemImage: "exclamationmark.triangle").font(WorkspaceStyle.caption)
+                        .foregroundStyle(.orange).accessibilityIdentifier("settings.quickComposerHotKey.notice")
+                }
+            }
             HStack {
                 Text("我的精灵").font(WorkspaceStyle.medium)
                 Spacer()

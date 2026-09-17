@@ -10,6 +10,8 @@ struct CompanionLayout {
     var pet: CGRect
     var activity: CGRect
     var controls: CGRect
+    /// The bubble canvas between the pet and the activity; empty unless room was reserved.
+    var bubble: CGRect = .zero
     var isActivityBelowPet: Bool { activity.maxY <= pet.minY }
     // A fixed transparent hosting canvas avoids AppKit/SwiftUI resizing races.
     // `activity` still describes the padded visible capsule for layout checks.
@@ -19,7 +21,8 @@ struct CompanionLayout {
                width: activity.width,
                height: Self.expandedHeight + 24)
     }
-    static func place(pet: CGRect, in screen: CGRect, expanded: Bool) -> Self {
+    /// `bubble` reserves the bubble canvas between the pet and the activity, e.g. for a voice session.
+    static func place(pet: CGRect, in screen: CGRect, expanded: Bool, bubble reservesBubble: Bool = false) -> Self {
         let inset = screen.insetBy(dx: 8, dy: 8)
         let width = min(capsuleWidth + 24, inset.width)
         let height = (expanded ? expandedHeight : collapsedHeight) + 24
@@ -33,10 +36,14 @@ struct CompanionLayout {
         let controls = CGRect(x: clamp(placed.midX - controlsWidth / 2, inset.minX, inset.maxX - controlsWidth),
                               y: placed.minY - controlsHeight, width: controlsWidth, height: controlsHeight)
         let below = placed.midY >= screen.midY
-        let activity = CGRect(x: clamp(placed.midX - width / 2, inset.minX, inset.maxX - width),
-                              y: below ? controls.minY + 4 - height : placed.maxY - 4,
+        let left = clamp(placed.midX - width / 2, inset.minX, inset.maxX - width)
+        let bubbleHeight = reservesBubble ? CompanionBubbleContent.canvasHeight : 0
+        let bubble = CGRect(x: left, y: below ? controls.minY - bubbleHeight : placed.maxY, width: width, height: bubbleHeight)
+        // The capsule's 12 pt transparent padding overlaps the pet side by 4 pt; the bubble keeps its own margin.
+        let overlap: CGFloat = reservesBubble ? 12 : 4
+        let activity = CGRect(x: left, y: below ? bubble.minY + overlap - height : bubble.maxY - overlap,
                               width: width, height: height)
-        return Self(pet: placed, activity: activity, controls: controls)
+        return Self(pet: placed, activity: activity, controls: controls, bubble: reservesBubble ? bubble : .zero)
     }
     /// The visible controls, centered under the pet but kept inside their canvas.
     func controlsContent(width: CGFloat) -> CGRect {
