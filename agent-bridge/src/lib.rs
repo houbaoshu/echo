@@ -240,10 +240,12 @@ pub unsafe extern "C" fn echo_agent_poll_events(
         }
         // If exactly max_batches were drained, closure is reported on the next
         // poll; never consume or drop a batch merely to inspect channel status.
+        // Streamed text follows the batches it may postdate, coalesced per poll.
         Ok(WirePoll {
             version: WIRE_VERSION,
             batches,
             closed,
+            stream: session.try_take_stream(),
         })
     }))
     .unwrap_or_else(|_| Err(internal()));

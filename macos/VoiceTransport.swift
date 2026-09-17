@@ -186,19 +186,37 @@ extension VoiceRecognizing {
     func cancel() { socket?.close() }
 }
 
+/// One spoken sentence with per-character timing, on the timeline of the synthesis's own audio.
+struct VoiceSubtitle: Decodable, Equatable, Sendable {
+    struct Word: Decodable, Equatable, Sendable {
+        let word: String
+        let startTime: TimeInterval
+    }
+    let text: String
+    let words: [Word]
+}
+
 @MainActor protocol VoiceSynthesizing: AnyObject {
     func run(configuration: VoiceConfiguration, key: String, text: AsyncThrowingStream<String, Error>,
              receive: @escaping @MainActor (Data) async throws -> Void) async throws
     func cancel()
+    /// Subtitles for audio already delivered through `receive`; synthesizers without them never call it.
+    var onSubtitle: (@MainActor (VoiceSubtitle) -> Void)? { get set }
+}
+extension VoiceSynthesizing {
+    var onSubtitle: (@MainActor (VoiceSubtitle) -> Void)? { get { nil } set {} }
 }
 
 @MainActor final class DoubaoSynthesizer: VoiceSynthesizing {
     private var socket: VoiceSocket?
+    var onSubtitle: (@MainActor (VoiceSubtitle) -> Void)?
     static func payload(event: Int, configuration: VoiceConfiguration, text: String = "") throws -> Data {
+        // `enable_subtitle` adds TTSSubtitle (364) events: each sentence's text with per-character start times.
         try JSONSerialization.data(withJSONObject: [
             "user": ["uid": "echo-desktop"], "event": event, "namespace": "BidirectionalTTS",
             "req_params": ["speaker": configuration.speaker, "text": text,
-                           "audio_params": ["format": "pcm", "sample_rate": 24000, "speech_rate": 0]]
+                           "audio_params": ["format": "pcm", "sample_rate": 24000, "speech_rate": 0,
+                                            "enable_subtitle": true]]
         ])
     }
     private func expect(_ event: Int, socket: VoiceSocket, session: String? = nil) async throws {
@@ -243,6 +261,10 @@ extension VoiceRecognizing {
                             chunks += 1; bytes += frame.payload.count
                             if chunks == 1 { VoiceDiagnostics.shared.record("5 返回音频流", "PASS", "TTS 首包 event=352 bytes=\(frame.payload.count)；PCM16 LE / 24000 Hz / 单声道") }
                             try await receive(frame.payload)
+                        }
+                        if frame.event == 364, let subtitle = try? JSONDecoder().decode(VoiceSubtitle.self, from: frame.payload),
+                           !subtitle.words.isEmpty {
+                            self.onSubtitle?(subtitle)
                         }
                         if frame.event == 152 {
                             VoiceDiagnostics.shared.record("5 返回音频流", receivedAudio ? "PASS" : "FAIL", "SessionFinished(152) chunks=\(chunks) bytes=\(bytes) duration=\(Double(bytes) / 48000)s")

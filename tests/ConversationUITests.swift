@@ -50,6 +50,15 @@ import SwiftUI
     func stop() { input?.finish(); input = nil }
 }
 
+/// Never touches the network: accepts the reply text and returns no audio.
+@MainActor private final class ComposerSynthesizer: VoiceSynthesizing {
+    func run(configuration: VoiceConfiguration, key: String, text: AsyncThrowingStream<String, Error>,
+             receive: @escaping @MainActor (Data) async throws -> Void) async throws {
+        for try await _ in text {}
+    }
+    func cancel() {}
+}
+
 @MainActor private final class ComposerRecognizer: VoiceRecognizing {
     var receive: (@MainActor (ASRResult) -> Void)?
     var pending: CheckedContinuation<Void, any Error>?
@@ -98,6 +107,8 @@ import SwiftUI
             try await testCompanionQuickComposerLifecycle()
             try testCompanionBubblePresentationAndLayout()
             try await testCompanionBubbleViews()
+            try await testPetVoiceConnectingAndBell()
+            try await testLiveVoiceTurnKeepsTaskCardHidden()
             try await testPetProjectMenuAndCardReveal()
             try await testCompanionBubblePanelAndHotKey()
             return
@@ -114,6 +125,8 @@ import SwiftUI
         try await testCompanionQuickComposerLifecycle()
         try testCompanionBubblePresentationAndLayout()
         try await testCompanionBubbleViews()
+        try await testPetVoiceConnectingAndBell()
+        try await testLiveVoiceTurnKeepsTaskCardHidden()
         try await testPetProjectMenuAndCardReveal()
         try await testCompanionBubblePanelAndHotKey()
         try await testComposerPreservesEditorStateAcrossVoiceUpdates()
@@ -1326,10 +1339,10 @@ import SwiftUI
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
         func surface(hovered: Bool = false, composer: Bool = false, draft: String = "", count: Int = 0,
                      collapsed: Bool = false, unseen: Int = 0, voice: VoiceSessionSnapshot = .init(),
-                     canStart: Bool = true, running: Int = 0, sent: Bool = false) -> Surface {
+                     canStart: Bool = true, running: Int = 0, sent: Bool = false, connected: UUID? = nil) -> Surface {
             Surface(hovered: hovered, composerOpen: composer, draft: draft, activityCount: count,
                     activitiesCollapsed: collapsed, unseenCompleted: unseen, voice: voice, canStartVoice: canStart,
-                    runningTasks: running, composerSent: sent)
+                    runningTasks: running, composerSent: sent, connectedVoiceSession: connected)
         }
         precondition(surface().mode == .compact && !surface().showsActions && surface().width == Surface.collapsedSize.width,
                      "Idle pet shows only the light collapsed bar")
@@ -1364,10 +1377,30 @@ import SwiftUI
         precondition(surface(composer: true, draft: "你好").canSend)
         var voice = VoiceSessionSnapshot()
         voice.session = .starting(owner)
-        precondition(surface(voice: voice).mode == .voice && surface(voice: voice).voice == .connecting
-                     && !surface(voice: voice).muteEnabled, "Connecting voice cannot be muted yet")
-        voice.session = .active(owner); voice.recognition = .listening
-        precondition(surface(voice: voice).voice == .listening && surface(voice: voice).muteEnabled)
+        let starting = surface(voice: voice)
+        precondition(starting.mode == .compact && starting.voiceConnecting && !starting.muteEnabled
+                     && starting.showsStatus && starting.tray == .none && starting.width == Surface.circle,
+                     "Starting Live Voice is shown by its own button, not the voice bar")
+        precondition(surface(hovered: true, count: 1, collapsed: true, unseen: 2, voice: voice).width
+                     == 2 * Surface.pillPadding + 2 * Surface.segment, "The hover strip swaps Live Voice for the connecting button")
+        voice.session = .active(owner)
+        precondition(surface(voice: voice).voiceConnecting && surface(voice: voice).mode == .compact,
+                     "Audio has started but recognition has not connected yet")
+        voice.recognition = .connecting
+        precondition(surface(voice: voice).voiceConnecting && surface(voice: voice).mode == .compact)
+        voice.recognition = .listening
+        precondition(!surface(voice: voice).voiceConnecting && surface(voice: voice).mode == .voice
+                     && surface(voice: voice).voice == .listening && surface(voice: voice).muteEnabled,
+                     "Once connected the formal voice bar appears")
+        voice.recognition = .connecting
+        precondition(surface(voice: voice, connected: owner.sessionID).mode == .voice
+                     && !surface(voice: voice, connected: owner.sessionID).voiceConnecting,
+                     "A session that connected keeps the voice bar while recognition reconnects")
+        precondition(surface(voice: voice, connected: UUID()).voiceConnecting, "Another session's connection does not count")
+        voice.recognition = .listening
+        precondition(surface(count: 1, collapsed: true, unseen: 2, voice: voice, running: 1).tray == .none
+                     && surface(hovered: true, count: 1, unseen: 2, voice: voice).tray == .collapse,
+                     "Live Voice shows no bell; an expanded card keeps its ⌃")
         voice.agentActivity = "正在请求模型…"
         precondition(surface(voice: voice).voice == .thinking)
         voice.replyAudio = .playing(UUID())
@@ -1586,47 +1619,85 @@ import SwiftUI
     @MainActor private static func testCompanionBubblePresentationAndLayout() throws {
         typealias Bubble = CompanionBubbleContent
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
-        func bubble(_ voice: VoiceSessionSnapshot, reply: String? = nil, notice: String? = nil) -> Bubble {
-            Bubble(voice: voice, replyText: reply, notice: notice)
+        let words: [VoiceSubtitle.Word] = [("今", 0.0), ("天", 0.2), ("天", 0.4), ("气", 0.6), ("好。", 0.8)]
+            .map { .init(word: $0.0, startTime: $0.1) }
+        let spoken = SpokenReply(runID: UUID(), source: "今天**天气**好。", words: words)
+        func bubble(_ voice: VoiceSessionSnapshot, spoken: SpokenReply? = spoken, at position: TimeInterval = 10,
+                    notice: String? = nil) -> Bubble {
+            Bubble(voice: voice, spoken: spoken, position: position, notice: notice)
+        }
+        func shown(_ voice: VoiceSessionSnapshot, spoken: SpokenReply? = spoken, notice: String? = nil) -> Bool {
+            Bubble.isShown(voice: voice, spoken: spoken, notice: notice)
         }
         var voice = VoiceSessionSnapshot()
-        precondition(bubble(voice) == .none && bubble(voice, notice: "语音失败") == .notice("语音失败"),
-                     "Without a session only notices appear")
+        precondition(bubble(voice) == .none && bubble(voice, notice: "语音失败") == .notice("语音失败")
+                     && !shown(voice) && shown(voice, notice: "语音失败"), "Without a session only errors appear")
         voice.session = .starting(owner); voice.speakerMuted = true
-        precondition(bubble(voice, reply: "回复") == .none, "Connecting is shown by the orb, not the bubble")
-        voice.session = .active(owner); voice.speakerMuted = false; voice.recognition = .listening
+        precondition(bubble(voice) == .none && !shown(voice), "Connecting shows no bubble; the Live Voice button reports it")
+        voice.session = .active(owner); voice.recognition = .listening
+        precondition(bubble(voice, spoken: nil) == .none && !shown(voice, spoken: nil),
+                     "Listening, the user's speech and the model request show nothing until speech is played")
+        voice.subtitle = "我在说话"; voice.agentActivity = "正在请求模型…"; voice.replyAudio = .preparing(UUID())
+        precondition(bubble(voice, spoken: nil) == .none && !shown(voice, spoken: nil), "Transcript, request and preparation never show")
+        let silent = SpokenReply(runID: UUID(), source: "回复")
+        precondition(bubble(voice, spoken: silent) == .none && !shown(voice, spoken: silent),
+                     "Audio without subtitles yet shows nothing")
 
-        // Live Voice is spoken: no transcript, progress or audible reply becomes text.
-        voice.subtitle = "我在说话"
-        precondition(bubble(voice) == .none, "The user's transcript never shows")
-        voice.subtitle = ""
-        voice.agentActivity = "正在请求模型…"
-        precondition(bubble(voice) == .none, "Request progress never shows")
-        voice.agentActivity = nil
-        voice.replyAudio = .preparing(UUID())
-        precondition(bubble(voice, reply: "回复") == .none, "Preparing speech never shows")
+        // With the speaker muted the bubble follows what playback has reached.
         voice.replyAudio = .playing(UUID())
-        precondition(bubble(voice, reply: "这是回复。") == .none, "An audible reply shows no text")
-        voice.microphone = .muted
-        precondition(bubble(voice, reply: "这是回复。") == .none, "Muting the microphone does not show the reply")
-        voice.microphone = .enabled
-
-        // With the speaker muted, the spoken reply stands in for the audio.
-        voice.speakerMuted = true
-        precondition(bubble(voice, reply: "  这是回复。 ") == .reply("这是回复。"), "A muted speaker shows the playing reply")
-        precondition(bubble(voice) == .none, "Without the spoken run's text there is no reply")
-        voice.replyAudio = .draining(UUID())
-        precondition(bubble(voice, reply: "尾声") == .reply("尾声"), "The reply stays while its audio finishes")
-        voice.subtitle = "我想补充"; voice.agentActivity = "正在运行命令 · ls"
-        precondition(bubble(voice, reply: "尾声") == .reply("尾声"), "Neither transcript nor progress replaces the muted reply")
-        voice.replyAudio = .preparing(UUID())
-        precondition(bubble(voice, reply: "尾声") == .none, "A muted speaker still hides preparation")
-        voice.replyAudio = .playing(UUID())
+        precondition(bubble(voice, at: 0) == .reply("今天**天气**好。", heard: "今") && shown(voice),
+                     "The first played character opens the bubble")
+        precondition(bubble(voice, at: 0.5) == .reply("今天**天气**好。", heard: "今天天"), "Heard text follows playback")
+        precondition(bubble(voice, at: 10) == .reply("今天**天气**好。", heard: "今天天气好。"), "All words once played")
+        var stopped = spoken; stopped.stoppedAt = 0.3
+        precondition(bubble(voice, spoken: stopped, at: 10) == .reply("今天**天气**好。", heard: "今天"),
+                     "An interrupted reply keeps what was heard")
+        stopped.stoppedAt = .infinity
+        precondition(bubble(voice, spoken: stopped, at: 0) == .reply("今天**天气**好。", heard: nil) && shown(voice, spoken: stopped),
+                     "A finished reply stays whole")
         voice.speakerMuted = false
-        precondition(bubble(voice, reply: "尾声") == .none, "Unmuting the speaker hides the reply again")
-        precondition(bubble(voice, reply: "尾声", notice: "麦克风不可用") == .notice("麦克风不可用"), "Errors show while the reply is audible")
+        precondition(bubble(voice) == .none && !shown(voice), "An audible reply shows no text")
+        precondition(bubble(voice, notice: "麦克风不可用") == .notice("麦克风不可用"), "Errors show while the reply is audible")
         voice.speakerMuted = true
-        precondition(bubble(voice, reply: "尾声", notice: "麦克风不可用") == .notice("麦克风不可用"), "Errors outrank the muted reply")
+        precondition(bubble(voice, notice: "麦克风不可用") == .notice("麦克风不可用"), "Errors outrank the muted reply")
+
+        // Heard speech maps onto the rendered Markdown, skipping unvoiced markers.
+        let heardRendered = CompanionBubble.renderedReply("## 结果\n\n- **构建**通过，运行 `swift test`：3 项")
+        let plain = String(heardRendered.characters)
+        precondition(plain == "结果\n• 构建通过，运行 swift test：3 项")
+        precondition(SpokenReply.coveredCount(of: plain, heard: "") == 0, "Nothing heard covers nothing")
+        precondition(SpokenReply.coveredCount(of: plain, heard: "##结果。-构建") == "结果\n• 构建".count,
+                     "Markdown markers voiced as symbols are skipped")
+        precondition(SpokenReply.coveredCount(of: plain, heard: "结果构建通过，") == "结果\n• 构建通过，".count,
+                     "Punctuation right after a heard character is shown with it")
+        precondition(SpokenReply.coveredCount(of: plain, heard: "结果构建通过运行swifttest三") == "结果\n• 构建通过，运行 swift test：".count
+                     && SpokenReply.coveredCount(of: plain, heard: "结果构建通过运行swifttest三项") == plain.count,
+                     "Speech that normalizes a character (3 read as 三) skips it; the next spoken character still matches")
+        let prefix = AttributedString(heardRendered[heardRendered.startIndex..<heardRendered.characters.index(heardRendered.startIndex, offsetBy: "结果\n• 构建".count)])
+        precondition(prefix.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true
+                                             && String(prefix[$0.range].characters) == "构建" }, "The heard prefix keeps Markdown styling")
+
+        // The reply stream: rounds, withdrawn tool steps and late snapshots.
+        let stream = AssistantReplyStream()
+        stream.receive(operationID: 3, text: "第一轮", toolCall: false)
+        stream.receive(operationID: 3, text: "第一轮回复", toolCall: false)
+        stream.complete(operationID: 3, text: "第一轮回复完成")
+        precondition(stream.text == "第一轮回复完成", "The final reply settles the round")
+        stream.receive(operationID: 5, text: "\n ", toolCall: false)
+        precondition(stream.text == "第一轮回复完成", "Whitespace does not start the next round")
+        stream.receive(operationID: 5, text: "先看看", toolCall: false)
+        precondition(stream.text == "先看看", "The next round's first real delta clears the previous reply")
+        stream.receive(operationID: 5, text: "先看看", toolCall: true)
+        precondition(stream.text == "第一轮回复完成", "A tool call withdraws its step and restores the previous reply")
+        stream.receive(operationID: 7, text: "结果", toolCall: false)
+        stream.withdraw(7)
+        stream.receive(operationID: 7, text: "结果更多", toolCall: false)
+        precondition(stream.text == "第一轮回复完成", "A withdrawn step never returns")
+        stream.complete(operationID: 9, text: "未流式的最终回复")
+        precondition(stream.text == "未流式的最终回复", "A reply without deltas still arrives when it completes")
+        stream.receive(operationID: 11, text: "半截", toolCall: false)
+        stream.abandon()
+        precondition(stream.text == "未流式的最终回复", "A stopped round keeps no partial reply")
 
         // The reply renders Markdown through the chat's parser instead of showing its syntax.
         let rendered = CompanionBubble.renderedReply("先看 **重点**，运行 `ls -la`：\n\n- 第一项\n- 第二项")
@@ -1657,83 +1728,210 @@ import SwiftUI
                              "The bubble sits between the pet and its card")
             }
         }
-        print("PASS: companion bubble rules (errors, muted-speaker reply only), Markdown reply and layout")
+        print("PASS: companion bubble rules (errors, muted reply as heard), heard-to-Markdown mapping, reply stream rounds and layout")
+    }
+
+    /// Speaking in Live Voice starts a turn; its task card must never appear, not even briefly.
+    @MainActor private static func testLiveVoiceTurnKeepsTaskCardHidden() async throws {
+        for scenario in ["fresh conversation", "card closed with ×"] {
+            let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+            let source = PreviewSource()
+            var recognizers: [ComposerRecognizer] = []
+            let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
+                let recognizer = ComposerRecognizer(); recognizers.append(recognizer); return recognizer
+            }, synthesizer: { ComposerSynthesizer() }, permission: { true })
+            let workspace = WorkspaceStore(voice: voice, sourceFactory: { source })
+            let settings = SettingsStore(secrets: ComposerSecrets())
+            let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings)
+            defer { companion.shutdown() }
+            if scenario == "card closed with ×" {
+                precondition(workspace.sendQuickMessage("之前的任务"))
+                source.receive?(.completed("完成"))
+                workspace.toggleActivityTray(); workspace.activityStore.closeActivity()
+                try await Task.sleep(for: .milliseconds(400))
+                precondition(!companion.activityPanel.isVisible)
+            }
+            let target = (workspace.activity ?? workspace.selected)!
+            voice.attach(workspace: workspace, settings: settings)
+            voice.start(conversation: target, configuration: VoiceConfiguration(), key: "k")
+            var shown = false
+            func watch(for duration: Duration) async throws {
+                let end = ContinuousClock.now + duration
+                while ContinuousClock.now < end {
+                    shown = shown || companion.activityPanel.isVisible
+                    try await Task.sleep(for: .milliseconds(2))
+                }
+            }
+            try await watch(for: .milliseconds(150))
+            precondition(voice.snapshot.recognition == .listening, "Live Voice connected")
+            recognizers.last?.emit("你好")
+            precondition(target.store.isGenerating && !target.store.isActivityVisible,
+                         "The spoken turn starts with its card already folded (\(scenario))")
+            try await watch(for: .milliseconds(400))
+            source.receive?(.completed("你好呀"))
+            try await watch(for: .milliseconds(400))
+            precondition(!shown, "The task card never appeared during the Live Voice turn (\(scenario))")
+            voice.end()
+        }
+        print("PASS: Live Voice turns keep the task card hidden from submit to reply, with no flash")
     }
 
     @MainActor private static func testCompanionBubbleViews() async throws {
-        let source = PreviewSource()
-        let store = TaskStore(source: source)
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(initialStore: store, dictation: DictationController(), voice: voice)
-        defer { workspace.shutdown(); voice.shutdown() }
+        defer { voice.shutdown() }
         let state = CompanionBubbleState(), placement = ActivityPlacement()
         let canvas = NSRect(x: 0, y: 0, width: CompanionLayout.capsuleWidth + 24, height: CompanionBubbleContent.canvasHeight)
-        let host = NSHostingView(rootView: WorkspaceCompanionBubble(workspace: workspace, voice: voice, state: state, placement: placement)
-            .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light))
         let window = NSWindow(contentRect: canvas, styleMask: .borderless, backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .aqua)
+        defer { window.orderOut(nil) }
+        var host = NSHostingView(rootView: AnyView(EmptyView()))
+        func show(_ view: some View) async throws {
+            host = NSHostingView(rootView: AnyView(view.background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)))
+            window.contentView = host
+            try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+        }
+        func node() -> AnyObject? { findAccessibility("companion.bubble", in: host) }
+        func snapshot(_ name: String) throws {
+            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/\(name).png"))
+        }
+
+        // Live Voice connecting, listening and waiting show no bubble.
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
+        try await show(WorkspaceCompanionBubble(voice: voice, state: state, placement: placement))
+        for update in [{ (s: inout VoiceSessionSnapshot) in s.session = .starting(owner) },
+                       { s in s.session = .active(owner); s.recognition = .connecting; s.speakerMuted = true },
+                       { s in s.recognition = .listening; s.subtitle = "帮我看看"; s.agentActivity = "正在请求模型…" },
+                       { s in s.replyAudio = .preparing(UUID()) }] {
+            voice.updateSnapshot(update)
+            try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
+            precondition(node() == nil, "No bubble before speech is played")
+        }
+        state.notice = "语音连接已断开，请稍后重试。"
+        try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
+        precondition(node()?.accessibilityLabel?() == "语音连接已断开，请稍后重试。", "Errors still use the bubble")
+        state.notice = nil
+
+        // The reply grows with what was heard: one line, two, three, then the latest three.
+        let lines = (1...5).map { "第\($0)项检查**通过**了" }
+        let markdown = lines.map { "- " + $0 }.joined(separator: "\n")
+        func heard(_ count: Int) -> String { lines.prefix(count).joined().replacingOccurrences(of: "**", with: "") }
+        var heights: [CGFloat] = []
+        for count in [1, 2, 3, 5] {
+            try await show(CompanionBubble(content: .reply(markdown, heard: heard(count)), tailOnTop: false,
+                                           petCenterX: canvas.width / 2))
+            let label = node()?.accessibilityLabel?()
+            precondition(label == lines.prefix(count).map { "• " + $0.replacingOccurrences(of: "**", with: "") }.joined(separator: "\n"),
+                         "The bubble shows exactly the heard lines (\(count)): \(label ?? "nil")")
+            heights.append(node()?.accessibilityFrame?().height ?? 0)
+            if count == 1 { try snapshot("pet-bubble-heard-one-line") }
+            if count == 5 { try snapshot("pet-bubble-heard-latest-lines") }
+        }
+        // Past three lines the accessibility frame reports the unclipped text; the layout check below covers the cap.
+        let line = heights[1] - heights[0]
+        precondition(line > 10 && abs(heights[2] - heights[1] - line) < 0.5,
+                     "The bubble is one line tall, then two, then three: \(heights)")
+        try await show(CompanionBubble(content: .reply(markdown, heard: ""), tailOnTop: false, petCenterX: canvas.width / 2))
+        precondition(node() == nil, "Nothing heard, no bubble")
+        try await show(CompanionBubble(content: .reply("目录里有 **3** 个文件", heard: nil), tailOnTop: true, petCenterX: canvas.width / 2))
+        try snapshot("pet-bubble-reply-below")
+        precondition(node()?.accessibilityLabel?() == "目录里有 3 个文件", "A fully played reply stays whole")
+        let notice = "语音连接已断开：服务端在等待识别结果时关闭了连接。请检查网络和语音密钥设置，然后在桌宠上重新开始 Live Voice，已经说过的内容会保留在会话里。"
+        try await show(CompanionBubble(content: .notice(notice), tailOnTop: false, petCenterX: canvas.width / 2))
+        try snapshot("pet-bubble-notice-long")
+        precondition(node()?.accessibilityLabel?() == notice, "Errors show in the bubble, limited to three lines")
+
+        // The layout: content up to three lines sets the height; taller content keeps its newest lines in view.
+        let lineBox = CompanionBubble.replyHeight
+        for height in [lineBox / 3, lineBox * 5 / 3] {
+            let layoutHost = NSHostingView(rootView: VStack(spacing: 0) {
+                LatestLinesLayout(maxHeight: lineBox) {
+                    Rectangle().fill(.red).frame(height: height).accessibilityElement().accessibilityIdentifier("latest.content")
+                }
+                .clipped()
+                .background { Rectangle().fill(.blue.opacity(0.02)).accessibilityElement().accessibilityIdentifier("latest.box") }
+                Spacer(minLength: 0)
+            }.frame(width: 200, height: lineBox * 2))
+            let layoutWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: lineBox * 2),
+                                        styleMask: .borderless, backing: .buffered, defer: false)
+            layoutWindow.contentView = layoutHost
+            try await Task.sleep(for: .milliseconds(100)); layoutHost.layoutSubtreeIfNeeded()
+            let box = findAccessibility("latest.box", in: layoutHost)?.accessibilityFrame?() ?? .zero
+            let content = findAccessibility("latest.content", in: layoutHost)?.accessibilityFrame?() ?? .zero
+            // Accessibility frames are bottom-up screen coordinates.
+            if height <= lineBox {
+                precondition(abs(box.height - height) < 0.5 && abs(content.maxY - box.maxY) < 0.5,
+                             "Short content sets the height and starts on the first line: \(box) \(content)")
+            } else {
+                precondition(abs(box.height - lineBox) < 0.5 && abs(content.minY - box.minY) < 0.5 && content.maxY > box.maxY,
+                             "Past three lines the height stays and the oldest lines move out above: \(box) \(content)")
+            }
+            layoutWindow.orderOut(nil)
+        }
+        print("PASS: Live Voice bubble hidden while connecting/listening/waiting, follows heard speech with Markdown, grows 1→3 lines then keeps the latest; previews: build/pet-bubble-*.png")
+    }
+
+    @MainActor private static func testPetVoiceConnectingAndBell() async throws {
+        let store = TaskStore(source: PreviewSource())
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        defer { store.shutdown(); voice.shutdown() }
+        let presentation = PetControlsPresentation()
+        var ended: [VoiceSessionSnapshot.Owner] = []
+        func controls(unseen: Int) -> some View {
+            PetControls(store: store, voice: voice, presentation: presentation, placement: ActivityPlacement(),
+                        unseenCompleted: unseen, actions: PetControlActions(endVoice: { ended.append($0) }))
+                .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
+        }
+        let host = NSHostingView(rootView: controls(unseen: 2))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight),
+                              styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
         window.appearance = NSAppearance(named: .aqua)
         defer { window.orderOut(nil) }
-        func refresh() async throws { try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded() }
-        func label() -> String? { findAccessibility("companion.bubble", in: host)?.accessibilityLabel?() }
+        func refresh() async throws { try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded() }
+        func node(_ id: String) -> AnyObject? { findAccessibility(id, in: host) }
+
+        presentation.isHovered = true
+        try await refresh()
+        precondition(node("pet.activity.expand") != nil && node("voice.start") != nil, "Without Live Voice the bell shows unseen tasks")
+        presentation.isHovered = false
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
+        voice.updateSnapshot { $0.session = .starting(owner) }
+        try await refresh(); try await refresh()
         func render() -> Data? {
             guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
             host.cacheDisplay(in: host.bounds, to: bitmap)
             return bitmap.representation(using: .png, properties: [:])
         }
-        func snapshot(_ name: String) throws { try render()?.write(to: URL(fileURLWithPath: "build/\(name).png")) }
-
+        let connecting = render()
+        try connecting?.write(to: URL(fileURLWithPath: "build/pet-voice-connecting.png"))
+        try await Task.sleep(for: .milliseconds(300)); host.layoutSubtreeIfNeeded()
+        precondition(connecting != nil && render() == connecting, "The connecting dot is still, without animation")
+        precondition(node("voice.connecting") != nil && node("voice.end") == nil && node("voice.mute") == nil
+                     && node("pet.activity.expand") == nil, "Starting Live Voice shows only the connecting button, without the bell")
+        voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .connecting }
         try await refresh()
-        precondition(label() == nil, "No voice session, no bubble")
-        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: workspace.selected!.id)
-        store.send("检查一下构建")
-        voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening; $0.agentActivity = "正在请求模型…"; $0.subtitle = "检查一下构建" }
+        precondition(node("voice.connecting") != nil && node("voice.end") == nil, "The button keeps connecting until recognition is ready")
+        precondition(node("voice.connecting")?.accessibilityPerformPress?() == true && ended == [owner],
+                     "Pressing the connecting button cancels Live Voice")
+        voice.updateSnapshot { $0.recognition = .listening }
+        try await refresh(); try await refresh()
+        precondition(node("voice.end") != nil && node("voice.mute") != nil && node("voice.connecting") == nil
+                     && presentation.connectedVoiceSession == owner.sessionID, "Once connected the formal voice bar appears")
+        voice.updateSnapshot { $0.recognition = .off(.recovery) }
+        voice.updateSnapshot { $0.recognition = .connecting }
         try await refresh()
-        precondition(label() == nil, "Neither the transcript nor request progress shows during Live Voice")
-        voice.updateSnapshot { $0.subtitle = ""; $0.agentActivity = nil; $0.replyAudio = .preparing(store.task!.runID) }
+        precondition(node("voice.end") != nil && node("voice.connecting") == nil,
+                     "Recognition reconnecting between replies keeps the voice bar")
+        presentation.isHovered = true
         try await refresh()
-        precondition(label() == nil, "Preparing speech shows no bubble")
-        let reply = "已经检查完了：\n\n- **构建**通过\n- 运行 `swift test` 也没有失败"
-        let rendered = "已经检查完了：\n• 构建通过\n• 运行 swift test 也没有失败"
-        source.receive?(.completed(reply))
-        voice.updateSnapshot { $0.replyAudio = .playing(store.task!.runID) }
-        try await refresh()
-        precondition(!voice.snapshot.speakerMuted && label() == nil, "An audible reply shows no text")
-
-        workspace.toggleVoiceSpeakerMute(owner: owner)
-        try await refresh()
-        let shown = render()
-        precondition(voice.snapshot.speakerMuted && label() == rendered, "Muting the speaker shows the whole Markdown reply at once")
-        try await Task.sleep(for: .milliseconds(1000))
-        host.layoutSubtreeIfNeeded()
-        precondition(shown != nil && render() == shown, "The muted reply stays still: no typing or fading")
-        try snapshot("pet-bubble-reply-markdown")
-        voice.updateSnapshot { $0.subtitle = "等一下，我想补充" }
-        try await refresh()
-        precondition(label() == rendered && voice.snapshot.subtitle == "等一下，我想补充",
-                     "Speaking keeps the muted reply and leaves the transcript to the conversation")
-        voice.updateSnapshot { $0.subtitle = ""; $0.replyAudio = .playing(UUID()) }
-        try await refresh()
-        precondition(label() == nil, "Another run's audio does not show this conversation's reply")
-        voice.updateSnapshot { $0.replyAudio = .playing(store.task!.runID) }
-        placement.isBelowPet = true
-        try await refresh()
-        try snapshot("pet-bubble-reply-below")
-        workspace.toggleVoiceSpeakerMute(owner: owner)
-        try await refresh()
-        precondition(!voice.snapshot.speakerMuted && label() == nil, "Unmuting the speaker removes the reply")
-
-        let notice = "语音连接已断开：服务端在等待识别结果时关闭了连接。请检查网络和语音密钥设置，然后在桌宠上重新开始 Live Voice，已经说过的内容会保留在会话里。"
-        placement.isBelowPet = false
-        state.notice = notice
-        try await refresh()
-        try snapshot("pet-bubble-notice-long")
-        precondition(label() == notice, "Errors show in the bubble, limited to three lines")
-        state.notice = nil
+        precondition(node("pet.activity.expand") == nil, "Live Voice in progress shows no bell even with unseen tasks")
         voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
         try await refresh()
-        precondition(label() == nil, "Ending the session clears the bubble")
-        print("PASS: Live Voice bubble hides transcript, progress and audible replies; muted reply appears at once and stays still; errors; previews: build/pet-bubble-*.png")
+        precondition(presentation.connectedVoiceSession == nil && node("pet.activity.expand") != nil && node("voice.start") != nil,
+                     "After Live Voice ends the bell returns")
+        print("PASS: Live Voice connecting button, formal voice bar after connection, steady reconnects, no bell during voice; preview: build/pet-voice-connecting.png")
     }
 
     @MainActor private static func testPetProjectMenuAndCardReveal() async throws {
@@ -1845,19 +2043,22 @@ import SwiftUI
 
         precondition(!companion.bubblePanel.isVisible, "No bubble without a voice session")
         let screen = companion.petPanel.screen!.visibleFrame
+        let unreserved = CompanionLayout.place(pet: companion.petPanel.frame, in: screen, expanded: false).activityCanvas
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: workspace.selected!.id)
-        voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
-        try await settle()
-        let frames = CompanionLayout.place(pet: companion.petPanel.frame, in: screen, expanded: false, bubble: true)
-        precondition(companion.bubblePanel.isVisible && companion.bubblePanel.frame == frames.bubble
-                     && companion.activityPanel.frame == frames.activityCanvas, "A voice session places the bubble between the pet and its card")
+        for update in [{ (s: inout VoiceSessionSnapshot) in s.session = .starting(owner) },
+                       { s in s.session = .active(owner); s.recognition = .listening },
+                       { s in s.speakerMuted = true; s.replyAudio = .preparing(UUID()) }] {
+            voice.updateSnapshot(update)
+            try await settle()
+            precondition(!companion.bubblePanel.isVisible && companion.activityPanel.frame == unreserved,
+                         "Starting, listening and waiting neither open the bubble nor move the card")
+        }
         precondition(companion.bubblePanel.ignoresMouseEvents, "The bubble never takes clicks")
         voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
         try await settle()
-        precondition(!companion.bubblePanel.isVisible
-                     && companion.activityPanel.frame == CompanionLayout.place(pet: companion.petPanel.frame, in: screen, expanded: false).activityCanvas,
-                     "Ending the session gives the card its place back")
-        print("PASS: global shortcut registration, settings toggle, composer shortcut and bubble panel placement")
+        precondition(!companion.bubblePanel.isVisible && companion.activityPanel.frame == unreserved,
+                     "Ending the session keeps the card in place")
+        print("PASS: global shortcut registration, settings toggle, composer shortcut; entering Live Voice opens no bubble")
     }
 
     @MainActor private static func testComposerPreservesEditorStateAcrossVoiceUpdates() async throws {

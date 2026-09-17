@@ -31,7 +31,7 @@ class Handler(BaseHTTPRequestHandler):
             expected = ["before\n", "", "after\n"]
             assert all(x["stdout"] == expected[i] and x["exit_code"] == 0
                        for i, x in enumerate(observed)), observed
-            assert body["stream"] is False
+            assert body["stream"] is True
             if responses:
                 assert body["store"] is False
             commands = ["cat note.txt", "printf 'after\\n' > note.txt", "test \"$(cat note.txt)\" = after && cat note.txt"]
@@ -50,6 +50,8 @@ class Handler(BaseHTTPRequestHandler):
             if model == "probe-malformed":
                 command = 17
         reply = "最终回复：" + ("已读取真实工具结果" if results else text)
+        if "markdown-stream" in text and not command:
+            reply = "## 结果\n\n- **第一项**通过\n- 运行 `swift test`\n- 第三项\n- 第四项完成"
         if "skip" in text:
             command = None
         if responses:
@@ -66,6 +68,9 @@ class Handler(BaseHTTPRequestHandler):
                 message["tool_calls"] = [{"id": "call-1", "type": "function", "function": {
                     "name": "bash", "arguments": json.dumps({"command": command})}}]
             value = {"choices": [{"message": message, "finish_reason": "tool_calls" if command else "stop"}]}
+        if body.get("stream"):
+            self.stream(value, responses, pause=0.15 if "slow-stream" in text else 0)
+            return
         encoded = json.dumps(value).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -73,6 +78,46 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def stream(self, value, responses, pause):
+        """Server-sent events carrying the same reply in several real deltas."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+
+        def send(event):
+            self.wfile.write(("data: " + json.dumps(event, ensure_ascii=False) + "\n\n").encode())
+            self.wfile.flush()
+            if pause:
+                time.sleep(pause)
+
+        def pieces(text, count=4):
+            size = max(1, -(-len(text) // count))
+            return [text[i:i + size] for i in range(0, len(text), size)]
+
+        try:
+            if responses:
+                for item in value["output"]:
+                    send({"type": "response.output_item.added", "item": item})
+                    if item["type"] == "message":
+                        for piece in pieces(item["content"][0]["text"]):
+                            send({"type": "response.output_text.delta", "item_id": "msg-test",
+                                  "content_index": 0, "delta": piece})
+                send({"type": "response.completed", "response": value})
+            else:
+                message = value["choices"][0]["message"]
+                for piece in pieces(message["content"]):
+                    send({"choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]})
+                for call in message.get("tool_calls", []):
+                    arguments = call["function"]["arguments"]
+                    send({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": call["id"], "type": "function",
+                          "function": {"name": "bash", "arguments": arguments[:5]}}]}, "finish_reason": None}]})
+                    send({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0,
+                          "function": {"arguments": arguments[5:]}}]}, "finish_reason": None}]})
+                send({"choices": [{"index": 0, "delta": {}, "finish_reason": value["choices"][0]["finish_reason"]}]})
+                self.wfile.write(b"data: [DONE]\n\n")
         except (BrokenPipeError, ConnectionResetError):
             pass
 

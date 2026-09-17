@@ -122,6 +122,7 @@ struct AgentEvent: Codable {
         struct Call: Codable { var id: String }
         var type: Tag
         var message_id: UInt64?
+        var content: String?
         var final_reply: Bool?
         var call: Call?
         var directory: String?
@@ -185,4 +186,14 @@ struct AgentWirePoll: Decodable {
     var version: Int
     var batches: [AgentBatch]
     var closed: Bool
+    var stream: AgentStream?
+}
+/// Display-only text of the running model operation, coalesced between polls and never
+/// checkpointed. `text` is cumulative, like `TaskEvent.progress`.
+struct AgentStream: Decodable, Equatable {
+    var turn_id: UInt64
+    var operation_id: UInt64
+    var text: String
+    /// The operation has started a tool call, so `text` is not a final reply.
+    var tool_call: Bool
 }

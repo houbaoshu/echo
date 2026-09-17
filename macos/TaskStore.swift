@@ -79,6 +79,52 @@ struct ActivityTask: Codable {
 }
 
 // Each conversation owns a cancellable source; window visibility never owns its lifetime.
+/// The latest assistant reply as the model writes it, for surfaces that follow a live
+/// conversation. The previous reply stays until the next reply's first real text; a model
+/// step that turns into a tool call, or is stopped, is withdrawn and the previous reply returns.
+/// Its own publisher keeps streamed text out of the conversation's save path.
+@MainActor final class AssistantReplyStream: ObservableObject {
+    @Published private(set) var text = ""
+    /// The unsettled operation that currently supplies `text`.
+    private var operationID: UInt64?
+    /// What was shown before `operationID` replaced it.
+    private var retained = ""
+    /// Operations up to here are final or withdrawn; late stream snapshots for them are ignored.
+    private var settledThrough: UInt64 = 0
+
+    /// `text` is everything received so far for the operation, like `TaskEvent.progress`.
+    func receive(operationID: UInt64, text next: String, toolCall: Bool) {
+        guard operationID > settledThrough else { return }
+        if toolCall { withdraw(operationID); return }
+        guard !next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if self.operationID != operationID {
+            if self.operationID == nil { retained = text }
+            self.operationID = operationID
+        }
+        if text != next { text = next }
+    }
+    /// The final reply of a step, which also covers models that did not stream.
+    func complete(operationID: UInt64, text final: String) {
+        guard operationID > settledThrough else { return }
+        settledThrough = operationID
+        if final.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if self.operationID == operationID { text = retained }
+        } else if text != final { text = final }
+        self.operationID = nil
+    }
+    func withdraw(_ operationID: UInt64) {
+        guard operationID > settledThrough else { return }
+        settledThrough = operationID
+        guard self.operationID == operationID else { return }
+        if text != retained { text = retained }
+        self.operationID = nil
+    }
+    /// A stopped or failed turn keeps no partial reply.
+    func abandon() {
+        if let operationID { withdraw(operationID) }
+    }
+}
+
 @MainActor protocol TaskSource: AnyObject {
     func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void)
     func cancel()
@@ -89,6 +135,11 @@ struct ActivityTask: Codable {
               receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws
     func control(_ command: AgentCommand) throws
     func close(afterCleanup: @escaping () -> Void)
+    /// Receives the session's streamed assistant text; sources that cannot stream never call it.
+    func observeStream(_ receive: @escaping (AgentStream) -> Void)
+}
+extension AgentSessionSource {
+    func observeStream(_ receive: @escaping (AgentStream) -> Void) {}
 }
 
 struct AgentToolRecord: Identifiable, Codable, Equatable {
@@ -119,6 +170,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @Published var mainDraft = ""
     @Published var followUpDraft = ""
     @Published var notice: String?
+    let replyStream = AssistantReplyStream()
     @Published private(set) var tools: [AgentToolRecord] = []
     @Published private(set) var needsDirectory = false
     @Published private(set) var waitingForProject = false
@@ -408,6 +460,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         activityDismissed = false; activitiesCollapsed = true
         if unseen { Self.completionClock += 1; unseenCompletion = Self.completionClock } else { markSeen() }
     }
+    /// A Live Voice turn is spoken, not watched: its card stays folded instead of appearing while it runs.
+    func foldActivity() { if !activitiesCollapsed { activitiesCollapsed = true } }
     /// A failure is not a completion; a hidden card only returns as a bell so it is not lost.
     func revealCollapsed() {
         guard task != nil, activityDismissed else { return }
@@ -479,6 +533,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         activityDismissed = false; onUserAction?(); lifecycle.send(.started(task!.runID))
         guard saveAgent() else { task?.status = .failed; return }
         do {
+            agent.observeStream { [weak self] stream in
+                guard let self, !self.retired, self.agentGeneration == generation,
+                      self.agentTurnID == stream.turn_id, self.task?.status == .running else { return }
+                self.replyStream.receive(operationID: stream.operation_id, text: stream.text, toolCall: stream.tool_call)
+            }
             try agent.open(sessionID: sessionID.uuidString, generation: generation.uuidString, restore: restore,
                 receive: { [weak self] batch in
                     guard let self, !self.retired, self.agentGeneration == generation else { return }
@@ -504,6 +563,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         }
     }
     private func failAgent(_ error: String) {
+        replyStream.abandon()
         notice = error; task?.summary = error
         pendingOperation = nil; cancelDirectoryWait?()
         task?.status = .stopping
@@ -553,6 +613,13 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                 if kind.final_reply == true, pendingInputs.isEmpty, let id = kind.message_id {
                     responseMessageID = messages.first { $0.coreID == id && $0.role == .assistant }?.id
                 }
+                if let operation = event.operation_id {
+                    // Text beside a tool call, or superseded by steering, is not a reply.
+                    if kind.final_reply == true { replyStream.complete(operationID: operation, text: kind.content ?? "") }
+                    else { replyStream.withdraw(operation) }
+                }
+            case .stopping:
+                replyStream.abandon()
             case .steering_queued, .steering_accepted:
                 if let id = kind.message_id, let index = messages.firstIndex(where: { $0.coreID == id }) {
                     messages[index].steering = kind.type == .steering_queued ? "待处理" : "已接收"
@@ -569,6 +636,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                     if task?.status != .stopping { task?.summary = Self.toolSummary(tools[index].command) }
                 }
             case .finished:
+                if kind.outcome?.status != .completed { replyStream.abandon() }
                 if pendingInputs.isEmpty && task?.status != .stopping { terminal = kind.outcome }
             default: break
             }

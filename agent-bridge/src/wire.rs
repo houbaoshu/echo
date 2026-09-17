@@ -1,8 +1,9 @@
 //! JSON v2 transport envelopes. All conversation types come from Mini Agent.
 pub use mini_agent::conversation::runner::{
-    BatchKind, COMMAND_CAPACITY, Checkpoint, CheckpointId, ClientMessageId, CommandResult,
-    DisplayEntry, DisplayRole, EVENT_CAPACITY, ErrorCode, HistoryInput, InputMessage, InputReceipt,
-    LegacyMessage, RestoreInput, SessionBatch, SessionCommand, SessionControl, SessionError,
+    AssistantStream, BatchKind, COMMAND_CAPACITY, Checkpoint, CheckpointId, ClientMessageId,
+    CommandResult, DisplayEntry, DisplayRole, EVENT_CAPACITY, ErrorCode, HistoryInput,
+    InputMessage, InputReceipt, LegacyMessage, RestoreInput, SessionBatch, SessionCommand,
+    SessionControl, SessionError,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -86,6 +87,10 @@ pub struct WirePoll {
     pub version: u32,
     pub batches: Vec<SessionBatch<String>>,
     pub closed: bool,
+    /// Latest display-only text of the running model operation, if it changed since
+    /// the previous poll. Deltas between polls are coalesced; never persist it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<AssistantStream>,
 }
 
 impl WireCommand {

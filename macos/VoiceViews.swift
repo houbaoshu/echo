@@ -158,6 +158,14 @@ struct VoiceSettingsView: View {
     }
 }
 
+/// Live Voice is connecting: a small solid dot, without motion.
+struct VoiceConnectingIndicator: View {
+    var body: some View {
+        Circle().fill(.primary).frame(width: 7, height: 7)
+            .accessibilityHidden(true)
+    }
+}
+
 /// The pet's voice indicator. State-driven motion only; it does not read audio levels.
 struct VoiceOrb: View {
     let indicator: PetSurfacePresentation.VoiceIndicator

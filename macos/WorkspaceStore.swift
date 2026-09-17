@@ -191,6 +191,10 @@ struct WorkspaceSnapshot: Codable {
     private var saveWork: DispatchWorkItem?
     private var saveDeadline: DispatchTime?
     private var shuttingDown = false
+    /// A Live Voice conversation whose completed replies have not been viewed. It becomes an
+    /// unseen completion only when the voice session ends; until then the conversation is in progress.
+    private var voiceCompletion: UUID?
+    private var voiceObservation: AnyCancellable?
     private var saveBlocked = false
     // Keep display timestamps fixed for this app session. Persist actual interaction
     // times separately so only the next launch applies the new order.
@@ -205,6 +209,9 @@ struct WorkspaceSnapshot: Codable {
         self.dictation = dictation; self.voice = voice
         self.persistence = persistence
         self.sourceFactory = sourceFactory
+        voiceObservation = voice.$snapshot.map { $0.session.owner == nil }.removeDuplicates().sink { [weak self] ended in
+            if ended { self?.finishVoiceConversation() }
+        }
         emptyObservation = emptyActivity.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.objectWillChange.send() }
         }
@@ -278,6 +285,14 @@ struct WorkspaceSnapshot: Codable {
     private func markViewedActivitySeen() {
         guard isMainWindowVisible else { return }
         selected?.store.markSeen()
+        if voiceCompletion == selectedID { voiceCompletion = nil }
+    }
+    private func isViewing(_ id: UUID) -> Bool { isMainWindowVisible && selectedID == id }
+    private func finishVoiceConversation() {
+        guard let id = voiceCompletion else { return }
+        voiceCompletion = nil
+        guard !shuttingDown, !isViewing(id), let store = conversation(id: id)?.store else { return }
+        store.collapseForCompletion(unseen: true)
     }
     private func synchronizeFileBrowser() {
         fileBrowser.select(project: selectedID.flatMap { project(for: $0) })
@@ -416,9 +431,14 @@ struct WorkspaceSnapshot: Codable {
             case .started:
                 // A new run supersedes the previous outcome.
                 target.store.markSeen()
+                // Folded before the companion next synchronizes, so the card never shows for a Live Voice turn.
+                if self.voice.conversationID == id { target.store.foldActivity() }
             case .reply(_, .completed):
                 // The conversation on screen already shows its reply; everywhere else it waits in the bell.
-                target.store.collapseForCompletion(unseen: !(self.isMainWindowVisible && self.selectedID == id))
+                // A Live Voice conversation is still in progress; it is counted when the voice session ends.
+                let viewed = self.isViewing(id)
+                if self.voice.conversationID == id { self.voiceCompletion = viewed ? nil : id }
+                target.store.collapseForCompletion(unseen: !viewed && self.voice.conversationID != id)
                 if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             case .reply(_, .failed):
                 if !target.store.isActivityVisible { target.store.revealCollapsed() }
@@ -630,6 +650,7 @@ struct WorkspaceSnapshot: Codable {
     func shutdown() {
         fileBrowser.select(project: nil)
         dictation.shutdown()
+        voiceObservation = nil
         voice.shutdown()
         shuttingDown = true; flush(); observations.removeAll(); lifecycleObservations.removeAll(); emptyObservation = nil
         (conversations + drafts).forEach { $0.store.shutdown() }

@@ -91,6 +91,8 @@ final class VoicePCMConverter: @unchecked Sendable {
     func setPlaybackPaused(_ paused: Bool)
     func setOutputMuted(_ muted: Bool)
     func play(_ data: Data) async throws
+    /// Frames of the current playback generation that have actually been heard.
+    var playbackFrames: Int { get }
     func drain() async throws
     func interruptPlayback()
     func finishCapture()
@@ -98,6 +100,7 @@ final class VoicePCMConverter: @unchecked Sendable {
 }
 
 extension VoiceAudioHandling {
+    var playbackFrames: Int { 0 }
     func finishCapture() { stop() }
     func resetCapture(epoch: Int, paused: Bool) {}
 }
@@ -115,6 +118,11 @@ extension VoiceAudioHandling {
     private var captureConverter: VoicePCMConverter?
     private var generation = UUID()
     private var queuedFrames = 0
+    /// Scheduled buffer lengths, oldest first, with the frames already played back before them.
+    private var scheduledBuffers: [Int] = []
+    private var playedBackFrames = 0
+    /// Player sample time when the oldest scheduled buffer began, or when the queue was last emptied.
+    private var headStartSample: AVAudioFramePosition?
     private var trailingByte = Data()
     private var playbackPaused = false
     private let playbackFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
@@ -234,14 +242,31 @@ extension VoiceAudioHandling {
         for i in 0..<count { samples[i] = Float(Int16(bitPattern: UInt16(bytes[i * 2]) | UInt16(bytes[i * 2 + 1]) << 8)) / 32768 }
         let wasEmpty = queuedFrames == 0
         queuedFrames += count
+        scheduledBuffers.append(count)
+        if wasEmpty { headStartSample = playerSample }
         if wasEmpty { VoiceDiagnostics.shared.record("6 播放器", "START", "scheduleBuffer frames=\(count) running=\(engine?.isRunning == true) playing=\(player.isPlaying)") }
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { @Sendable [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.generation == epoch else { return }
                 self.queuedFrames = max(0, self.queuedFrames - count)
+                if !self.scheduledBuffers.isEmpty { self.scheduledBuffers.removeFirst() }
+                self.playedBackFrames += count
+                self.headStartSample = self.playerSample
                 if self.queuedFrames == 0 { VoiceDiagnostics.shared.record("6 播放器", "PASS", "dataPlayedBack 回调已到达，队列清空") }
             }
         }
+    }
+    private var playerSample: AVAudioFramePosition? {
+        guard let player, let now = player.lastRenderTime, now.isSampleTimeValid,
+              let time = player.playerTime(forNodeTime: now) else { return nil }
+        return time.sampleTime
+    }
+    /// Completed buffers exactly, plus the player's progress through the current one, never past its end.
+    var playbackFrames: Int {
+        guard let head = scheduledBuffers.first, let start = headStartSample, let sample = playerSample else {
+            return playedBackFrames
+        }
+        return playedBackFrames + min(max(0, Int(sample - start)), head)
     }
     func drain() async throws {
         let epoch = generation
@@ -262,6 +287,7 @@ extension VoiceAudioHandling {
     }
     func interruptPlayback() {
         generation = UUID(); queuedFrames = 0; trailingByte = Data(); playbackPaused = false
+        scheduledBuffers = []; playedBackFrames = 0; headStartSample = nil
         player?.stop()
         if engine?.isRunning == true { player?.play() }
     }
@@ -270,6 +296,7 @@ extension VoiceAudioHandling {
     private func stop(flushCapture: Bool) {
         NotificationCenter.default.removeObserver(self)
         generation = UUID(); queuedFrames = 0; trailingByte = Data(); playbackPaused = false
+        scheduledBuffers = []; playedBackFrames = 0; headStartSample = nil
         if tapped { engine?.inputNode.removeTap(onBus: 0); tapped = false }
         captureConverter?.finish(flush: flushCapture); captureConverter = nil
         continuation?.finish(); continuation = nil

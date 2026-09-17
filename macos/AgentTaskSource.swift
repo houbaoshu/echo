@@ -13,6 +13,7 @@ import Foundation
     private var retry: Task<Void, Never>?
     private var closingBridges: [UUID: AgentBridge] = [:]
     private var cleanupWaiters: [() -> Void] = []
+    private var streamReceiver: ((AgentStream) -> Void)?
     init(settings: SettingsStore) {
         resources = Bundle.main.resourceURL
         credentials = {
@@ -29,13 +30,17 @@ import Foundation
     }
     func open(sessionID: String, generation: String, restore: AgentRestore,
               receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws {
-        bridge?.close(); bridge = nil
+        bridge?.onStream = nil; bridge?.close(); bridge = nil
         retry?.cancel(); retry = nil
         ready = false; cancelled = false; cleanupConfirmed = false; queued = []; controls = []
         let current = try AgentBridge(sessionID: sessionID, generation: generation, model: credentials(),
                                       restore: restore, resources: resources)
         bridge = current
         current.onFailure = { error in failure(error.localizedDescription) }
+        current.onStream = { [weak self, weak current] stream in
+            guard let self, self.bridge === current else { return }
+            self.streamReceiver?(stream)
+        }
         current.onBatch = { [weak self, weak current] batch in
             guard let self, self.bridge === current else { return }
             if batch.kind.type == .cancelled || batch.kind.type == .initialization_failed {
@@ -51,6 +56,7 @@ import Foundation
         }
         current.startPolling()
     }
+    func observeStream(_ receive: @escaping (AgentStream) -> Void) { streamReceiver = receive }
     func control(_ command: AgentCommand) throws {
         guard let bridge else { throw AgentBridgeError(code: .session_closed, message: "Agent 会话未启动。") }
         // Persistence controls remain usable before Ready and during Stop.
@@ -109,7 +115,7 @@ import Foundation
         var finished = false
         let finish = {
             guard !finished else { return }; finished = true
-            current.onBatch = nil; current.onFailure = nil; current.onClosed = nil
+            current.onBatch = nil; current.onFailure = nil; current.onClosed = nil; current.onStream = nil
             current.close()
             self.closingBridges[closeID] = nil
             self.finishCloseIfReady()

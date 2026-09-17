@@ -69,7 +69,7 @@ import Combine
                                          content: WorkspacePetControls(workspace: workspace, presentation: controlsPresentation,
                                                                        placement: placement))
         bubblePanel = CompanionSurface(title: "语音气泡",
-                                       content: WorkspaceCompanionBubble(workspace: workspace, voice: workspace.voice,
+                                       content: WorkspaceCompanionBubble(voice: workspace.voice,
                                                                          state: bubbleState, placement: placement))
         // The bubble only reports; clicks pass through to whatever is behind it.
         bubblePanel.ignoresMouseEvents = true
@@ -105,10 +105,13 @@ import Combine
         observation = workspace.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.synchronize() }
         }
-        // A voice session reserves the bubble between the pet and its card.
-        bubbleObservation = workspace.voice.$snapshot.map { $0.session.owner != nil }.removeDuplicates().dropFirst().sink { [weak self] _ in
-            DispatchQueue.main.async { [weak self] in self?.layout() }
-        }
+        // The bubble takes its place between the pet and its card only once it has something to show.
+        let voice = workspace.voice
+        bubbleObservation = Publishers.CombineLatest(voice.$snapshot, voice.$spoken)
+            .map { CompanionBubbleContent.isShown(voice: $0, spoken: $1, notice: nil) }
+            .removeDuplicates().dropFirst().sink { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in self?.layout() }
+            }
         voiceObservation = workspace.voice.$snapshot.map(\.error).removeDuplicates().compactMap { $0 }.sink { [weak self] error in
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.workspace.isMainWindowVisible else { return }
@@ -180,7 +183,8 @@ import Combine
         let surface = PetSurfacePresentation(hovered: hovered, composerOpen: presentation.isComposerOpen, draft: presentation.draft,
             activityCount: taskStore.activityCount, activitiesCollapsed: taskStore.activitiesCollapsed,
             unseenCompleted: workspace.unseenCompletedCount, voice: workspace.voice.snapshot, canStartVoice: workspace.voice.canStartCall,
-            runningTasks: workspace.runningTaskCount, composerSent: presentation.collapsesOnExit)
+            runningTasks: workspace.runningTaskCount, composerSent: presentation.collapsesOnExit,
+            connectedVoiceSession: presentation.connectedVoiceSession)
         let frames = CompanionLayout(pet: petPanel.frame, activity: activityPanel.frame, controls: controlsPanel.frame)
         return frames.controlsContent(width: surface.width)
     }
@@ -232,7 +236,8 @@ import Combine
         guard !layingOut, let screen = CompanionLayout.screen(for: petPanel.frame, screens: NSScreen.screens.map(\.visibleFrame)) else { return }
         layingOut = true
         defer { layingOut = false }
-        let reservesBubble = workspace.voice.snapshot.session.owner != nil || bubbleState.notice != nil
+        let reservesBubble = CompanionBubbleContent.isShown(voice: workspace.voice.snapshot, spoken: workspace.voice.spoken,
+                                                            notice: bubbleState.notice)
         let frames = CompanionLayout.place(pet: petPanel.frame, in: screen, expanded: taskStore.isFollowUpExpanded,
                                            bubble: reservesBubble)
         if activityPlacement.isBelowPet != frames.isActivityBelowPet {

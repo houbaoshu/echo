@@ -170,6 +170,18 @@ struct ActivityCapsule: View {
     @Published var isProjectPickerOpen = false
     /// After a send the empty composer collapses once the pointer leaves, like the idle strip.
     private(set) var collapsesOnExit = false
+    /// The Live Voice session that has connected once. The snapshot shows only the current
+    /// recognition state, which also reconnects between replies; those keep the voice bar.
+    @Published private(set) var connectedVoiceSession: UUID?
+    func noteVoice(_ snapshot: VoiceSessionSnapshot) {
+        guard case .active(let owner) = snapshot.session else {
+            if snapshot.session.owner == nil, connectedVoiceSession != nil { connectedVoiceSession = nil }
+            return
+        }
+        guard connectedVoiceSession != owner.sessionID,
+              snapshot.recognition != .connecting, snapshot.recognition != .off(.idle) else { return }
+        connectedVoiceSession = owner.sessionID
+    }
     func openComposer() {
         collapsesOnExit = false
         if !isComposerOpen { isComposerOpen = true }
@@ -265,11 +277,13 @@ struct PetControls: View {
                                draft: presentation.draft, activityCount: store.activityCount,
                                activitiesCollapsed: store.activitiesCollapsed, unseenCompleted: unseenCompleted,
                                voice: voice.snapshot, canStartVoice: voice.canStartCall,
-                               runningTasks: runningTasks, composerSent: presentation.collapsesOnExit)
+                               runningTasks: runningTasks, composerSent: presentation.collapsesOnExit,
+                               connectedVoiceSession: presentation.connectedVoiceSession)
     }
     var body: some View {
         let surface = surface
         content(surface)
+            .onChange(of: voice.snapshot, initial: true) { _, snapshot in presentation.noteVoice(snapshot) }
             .frame(width: surface.width, height: PetSurfacePresentation.circle)
             .shadow(color: .black.opacity(0.17), radius: 6, y: 3)
             .position(x: PetSurfacePresentation.contentCenter(petCenter: presentation.petCenterX, width: surface.width),
@@ -286,9 +300,15 @@ struct PetControls: View {
                 HStack(spacing: 0) {
                     composeSegment
                     SegmentDivider()
-                    PetSegment(label: "开始 Live Voice", identifier: "voice.start", enabled: surface.canStartVoice,
-                               action: actions.startVoice) {
-                        VoiceWaveform().frame(width: 12, height: 12)
+                    if surface.voiceConnecting, let owner = voice.snapshot.session.owner {
+                        PetSegment(label: Self.connectingLabel, identifier: "voice.connecting", action: { actions.endVoice(owner) }) {
+                            VoiceConnectingIndicator().frame(width: 16, height: 16)
+                        }
+                    } else {
+                        PetSegment(label: "开始 Live Voice", identifier: "voice.start", enabled: surface.canStartVoice,
+                                   action: actions.startVoice) {
+                            VoiceWaveform().frame(width: 12, height: 12)
+                        }
                     }
                     if surface.tray != .none {
                         SegmentDivider()
@@ -341,7 +361,11 @@ struct PetControls: View {
 
     private func statusControls(_ surface: PetSurfacePresentation) -> some View {
         HStack(spacing: PetSurfacePresentation.gap) {
-            if voice.snapshot.session.owner != nil {
+            if surface.voiceConnecting, let owner = voice.snapshot.session.owner {
+                PetCircle(label: Self.connectingLabel, identifier: "voice.connecting", action: { actions.endVoice(owner) }) {
+                    VoiceConnectingIndicator().frame(width: 16, height: 16)
+                }
+            } else if voice.snapshot.session.owner != nil {
                 PetCircle(label: "显示语音控制", identifier: "pet.voice.show", action: presentation.closeComposer) {
                     VoiceOrb(indicator: surface.voice, muted: surface.micMuted).frame(width: 18, height: 18)
                         .accessibilityHidden(true)
@@ -373,6 +397,8 @@ struct PetControls: View {
         .accessibilityLabel(surface.unseenCompleted > 0 ? "\(surface.unseenCompleted) 个已完成任务未查看" : "桌宠快捷控件")
         .accessibilityIdentifier("pet.collapsed")
     }
+
+    private static let connectingLabel = "正在连接 Live Voice，点按取消"
 
     private var composeSegment: some View {
         PetSegment(label: "新聊天", identifier: "pet.compose", action: presentation.openComposer) {
@@ -601,14 +627,14 @@ struct CompanionBubble: View {
     var canvasWidth = CompanionLayout.capsuleWidth + 24
 
     var body: some View {
-        // A fixed-size bubble appears at once and stays put while its content is shown.
+        // A fixed-width bubble; a reply grows from one line to three with what has been heard.
         let width = CompanionBubbleContent.width
         let center = min(max(petCenterX, width / 2 + 4), canvasWidth - width / 2 - 4)
+        let reply = shownReply
         ZStack {
-            if content != .none {
-                text
+            if content != .none, reply.map({ !$0.characters.isEmpty }) ?? true {
+                text(reply)
                     .font(.system(size: 12)).foregroundStyle(.primary)
-                    .lineLimit(3).truncationMode(.tail).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .padding(tailOnTop ? .top : .bottom, CompanionBubbleShape.tail)
@@ -619,7 +645,7 @@ struct CompanionBubble: View {
                     .shadow(color: .black.opacity(0.14), radius: 5, y: 2)
                     .offset(x: center - canvasWidth / 2)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(accessibilityText)
+                    .accessibilityLabel(reply.map { String($0.characters) } ?? accessibilityNotice)
                     .accessibilityIdentifier("companion.bubble")
             }
         }
@@ -627,11 +653,27 @@ struct CompanionBubble: View {
         .frame(width: canvasWidth, height: CompanionBubbleContent.canvasHeight, alignment: tailOnTop ? .top : .bottom)
     }
 
-    @ViewBuilder private var text: some View {
-        switch content {
-        case .none: EmptyView()
-        case .notice(let message): Text(message)
-        case .reply(let markdown): Text(Self.renderedReply(markdown))
+    static let replyHeight = 3 * NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: 12))
+
+    /// The rendered reply up to what speech has covered.
+    private var shownReply: AttributedString? {
+        guard case .reply(let markdown, let heard) = content else { return nil }
+        let rendered = Self.renderedReply(markdown)
+        guard let heard else { return rendered }
+        let count = SpokenReply.coveredCount(of: String(rendered.characters), heard: heard)
+        let end = rendered.characters.index(rendered.startIndex, offsetBy: count)
+        return AttributedString(rendered[rendered.startIndex..<end])
+    }
+
+    @ViewBuilder private func text(_ reply: AttributedString?) -> some View {
+        if let reply {
+            // Grows with each heard line up to three, then keeps the latest three.
+            LatestLinesLayout(maxHeight: Self.replyHeight) {
+                Text(reply)
+            }
+            .clipped()
+        } else if case .notice(let message) = content {
+            Text(message).lineLimit(3).truncationMode(.tail).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -655,27 +697,40 @@ struct CompanionBubble: View {
         return result
     }
 
-    private var accessibilityText: String {
-        switch content {
-        case .none: ""
-        case .notice(let text): text
-        case .reply(let markdown): String(Self.renderedReply(markdown).characters)
-        }
+    private var accessibilityNotice: String {
+        if case .notice(let text) = content { return text }
+        return ""
+    }
+}
+
+/// Takes its content's height up to `maxHeight`; taller content stays bottom-aligned,
+/// so the latest lines remain in view without measuring in state or animating.
+struct LatestLinesLayout: Layout {
+    var maxHeight: CGFloat
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let natural = subviews.first?.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) ?? .zero
+        return CGSize(width: proposal.width ?? natural.width, height: min(natural.height, maxHeight))
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let content = subviews.first else { return }
+        let size = content.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+        let top = size.height > bounds.height ? bounds.maxY - size.height : bounds.minY
+        content.place(at: CGPoint(x: bounds.minX, y: top), anchor: .topLeading,
+                      proposal: ProposedViewSize(width: bounds.width, height: size.height))
     }
 }
 
 struct WorkspaceCompanionBubble: View {
-    @ObservedObject var workspace: WorkspaceStore
     @ObservedObject var voice: VoiceSessionController
     @ObservedObject var state: CompanionBubbleState
     @ObservedObject var placement: ActivityPlacement
     var body: some View {
-        let snapshot = voice.snapshot
-        let store = snapshot.session.owner.flatMap { workspace.conversation(id: $0.conversationID)?.store }
-        let runID = snapshot.replyAudio.runID
-        // Only the run being spoken supplies its reply; a newer run has already interrupted its audio.
-        let reply = runID != nil && store?.task?.runID == runID ? store?.responseMessage?.content : nil
-        CompanionBubble(content: CompanionBubbleContent(voice: snapshot, replyText: reply, notice: state.notice),
-                        tailOnTop: placement.isBelowPet, petCenterX: state.petCenterX)
+        let playing = voice.snapshot.speakerMuted && voice.spoken != nil && voice.spoken?.stoppedAt == nil
+        // Follows the real playback position while the reply is being spoken; still otherwise.
+        TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !playing)) { _ in
+            CompanionBubble(content: CompanionBubbleContent(voice: voice.snapshot, spoken: voice.spoken,
+                                                            position: voice.spokenPosition, notice: state.notice),
+                            tailOnTop: placement.isBelowPet, petCenterX: state.petCenterX)
+        }
     }
 }

@@ -78,6 +78,12 @@ fn opaque_history_and_receipts_share_one_checkpoint() {
     let poll = WirePoll {
         version: WIRE_VERSION,
         closed: false,
+        stream: Some(AssistantStream {
+            turn_id: 2,
+            operation_id: 4,
+            text: "正在**回复**".into(),
+            tool_call: false,
+        }),
         batches: vec![SessionBatch {
             session_id: "session-一".into(),
             generation: "handle-2".into(),

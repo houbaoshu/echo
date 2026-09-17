@@ -137,6 +137,7 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 - `WireCreate` 需要非空 session/generation、绝对 prompt 路径和完整 `restore`。`restore.directory` 必须显式出现，null 表示清除。generation 由宿主生成，每次重建必须更新。旧文本及待确认输入直接交给核心恢复。
 - `echo_agent_request` 解码嵌套 `WireCommand`，普通命令直接进入 `try_command`，三种控制直接进入 `try_control`。`echo_agent_cancel` 调用 `stop`，销毁通过 `SessionHandle::drop` 触发 close。
 - wire 历史仅在后台初始化时解码为核心历史，在 poll 时编码为完整 JSON 字符串；投影、输入映射和事件直接透传。Bridge 不编辑历史内部 IDs，也不解释错误消息。
+- poll 在批次之后附带可选的 `stream`：`{turn_id, operation_id, text, tool_call}`，是正在运行的模型操作迄今收到的完整文本，仅在上次 poll 后有变化时出现；两次 poll 之间的 delta 被合并。它只用于显示，不进入批次、checkpoint 或确认流程，`tool_call:true` 表示该操作已开始工具调用、文本不是最终回复。
 - poll 在观察到核心批次通道已断开且排空后返回 `closed:true`；若恰好取满请求上限，可能下一次 poll 才观察到关闭。初始化失败批次也会先交付，再报告关闭。Stop 的清理回执为 `kind.type=cancelled`；close/destroy 的全局退出水位由 `echo_agent_active_sessions` 提供。
 - `scripts/agent-prompt-path.sh` 根据 Cargo metadata 中 `echo-agent` 的实际解析依赖定位 prompt，构建和 Agent/Voice 资源复制入口复用该路径。
 - Rust/C 阶段验收使用 `scripts/test-agent-ffi.sh`。Swift Bridge/Session/聊天/Voice 集成入口已迁至 v2；Rust/C 独立通过不代表 Swift 跨层通过。

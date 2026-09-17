@@ -15,4 +15,5 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 [dev-dependencies]
 rustix = { version = "1", features = ["process"] }
 axum = "0.8"
+futures-util = { version = "0.3", default-features = false }
 tempfile = "3"

@@ -7,6 +7,7 @@ import Foundation
     let generation: String
     let restore: AgentRestore
     var onBatch: ((AgentBatch) -> Void)?
+    var onStream: ((AgentStream) -> Void)?
     var onFailure: ((Error) -> Void)?
     var onClosed: (() -> Void)?
     var sent: [AgentCommand] = []
@@ -46,6 +47,22 @@ import Foundation
 
 @main @MainActor struct AgentTaskSourceTests {
     static let model = AgentModel(base_url: "http://unused", model: "fixture", protocol: .chat_completions)
+    /// Streamed text reaches the session's observer only from its current bridge.
+    static func streamTests() throws {
+        let source = source()
+        var received: [AgentStream] = []
+        source.observeStream { received.append($0) }
+        try source.open(sessionID: "s", generation: "g1", restore: AgentRestore(), receive: { _ in }, failure: { _ in })
+        let first = AgentBridge.latest!
+        let delta = AgentStream(turn_id: 1, operation_id: 2, text: "你好", tool_call: false)
+        first.onStream?(delta)
+        precondition(received == [delta], "the current bridge's stream reaches the observer")
+        try source.open(sessionID: "s", generation: "g2", restore: AgentRestore(), receive: { _ in }, failure: { _ in })
+        first.onStream?(AgentStream(turn_id: 1, operation_id: 2, text: "旧的", tool_call: false))
+        precondition(first.onStream == nil && received == [delta], "a replaced bridge's stream is ignored")
+        AgentBridge.latest.onStream?(AgentStream(turn_id: 2, operation_id: 4, text: "新的", tool_call: true))
+        precondition(received.last?.text == "新的" && received.last?.tool_call == true, "the new bridge streams to the same observer")
+    }
     static func source() -> AgentTaskSource { AgentTaskSource(model: model, resources: URL(fileURLWithPath: "/unused")) }
     static func user(_ input: AgentInput, message: UInt64, turn: UInt64) -> (AgentInputReceipt, AgentDisplayEntry) {
         (.init(client_message_id: input.client_message_id, message_id: message, turn_id: turn),
@@ -53,6 +70,7 @@ import Foundation
     }
     static func main() async throws {
         try wireTests()
+        try streamTests()
         for cleanupFirst in [false, true] {
             let store = TaskStore(source: source())
             var persisted: TaskStore.Snapshot?

@@ -31,6 +31,8 @@ actor PendingModelTester: ConnectionTesting {
     var capturePaused = false
     var playbackPaused = false
     var monitoring = false
+    /// Frames heard in the current playback generation; tests advance it to simulate playback.
+    var playbackFrames = 0
     func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         capturing = capture
         let (stream, continuation) = AsyncThrowingStream<VoiceCapturePacket, Error>.makeStream()
@@ -51,8 +53,8 @@ actor PendingModelTester: ConnectionTesting {
         else { played.append(data) }
     }
     func drain() async throws { await onDrain?() }
-    func interruptPlayback() { stops += 1; playbackPaused = false }
-    func stop() { capturing = false; playbackPaused = false; monitoring = false; input?.finish(); input = nil }
+    func interruptPlayback() { stops += 1; playbackPaused = false; playbackFrames = 0 }
+    func stop() { capturing = false; playbackPaused = false; monitoring = false; playbackFrames = 0; input?.finish(); input = nil }
 }
 @MainActor final class FakeRecognizer: VoiceRecognizing {
     var callback: (@MainActor (ASRResult) -> Void)?
@@ -82,6 +84,11 @@ actor PendingModelTester: ConnectionTesting {
     var chunks: [String] = []
     var callback: (@MainActor (Data) async throws -> Void)?
     var cancelled = false
+    var onSubtitle: (@MainActor (VoiceSubtitle) -> Void)?
+    /// A TTSSubtitle sentence: characters with their start times on this synthesis's audio.
+    func subtitle(_ timed: [(String, TimeInterval)]) {
+        onSubtitle?(VoiceSubtitle(text: timed.map(\.0).joined(), words: timed.map { .init(word: $0.0, startTime: $0.1) }))
+    }
     func run(configuration: VoiceConfiguration, key: String, text: AsyncThrowingStream<String, Error>,
              receive: @escaping @MainActor (Data) async throws -> Void) async throws {
         callback = receive

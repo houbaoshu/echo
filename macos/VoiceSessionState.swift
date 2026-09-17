@@ -105,6 +105,40 @@ struct VoiceSessionSnapshot: Equatable {
     }
 }
 
+/// What Live Voice has said of one reply, from the synthesizer's subtitles.
+struct SpokenReply: Equatable {
+    let runID: UUID
+    /// The reply text given to speech.
+    var source: String
+    /// Spoken characters in order, timed on this reply's own audio.
+    var words: [VoiceSubtitle.Word] = []
+    /// Once playback stopped: `.infinity` when it finished, otherwise where it was interrupted.
+    var stoppedAt: TimeInterval?
+
+    /// The words heard by `position` seconds into this reply's audio; `nil` once all of it was played.
+    func heard(at position: TimeInterval) -> String? {
+        if stoppedAt == .infinity { return nil }
+        let position = min(position, stoppedAt ?? position)
+        return words.prefix { $0.startTime <= position }.map(\.word).joined()
+    }
+
+    /// How much of `rendered` the heard speech covers. Heard letters and digits are matched in order,
+    /// skipping what speech does not voice (Markdown markers, spacing) or voices differently.
+    static func coveredCount(of rendered: String, heard: String) -> Int {
+        let target = Array(rendered)
+        var cursor = 0
+        for character in heard where character.isLetter || character.isNumber {
+            let limit = min(target.count, cursor + 24)
+            if let index = (cursor..<limit).first(where: { target[$0].lowercased() == character.lowercased() }) {
+                cursor = index + 1
+            }
+        }
+        // Punctuation right after the last heard character was already voiced as a pause.
+        while cursor > 0, cursor < target.count, target[cursor].isPunctuation { cursor += 1 }
+        return cursor
+    }
+}
+
 struct VoiceSessionPresentation: Equatable {
     let status: String
     let isActive: Bool

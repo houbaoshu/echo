@@ -24,6 +24,8 @@ struct AgentBridgeTests {
         let model = AgentModel(base_url: "http://127.0.0.1:\(port)", model: "fixture", protocol: .chat_completions)
         let bridge = try AgentBridge(sessionID: "swift-session", model: model)
         var batches: [AgentBatch] = []
+        var streamed: [String] = []
+        bridge.onStream = { streamed.append($0.text) }
         bridge.onBatch = {
             batches.append($0)
             if let cp = $0.checkpoint { try! bridge.send(.acknowledgeCheckpoint(cp.id)) }
@@ -48,6 +50,8 @@ struct AgentBridgeTests {
         }
         heartbeat.cancel()
         precondition(heartbeats >= 20, "main actor stalled during model request")
+        precondition(streamed.count >= 2 && streamed.first != "你好，bridge 🌱" && streamed.allSatisfy { "你好，bridge 🌱".hasPrefix($0) },
+                     "poll delivers the reply's real deltas before it finishes: \(streamed)")
         let serialized = try JSONEncoder().encode(batches)
         precondition(String(decoding: serialized, as: UTF8.self).contains("你好，bridge 🌱"))
         let retained = batches

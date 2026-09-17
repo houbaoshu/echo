@@ -15,7 +15,10 @@ typedef struct EchoAgent EchoAgent;
  * acknowledge_checkpoint / checkpoint_failed / authorize_tool sent via request
  * bypass the ordinary command queue. Save checkpoints before acknowledging;
  * authorize a tool only while holding its matching directory lease.
- * poll: {version:2,batches:[...],closed:bool}. A Cancelled batch confirms Stop
+ * poll: {version:2,batches:[...],closed:bool,stream?}. stream is the running model
+ * operation's latest display-only text {turn_id,operation_id,text,tool_call},
+ * present when it changed since the previous poll; it is never checkpointed.
+ * A Cancelled batch confirms Stop
  * cleanup; active_sessions confirms close/destroy cleanup for process shutdown.
  * See docs/mini-agent-mainline-bridge-v2-contract.md for full JSON types.
  * All JSON strings use UTF-8. Inputs are borrowed only during the call.

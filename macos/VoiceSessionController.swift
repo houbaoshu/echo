@@ -4,6 +4,17 @@ import Combine
 
 @MainActor final class VoiceSessionController: NSObject, ObservableObject {
     @Published private(set) var snapshot = VoiceSessionSnapshot()
+    /// The reply being spoken, or the last one, until the next reply's first subtitle.
+    @Published private(set) var spoken: SpokenReply?
+    /// Playback frames already heard when the current reply's audio began.
+    private var speechBaseFrames = 0
+    /// Seconds of `spoken` audio actually played so far.
+    var spokenPosition: TimeInterval {
+        guard let spoken else { return 0 }
+        if let stopped = spoken.stoppedAt { return stopped }
+        guard spoken.runID == runID, playedAudioForCurrentRun else { return 0 }
+        return Double(max(0, audio.playbackFrames - speechBaseFrames)) / 24000
+    }
     // Read-only adapters keep the existing UI in place until its planned migration.
     var presentation: VoiceSessionPresentation { snapshot.presentation(modelIsGenerating: store?.isGenerating == true) }
     var conversationID: UUID? { snapshot.session.owner?.conversationID }
@@ -137,6 +148,7 @@ import Combine
         sessionID = UUID(); let call = sessionID
         self.configuration = configuration; self.key = key; store = conversation.store
         snapshot = VoiceSessionSnapshot(session: .starting(.init(sessionID: call, conversationID: conversation.id)))
+        spoken = nil
         textOnlyRunID = !usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
         runID = usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
         handledFinalRunID = nil
@@ -466,6 +478,13 @@ import Combine
         guard let runID else { return }
         let turn = turnID, call = sessionID
         let client = makeSynthesizer(); synthesizer = client
+        client.onSubtitle = { [weak self] subtitle in
+            guard let self, self.sessionID == call, self.turnID == turn, self.runID == runID else { return }
+            var next = self.spoken?.runID == runID ? self.spoken! : SpokenReply(runID: runID, source: "")
+            next.source = self.delta.previous
+            next.words += subtitle.words
+            self.spoken = next
+        }
         let (stream, input) = AsyncThrowingStream<String, Error>.makeStream(bufferingPolicy: .bufferingOldest(512))
         textInput = input
         updateSnapshot { $0.replyAudio = .preparing(runID) }
@@ -476,6 +495,7 @@ import Combine
                 try await client.run(configuration: configuration, key: key, text: stream) { [weak self] data in
                     guard let self, self.sessionID == call, self.turnID == turn, !Task.isCancelled else { throw CancellationError() }
                     if !data.isEmpty {
+                        if !self.playedAudioForCurrentRun { self.speechBaseFrames = self.audio.playbackFrames }
                         self.playedAudioForCurrentRun = true
                         self.updateSnapshot { $0.replyAudio = .playing(runID) }
                         if self.snapshot.bargeIn == .off { self.armBargeIn() }
@@ -487,6 +507,11 @@ import Combine
                 try await self.audio.drain()
                 guard self.sessionID == call, self.turnID == turn, !Task.isCancelled else { return }
                 self.synthesisTask = nil; self.synthesizer = nil; self.textInput = nil
+                if self.spoken?.runID == runID { self.spoken?.stoppedAt = .infinity }
+                // A voice without subtitles still leaves its reply once it has been played in full.
+                else if !self.delta.previous.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.spoken = SpokenReply(runID: runID, source: self.delta.previous, stoppedAt: .infinity)
+                }
                 self.updateSnapshot { $0.replyAudio = .none }
                 if self.store?.isGenerating != true {
                     self.scheduleListeningRecovery(runID: runID, playedAudio: self.playedAudioForCurrentRun)
@@ -499,6 +524,8 @@ import Combine
         }
     }
     private func interruptReply(preserveRun: Bool = false) {
+        // Keep what was heard; playback progress resets with the audio below.
+        if let spoken, spoken.runID == runID, spoken.stoppedAt == nil { self.spoken?.stoppedAt = spokenPosition }
         cancelBargeIn()
         turnID = UUID()
         if !preserveRun { runID = nil }
@@ -646,6 +673,7 @@ import Combine
         inputEpoch += 1; audio.resetCapture(epoch: inputEpoch, paused: true)
         store = nil; key = ""
         textOnlyRunID = nil; handledFinalRunID = nil; submitting = false; submissionHadAudio = false
+        spoken = nil
         let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0) } ?? snapshot.error
         snapshot = VoiceSessionSnapshot(error: failure)
     }

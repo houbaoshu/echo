@@ -13,6 +13,19 @@ import Foundation
     private var revision: UInt64 = 0
     private var finalID: UInt64?
     private var newTurn = false
+    private var streamReceiver: ((AgentStream) -> Void)?
+    var currentTurn: UInt64 { turnID }
+    func observeStream(_ receive: @escaping (AgentStream) -> Void) { streamReceiver = receive }
+    /// A coalesced stream snapshot, as the bridge delivers it between polls.
+    func observeStreamForTest(_ stream: AgentStream) { streamReceiver?(stream) }
+    func stream(operation: UInt64, _ text: String, toolCall: Bool = false) {
+        streamReceiver?(AgentStream(turn_id: turnID, operation_id: operation, text: text, tool_call: toolCall))
+    }
+    func emit(operation: UInt64, _ kind: AgentEvent.Kind) {
+        receive?(AgentBatch(session_id: sessionID, generation: generation, turn_id: turnID,
+            kind: .init(type: .update),
+            events: [AgentEvent(version: 1, session_id: sessionID, turn_id: turnID, operation_id: operation, kind: kind)]))
+    }
     func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
         preconditionFailure("Voice must use the unified Agent session")
     }
@@ -42,7 +55,7 @@ import Foundation
             kind: .init(type: cancelled ? .cancelled : .update),
             events: [AgentEvent(version: 1, session_id: sessionID, turn_id: turnID, kind: kind)]))
     }
-    func complete(_ text: String, rawReply: String? = nil) {
+    func complete(_ text: String, rawReply: String? = nil, operation: UInt64? = nil) {
         if finalID == nil {
             finalID = nextID; nextID += 1
             entries.append(.init(type: .message, message_id: finalID!, turn_id: turnID,
@@ -50,12 +63,12 @@ import Foundation
         }
         revision += 1
         let kinds: [AgentEvent.Kind] = [
-            .init(type: .assistant, message_id: finalID!, final_reply: true),
+            .init(type: .assistant, message_id: finalID!, content: text, final_reply: true),
             .init(type: .finished, outcome: AgentOutcome(status: .completed, reply: rawReply ?? text))
         ]
         receive?(AgentBatch(session_id: sessionID, generation: generation, turn_id: turnID,
             kind: .init(type: .update),
-            events: kinds.map { AgentEvent(version: 1, session_id: sessionID, turn_id: turnID, kind: $0) },
+            events: kinds.map { AgentEvent(version: 1, session_id: sessionID, turn_id: turnID, operation_id: operation, kind: $0) },
             checkpoint: AgentCheckpoint(id: .init(generation: generation, revision: revision), history: "{}",
                                         input_receipts: receipts, projection: entries)))
     }
@@ -152,7 +165,7 @@ extension VoiceTests {
                     check(f.voice.status == "等待项目空闲… · 可补充语音", "project queue exposes live voice input")
                 default:
                     try await waitForAgentVoice("voice command starts") { f.store.tools.first?.state == "执行中" }
-                    check(f.voice.status.contains("正在执行") && f.synths.isEmpty, "running command remains audible-input only")
+                    check(f.voice.status.contains("正在运行命令") && f.synths.isEmpty, "running command remains audible-input only")
                 }
                 check(f.voice.snapshot.recognition == .listening, "ASR remains active through \(scenario) / \(apiProtocol)")
                 if scenario == "stop" {
@@ -190,6 +203,32 @@ extension VoiceTests {
                 f.shutdown()
                 await AgentBridge.waitForShutdown()
             }
+        }
+        // Real Rust streaming: the reply grows from actual SSE deltas, outside checkpoints.
+        for apiProtocol in ["chat_completions", "responses"] {
+            let makeSource = { AgentTaskSource(model: AgentModel(base_url: "http://127.0.0.1:\(port)", model: "fixture", protocol: AgentModel.ProtocolName(rawValue: apiProtocol)!), resources: resources) }
+            let f = AgentVoiceFixture(source: makeSource()); f.sourceFactory = makeSource
+            defer { f.shutdown() }
+            await f.start()
+            f.voice.toggleSpeakerMute()
+            f.speak("slow-stream markdown-stream 汇报结果")
+            let final = "## 结果\n\n- **第一项**通过\n- 运行 `swift test`\n- 第三项\n- 第四项完成"
+            var seen: [String] = []
+            var revisions: Set<UInt64> = []
+            try await waitForAgentVoice("streamed reply completes for \(apiProtocol)") {
+                let text = f.store.replyStream.text
+                if f.store.isGenerating, !text.isEmpty, seen.last != text {
+                    seen.append(text); revisions.insert(f.store.snapshot.savedCheckpoint?.revision ?? 0)
+                }
+                return !f.store.isGenerating
+            }
+            check(seen.filter { $0 != final }.count >= 2 && seen.allSatisfy { final.hasPrefix($0) },
+                  "real SSE deltas grow the reply before the turn completes (\(apiProtocol): \(seen.count) updates)")
+            check(revisions.count == 1, "streamed text never advances checkpoints (\(apiProtocol))")
+            check(f.store.replyStream.text == final && f.store.task?.status == .completed,
+                  "the completed Markdown reply is kept after streaming (\(apiProtocol))")
+            f.shutdown()
+            await AgentBridge.waitForShutdown()
         }
         print("Passed \(checks) Agent voice integration checks (local model fixture, real Rust/bash, simulated ASR/TTS).")
     }
@@ -269,6 +308,9 @@ extension VoiceTests {
                   "ending Live Voice releases audio without cancelling the Agent")
         }
         try await agentFinalAudioTests()
+        try await agentReplyStreamTests()
+        try await agentSpokenReplyTests()
+        try await agentVoiceUnseenTests()
         try await agentVoiceStartupAndFailureTests()
         try await agentVoiceRecoveryTests()
     }
@@ -302,6 +344,176 @@ extension VoiceTests {
         ])))
         check(source.commands.last?.1 == "已经定稿" && f.voice.subtitle == "下一句仍在讲话",
               "a mixed ASR batch submits finals while retaining the next utterance's partial")
+    }
+
+    /// The streamed reply follows real deltas per model step, keeps the last reply between
+    /// turns and never reaches speech before the final reply.
+    @MainActor private static func agentReplyStreamTests() async throws {
+        let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
+        defer { f.shutdown() }
+        await f.start(); f.holdPlayback()
+        f.voice.toggleSpeakerMute(); f.speak("第一个问题")
+        source.emit(.init(type: .turn_started)); source.emit(.init(type: .model_started))
+        let stream = f.store.replyStream
+        check(stream.text.isEmpty, "requesting the model has no reply text")
+        source.stream(operation: 10, "今天")
+        check(stream.text == "今天" && f.synths.isEmpty, "the first real delta arrives without starting speech")
+        source.stream(operation: 10, "今天**天气**不错，")
+        check(stream.text == "今天**天气**不错，" && f.synths.isEmpty, "each delta grows the same reply")
+        source.complete("今天**天气**不错，适合散步。", operation: 10)
+        await tick()
+        check(stream.text == "今天**天气**不错，适合散步。" && f.synths.count == 1
+              && f.synths[0].chunks == ["今天**天气**不错，适合散步。"], "speech still receives only the final reply")
+        source.stream(operation: 10, "今天**天气**不错，适合")
+        check(stream.text == "今天**天气**不错，适合散步。", "a late snapshot of a finished step is ignored")
+        f.releasePlayback(); await tick()
+        check(stream.text == "今天**天气**不错，适合散步。", "the reply stays after playback ends")
+
+        let recognizers = f.recognizers.count
+        try await waitForAgentVoice("listening resumes after the reply") {
+            f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
+        }
+        f.speak("第二个问题", start: 400)
+        source.emit(.init(type: .turn_started)); source.emit(.init(type: .model_started))
+        check(f.store.isGenerating && stream.text == "今天**天气**不错，适合散步。", "a new request keeps the previous reply")
+        source.stream(operation: 12, " \n")
+        check(stream.text == "今天**天气**不错，适合散步。", "whitespace is not the first real text")
+        source.stream(operation: 12, "我先看看目录。")
+        check(stream.text == "我先看看目录。", "the next turn's first real delta replaces the previous reply")
+        source.stream(operation: 12, "我先看看目录。", toolCall: true)
+        check(stream.text == "今天**天气**不错，适合散步。", "text that turns into a tool call is withdrawn")
+        source.emit(operation: 12, .init(type: .assistant, message_id: 90, content: "我先看看目录。", final_reply: false))
+        source.stream(operation: 12, "我先看看目录。补充")
+        check(stream.text == "今天**天气**不错，适合散步。", "a withdrawn step never returns")
+        source.stream(operation: 14, "目录里有三个文件")
+        check(stream.text == "目录里有三个文件", "the final step streams from a blank bubble")
+        source.emit(operation: 14, .init(type: .stopping))
+        check(stream.text == "今天**天气**不错，适合散步。", "a stopped step keeps no partial reply")
+
+        let otherTurn = AgentStream(turn_id: source.currentTurn + 5, operation_id: 20, text: "别的轮次", tool_call: false)
+        source.observeStreamForTest(otherTurn)
+        check(stream.text == "今天**天气**不错，适合散步。", "snapshots of another turn are ignored")
+    }
+
+    /// The muted bubble follows what speech has actually played: subtitles time each character and
+    /// playback frames say how far the audio got.
+    @MainActor private static func agentSpokenReplyTests() async throws {
+        let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
+        defer { f.shutdown() }
+        await f.start(); f.holdPlayback()
+        f.voice.toggleSpeakerMute()
+        func bubble() -> CompanionBubbleContent {
+            CompanionBubbleContent(voice: f.voice.snapshot, spoken: f.voice.spoken, position: f.voice.spokenPosition, notice: nil)
+        }
+        func shown() -> Bool { CompanionBubbleContent.isShown(voice: f.voice.snapshot, spoken: f.voice.spoken, notice: nil) }
+        check(bubble() == .none && !shown(), "listening shows no bubble")
+        f.speak("介绍一下")
+        source.emit(.init(type: .turn_started)); source.emit(.init(type: .model_started))
+        let reply = "## 天气\n\n今天**天气**很好，适合散步。"
+        check(bubble() == .none && !shown(), "requesting the model shows no bubble")
+        f.audio.playbackFrames = 4800
+        source.complete(reply)
+        await tick()
+        check(f.synths.count == 1 && f.voice.spoken == nil && !shown(),
+              "audio that starts before its subtitles shows nothing yet")
+        let synth = f.synths[0]
+        synth.subtitle([("##", 0), ("天", 0.1), ("气。", 0.3), ("今", 0.9), ("天", 1.1), ("天", 1.3), ("气", 1.5), ("很", 1.7), ("好，", 1.9)])
+        check(shown() && f.voice.spoken?.source == reply, "the first subtitle makes the bubble take its place")
+        f.audio.playbackFrames = 4800 + 21600
+        check(bubble() == .reply(reply, heard: "##天气。今"), "0.9 seconds in, the bubble shows what was heard")
+        f.audio.playbackFrames = 4800 + 48000
+        check(bubble() == .reply(reply, heard: "##天气。今天天气很好，"), "two seconds in, the heard text follows the audio")
+        synth.subtitle([("适", 2.3), ("合", 2.5), ("散", 2.7), ("步。", 2.9)])
+        f.audio.playbackFrames = 4800 + 60000
+        check(bubble() == .reply(reply, heard: "##天气。今天天气很好，适合"), "later sentences extend the timeline")
+        f.releasePlayback(); await tick()
+        check(f.voice.spoken?.stoppedAt == .infinity && bubble() == .reply(reply, heard: nil) && shown(),
+              "finished playback shows the whole reply and keeps it")
+
+        let recognizers = f.recognizers.count
+        try await waitForAgentVoice("listening resumes after the reply") {
+            f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
+        }
+        f.holdPlayback()
+        f.speak("再说一个", start: 400)
+        source.emit(.init(type: .turn_started)); source.emit(.init(type: .model_started))
+        check(bubble() == .reply(reply, heard: nil), "the next request keeps the previous reply")
+        source.complete("好的，下午见。")
+        await tick()
+        check(f.synths.count == 2 && bubble() == .reply(reply, heard: nil), "new audio without subtitles keeps the previous reply")
+        f.synths[1].subtitle([("好", 0), ("的，", 0.2), ("下", 0.6), ("午", 0.8), ("见。", 1.0)])
+        f.audio.playbackFrames += 7200
+        check(bubble() == .reply("好的，下午见。", heard: "好的，"), "the next reply's first subtitle replaces the previous one")
+        f.voice.stopReply()
+        await tick()
+        f.audio.playbackFrames = 96000
+        check(f.voice.spoken?.stoppedAt == 0.3 && bubble() == .reply("好的，下午见。", heard: "好的，"),
+              "an interrupted reply keeps what was heard")
+        f.voice.toggleSpeakerMute()
+        check(bubble() == .none && !shown(), "an audible reply shows no bubble")
+        f.voice.toggleSpeakerMute()
+
+        // A voice that sends no subtitles shows its reply once playback has finished.
+        let recovered = f.recognizers.count
+        try await waitForAgentVoice("listening resumes after the stop") {
+            f.voice.snapshot.recognition == .listening && f.recognizers.count > recovered
+        }
+        f.speak("第三个问题", start: 800)
+        source.emit(.init(type: .turn_started))
+        source.complete("没有字幕的回复。")
+        await tick()
+        check(bubble() == .reply("好的，下午见。", heard: "好的，"), "until playback finishes the previous reply stays")
+        f.releasePlayback(); await tick()
+        check(bubble() == .reply("没有字幕的回复。", heard: nil) && shown(), "a reply without subtitles appears whole after playback")
+        f.voice.end(); await tick()
+        check(f.voice.spoken == nil, "ending Live Voice forgets the spoken reply")
+    }
+
+    /// While Live Voice runs its conversation is in progress; ending the session makes it unseen.
+    @MainActor private static func agentVoiceUnseenTests() async throws {
+        for viewed in [false, true] {
+            let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
+            defer { f.shutdown() }
+            f.workspace.isMainWindowVisible = viewed
+            await f.start(); f.holdPlayback()
+            f.speak("第一轮")
+            check(f.store.isGenerating && !f.store.isActivityVisible, "a Live Voice turn keeps its task card folded")
+            source.emit(.init(type: .turn_started))
+            source.complete("第一轮回复")
+            f.releasePlayback()
+            let recognizers = f.recognizers.count
+            try await waitForAgentVoice("listening resumes") {
+                f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
+            }
+            f.speak("第二轮", start: 400)
+            source.emit(.init(type: .turn_started))
+            source.complete("第二轮回复")
+            f.releasePlayback(); await tick()
+            let surface = PetSurfacePresentation(hovered: true, composerOpen: false, draft: "",
+                activityCount: f.store.activityCount, activitiesCollapsed: f.store.activitiesCollapsed,
+                unseenCompleted: f.workspace.unseenCompletedCount, voice: f.voice.snapshot, canStartVoice: false,
+                runningTasks: f.workspace.runningTaskCount)
+            check(f.workspace.unseenCompletedCount == 0 && !f.store.hasUnseenCompletion && surface.tray != .bell(unseen: 0)
+                  && surface.tray != .bell(unseen: 1), "completed Live Voice turns are neither unseen nor shown as a bell")
+            f.voice.end(); await tick()
+            if viewed {
+                check(f.workspace.unseenCompletedCount == 0, "a Live Voice conversation viewed in the main window ends seen")
+            } else {
+                check(f.workspace.unseenCompletedCount == 1 && f.store.hasUnseenCompletion && f.store.activitiesCollapsed,
+                      "ending Live Voice turns its conversation into one unseen completion")
+                let bell = PetSurfacePresentation(hovered: true, composerOpen: false, draft: "",
+                    activityCount: f.store.activityCount, activitiesCollapsed: f.store.activitiesCollapsed,
+                    unseenCompleted: f.workspace.unseenCompletedCount, voice: f.voice.snapshot, canStartVoice: true)
+                check(bell.tray == .bell(unseen: 1), "the bell appears with its count once the voice session ends")
+                f.workspace.isMainWindowVisible = true
+                check(f.workspace.unseenCompletedCount == 0, "viewing the conversation clears it by the existing rule")
+            }
+        }
+        // A session with no completed reply leaves nothing unseen.
+        let f = AgentVoiceFixture(source: ScriptedVoiceAgent())
+        defer { f.shutdown() }
+        await f.start(); f.voice.end(); await tick()
+        check(f.workspace.unseenCompletedCount == 0, "an empty Live Voice session creates no unseen item")
     }
 
     @MainActor private static func agentFinalAudioTests() async throws {

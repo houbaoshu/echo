@@ -16,6 +16,7 @@ final class AgentBridge {
     let sessionID: String
     let generation: String
     var onBatch: ((AgentBatch) -> Void)?
+    var onStream: ((AgentStream) -> Void)?
     var onFailure: ((Error) -> Void)?
     var onClosed: (() -> Void)?
 
@@ -91,6 +92,8 @@ final class AgentBridge {
                 onBatch?(batch)
                 if self.handle == nil { return false }
             }
+            // Streamed text may postdate the batches above; it never outruns them.
+            if let stream = result.stream { onStream?(stream) }
             if result.closed { polling = nil; onClosed?(); return false }
             return true
         } catch { polling = nil; onFailure?(error); return false }
