@@ -180,10 +180,106 @@ import Foundation
         workspace.shutdown()
         try await projectAssociationTests()
         try sessionCleanupTests()
+        checks += quickComposerTests()
         try await ProjectFileBrowserTests.run()
         checks += try await streamingPersistenceTests()
         print("PASS: \(checks) workspace checks")
         await WorkspaceVoiceCommandTests.run()
+    }
+
+    @MainActor private static func quickComposerTests() -> Int {
+        var checks = 0
+        func check(_ condition: @autoclosure () -> Bool, _ message: String) {
+            precondition(condition(), message); checks += 1
+        }
+        var sources: [WorkspaceTestSource] = []
+        let ws = WorkspaceStore(sourceFactory: { let source = WorkspaceTestSource(); sources.append(source); return source })
+        defer { ws.shutdown() }
+        let mainDraft = ws.selected!
+        mainDraft.store.mainDraft = "主窗口里的草稿"
+        check(!ws.sendQuickMessage("  \n "), "Whitespace cannot start a quick conversation")
+        check(ws.conversations.isEmpty && ws.snapshot.drafts?.count == 1, "A rejected quick message leaves no draft behind")
+        check(ws.sendQuickMessage("桌宠里的问题"), "The pet starts a quick conversation")
+        let quick = ws.conversations.first!
+        check(ws.conversations.count == 1 && quick.id != mainDraft.id, "A quick message never reuses the main window draft")
+        check(ws.selectedID == mainDraft.id && mainDraft.store.mainDraft == "主窗口里的草稿",
+              "A quick message keeps the main window selection and its draft")
+        check(ws.activityID == quick.id && ws.activityStore.isActivityVisible, "The quick conversation becomes the visible activity")
+        check(quick.title == "桌宠里的问题" && quick.store.messages.first?.content == "桌宠里的问题",
+              "The quick conversation is named after its first message")
+        check(ws.snapshot.drafts?.map(\.id) == [mainDraft.id], "The quick conversation does not stay in drafts")
+
+        let quickSource = sources.last!
+        // Completion folds the open card into the bell and counts it until the card is expanded.
+        quickSource.receive?(.completed("回复"))
+        check(quick.store.activitiesCollapsed && !ws.activityStore.isActivityVisible && quick.store.hasUnseenCompletion,
+              "A completed task collapses its card into the bell")
+        check(ws.unseenCompletedCount == 1, "The bell counts one completed task not yet expanded")
+        ws.toggleActivityTray()
+        check(ws.activityStore.isActivityVisible && ws.unseenCompletedCount == 0,
+              "Clicking the bell expands the completed card and clears its count")
+        ws.toggleActivityTray()
+        check(quick.store.activitiesCollapsed && ws.unseenCompletedCount == 0, "Collapsing a viewed card does not count it again")
+
+        // Several completions accumulate; each bell click views the newest remaining one.
+        quick.store.send("第二个问题")
+        check(ws.sendQuickMessage("另一个桌宠任务"), "A second quick task starts")
+        let other = ws.activity!, otherSource = sources.last!
+        check(ws.runningTaskCount == 2, "Both quick tasks are running")
+        quickSource.receive?(.completed("第二个回复"))
+        check(ws.unseenCompletedCount == 1 && other.store.isActivityVisible,
+              "Another conversation's completion counts without collapsing the current card")
+        otherSource.receive?(.completed("另一个回复"))
+        check(ws.unseenCompletedCount == 2 && !ws.activityStore.isActivityVisible && ws.runningTaskCount == 0,
+              "Completed tasks accumulate in the bell")
+        ws.toggleActivityTray()
+        check(ws.activityID == other.id && other.store.isActivityVisible && ws.unseenCompletedCount == 1,
+              "The bell expands the newest completion first")
+        ws.toggleActivityTray()
+        check(!other.store.isActivityVisible && ws.unseenCompletedCount == 1, "Collapsing keeps the remaining count")
+        ws.toggleActivityTray()
+        check(ws.activityID == quick.id && quick.store.isActivityVisible && ws.unseenCompletedCount == 0,
+              "The next click expands the remaining completion")
+        ws.toggleActivityTray()
+
+        // Failures are not completions: a closed card only returns as a bell.
+        quick.store.send("第三个问题")
+        quick.store.closeActivity()
+        check(ws.activityStore.activityCount == 0, "Closing the card hides the activity while the task runs")
+        quickSource.receive?(.failed("连接失败"))
+        check(ws.activityStore.activityCount == 1 && quick.store.activitiesCollapsed && ws.unseenCompletedCount == 0,
+              "A failure after closing returns as a bell without a completed count")
+
+        // A card whose follow-up is open stays open, and what it shows counts as seen.
+        quick.store.send("第四个问题")
+        ws.toggleActivityTray()
+        quick.store.toggleFollowUp()
+        quickSource.receive?(.completed("第四个回复"))
+        check(quick.store.isActivityVisible && ws.unseenCompletedCount == 0, "An open follow-up keeps its card")
+        quick.store.toggleFollowUp()
+
+        // The conversation on screen already shows its reply.
+        ws.select(quick.id); ws.isMainWindowVisible = true
+        quick.store.send("第五个问题")
+        quickSource.receive?(.completed("第五个回复"))
+        check(quick.store.activitiesCollapsed && ws.unseenCompletedCount == 0,
+              "A completion viewed in the main window collapses without counting")
+        ws.isMainWindowVisible = false
+        quick.store.send("第六个问题")
+        quickSource.receive?(.completed("第六个回复"))
+        check(ws.unseenCompletedCount == 1, "A hidden main window leaves the completion unseen")
+        ws.isMainWindowVisible = true
+        check(ws.unseenCompletedCount == 0, "Showing the selected conversation marks it seen")
+        ws.isMainWindowVisible = false
+        other.store.send("继续另一个任务")
+        otherSource.receive?(.completed("另一个任务的新回复"))
+        check(ws.unseenCompletedCount == 1, "A background conversation's completion is counted")
+        other.store.send("再继续")
+        check(ws.unseenCompletedCount == 0 && !other.store.hasUnseenCompletion, "Starting a new run supersedes its unseen completion")
+        check(TaskStore.toolSummary("ls -la\necho done") == "正在运行命令 · ls -la"
+              && TaskStore.toolSummary(String(repeating: "a", count: 70)) == "正在运行命令 · " + String(repeating: "a", count: 60) + "…"
+              && TaskStore.toolSummary("  ") == "正在运行命令", "Tool steps are short single-line summaries")
+        return checks
     }
 
     @MainActor private static func projectAssociationTests() async throws {

@@ -41,6 +41,9 @@ import Combine
     private var activityShown = false
     private(set) var noticePanel: NSPanel?
     private var noticeTimer: Timer?
+    let controlsPresentation: PetControlsPresentation
+    private var composerObservation: AnyCancellable?
+    private var outsideClickMonitor: Any?
 
     init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore? = nil, pets: PetCatalog? = nil) {
         self.workspace = workspace
@@ -54,8 +57,11 @@ import Combine
         activityPanel = CompanionSurface(title: "活动摘要", acceptsKeyboard: true,
                                          content: WorkspaceActivityCapsule(workspace: workspace, placement: placement))
         let controlsPresentation = PetControlsPresentation()
-        controlsPanel = CompanionSurface(title: "活动控件",
-                                         content: WorkspacePetControls(workspace: workspace, presentation: controlsPresentation))
+        self.controlsPresentation = controlsPresentation
+        // Keyboard is only claimed while the quick composer is open.
+        controlsPanel = CompanionSurface(title: "活动控件", acceptsKeyboard: true,
+                                         content: WorkspacePetControls(workspace: workspace, presentation: controlsPresentation,
+                                                                       placement: placement))
         super.init()
         self.pets.onActivate = { [weak self] store in
             self?.petPanel.replacePet(with: store)
@@ -69,11 +75,13 @@ import Combine
             return CompanionLayout.place(pet: proposed, in: screen, expanded: self.taskStore.isFollowUpExpanded).pet.origin
         }
         petPanel.onMove = { [weak self] in self?.layout() }
-        petPanel.onPointerSample = { [weak self] point in
-            guard let self else { return }
-            let hovered = self.petPanel.frame.union(self.controlsPanel.frame).contains(point)
-            if controlsPresentation.isHovered != hovered { controlsPresentation.isHovered = hovered }
+        petPanel.onPointerSample = { [weak self] point in self?.samplePointer(point) }
+        composerObservation = controlsPresentation.$isComposerOpen.removeDuplicates().dropFirst().sink { [weak self] open in
+            // @Published delivers before the value is stored; act once the new state is visible.
+            DispatchQueue.main.async { [weak self] in self?.composerDidChange(open: open) }
         }
+        NotificationCenter.default.addObserver(self, selector: #selector(controlsResignedKey),
+                                               name: NSWindow.didResignKeyNotification, object: controlsPanel)
         observation = workspace.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.synchronize() }
         }
@@ -127,6 +135,51 @@ import Combine
         }
     }
 
+    /// Hover covers the pet and the controls as they would appear while hovered.
+    private func samplePointer(_ point: NSPoint) {
+        let presentation = controlsPresentation
+        let hovered = petPanel.frame.contains(point) || controlsContentFrame(hovered: true).contains(point)
+        guard presentation.isHovered != hovered else { return }
+        presentation.isHovered = hovered
+        // An empty composer follows the idle strip, unless the user is still typing in it.
+        if !hovered, presentation.isComposerOpen,
+           presentation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           presentation.collapsesOnExit || !controlsPanel.isKeyWindow {
+            presentation.closeComposer()
+        }
+    }
+    private func controlsContentFrame(hovered: Bool) -> CGRect {
+        let presentation = controlsPresentation
+        let surface = PetSurfacePresentation(hovered: hovered, composerOpen: presentation.isComposerOpen, draft: presentation.draft,
+            activityCount: taskStore.activityCount, activitiesCollapsed: taskStore.activitiesCollapsed,
+            unseenCompleted: workspace.unseenCompletedCount, voice: workspace.voice.snapshot, canStartVoice: workspace.voice.canStartCall,
+            runningTasks: workspace.runningTaskCount, composerSent: presentation.collapsesOnExit)
+        let frames = CompanionLayout(pet: petPanel.frame, activity: activityPanel.frame, controls: controlsPanel.frame)
+        return frames.controlsContent(width: surface.width)
+    }
+    private func composerDidChange(open: Bool) {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor); self.outsideClickMonitor = nil }
+        if open {
+            controlsPanel.orderFrontRegardless()
+            controlsPanel.makeKey()
+            // The editor may have asked for focus before its panel became key.
+            controlsPresentation.refocusComposer()
+            // A non-activating panel is not always told when another app takes the click.
+            outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                MainActor.assumeIsolated { self?.controlsPresentation.closeComposer() }
+            }
+        } else if controlsPanel.isKeyWindow {
+            // Return typing to the app that was in front instead of an empty panel.
+            controlsPanel.orderOut(nil)
+            controlsPanel.orderFrontRegardless()
+        }
+    }
+    @objc private func controlsResignedKey() {
+        // Clicking elsewhere collapses the composer; its draft is kept for next time.
+        controlsPresentation.closeComposer()
+    }
+    func openQuickComposer() { controlsPresentation.openComposer() }
+
     func layout() {
         guard !layingOut, let screen = CompanionLayout.screen(for: petPanel.frame, screens: NSScreen.screens.map(\.visibleFrame)) else { return }
         layingOut = true
@@ -141,6 +194,8 @@ import Combine
             activityPanel.setFrame(frames.activityCanvas, display: true)
         }
         controlsPanel.setFrame(frames.controls, display: true)
+        let petCenterX = frames.pet.midX - frames.controls.minX
+        if controlsPresentation.petCenterX != petCenterX { controlsPresentation.petCenterX = petCenterX }
         if let noticePanel {
             let noticeY = frames.isActivityBelowPet ? frames.activityCanvas.minY - 62
                                                    : frames.activityCanvas.maxY + 2
@@ -189,7 +244,8 @@ import Combine
     func shutdown() {
         workspace.voice.shutdown(); voiceObservation = nil
         settings.cancelTest(); pets.stop(); pets.onActivate = nil
-        observation = nil
+        observation = nil; composerObservation = nil
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor); self.outsideClickMonitor = nil }
         NotificationCenter.default.removeObserver(self)
         noticeTimer?.invalidate()
         mainController?.shutdown()

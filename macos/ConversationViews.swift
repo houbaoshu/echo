@@ -709,8 +709,37 @@ final class ComposerTextView: NSTextView {
         focusPending = true
         applyPendingFocus()
     }
+    /// Reports whether typing lands here: first responder of a key window.
+    var onFocusChange: ((Bool) -> Void)? { didSet { reportFocus() } }
+    private var windowObservers: [NSObjectProtocol] = []
+    override func becomeFirstResponder() -> Bool {
+        defer { reportFocus() }
+        return super.becomeFirstResponder()
+    }
+    override func resignFirstResponder() -> Bool {
+        defer { reportFocus() }
+        return super.resignFirstResponder()
+    }
+    private func reportFocus() {
+        guard onFocusChange != nil else { return }
+        // First-responder changes finish after these overrides return.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onFocusChange?(self.window?.isKeyWindow == true && self.window?.firstResponder === self)
+        }
+    }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
+        windowObservers = []
+        if let window, onFocusChange != nil {
+            windowObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map { name in
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.reportFocus() }
+                }
+            }
+        }
+        reportFocus()
         applyPendingFocus()
     }
     private func applyPendingFocus() {
@@ -742,6 +771,15 @@ struct NativeComposer: NSViewRepresentable {
     var isSuspended = false
     var diagnostics: DictationTrace?
     var onEscape: (() -> Bool)?
+    // The desktop pet reuses this editor as a compact single-line field.
+    var fontSize = WorkspaceStyle.bodySize
+    var minHeight: CGFloat = 44
+    var maxLines = 6
+    var label = "会话输入框"
+    var identifier = "conversation.composer"
+    var onFocusChange: ((Bool) -> Void)?
+    /// Nil keeps the system caret, which follows the accent color.
+    var caretColor: NSColor?
     let onSend: () -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
@@ -749,14 +787,16 @@ struct NativeComposer: NSViewRepresentable {
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         let editor = ComposerTextView()
         editor.isRichText = false; editor.allowsUndo = true; editor.drawsBackground = false
-        editor.font = .systemFont(ofSize: WorkspaceStyle.bodySize); editor.textColor = .labelColor
+        editor.font = .systemFont(ofSize: fontSize); editor.textColor = .labelColor
         editor.isVerticallyResizable = true; editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]; editor.textContainer?.widthTracksTextView = true
         editor.textContainerInset = NSSize(width: 0, height: 4)
         editor.textContainer?.lineFragmentPadding = 0
-        editor.setAccessibilityLabel("会话输入框")
-        editor.setAccessibilityIdentifier("conversation.composer")
+        editor.setAccessibilityLabel(label)
+        editor.setAccessibilityIdentifier(identifier)
         editor.delegate = context.coordinator; editor.onSend = onSend; editor.onEscape = onEscape
+        editor.onFocusChange = onFocusChange
+        if let caretColor { editor.insertionPointColor = caretColor }
         scroll.documentView = editor
         editor.string = text
         diagnostics?.record("editor.created", context.coordinator.diagnosticState(editor))
@@ -769,6 +809,7 @@ struct NativeComposer: NSViewRepresentable {
         defer { diagnostics?.snapshot("editor.update.after", context.coordinator.diagnosticState(editor)) }
         editor.onSend = onSend
         editor.onEscape = onEscape
+        if (editor.onFocusChange == nil) != (onFocusChange == nil) { editor.onFocusChange = onFocusChange }
         editor.onCompositionEnded = { [weak coordinator = context.coordinator, weak editor] in
             guard let editor else { return }
             coordinator?.applyPendingAppend(to: editor)
@@ -806,11 +847,11 @@ struct NativeComposer: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
         let width = proposal.width ?? 400
         guard let editor = nsView.documentView as? NSTextView, let container = editor.textContainer,
-              let layout = editor.layoutManager else { return CGSize(width: width, height: 44) }
+              let layout = editor.layoutManager else { return CGSize(width: width, height: minHeight) }
         container.containerSize = NSSize(width: max(1, width - 2), height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
-        let lineHeight = layout.defaultLineHeight(for: editor.font ?? .systemFont(ofSize: WorkspaceStyle.bodySize))
-        let height = min(ceil(lineHeight * 6) + 8, max(44, layout.usedRect(for: container).height + 8))
+        let lineHeight = layout.defaultLineHeight(for: editor.font ?? .systemFont(ofSize: fontSize))
+        let height = min(ceil(lineHeight * CGFloat(maxLines)) + 8, max(minHeight, layout.usedRect(for: container).height + 8))
         return CGSize(width: width, height: height)
     }
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {

@@ -111,6 +111,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @Published private(set) var activitiesCollapsed = false
     @Published private(set) var activityDismissed = false
     @Published private(set) var isFollowUpExpanded = false
+    /// Set when a completed run's card collapses unviewed; cleared once the card is expanded.
+    /// The value orders completions across conversations. Transient: restart never restores the activity.
+    @Published private(set) var unseenCompletion: UInt64?
+    private static var completionClock: UInt64 = 0
+    var hasUnseenCompletion: Bool { unseenCompletion != nil }
     @Published var mainDraft = ""
     @Published var followUpDraft = ""
     @Published var notice: String?
@@ -269,6 +274,13 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         guard let last = requestMessages.last else { return false }
         return last.role == .user
     }
+    /// A short, single-line step for the pet card and voice status.
+    static func toolSummary(_ command: String) -> String {
+        let line = command.split(whereSeparator: \.isNewline).first.map(String.init) ?? command
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let preview = trimmed.count > 60 ? String(trimmed.prefix(60)) + "…" : trimmed
+        return preview.isEmpty ? "正在运行命令" : "正在运行命令 · \(preview)"
+    }
     private static func continuable(_ history: Data?) -> Bool {
         struct History: Decodable {
             struct Turn: Decodable { struct Outcome: Decodable { var status: String }; var outcome: Outcome? }
@@ -379,8 +391,29 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         lifecycle.send(.stopped(runID))
     }
     // Project convention: dismissing a surface never cancels its task source.
-    func closeActivity() { activityDismissed = true; isFollowUpExpanded = false }
-    func toggleActivities() { activitiesCollapsed.toggle() }
+    func closeActivity() { activityDismissed = true; isFollowUpExpanded = false; markSeen() }
+    func toggleActivities() {
+        if activitiesCollapsed { expandActivity() } else { activitiesCollapsed = true }
+    }
+    /// Expanding the card is what views a completed run.
+    func expandActivity() {
+        activityDismissed = false; activitiesCollapsed = false
+        markSeen()
+    }
+    /// A completed run folds its card into the bell. `unseen` is false when the conversation is
+    /// already on screen. An open follow-up keeps the card, and what it shows counts as seen.
+    func collapseForCompletion(unseen: Bool) {
+        guard task != nil else { return }
+        if isFollowUpExpanded && isActivityVisible { markSeen(); return }
+        activityDismissed = false; activitiesCollapsed = true
+        if unseen { Self.completionClock += 1; unseenCompletion = Self.completionClock } else { markSeen() }
+    }
+    /// A failure is not a completion; a hidden card only returns as a bell so it is not lost.
+    func revealCollapsed() {
+        guard task != nil, activityDismissed else { return }
+        activityDismissed = false; activitiesCollapsed = true
+    }
+    func markSeen() { if unseenCompletion != nil { unseenCompletion = nil } }
     func showMainWindow() { isMainWindowVisible = true; onVisibilityChange?(true) }
     func hideMainWindow() { isMainWindowVisible = false; onVisibilityChange?(false) }
     func shutdown() {
@@ -533,7 +566,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                 if let id = kind.call?.id,
                    let index = tools.lastIndex(where: { $0.callID == id && $0.turnID == event.turn_id && $0.result == nil }) {
                     tools[index].state = "执行中"; tools[index].directory = kind.directory
-                    if task?.status != .stopping { task?.summary = "正在执行：\(tools[index].command.prefix(120))" }
+                    if task?.status != .stopping { task?.summary = Self.toolSummary(tools[index].command) }
                 }
             case .finished:
                 if pendingInputs.isEmpty && task?.status != .stopping { terminal = kind.outcome }

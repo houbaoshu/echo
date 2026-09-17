@@ -70,7 +70,12 @@ import SwiftUI
         app.setActivationPolicy(.accessory)
         // Native menu routing needs AppKit's event loop and a real key window.
         Task { @MainActor in
-            do { try await testNativeMenuShortcuts(); try await testProjectDetachPointer(); exit(0) }
+            do {
+                if !CommandLine.arguments.contains("--pet-focus-only") {
+                    try await testNativeMenuShortcuts(); try await testProjectDetachPointer()
+                }
+                try await testPetComposerPointerFocus(); exit(0)
+            }
             catch { print("FAIL: \(error)"); exit(1) }
         }
         app.run()
@@ -83,6 +88,15 @@ import SwiftUI
     #endif
 
     @MainActor private static func run() async throws {
+        if CommandLine.arguments.contains("--pet-only") {
+            // The full run enables this in testComposerActionMatrix; SwiftUI AX nodes need it.
+            NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+            try await testSettingsAndCompanionVoiceIntegration()
+            try testPetSurfacePresentationAndLayout()
+            try await testPetQuickComposerAndTray()
+            try await testCompanionQuickComposerLifecycle()
+            return
+        }
         try await testConsecutiveDictationAppends()
         try await testComposerActionMatrix()
         try await testStoppingAndDictationEscape()
@@ -90,6 +104,9 @@ import SwiftUI
         try await testEscapeAndKeyboardCommands()
         try await testLiveVoiceComposerStatesAndAttribution()
         try await testSettingsAndCompanionVoiceIntegration()
+        try testPetSurfacePresentationAndLayout()
+        try await testPetQuickComposerAndTray()
+        try await testCompanionQuickComposerLifecycle()
         try await testComposerPreservesEditorStateAcrossVoiceUpdates()
         try await testRightSidebarLayoutAndToggling()
         try await testCodeCopyAndSyntaxPreview()
@@ -849,6 +866,122 @@ import SwiftUI
     }
 
     // The detach action is hover-revealed; SwiftUI hover ignores synthesized NSEvents, so drive the real pointer.
+    /// Real pointer and keyboard events: the pet composer must take typing without activating Echo.
+    @MainActor private static func testPetComposerPointerFocus() async throws {
+        precondition(CGPreflightPostEventAccess(), "Pet composer test needs Accessibility permission to post events")
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+        let source = PreviewSource()
+        let workspace = WorkspaceStore(sourceFactory: { source })
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: SettingsStore(secrets: ComposerSecrets()))
+        let presentation = companion.controlsPresentation
+        let restoreCursor = NSEvent.mouseLocation
+        func post(_ type: CGEventType, at point: NSPoint) {
+            let flipped = CGPoint(x: point.x, y: NSScreen.screens[0].frame.maxY - point.y)
+            CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: flipped, mouseButton: .left)!.post(tap: .cghidEventTap)
+        }
+        func click(_ point: NSPoint) async throws {
+            post(.mouseMoved, at: point); try await Task.sleep(for: .milliseconds(150))
+            post(.leftMouseDown, at: point); try await Task.sleep(for: .milliseconds(50))
+            post(.leftMouseUp, at: point); try await Task.sleep(for: .milliseconds(400))
+        }
+        func key(_ code: CGKeyCode, _ text: String? = nil) async throws {
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)!
+                if let text { event.keyboardSetUnicodeString(stringLength: text.utf16.count, unicodeString: Array(text.utf16)) }
+                event.post(tap: .cghidEventTap)
+            }
+            try await Task.sleep(for: .milliseconds(120))
+        }
+        defer { post(.mouseMoved, at: restoreCursor); companion.shutdown() }
+        func controlFrame(_ id: String) -> NSRect? {
+            (findAccessibility(id, in: companion.controlsPanel.contentView!)?.accessibilityFrame?())
+        }
+        /// Real events land asynchronously; wait for the rendered controls rather than a fixed delay.
+        func waitFor(_ description: @autoclosure () -> String, _ ready: () -> Bool) async throws {
+            for _ in 0..<40 where !ready() { try await Task.sleep(for: .milliseconds(50)) }
+            precondition(ready(), description())
+        }
+        post(.mouseMoved, at: NSPoint(x: companion.petPanel.frame.midX, y: companion.petPanel.frame.midY))
+        try await Task.sleep(for: .milliseconds(500))
+        precondition(presentation.isHovered, "Real pointer over the pet reveals its controls")
+        try await waitFor("Hover strip lacks ✎") { controlFrame("pet.compose") != nil }
+        guard let compose = controlFrame("pet.compose") else { preconditionFailure("Hover strip lacks ✎") }
+        try await click(NSPoint(x: compose.midX, y: compose.midY))
+        precondition(presentation.isComposerOpen, "Clicking ✎ opens the composer")
+        let editor = companion.controlsPanel.firstResponder as? ComposerTextView
+        print("pet composer focus: key=\(companion.controlsPanel.isKeyWindow) editor=\(editor != nil) focused=\(presentation.isComposerFocused)")
+        precondition(companion.controlsPanel.isKeyWindow && editor != nil, "The opened composer owns keyboard focus")
+        precondition(presentation.isComposerFocused, "The composer shows its focused state")
+        precondition(controlFrame("voice.start") == nil && controlFrame("pet.voice.show") == nil
+                     && controlFrame("pet.activity.expand") == nil && controlFrame("pet.activity.collapse") == nil,
+                     "Composing hides voice and tray controls")
+        let petCenter = NSPoint(x: companion.petPanel.frame.midX, y: companion.petPanel.frame.midY)
+        post(.mouseMoved, at: NSPoint(x: petCenter.x - 500, y: petCenter.y + 400))
+        try await Task.sleep(for: .milliseconds(300))
+        precondition(!presentation.isHovered && presentation.isComposerOpen && companion.controlsPanel.isKeyWindow,
+                     "A focused empty composer stays open when the pointer leaves")
+        post(.mouseMoved, at: petCenter)
+        try await Task.sleep(for: .milliseconds(300))
+        for (code, digit) in [(CGKeyCode(18), "1"), (19, "2"), (20, "3")] { try await key(code, digit) }
+        precondition(presentation.draft == "123", "Real keystrokes reach the pet composer, got \(presentation.draft)")
+        try snapshot(companion.controlsPanel, "pet-composer-focused")
+        try await key(53)
+        precondition(!presentation.isComposerOpen && presentation.draft == "123", "Escape closes the composer and keeps its draft")
+        precondition(!companion.controlsPanel.isKeyWindow && !presentation.isComposerFocused, "Closing gives up keyboard focus")
+        precondition(controlFrame("voice.start") != nil, "Closing the composer restores the hover controls")
+
+        // Send with Enter, leave, complete, then view the result through the bell.
+        // Let the strip finish its 0.18 s transition before reading ✎'s frame.
+        try await Task.sleep(for: .milliseconds(300))
+        guard let reopen = controlFrame("pet.compose") else { preconditionFailure("Hover strip lacks ✎ after Escape") }
+        try await click(NSPoint(x: reopen.midX, y: reopen.midY))
+        try await waitFor("Reopening restores the kept draft with focus") {
+            presentation.isComposerOpen && presentation.draft == "123" && companion.controlsPanel.isKeyWindow
+        }
+        try await key(36)
+        try await Task.sleep(for: .milliseconds(300))
+        precondition(workspace.activity?.title == "123" && presentation.draft.isEmpty && presentation.isComposerOpen,
+                     "Enter sends a quick task and keeps the empty composer")
+        precondition(companion.activityPanel.isVisible && controlFrame("voice.start") != nil
+                     && controlFrame("pet.activity.collapse") != nil, "After a send, Live Voice and the tray return beside the composer")
+        post(.mouseMoved, at: NSPoint(x: petCenter.x - 500, y: petCenter.y + 400))
+        try await Task.sleep(for: .milliseconds(400))
+        precondition(!presentation.isComposerOpen && controlFrame("voice.start") != nil && controlFrame("pet.activity.collapse") != nil,
+                     "Leaving collapses the composer but keeps the running task's status controls")
+        source.receive?(.completed("完成"))
+        try await Task.sleep(for: .milliseconds(400))
+        precondition(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 1,
+                     "The completed card collapses and waits in the bell")
+        post(.mouseMoved, at: petCenter)
+        try await Task.sleep(for: .milliseconds(400))
+        guard let bell = controlFrame("pet.activity.expand") else { preconditionFailure("Hover strip lacks the bell") }
+        precondition(axValue(findAccessibility("pet.activity.expand", in: companion.controlsPanel.contentView!)) == "1 个已完成任务未查看",
+                     "The bell shows one completed task not yet expanded")
+        try snapshot(companion.controlsPanel, "pet-bell-completed")
+        try await click(NSPoint(x: bell.midX, y: bell.midY))
+        try await Task.sleep(for: .milliseconds(300))
+        precondition(companion.activityPanel.isVisible && workspace.unseenCompletedCount == 0
+                     && controlFrame("pet.activity.collapse") != nil && controlFrame("pet.activity.expand") == nil,
+                     "Clicking the bell expands the completed card, clears its count and shows ⌃")
+        try snapshot(companion.controlsPanel, "pet-bell-expanded")
+        guard let chevron = controlFrame("pet.activity.collapse") else { preconditionFailure("Missing ⌃") }
+        try await click(NSPoint(x: chevron.midX, y: chevron.midY))
+        try await Task.sleep(for: .milliseconds(300))
+        precondition(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 0 && controlFrame("pet.activity.expand") != nil,
+                     "⌃ collapses the viewed card into a bell without a count")
+
+        // Losing key focus collapses a composer with a draft and keeps the draft.
+        guard let compose2 = controlFrame("pet.compose") else { preconditionFailure("Hover strip lacks ✎") }
+        try await click(NSPoint(x: compose2.midX, y: compose2.midY))
+        try await key(21, "4")
+        precondition(presentation.draft == "4" && presentation.isComposerOpen)
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: companion.controlsPanel)
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(!presentation.isComposerOpen && presentation.draft == "4", "Losing focus collapses the composer and keeps the draft")
+        print("PASS: real pointer composer focus/Escape, Enter send, status on exit, completion bell count, expand, ⌃ and focus loss")
+    }
+
     @MainActor private static func testProjectDetachPointer() async throws {
         precondition(CGPreflightPostEventAccess(), "Pointer detach test needs Accessibility permission to post mouse events")
         NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
@@ -1144,30 +1277,301 @@ import SwiftUI
         precondition(workspace.selectedID == conversationA.id, "Conversation A selected")
         precondition(workspace.composerFocusID == conversationA.id, "Composer focus requested for A")
 
-        // Verify PetControls presentation:
+        // Verify the pet's voice bar:
         let presentation = PetControlsPresentation()
         var endVoiceCalled = false
         var startVoiceCalled = false
+        let canvas = NSRect(x: 0, y: 0, width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight)
         let petHost = NSHostingView(rootView: PetControls(store: store, voice: voice, presentation: presentation,
-            startVoice: { startVoiceCalled = true },
-            endVoice: { selectedOwner in
-                precondition(selectedOwner == owner)
-                endVoiceCalled = true; workspace.endVoice(owner: selectedOwner)
-            }).frame(width: 160, height: 80).background(Color(nsColor: .windowBackgroundColor)))
-        let petWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 160, height: 80),
-                                 styleMask: .borderless, backing: .buffered, defer: false)
+            placement: ActivityPlacement(), actions: PetControlActions(
+                startVoice: { startVoiceCalled = true },
+                endVoice: { selectedOwner in
+                    precondition(selectedOwner == owner)
+                    endVoiceCalled = true; workspace.endVoice(owner: selectedOwner)
+                },
+                toggleSpeaker: { workspace.toggleVoiceSpeakerMute(owner: $0) }))
+            .background(Color(nsColor: .windowBackgroundColor)))
+        let petWindow = NSWindow(contentRect: canvas, styleMask: .borderless, backing: .buffered, defer: false)
         petWindow.contentView = petHost
         defer { petWindow.orderOut(nil) }
         try await Task.sleep(for: .milliseconds(100)); petHost.layoutSubtreeIfNeeded()
         precondition(findAccessibility("voice.end", in: petHost)?.accessibilityLabel?() == "结束语音")
+        precondition(findAccessibility("voice.mute", in: petHost)?.accessibilityLabel?() == "关闭麦克风")
+        precondition(findAccessibility("pet.compose", in: petHost) != nil, "Voice bar keeps the new chat entry")
+        precondition(findAccessibility("voice.speaker", in: petHost)?.accessibilityPerformPress?() == true)
+        precondition(voice.snapshot.speakerMuted, "Pet speaker control mutes the owned Voice session")
+        try await Task.sleep(for: .milliseconds(100)); petHost.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("voice.speaker", in: petHost)?.accessibilityLabel?() == "开启扬声器")
         if let bitmap = petHost.bitmapImageRepForCachingDisplay(in: petHost.bounds) {
             petHost.cacheDisplay(in: petHost.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/pet-voice-end.png"))
         }
         precondition(findAccessibility("voice.end", in: petHost)?.accessibilityPerformPress?() == true)
-        precondition(!voice.isActive && endVoiceCalled && !startVoiceCalled, "Pet × ends its owned Voice session")
+        precondition(!voice.isActive && endVoiceCalled && !startVoiceCalled, "Pet orb ends its owned Voice session")
 
         print("PASS: Settings and companion voice integration without phone terminology")
+    }
+
+    @MainActor private static func testPetSurfacePresentationAndLayout() throws {
+        typealias Surface = PetSurfacePresentation
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
+        func surface(hovered: Bool = false, composer: Bool = false, draft: String = "", count: Int = 0,
+                     collapsed: Bool = false, unseen: Int = 0, voice: VoiceSessionSnapshot = .init(),
+                     canStart: Bool = true, running: Int = 0, sent: Bool = false) -> Surface {
+            Surface(hovered: hovered, composerOpen: composer, draft: draft, activityCount: count,
+                    activitiesCollapsed: collapsed, unseenCompleted: unseen, voice: voice, canStartVoice: canStart,
+                    runningTasks: running, composerSent: sent)
+        }
+        precondition(surface().mode == .compact && !surface().showsActions && surface().width == Surface.collapsedSize.width,
+                     "Idle pet shows only the light collapsed bar")
+        let hovered = surface(hovered: true)
+        precondition(hovered.mode == .compact && hovered.showsActions && hovered.tray == .none, "Hover shows ✎ and voice")
+        precondition(surface(count: 1).mode == .compact && !surface(count: 1).showsActions
+                     && surface(count: 1).tray == .collapse && surface(count: 1).width == Surface.collapsedSize.width,
+                     "Without hover an activity still collapses to the light bar")
+        precondition(surface(count: 1, collapsed: true, unseen: 3).tray == .bell(unseen: 3), "The bell counts unseen completed tasks")
+        precondition(surface(count: 1, collapsed: true).tray == .bell(unseen: 0))
+        precondition(surface(unseen: 2).tray == .bell(unseen: 2), "Unseen completions keep the bell without a current activity")
+        precondition(surface(count: 1, unseen: 1, running: 2).badge == .completed(1)
+                     && surface(count: 1, running: 2).badge == .running(2)
+                     && surface(count: 1, collapsed: true, unseen: 1).badge == .completed(1)
+                     && surface(count: 1).badge == .none, "The bell reports unseen completions first, running tasks otherwise")
+        precondition(surface(count: 1, unseen: 2).tray == .collapse && surface(count: 1, collapsed: true, unseen: 2).tray == .bell(unseen: 2),
+                     "An expanded card shows ⌃; a collapsed one shows the bell with its count")
+        let running = surface(count: 1, running: 1)
+        precondition(running.showsStatus && running.width == 2 * Surface.circle + Surface.gap,
+                     "Without hover, running tasks keep Live Voice and the bell")
+        precondition(!surface(count: 1, collapsed: true, unseen: 1).showsStatus, "Finished tasks collapse to the light bar")
+        precondition(!surface(composer: true, count: 1, running: 1).showsStatus
+                     && surface(composer: true, count: 1, running: 1).width == Surface.composerWidth,
+                     "A freshly opened composer stays in focus mode")
+        let sentComposer = surface(composer: true, count: 1, running: 1, sent: true)
+        precondition(sentComposer.showsStatus && sentComposer.width == Surface.composerWidth + 2 * (Surface.gap + Surface.circle),
+                     "After a send the composer shows Live Voice and the bell beside it")
+        precondition(surface(hovered: true, unseen: 2).width == 2 * Surface.pillPadding + 3 * Surface.segment,
+                     "Hover strip holds text entry, Live Voice and the bell")
+        let composer = surface(composer: true, draft: " \n")
+        precondition(composer.mode == .composer && !composer.canSend, "Whitespace cannot be sent")
+        precondition(surface(composer: true, draft: "你好").canSend)
+        var voice = VoiceSessionSnapshot()
+        voice.session = .starting(owner)
+        precondition(surface(voice: voice).mode == .voice && surface(voice: voice).voice == .connecting
+                     && !surface(voice: voice).muteEnabled, "Connecting voice cannot be muted yet")
+        voice.session = .active(owner); voice.recognition = .listening
+        precondition(surface(voice: voice).voice == .listening && surface(voice: voice).muteEnabled)
+        voice.agentActivity = "正在请求模型…"
+        precondition(surface(voice: voice).voice == .thinking)
+        voice.replyAudio = .playing(UUID())
+        precondition(surface(voice: voice).voice == .speaking)
+        voice.microphone = .muted; voice.speakerMuted = true
+        precondition(surface(voice: voice).micMuted && surface(voice: voice).speakerMuted)
+        precondition(surface(composer: true, voice: voice).mode == .composer, "Composing takes precedence over the voice bar")
+        precondition(surface(composer: true, count: 1, collapsed: true, unseen: 1, voice: voice).width == Surface.composerWidth
+                     && surface(composer: true).width == Surface.composerWidth, "Composing hides voice and tray controls")
+        voice.session = .ending(owner)
+        precondition(surface(voice: voice).voice == .ending && surface(voice: voice).mode == .voice)
+        let widths = [surface(hovered: true), surface(hovered: true, count: 1), surface(composer: true, count: 1, sent: true),
+                      surface(count: 1, voice: { var active = VoiceSessionSnapshot(); active.session = .active(owner); return active }())]
+        precondition(widths.allSatisfy { $0.width <= Surface.canvasWidth }, "Every mode fits the fixed controls canvas")
+
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let petSize = CGSize(width: 112, height: 112)
+        for origin in [CGPoint(x: -50, y: -50), CGPoint(x: 1400, y: -50), CGPoint(x: -50, y: 880), CGPoint(x: 1400, y: 880), CGPoint(x: 660, y: 400)] {
+            let frames = CompanionLayout.place(pet: CGRect(origin: origin, size: petSize), in: screen, expanded: false)
+            let inset = screen.insetBy(dx: 8, dy: 8)
+            precondition(inset.contains(frames.pet) && inset.contains(frames.controls), "Pet and controls stay on screen at \(origin)")
+            precondition(frames.controls.maxY == frames.pet.minY, "Controls sit directly below the pet")
+            for width in widths.map({ $0.width }) {
+                let content = frames.controlsContent(width: width)
+                let inset = PetSurfacePresentation.canvasInset
+                precondition(frames.controls.insetBy(dx: inset, dy: 0).contains(content), "Controls keep room for their glow in the canvas")
+                precondition(abs(content.midX - frames.pet.midX) < 0.5 || abs(content.minX - frames.controls.minX - inset) < 0.5
+                             || abs(frames.controls.maxX - inset - content.maxX) < 0.5, "Content centers under the pet unless clamped")
+            }
+            // The activity frame includes 12 pt of transparent padding around the visible capsule.
+            let capsule = frames.activity.insetBy(dx: 12, dy: 12)
+            precondition(!capsule.intersects(frames.pet) && !capsule.intersects(frames.controls),
+                         "The activity never covers the pet or its controls")
+        }
+        print("PASS: pet surface presentation matrix and controls layout")
+    }
+
+    @MainActor private static func testPetQuickComposerAndTray() async throws {
+        let source = PreviewSource()
+        let store = TaskStore(source: source)
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        defer { store.shutdown(); voice.shutdown() }
+        let presentation = PetControlsPresentation()
+        presentation.isHovered = true
+        var sent: [String] = []
+        var accepts = true
+        let placement = ActivityPlacement()
+        func controls(unseen: Int, running: Int = 0) -> some View {
+            PetControls(store: store, voice: voice, presentation: presentation, placement: placement, unseenCompleted: unseen,
+                        runningTasks: running,
+                        actions: PetControlActions(send: { sent.append($0); return accepts }))
+                .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
+        }
+        let host = NSHostingView(rootView: controls(unseen: 0))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.appearance = NSAppearance(named: .aqua)
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        func refresh() async throws { try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded() }
+        func node(_ id: String) -> AnyObject? { findAccessibility(id, in: host) }
+        func snapshot(_ name: String) throws {
+            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/\(name).png"))
+        }
+        func key(_ code: UInt16, _ characters: String) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                             context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
+        }
+
+        try await refresh()
+        try snapshot("pet-controls-hover")
+        precondition(node("pet.compose") != nil && node("voice.start") != nil && node("pet.activity.expand") == nil,
+                     "Hover strip has new chat and voice, and no tray without an activity")
+        precondition(node("pet.compose")?.accessibilityPerformPress?() == true)
+        try await refresh()
+        precondition(presentation.isComposerOpen, "✎ opens the quick composer")
+        precondition(node("voice.start") == nil && node("pet.compose") == nil, "Composing hides the other pet controls")
+        guard let editor = node("pet.composer") as? ComposerTextView else { preconditionFailure("Missing quick composer editor") }
+        precondition(window.firstResponder === editor, "The quick composer takes keyboard focus")
+        _ = node("pet.send")?.accessibilityPerformPress?()
+        precondition(sent.isEmpty, "Empty composer cannot send")
+
+        editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        editor.keyDown(with: key(36, "\r"))
+        precondition(sent.isEmpty, "Confirming an IME candidate in the pet composer must not send")
+        editor.unmarkText()
+        editor.string = ""
+        presentation.draft = "桌宠提问"
+        try await refresh()
+        try snapshot("pet-quick-composer")
+        accepts = false
+        editor.keyDown(with: key(36, "\r"))
+        precondition(sent == ["桌宠提问"] && presentation.draft == "桌宠提问", "A rejected send keeps the draft")
+        accepts = true
+        precondition(node("pet.send")?.accessibilityPerformPress?() == true)
+        precondition(sent.count == 2 && presentation.draft.isEmpty && presentation.collapsesOnExit && presentation.isComposerOpen,
+                     "A sent message clears the composer, which then collapses on pointer exit")
+        host.rootView = controls(unseen: 0, running: 1)
+        try await refresh()
+        try snapshot("pet-composer-sent")
+        precondition(node("pet.composer") != nil && node("voice.start") != nil
+                     && axValue(node("pet.activity.expand")) == "1 个任务进行中",
+                     "After a send the composer shows Live Voice and a running bell beside it")
+        host.rootView = controls(unseen: 0)
+        presentation.draft = "保留草稿"
+        try await refresh()
+        editor.keyDown(with: key(53, "\u{1b}"))
+        try await refresh()
+        precondition(!presentation.isComposerOpen && presentation.draft == "保留草稿", "Escape closes the composer and keeps its draft")
+        precondition(node("voice.start") != nil && node("pet.compose") != nil, "Closing the composer restores the hover controls")
+
+        store.send("任务")
+        source.receive?(.completed("完成"))
+        presentation.isHovered = false
+        try await refresh()
+        precondition(node("pet.collapsed")?.accessibilityLabel?() == "桌宠快捷控件" && node("pet.compose") == nil
+                     && node("pet.activity.collapse") == nil, "Without hover the strip collapses to a light neutral bar")
+        host.rootView = controls(unseen: 0, running: 1)
+        try await refresh()
+        precondition(node("pet.collapsed") == nil && node("voice.start") != nil && node("pet.compose") == nil
+                     && node("pet.activity.collapse") != nil && axValue(node("pet.activity.collapse")) == "",
+                     "Without hover a running task keeps Live Voice and its expanded card's ⌃ without a badge")
+        host.rootView = controls(unseen: 0)
+        presentation.isHovered = true
+        try await refresh()
+        precondition(node("pet.activity.collapse")?.accessibilityPerformPress?() == true)
+        host.rootView = controls(unseen: 2)
+        try await refresh()
+        try snapshot("pet-controls-unread")
+        precondition(node("pet.compose") != nil && node("voice.start") != nil
+                     && node("pet.activity.expand")?.accessibilityLabel?() == "展开活动（2 个已完成任务未查看）",
+                     "Hover shows text entry, Live Voice and the bell with the unseen completed count")
+        presentation.isHovered = false
+        try await refresh(); try await refresh()
+        try snapshot("pet-controls-collapsed")
+        precondition(node("pet.collapsed")?.accessibilityLabel?() == "2 个已完成任务未查看", "The collapsed bar turns green for unseen completions")
+        presentation.isHovered = true
+        try await refresh()
+        precondition(node("pet.activity.expand")?.accessibilityPerformPress?() == true)
+        try await refresh()
+        precondition(!store.activitiesCollapsed && node("pet.activity.collapse") != nil && node("pet.activity.expand") == nil,
+                     "Opening the bell shows the card and turns the bell into ⌃")
+        print("PASS: pet quick composer, IME, Escape, tray bell; previews: build/pet-*.png")
+    }
+
+    @MainActor private static func testCompanionQuickComposerLifecycle() async throws {
+        let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+        let source = PreviewSource()
+        let workspace = WorkspaceStore(sourceFactory: { source })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings)
+        defer { companion.shutdown() }
+        let presentation = companion.controlsPresentation
+        func settle() async throws { try await Task.sleep(for: .milliseconds(150)) }
+        // The pet samples the real cursor at 30 Hz; keep simulating the pointer until SwiftUI shows `ready`.
+        func hover(_ point: NSPoint, until ready: () -> Bool = { true }) async throws {
+            for _ in 0..<60 {
+                companion.petPanel.samplePointer(at: point)
+                try await Task.sleep(for: .milliseconds(10))
+                companion.petPanel.samplePointer(at: point)
+                if ready() { return }
+            }
+        }
+        let inside = NSPoint(x: companion.petPanel.frame.midX, y: companion.petPanel.frame.midY)
+        let outside = NSPoint(x: companion.petPanel.frame.minX - 600, y: companion.petPanel.frame.maxY + 600)
+        let expectedCanvas = CompanionLayout.place(pet: companion.petPanel.frame, in: companion.petPanel.screen!.visibleFrame,
+                                                   expanded: false).controls
+        precondition(companion.controlsPanel.frame == expectedCanvas, "The controls panel uses the fixed canvas under the pet")
+        precondition(abs(presentation.petCenterX - (companion.petPanel.frame.midX - expectedCanvas.minX)) < 0.5,
+                     "The controls content is anchored to the pet's center")
+
+        try await hover(inside)
+        precondition(presentation.isHovered, "Pointer over the pet reveals its controls")
+        // Composer focus and send use real events in testPetComposerPointerFocus; this test drives the
+        // task status state without keyboard focus, which a non-active test process cannot own.
+        let selected = workspace.selectedID
+        precondition(workspace.sendQuickMessage("从桌宠发起"))
+        try await settle()
+        precondition(workspace.activity?.title == "从桌宠发起" && workspace.selectedID == selected,
+                     "A quick send starts the activity without changing the main window selection")
+        precondition(companion.activityPanel.isVisible, "The new activity card appears beside the pet")
+        let controls = companion.controlsPanel.contentView!
+        try await hover(outside) { findAccessibility("pet.compose", in: controls) == nil }
+        precondition(findAccessibility("voice.start", in: controls) != nil
+                     && findAccessibility("pet.activity.collapse", in: controls) != nil,
+                     "Without hover the running task keeps Live Voice and its card's ⌃")
+        source.receive?(.completed("完成"))
+        // The card fades out over 0.2 s before it leaves the screen.
+        try await hover(outside) { !companion.activityPanel.isVisible && findAccessibility("pet.collapsed", in: controls) != nil }
+        precondition(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 1
+                     && findAccessibility("pet.collapsed", in: controls)?.accessibilityLabel?() == "1 个已完成任务未查看",
+                     "A completed task folds its card away and collapses to the green bar")
+        try await hover(inside) { axValue(findAccessibility("pet.activity.expand", in: controls)) != nil }
+        precondition(axValue(findAccessibility("pet.activity.expand", in: controls)) == "1 个已完成任务未查看",
+                     "Hover shows the bell with the green completed count")
+        precondition(findAccessibility("pet.activity.expand", in: controls)?.accessibilityPerformPress?() == true)
+        try await hover(inside) { findAccessibility("pet.activity.collapse", in: controls) != nil }
+        precondition(companion.activityPanel.isVisible && workspace.unseenCompletedCount == 0
+                     && findAccessibility("pet.activity.collapse", in: controls) != nil
+                     && findAccessibility("pet.activity.expand", in: controls) == nil,
+                     "Clicking the bell expands the completed card, clears the count and shows ⌃")
+        precondition(findAccessibility("pet.activity.collapse", in: controls)?.accessibilityPerformPress?() == true)
+        try await hover(inside) { findAccessibility("pet.activity.expand", in: controls) != nil }
+        try await Task.sleep(for: .milliseconds(300))
+        try await hover(inside) { findAccessibility("pet.activity.expand", in: controls) != nil }
+        precondition(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 0
+                     && axValue(findAccessibility("pet.activity.expand", in: controls)) == "",
+                     "⌃ collapses the viewed card back into a bell without a count")
+        companion.petPanel.samplePointer(at: outside)
+        print("PASS: companion canvas, quick send activity, running status, completion collapse, bell count, expand and ⌃")
     }
 
     @MainActor private static func testComposerPreservesEditorStateAcrossVoiceUpdates() async throws {
@@ -1639,6 +2043,19 @@ import SwiftUI
         print("PASS: project picker placement, multiline/narrow layout, fixed attribution, populated inspector, read-only preview and refresh")
     }
 
+    /// SwiftUI AX nodes answer the selector without declaring the protocol, so dispatch it directly.
+    /// Real window-server capture of a companion panel.
+    @MainActor private static func snapshot(_ window: NSWindow, _ name: String) throws {
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", "build/\(name).png"]
+        try capture.run(); capture.waitUntilExit()
+    }
+    @MainActor private static func axValue(_ object: AnyObject?) -> String? {
+        let selector = NSSelectorFromString("accessibilityValue")
+        guard let object, object.responds(to: selector) else { return nil }
+        return object.perform(selector)?.takeUnretainedValue() as? String
+    }
     @MainActor private static func findAccessibility(_ id: String, in root: Any) -> AnyObject? {
         var visited: Set<ObjectIdentifier> = []
         func visit(_ value: Any) -> AnyObject? {

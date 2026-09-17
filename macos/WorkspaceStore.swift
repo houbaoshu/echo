@@ -165,6 +165,7 @@ struct WorkspaceSnapshot: Codable {
         didSet {
             if oldValue != selectedID { fileBrowser.collapsePreview() }
             synchronizeFileBrowser()
+            markViewedActivitySeen()
         }
     }
     @Published private(set) var composerFocusRequest = 0
@@ -172,7 +173,10 @@ struct WorkspaceSnapshot: Codable {
     private var drafts: [WorkspaceConversation] = []
     @Published private(set) var activityID: UUID?
     @Published var isMainWindowVisible = false {
-        didSet { if !isMainWindowVisible { dictation.cancel() } }
+        didSet {
+            if !isMainWindowVisible { dictation.cancel() }
+            markViewedActivitySeen()
+        }
     }
     @Published var searchText = ""
     @Published var searchFocusRequest = 0
@@ -253,6 +257,28 @@ struct WorkspaceSnapshot: Codable {
         guard let id = conversation(id: conversationID)?.projectID else { return nil }
         return projects.first { $0.id == id }
     }
+    /// Completed runs whose card has not been expanded since, across all conversations.
+    var unseenCompletedCount: Int { conversations.filter { $0.store.hasUnseenCompletion }.count }
+    /// The pet's bell: an open card collapses; otherwise the newest unseen completion becomes
+    /// the activity and expands, so each click views one completed task.
+    func toggleActivityTray() {
+        let current = activityStore
+        if current.isActivityVisible { current.toggleActivities(); return }
+        let unseen = conversations.compactMap { conversation in
+            conversation.store.unseenCompletion.map { (conversation, $0) }
+        }
+        if let next = unseen.max(by: { $0.1 < $1.1 })?.0 {
+            if activityID != next.id { activityID = next.id }
+            next.store.expandActivity()
+        } else if current.task != nil {
+            current.expandActivity()
+        }
+    }
+    var runningTaskCount: Int { conversations.filter { $0.store.isGenerating }.count }
+    private func markViewedActivitySeen() {
+        guard isMainWindowVisible else { return }
+        selected?.store.markSeen()
+    }
     private func synchronizeFileBrowser() {
         fileBrowser.select(project: selectedID.flatMap { project(for: $0) })
     }
@@ -274,6 +300,20 @@ struct WorkspaceSnapshot: Codable {
             return accepted
         }
         return target.store.send(text)
+    }
+    /// The pet's quick composer always starts its own conversation. It never reuses the
+    /// main window's draft or changes the selection; the first send makes it the activity.
+    @discardableResult func sendQuickMessage(_ text: String, projectID: UUID? = nil) -> Bool {
+        guard !shuttingDown, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        let validProject = projects.contains { $0.id == projectID } ? projectID : nil
+        let conversation = WorkspaceConversation(projectID: validProject, title: "新对话", store: TaskStore(source: sourceFactory()))
+        drafts.append(conversation); bind(conversation)
+        if send(text, conversationID: conversation.id) { return true }
+        if conversation.store.messages.isEmpty {
+            conversation.store.shutdown(); observations[conversation.id] = nil; lifecycleObservations[conversation.id] = nil
+            drafts.removeAll { $0.id == conversation.id }
+        }
+        return false
     }
     @discardableResult func sendMainMessage(conversationID: UUID) -> Bool {
         guard let target = conversation(id: conversationID), send(target.store.mainDraft, conversationID: conversationID) else { return false }
@@ -371,10 +411,20 @@ struct WorkspaceSnapshot: Codable {
         conversation.store.onUserAction = { [weak self] in self?.didUse(id) }
         conversation.store.onVisibilityChange = { [weak self] visible in self?.isMainWindowVisible = visible }
         lifecycleObservations[id] = conversation.store.lifecycle.sink { [weak self] event in
-            guard let self, let target = self.conversation(id: id), target.store.usesAgent else { return }
+            guard let self, let target = self.conversation(id: id) else { return }
             switch event {
-            case .reply(_, .completed), .reply(_, .failed), .stopped:
-                self.fileBrowser.refresh(projectID: target.projectID)
+            case .started:
+                // A new run supersedes the previous outcome.
+                target.store.markSeen()
+            case .reply(_, .completed):
+                // The conversation on screen already shows its reply; everywhere else it waits in the bell.
+                target.store.collapseForCompletion(unseen: !(self.isMainWindowVisible && self.selectedID == id))
+                if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
+            case .reply(_, .failed):
+                if !target.store.isActivityVisible { target.store.revealCollapsed() }
+                if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
+            case .stopped:
+                if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             default: break
             }
         }

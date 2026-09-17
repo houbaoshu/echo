@@ -157,3 +157,50 @@ struct VoiceSettingsView: View {
         voice.test(configuration: settings.voiceDraft, key: key, preview: preview)
     }
 }
+
+/// The pet's voice indicator. State-driven motion only; it does not read audio levels.
+struct VoiceOrb: View {
+    let indicator: PetSurfacePresentation.VoiceIndicator
+    var muted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let colors = [Color(red: 0.56, green: 0.64, blue: 1), Color(red: 0.32, green: 0.42, blue: 0.96),
+                                 Color(red: 0.8, green: 0.84, blue: 1), Color(red: 0.56, green: 0.64, blue: 1)]
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion || indicator == .inactive || indicator == .ending)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
+            Circle()
+                .fill(AngularGradient(colors: Self.colors, center: .center, angle: .degrees(angle(time))))
+                .overlay {
+                    Circle().fill(RadialGradient(colors: [.white.opacity(0.8), .clear], center: UnitPoint(x: 0.35, y: 0.3),
+                                                 startRadius: 0, endRadius: 10))
+                }
+                .scaleEffect(reduceMotion ? 0.92 : scale(time))
+                .opacity(indicator == .connecting || indicator == .ending ? 0.55 : 1)
+                .saturation(muted ? 0.15 : 1)
+        }
+        .accessibilityLabel(accessibilityText)
+        .accessibilityIdentifier("voice.orb")
+    }
+    private func scale(_ time: Double) -> CGFloat {
+        switch indicator {
+        case .inactive, .ending: 0.9
+        case .connecting: 0.82 + 0.08 * sin(time * 3)
+        case .listening: 0.94 + 0.04 * sin(time * 2)
+        case .thinking: 0.9
+        case .speaking: 0.88 + 0.12 * abs(sin(time * 7))
+        }
+    }
+    private func angle(_ time: Double) -> Double {
+        indicator == .thinking ? time.truncatingRemainder(dividingBy: 3) * 120 : 0
+    }
+    private var accessibilityText: String {
+        switch indicator {
+        case .inactive: "语音未开始"
+        case .connecting: "正在连接"
+        case .listening: muted ? "麦克风已静音" : "正在聆听"
+        case .thinking: "正在思考"
+        case .speaking: "正在播报"
+        case .ending: "正在结束"
+        }
+    }
+}

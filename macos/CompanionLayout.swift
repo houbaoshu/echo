@@ -5,6 +5,8 @@ struct CompanionLayout {
     static let capsuleWidth: CGFloat = 260
     static let collapsedHeight: CGFloat = 54
     static let expandedHeight: CGFloat = 94
+    static let controlsWidth = PetSurfacePresentation.canvasWidth
+    static let controlsHeight = PetSurfacePresentation.canvasHeight
     var pet: CGRect
     var activity: CGRect
     var controls: CGRect
@@ -25,15 +27,22 @@ struct CompanionLayout {
         // the screen center, so it never reserves space above a top-edge pet.
         // Coordinates are AppKit's bottom-up points.
         let x = clamp(pet.minX, inset.minX, inset.maxX - pet.width)
-        let y = clamp(pet.minY, inset.minY + 40, inset.maxY - pet.height)
+        let y = clamp(pet.minY, inset.minY + controlsHeight, inset.maxY - pet.height)
         let placed = CGRect(x: x, y: y, width: pet.width, height: pet.height)
-        let controls = CGRect(x: clamp(placed.midX - 40, inset.minX, inset.maxX - 80),
-                              y: placed.minY - 40, width: 80, height: 40)
+        // Like the activity, the controls use a fixed canvas; only their content moves and resizes.
+        let controls = CGRect(x: clamp(placed.midX - controlsWidth / 2, inset.minX, inset.maxX - controlsWidth),
+                              y: placed.minY - controlsHeight, width: controlsWidth, height: controlsHeight)
         let below = placed.midY >= screen.midY
         let activity = CGRect(x: clamp(placed.midX - width / 2, inset.minX, inset.maxX - width),
                               y: below ? controls.minY + 4 - height : placed.maxY - 4,
                               width: width, height: height)
         return Self(pet: placed, activity: activity, controls: controls)
+    }
+    /// The visible controls, centered under the pet but kept inside their canvas.
+    func controlsContent(width: CGFloat) -> CGRect {
+        let center = PetSurfacePresentation.contentCenter(petCenter: pet.midX - controls.minX, width: width)
+        let x = controls.minX + center - width / 2
+        return CGRect(x: x, y: controls.minY, width: width, height: controls.height)
     }
     static func screen(for pet: CGRect, screens: [CGRect]) -> CGRect? {
         screens.min { left, right in
