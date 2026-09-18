@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Darwin
 import AppKit
 
@@ -176,6 +177,97 @@ import AppKit
         try await Task.sleep(for: .milliseconds(250))
         precondition(slow.location == nil && slow.state.directories.isEmpty)
         print("PASS: file browser encodings, limits, links, permissions, lazy tree, memory navigation, filesystem watching and late-result isolation")
+        try await testRefreshCommitsDirectoriesSeparately()
+    }
+
+    /// Records what each run loop turn changed, so a refresh that alters several
+    /// directories can be checked for how it reaches the list.
+    @MainActor private final class CommitRecorder {
+        var turn = 0
+        var previous: [String: ProjectDirectoryState] = [:]
+        var changesPerTurn: [Int: Int] = [:]
+        var busiestTurn: Int { changesPerTurn.values.max() ?? 0 }
+        var changedDirectories: Int { changesPerTurn.values.reduce(0, +) }
+        func record(_ directories: [String: ProjectDirectoryState]) {
+            let changed = Set(previous.keys).union(directories.keys).count { previous[$0] != directories[$0] }
+            if changed > 0 { changesPerTurn[turn, default: 0] += changed }
+            previous = directories
+        }
+    }
+    /// A thread-safe switch for the injected reader, which runs off the main actor.
+    private final class ContentFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
+        func set() { lock.lock(); value = true; lock.unlock() }
+    }
+
+    /// Several directories changing in one refresh must reach the list in separate run loop
+    /// turns. The sidebar list is an NSOutlineView, and two of its groups gaining rows in a
+    /// single SwiftUI update make it insert rows from inside its own delegate callbacks —
+    /// see docs/repros/swiftui-outline-list-reentrancy.swift, which logs
+    /// "Application performed a reentrant operation in its NSTableView delegate".
+    static func testRefreshCommitsDirectoriesSeparately() async throws {
+        let folders = (0..<6).map { "folder\($0)" }
+        let grown = ContentFlag()
+        // Returns immediately, so every directory's read finishes in the same instant and
+        // the results would land in one update unless refresh separates them.
+        let browser = ProjectFileBrowserStore(readDirectory: { _, path in
+            if path.isEmpty {
+                return .loaded(folders.map { .init(path: $0, name: $0, kind: .directory) })
+            }
+            var entries: [ProjectFileEntry] = [.init(path: path + "/seed.txt", name: "seed.txt", kind: .file)]
+            if grown.isSet { entries.append(.init(path: path + "/added.txt", name: "added.txt", kind: .file)) }
+            return .loaded(entries)
+        }, readPreview: { _, _ in .text("") })
+
+        browser.select(project: WorkspaceProject(name: "commits", path: "/commits"))
+        try await wait("root loaded") { if case .loaded = browser.state.directories[""] { return true }; return false }
+        for folder in folders { browser.toggleDirectory(folder) }
+        try await wait("all expanded") {
+            folders.allSatisfy { if case .loaded = browser.state.directories[$0] { return true }; return false }
+        }
+
+        let recorder = CommitRecorder()
+        recorder.previous = browser.state.directories
+        guard let observer = CFRunLoopObserverCreateWithHandler(
+            nil, CFRunLoopActivity.beforeWaiting.rawValue, true, 0, { _, _ in
+                MainActor.assumeIsolated { recorder.turn += 1 }
+            }) else { preconditionFailure("Could not observe the run loop") }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        defer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+        let subscription = browser.$state.sink { state in
+            MainActor.assumeIsolated { recorder.record(state.directories) }
+        }
+        defer { subscription.cancel() }
+
+        grown.set()
+        browser.refresh()
+        try await wait("every folder grew") {
+            folders.allSatisfy { folder in
+                guard case .loaded(let entries) = browser.state.directories[folder] else { return false }
+                return entries.contains { $0.name == "added.txt" }
+            }
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(recorder.changedDirectories >= folders.count,
+                     "Every grown folder is observed: \(recorder.changedDirectories)")
+        precondition(recorder.busiestTurn == 1,
+                     "A run loop turn carries at most one changed directory, saw \(recorder.busiestTurn) in one turn")
+
+        // An unchanged refresh must not rewrite anything: a rewrite rebuilds the subtree
+        // and, with several directories, is the update shape the list cannot take.
+        let quiet = CommitRecorder()
+        quiet.previous = browser.state.directories
+        let quietSubscription = browser.$state.sink { state in
+            MainActor.assumeIsolated { quiet.record(state.directories) }
+        }
+        defer { quietSubscription.cancel() }
+        browser.refresh()
+        try await Task.sleep(for: .milliseconds(300))
+        precondition(quiet.changedDirectories == 0,
+                     "An unchanged refresh rewrites no directory, saw \(quiet.changedDirectories)")
+        print("PASS: refresh commits each changed directory in its own run loop turn and rewrites nothing unchanged")
     }
 
     private static func testImages(root: URL) throws {

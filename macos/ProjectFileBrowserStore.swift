@@ -123,11 +123,11 @@ enum ProjectFilePreview: Equatable, Sendable {
             self.state.preview = result
         }
     }
-    func loadDirectory(_ path: String = "", preservingContent: Bool = false) {
+    func loadDirectory(_ path: String = "") {
         guard let location else { return }
         let request = UUID(), generation = generation, readDirectory = readDirectory
         directoryRequests[path] = request
-        if !preservingContent { state.directories[path] = .loading }
+        state.directories[path] = .loading
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
                 readDirectory(location.root, path)
@@ -142,12 +142,49 @@ enum ProjectFilePreview: Equatable, Sendable {
         guard let projectID, projectID == location?.projectID else { return }
         refresh()
     }
+    /// Re-reads every directory the tree knows about, without ever showing `.loading`
+    /// over content that is already on screen.
+    ///
+    /// Results are applied one per run loop turn, and only where the listing actually
+    /// changed. The sidebar list is an NSOutlineView, and two of its groups gaining rows
+    /// in a single SwiftUI update make it insert rows from inside its own delegate
+    /// callbacks — see docs/repros/swiftui-outline-list-reentrancy.swift. Reading every
+    /// directory concurrently but committing the results one at a time keeps each group's
+    /// insertion in an update of its own.
     func refresh() {
-        guard location != nil else { return }
+        guard let location else { return }
         generation = UUID(); directoryRequests = [:]
         let paths = Set(state.directories.keys).union(state.expanded).union([""])
-        for path in paths { loadDirectory(path, preservingContent: true) }
+        let request = UUID(), generation = generation, readDirectory = readDirectory
+        for path in paths { directoryRequests[path] = request }
+        Task { [weak self] in
+            let results = await withTaskGroup(of: (String, ProjectDirectoryState).self) { group in
+                for path in paths {
+                    group.addTask(priority: .userInitiated) { (path, readDirectory(location.root, path)) }
+                }
+                var results: [(String, ProjectDirectoryState)] = []
+                for await result in group { results.append(result) }
+                return results
+            }
+            for (path, result) in results {
+                // A newer selection or refresh abandons everything still unapplied; a newer
+                // load of one directory only abandons that directory.
+                guard let self, self.location == location, self.generation == generation else { return }
+                guard self.directoryRequests[path] == request else { continue }
+                self.directoryRequests[path] = nil
+                guard self.state.directories[path] != result else { continue }
+                self.state.directories[path] = result
+                await Self.commitSeparately()
+            }
+        }
         if state.showingFile, let path = state.selectedPath { openFile(path, preservingContent: true) }
+    }
+    /// Hands back one run loop turn, so the list applies the directory just written before
+    /// the next one changes.
+    private static func commitSeparately() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
     }
 }
 

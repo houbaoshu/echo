@@ -133,6 +133,7 @@ import SwiftUI
         try await testCompanionBubblePanelAndHotKey()
         try await testComposerPreservesEditorStateAcrossVoiceUpdates()
         try await testRightSidebarLayoutAndToggling()
+        try await testProjectTreeScrollRestoration()
         try await testCodeCopyAndSyntaxPreview()
         let editor = ComposerTextView()
         editor.isRichText = false
@@ -2502,6 +2503,79 @@ import SwiftUI
         precondition(editorBefore === getEditor(), "ComposerTextView is not recreated when voice ends")
 
         print("PASS: NativeComposer instance, draft, and selection preserved across voice updates")
+    }
+
+    /// A project the tree is brought back to must return to the position it was left at.
+    /// The list keeps its identity across a switch, so nothing appears or disappears to hang
+    /// the restore on; only the browser's location changes.
+    @MainActor private static func testProjectTreeScrollRestoration() async throws {
+        let store = TaskStore(source: PreviewSource())
+        let voice = VoiceSessionController(), dictation = DictationController()
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
+        defer { workspace.shutdown(); voice.shutdown() }
+        let fm = FileManager.default
+        let tall = fm.temporaryDirectory.appendingPathComponent("echo-scroll-tall-\(UUID())")
+        let short = fm.temporaryDirectory.appendingPathComponent("echo-scroll-short-\(UUID())")
+        try fm.createDirectory(at: tall, withIntermediateDirectories: true)
+        try fm.createDirectory(at: short, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tall); try? fm.removeItem(at: short) }
+        let names = (0..<60).map { String(format: "file%02d.txt", $0) }
+        for name in names { try Data("x".utf8).write(to: tall.appendingPathComponent(name)) }
+        try Data("y".utf8).write(to: short.appendingPathComponent("only.txt"))
+
+        let tallID = workspace.addProject(url: tall), shortID = workspace.addProject(url: short)
+        guard let first = workspace.selected else { preconditionFailure("No conversation") }
+        precondition(workspace.associateProject(tallID, conversationID: first.id))
+        let second = workspace.newConversation(projectID: shortID)
+
+        let host = NSHostingView(rootView: WorkspaceInspector(workspace: workspace).frame(width: 300, height: 400))
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: 400)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.orderOut(nil) }
+        func settle(_ ms: Int = 250) async throws {
+            try await Task.sleep(for: .milliseconds(ms)); host.layoutSubtreeIfNeeded()
+        }
+        workspace.select(first.id)
+        try await settle(500)
+        func tree() -> NSTableView? { findAccessibility("projectFiles.tree", in: host) as? NSTableView }
+        guard let table = tree(), let scroll = table.enclosingScrollView else {
+            preconditionFailure("Project tree missing")
+        }
+        let target = "file50.txt"
+        guard let row = (0..<table.numberOfRows).first(where: { table.rect(ofRow: $0).minY > 0 })
+                .map({ _ in names.firstIndex(of: target)! }) else { preconditionFailure("No rows") }
+        precondition(table.numberOfRows >= names.count, "Every file has a row: \(table.numberOfRows)")
+        let document = scroll.documentView!.bounds.height
+        precondition(document > scroll.contentView.bounds.height,
+                     "The tree is taller than its viewport, so a position exists to restore")
+        let savedTop = table.rect(ofRow: row).minY
+        precondition(savedTop > scroll.contentView.bounds.height, "The target row sits below the first screenful")
+
+        // What a click records: the highlight and the row to come back to.
+        workspace.fileBrowser.highlight(target); workspace.fileBrowser.setScrollID(target)
+        // Leave the tree at the very top, so only a real restore can move it back down.
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: 0))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        try await settle()
+        precondition(scroll.contentView.bounds.origin.y == 0, "The tree starts the switch at the top")
+
+        workspace.select(second.id)
+        try await settle(500)
+        precondition(workspace.fileBrowser.location?.projectID == shortID, "The other project is showing")
+        workspace.select(first.id)
+        try await settle(600)
+        precondition(workspace.fileBrowser.location?.projectID == tallID, "Back on the first project")
+        precondition(workspace.fileBrowser.state.scrollID == target, "The saved position survives the switch")
+        guard let restoredTable = tree(), let restoredScroll = restoredTable.enclosingScrollView else {
+            preconditionFailure("Project tree missing after the switch")
+        }
+        let restored = restoredScroll.contentView.bounds.origin.y
+        precondition(restored > 0, "Coming back does not leave the tree at the top")
+        let expected = restoredTable.rect(ofRow: row).minY
+        precondition(abs(restored - expected) < restoredTable.rowHeight * 3,
+                     "The saved row is back at the top of the viewport: \(restored) vs \(expected)")
+        print("PASS: the project tree returns to its saved position when a project comes back")
     }
 
     @MainActor private static func testRightSidebarLayoutAndToggling() async throws {

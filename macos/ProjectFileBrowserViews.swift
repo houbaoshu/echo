@@ -44,7 +44,10 @@ private struct ProjectFileBrowserView: View {
                 }.listStyle(.sidebar).scrollContentBackground(.hidden)
                     .accessibilityIdentifier("projectFiles.tree")
                     .onKeyPress(.return) { activateSelection(); return .handled }
-                    .onAppear {
+                    // The list keeps its identity when the project changes, so `onAppear`
+                    // fires once for the window's whole life. Restoring on the location
+                    // covers the first appearance and every later switch alike.
+                    .onChange(of: browser.location, initial: true) { _, _ in
                         // Rows restored from a saved expansion exist only once the list lays out.
                         guard let path = browser.state.scrollID else { return }
                         DispatchQueue.main.async { proxy.scrollTo(path, anchor: .top) }
