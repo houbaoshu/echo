@@ -12,10 +12,6 @@ enum WorkspaceStyle {
     static let heading = Font.system(size: 16, weight: .medium)
     static let pageTitle = Font.system(size: 24, weight: .semibold)
     static let primary = Color(nsColor: .labelColor)
-    // The sidebar and the inspector are one layer below the conversation. They share this so the
-    // two side columns cannot drift apart; the conversation keeps .textBackgroundColor to read as
-    // content. Both are semantic system colours, so light/dark and high contrast follow the system.
-    static let sideColumn = Color(nsColor: .underPageBackgroundColor)
     static let secondary = Color(nsColor: secondaryTextColor)
     static let tertiary = Color(nsColor: tertiaryTextColor)
     static let secondaryTextColor = NSColor(name: nil) { appearance in
@@ -139,7 +135,6 @@ struct WorkspaceSidebar: View {
             }.font(WorkspaceStyle.body)
             Color.clear.frame(height: 48)
         }
-        .background { WorkspaceStyle.sideColumn.ignoresSafeArea().allowsHitTesting(false) }
         .onChange(of: workspace.searchFocusRequest) { _, _ in searchFocused = true }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             workspace.objectWillChange.send()

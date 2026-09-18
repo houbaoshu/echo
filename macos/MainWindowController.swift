@@ -50,7 +50,7 @@ struct MainWindowLayout {
 @MainActor final class MainSplitController: NSSplitViewController {
     var resized: (() -> Void)?
     func columnWidth(_ item: NSSplitViewItem) -> CGFloat {
-        // Inspector content may be wrapped in an inset system container.
+        // Sidebar and inspector content are wrapped in a system glass container.
         var view = item.viewController.view
         while let parent = view.superview, parent !== splitView { view = parent }
         return view.frame.width
@@ -85,7 +85,6 @@ struct MainWindowLayout {
     private let titleField = NSTextField(labelWithString: "新会话")
     private var manualColumn: MainWindowLayout.Column?
     private static let leftID = NSToolbarItem.Identifier("chiyan.sidebar")
-    private static let leftSeparatorID = NSToolbarItem.Identifier("chiyan.sidebarSeparator")
     private static let rightID = NSToolbarItem.Identifier("chiyan.inspector")
     private static let titleID = NSToolbarItem.Identifier("chiyan.title")
 
@@ -112,14 +111,15 @@ struct MainWindowLayout {
         // AppKit owns column constraints; SwiftUI content must not impose its ideal
         // text width on the window or prevent it from shrinking before collapse.
         sidebarHost.sizingOptions = []; conversationHost.sizingOptions = []; inspectorHost.sizingOptions = []
-        // A regular split item keeps the sidebar flush with the window instead
-        // of adding macOS 26's inset, rounded sidebar glass container.
-        sidebarItem = NSSplitViewItem(viewController: sidebarHost)
+        // A sidebar item lets AppKit own the column: the same glass container it gives the
+        // inspector, its own titlebar region so the content's scroll pocket stops at the divider,
+        // and a hairline divider. The content view must stay transparent for that to show.
+        sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHost)
         sidebarItem.minimumThickness = 220; sidebarItem.maximumThickness = 340
         sidebarItem.canCollapse = true; sidebarItem.canCollapseFromWindowResize = true
         sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         sidebarItem.holdingPriority = .init(260)
-        sidebarItem.preferredThicknessFraction = 0.15; sidebarItem.isSpringLoaded = true
+        sidebarItem.preferredThicknessFraction = 0.15
         let content = NSSplitViewItem(viewController: conversationHost)
         content.minimumThickness = 440; content.holdingPriority = .init(249)
         content.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
@@ -397,12 +397,9 @@ struct MainWindowLayout {
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.leftID, Self.leftSeparatorID, Self.titleID, .flexibleSpace, .inspectorTrackingSeparator, .flexibleSpace, Self.rightID]
+        [Self.leftID, .sidebarTrackingSeparator, Self.titleID, .flexibleSpace, .inspectorTrackingSeparator, .flexibleSpace, Self.rightID]
     }
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        if id == Self.leftSeparatorID {
-            return NSTrackingSeparatorToolbarItem(identifier: id, splitView: splitController.splitView, dividerIndex: 0)
-        }
         let item = NSToolbarItem(itemIdentifier: id)
         item.target = self
         switch id {
