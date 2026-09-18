@@ -1,12 +1,14 @@
 import AppKit
 import SwiftUI
 
+/// The shared surface behind every companion panel. The panels are borderless and fully
+/// transparent, so the system material is what samples the desktop behind them.
 struct CompanionBackground<SurfaceShape: InsettableShape>: View {
-    @Environment(\.colorScheme) private var colorScheme
     var shape: SurfaceShape
     var hovered = false
     var body: some View {
-        shape.fill(colorScheme == .dark ? Color(white: 0.14) : .white.opacity(0.9))
+        Color.clear
+            .glassEffect(.regular, in: shape)
             .overlay {
                 shape.strokeBorder(.primary.opacity(hovered ? 0.24 : 0.14), lineWidth: 0.75)
             }
