@@ -108,47 +108,59 @@ struct VoiceSettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var voice: VoiceSessionController
     @ObservedObject private var diagnostics = VoiceDiagnostics.shared
+    private var testsDisabled: Bool { voice.testing || voice.isActive || voice.isDictating || !settings.canTestVoice }
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(spacing: 8) {
-                Text("音色 ID").font(.headline).fixedSize().padding(.trailing, 16)
-                TextField("输入音色 ID", text: $settings.voiceDraft.speaker)
-                    .accessibilityLabel("音色 ID")
-                    .accessibilityIdentifier("voiceSettings.speaker")
+        VStack(alignment: .leading, spacing: 24) {
+            SettingsCard {
+                SettingsRow(title: "音色 ID") {
+                    TextField("输入音色 ID", text: $settings.voiceDraft.speaker)
+                        .accessibilityLabel("音色 ID")
+                        .accessibilityIdentifier("voiceSettings.speaker")
+                }
             }
-            HStack {
+            HStack(spacing: 12) {
                 Button("保存") { settings.saveVoice() }.buttonStyle(.borderedProminent)
                     .disabled(!settings.isVoiceDirty).accessibilityIdentifier("voiceSettings.save")
                 Button("还原修改") { settings.restoreVoice() }.disabled(!settings.isVoiceDirty)
+                    .accessibilityIdentifier("voiceSettings.restore")
             }
-            if let notice = settings.voiceNotice { Text(notice).font(.callout).textSelection(.enabled) }
+            if let notice = settings.voiceNotice {
+                Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                    .accessibilityIdentifier("voiceSettings.notice")
+            }
             Divider()
-            HStack {
+            HStack(spacing: 12) {
                 Button("检查连接") { test(preview: false) }
                     .accessibilityIdentifier("voiceSettings.test")
                 Button("试听音色") { test(preview: true) }
                     .accessibilityIdentifier("voiceSettings.preview")
-            }.disabled(voice.testing || voice.isActive || voice.isDictating || !settings.canTestVoice)
+            }.disabled(testsDisabled)
             if voice.testing {
-                HStack { ProgressView().controlSize(.small); Text("正在测试…"); Button("取消") { voice.cancelTest() } }
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在测试…").font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                    Button("取消") { voice.cancelTest() }.accessibilityIdentifier("voiceSettings.cancelTest")
+                }
             }
-            if let result = voice.testResult { Text(result).font(.callout).textSelection(.enabled) }
+            if let result = voice.testResult {
+                Text(result).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                    .accessibilityIdentifier("voiceSettings.testResult")
+            }
             DisclosureGroup("诊断日志") {
                 HStack {
                     Spacer()
                     Button("复制日志") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(diagnostics.text, forType: .string)
-                    }.disabled(diagnostics.lines.isEmpty)
+                    }.disabled(diagnostics.lines.isEmpty).accessibilityIdentifier("voiceSettings.copyLog")
                 }
                 ScrollView {
                     Text(diagnostics.text)
                         .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(height: 220)
-            }
-        }.textFieldStyle(.roundedBorder)
-            .onChange(of: settings.voiceAPIKey) { _, _ in voice.invalidateTest() }
+            }.accessibilityIdentifier("voiceSettings.diagnostics")
+        }.onChange(of: settings.voiceAPIKey) { _, _ in voice.invalidateTest() }
             .onChange(of: settings.voiceDraft) { _, _ in voice.invalidateTest() }
             .onDisappear { voice.cancelTest() }
     }

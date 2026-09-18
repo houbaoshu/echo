@@ -8,21 +8,23 @@ struct SettingsView: View {
     var workspace: WorkspaceStore? = nil
     var onBack: () -> Void
     var onReturnToVoice: (() -> Void)? = nil
+    /// The section order the sidebar and its keyboard traversal both follow.
+    static let sections = ["模型", "语音", "精灵"]
     private var section: String { settings.selectedSection }
+    /// The sidebar is a system source list, so it hands back an optional selection.
+    /// Clearing it (⌘-click on the selected row) keeps the current section.
+    private var sectionSelection: Binding<String?> {
+        Binding(get: { settings.selectedSection },
+                set: { if let value = $0 { settings.selectedSection = value } })
+    }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Button(action: onBack) { Label("返回应用", systemImage: "arrow.left").fontWeight(.medium) }
-                        .buttonStyle(.plain).padding(.bottom, 30).accessibilityIdentifier("settings.back")
-                    navigation("模型", icon: "slider.horizontal.3")
-                    navigation("语音", icon: "waveform")
-                    navigation("精灵") { SpiritCapsuleIcon().frame(width: 20, height: 20) }
-                    Spacer()
-                }.padding(20).frame(width: 200, alignment: .leading)
-                    .frame(maxHeight: .infinity).background(Color.primary.opacity(0.035))
-                    .background(Color(nsColor: .windowBackgroundColor))
-                Divider()
+                sidebar
+                // The page sits under a full-size transparent titlebar. Neighbouring
+                // backgrounds bleed into that top safe area by default while plain
+                // content does not, so the rule has to opt in or it starts 32pt down.
+                Divider().ignoresSafeArea(.container, edges: .top)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         Text(section).font(WorkspaceStyle.pageTitle)
@@ -49,16 +51,34 @@ struct SettingsView: View {
         .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    private func navigation(_ name: String, icon: String) -> some View {
-        navigation(name) { Image(systemName: icon) }
+    /// A system source list owns section selection: it supplies the standard
+    /// selection fill, hover, focus ring, arrow-key traversal and selected trait.
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: onBack) { Label("返回应用", systemImage: "arrow.left").fontWeight(.medium) }
+                .buttonStyle(.accessoryBar).controlSize(.large)
+                .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 14)
+                .accessibilityIdentifier("settings.back")
+            List(selection: sectionSelection) {
+                ForEach(Self.sections, id: \.self) { name in
+                    Label { Text(name) } icon: { icon(name).accessibilityHidden(true) }
+                        // Fill the row so the blank space beside the label selects too.
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .accessibilityIdentifier("settings.section.\(name)")
+                }
+            }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                .accessibilityLabel("设置分区").accessibilityIdentifier("settings.sections")
+        }.padding(.vertical, 6).frame(width: 200, alignment: .leading)
+            .frame(maxHeight: .infinity).background(Color.primary.opacity(0.035))
+            .background(Color(nsColor: .windowBackgroundColor))
     }
-    private func navigation<Icon: View>(_ name: String, @ViewBuilder icon: () -> Icon) -> some View {
-        Button { settings.selectedSection = name } label: {
-            Label { Text(name) } icon: { icon().accessibilityHidden(true) }
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 10)
-                .background(section == name ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(section == name ? Color.accentColor.opacity(0.8) : .clear, lineWidth: 1.5))
-        }.buttonStyle(.plain).accessibilityIdentifier("settings.section.\(name)")
+    @ViewBuilder private func icon(_ name: String) -> some View {
+        switch name {
+        case "模型": Image(systemName: "slider.horizontal.3")
+        case "语音": Image(systemName: "waveform")
+        default: SpiritCapsuleIcon().frame(width: 20, height: 20)
+        }
     }
 }
 
@@ -114,13 +134,43 @@ struct SpiritCapsuleIcon: View {
     }
 }
 
+/// One labelled settings row. Every section uses it so labels, control width and
+/// row padding match, and so a narrow pane stacks each row the same way.
+struct SettingsRow<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 24) {
+                Text(title).font(WorkspaceStyle.body).frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
+                content.frame(width: 270)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title).font(WorkspaceStyle.body)
+                content.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }.padding(16)
+    }
+}
+
+/// The grouping box the settings rows sit in.
+struct SettingsCard<Content: View>: View {
+    @ViewBuilder let content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) { content }
+            .textFieldStyle(.roundedBorder)
+            .background(RoundedRectangle(cornerRadius: 16).fill(Color(nsColor: .controlBackgroundColor).opacity(0.35)))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.09)))
+    }
+}
+
 struct ModelSettingsView: View {
     @ObservedObject var settings: SettingsStore
     @State private var revealsKey = false
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 0) {
-                row("Provider") {
+            SettingsCard {
+                SettingsRow(title: "Provider") {
                     Picker("Provider", selection: Binding(get: { settings.selectedProvider }, set: { settings.selectProvider($0) })) {
                         ForEach(ModelProvider.allCases, id: \.self) { provider in
                             Text(provider.title).tag(provider)
@@ -129,7 +179,7 @@ struct ModelSettingsView: View {
                         .accessibilityLabel("Provider").accessibilityIdentifier("settings.provider")
                 }
                 Divider()
-                row("协议") {
+                SettingsRow(title: "协议") {
                     Picker("协议", selection: $settings.draft.apiProtocol) {
                         ForEach(ModelAPIProtocol.allCases, id: \.self) { apiProtocol in
                             Text(apiProtocol.title).tag(apiProtocol)
@@ -138,12 +188,12 @@ struct ModelSettingsView: View {
                         .accessibilityLabel("协议").accessibilityIdentifier("settings.protocol")
                 }
                 Divider()
-                row("Base URL") {
+                SettingsRow(title: "Base URL") {
                     TextField("https://api.openai.com/v1", text: $settings.draft.baseURL)
                         .accessibilityLabel("Base URL").accessibilityIdentifier("settings.baseURL")
                 }
                 Divider()
-                row("API Key") {
+                SettingsRow(title: "API Key") {
                     HStack(spacing: 8) {
                         Group {
                             if revealsKey { TextField("输入 API Key", text: $settings.apiKey) }
@@ -152,19 +202,19 @@ struct ModelSettingsView: View {
                         Button { revealsKey.toggle() } label: { Image(systemName: revealsKey ? "eye.slash" : "eye") }
                             .buttonStyle(.borderless).help(revealsKey ? "隐藏 API Key" : "显示 API Key")
                             .accessibilityLabel(revealsKey ? "隐藏 API Key" : "显示 API Key")
+                            .accessibilityIdentifier("settings.apiKey.reveal")
                         Button { settings.apiKey = "" } label: { Image(systemName: "xmark.circle") }
                             .buttonStyle(.borderless).disabled(settings.apiKey.isEmpty).help("清除 API Key，保存后生效")
                             .accessibilityLabel("清除 API Key")
+                            .accessibilityIdentifier("settings.apiKey.clear")
                     }.disabled(!settings.selectedProvider.requiresKey)
                 }
                 Divider()
-                row("默认模型") {
+                SettingsRow(title: "默认模型") {
                     TextField("输入 Model ID", text: $settings.draft.model)
                         .accessibilityLabel("默认模型").accessibilityIdentifier("settings.model")
                 }
-            }.textFieldStyle(.roundedBorder)
-                .background(RoundedRectangle(cornerRadius: 16).fill(Color(nsColor: .controlBackgroundColor).opacity(0.35)))
-                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.09)))
+            }
             ViewThatFits(in: .horizontal) {
                 HStack { saveActions; Spacer(); testAction }
                 VStack(alignment: .leading, spacing: 12) { saveActions; testAction }
@@ -176,6 +226,7 @@ struct ModelSettingsView: View {
             }
             if let notice = settings.notice {
                 Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                    .accessibilityIdentifier("settings.notice")
             }
         }
         .onDisappear { revealsKey = false }
@@ -186,6 +237,7 @@ struct ModelSettingsView: View {
             Button("保存") { settings.save() }.buttonStyle(.borderedProminent).disabled(!settings.isDirty)
                 .accessibilityIdentifier("settings.save")
             Button("还原修改") { settings.restore() }.disabled(!settings.canRestoreModel)
+                .accessibilityIdentifier("settings.restore")
         }
     }
     private var testAction: some View {
@@ -197,19 +249,6 @@ struct ModelSettingsView: View {
                 .accessibilityIdentifier("settings.test")
         }
     }
-    private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 24) {
-                Text(title).font(WorkspaceStyle.body).frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
-                content().frame(width: 270)
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                Text(title).font(WorkspaceStyle.body)
-                content().frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }.padding(16)
-    }
-
 }
 
 struct PetSettingsView: View {
@@ -237,6 +276,7 @@ struct PetSettingsView: View {
             ScrollViewReader { proxy in
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 16) {
                     ForEach(pets.entries) { pet in
+                        let selected = pets.selectedID == pet.id
                         Button { pets.activate(pet.id) } label: {
                             VStack(alignment: .leading, spacing: 12) {
                                 Image(decorative: pet.preview, scale: 1).resizable().interpolation(.high).scaledToFit()
@@ -244,17 +284,44 @@ struct PetSettingsView: View {
                                 HStack {
                                     Text(pet.name).font(WorkspaceStyle.medium).lineLimit(1)
                                     Spacer()
-                                    if pets.selectedID == pet.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
+                                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
                                 }
                             }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 16))
-                                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(pets.selectedID == pet.id ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: pets.selectedID == pet.id ? 2 : 1))
-                        }.buttonStyle(.plain).id(pet.id)
-                            .accessibilityLabel("\(pet.name)，\(pets.selectedID == pet.id ? "当前精灵" : "点击切换")")
+                        }.buttonStyle(PetCardButtonStyle(selected: selected)).id(pet.id)
+                            // Keep the system focus ring on the card's own shape.
+                            .contentShape(.focusEffect, RoundedRectangle(cornerRadius: 16))
+                            .accessibilityAddTraits(selected ? [.isSelected] : [])
+                            .accessibilityLabel("\(pet.name)，\(selected ? "当前精灵" : "点击切换")")
                             .accessibilityIdentifier("settings.pet.\(pet.id)")
                     }
                 }.onChange(of: pets.highlightedID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
             }
+        }
+    }
+}
+
+/// The pet card is a selectable tile, so it carries the states a system row does:
+/// hover, pressed, selected and disabled.
+private struct PetCardButtonStyle: ButtonStyle {
+    let selected: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        Card(selected: selected, pressed: configuration.isPressed) { configuration.label }
+    }
+    private struct Card<Content: View>: View {
+        let selected: Bool
+        let pressed: Bool
+        @ViewBuilder let content: Content
+        @Environment(\.isEnabled) private var enabled
+        @State private var hovered = false
+        var body: some View {
+            let highlighted = enabled && (pressed || hovered)
+            content
+                .background(Color.primary.opacity(pressed ? 0.08 : hovered ? 0.05 : 0.025), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(highlighted ? 0.2 : 0.1),
+                                  lineWidth: selected ? 2 : 1))
+                .opacity(enabled ? 1 : 0.5)
+                .onHover { hovered = $0 }
         }
     }
 }

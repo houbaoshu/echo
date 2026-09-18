@@ -81,6 +81,7 @@ struct MainWindowLayout {
     private var ready = false
     private var observation: AnyCancellable?
     private var previewObservation: AnyCancellable?
+    private var sectionObservation: AnyCancellable?
     private let projectIcon = NSImageView()
     private let titleField = NSTextField(labelWithString: "新会话")
     private var manualColumn: MainWindowLayout.Column?
@@ -173,6 +174,11 @@ struct MainWindowLayout {
         observation = workspace.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.refreshTitle() }
         }
+        sectionObservation = settings.$selectedSection.removeDuplicates().sink { [weak self] _ in
+            // Switching sections rebuilds the whole right pane. Without a fresh key
+            // view loop AppKit keeps the stale one and Tab cannot leave the section list.
+            DispatchQueue.main.async { [weak self] in self?.window?.recalculateKeyViewLoop() }
+        }
         previewObservation = workspace.fileBrowser.$isPreviewExpanded.removeDuplicates().sink { [weak self] _ in
             // Published delivers before the stored value changes.
             DispatchQueue.main.async { [weak self] in self?.applyLayout() }
@@ -206,6 +212,11 @@ struct MainWindowLayout {
         window?.toolbar?.isVisible = false
         window?.title = "设置"
         present()
+        // Hiding the workspace does not resign its first responder, so the composer
+        // behind the page would keep taking keystrokes and swallow Tab. Hand the key
+        // view loop to the settings page instead.
+        window?.recalculateKeyViewLoop()
+        window?.makeFirstResponder(settingsHost.view)
     }
     func showWorkspace() {
         guard isSettingsVisible else { return }
@@ -391,7 +402,7 @@ struct MainWindowLayout {
         guard let window else { return }
         window.setFrame(MainWindowLayout.constrain(window.frame, screens: NSScreen.screens.map(\.visibleFrame)), display: true)
     }
-    func shutdown() { workspace.flush(); saveLayout(); observation = nil; previewObservation = nil; NotificationCenter.default.removeObserver(self); window?.orderOut(nil) }
+    func shutdown() { workspace.flush(); saveLayout(); observation = nil; previewObservation = nil; sectionObservation = nil; NotificationCenter.default.removeObserver(self); window?.orderOut(nil) }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {

@@ -754,6 +754,9 @@ final class ComposerTextView: NSTextView {
         guard focusPending, window != nil else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, self.focusPending, let window = self.window else { return }
+            // A queued request must never pull typing back into an editor that has
+            // since been hidden, e.g. the workspace behind the settings page.
+            guard !self.isHiddenOrHasHiddenAncestor else { return }
             if window.makeFirstResponder(self) { self.focusPending = false }
         }
     }

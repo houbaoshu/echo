@@ -83,6 +83,7 @@ import SwiftUI
             do {
                 if !CommandLine.arguments.contains("--pet-focus-only") {
                     try await testNativeMenuShortcuts(); try await testProjectDetachPointer()
+                    try await testSettingsKeyboardAndFocus()
                 }
                 try await testPetComposerPointerFocus(); exit(0)
             }
@@ -2560,6 +2561,224 @@ import SwiftUI
         precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "unmatched query") == [.add])
 
         print("PASS: project picker placement, multiline/narrow layout, fixed attribution, populated inspector, read-only preview and refresh")
+    }
+
+
+    /// Real keyboard and pointer events against the settings page: the page must own
+    /// typing while it is up, and its controls must traverse, activate and disable the
+    /// way system controls do.
+    @MainActor private static func testSettingsKeyboardAndFocus() async throws {
+        precondition(CGPreflightPostEventAccess(), "Settings keyboard test needs Accessibility permission to post events")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("settings-keys-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: ComposerSecrets())
+        settings.draft.model = "test-model"; settings.apiKey = "test-key"; settings.save()
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
+        voice.attach(workspace: workspace, settings: settings)
+        let pets = PetCatalog(settings: settings, builtinRoot: URL(fileURLWithPath: "assets/pets"))
+        let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "settings-keys-\(UUID())")!,
+                                        settings: settings, pets: pets)
+        let window = main.window!
+        main.present()
+        NSApp.activate(ignoringOtherApps: true)
+        defer { main.shutdown(); workspace.shutdown() }
+        func settle() async throws {
+            try await Task.sleep(for: .milliseconds(140)); window.contentView?.layoutSubtreeIfNeeded()
+        }
+        func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) async throws {
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)!
+                event.flags = flags
+                event.post(tap: .cghidEventTap)
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            try await settle()
+        }
+        /// One click. `isolate` parks the pointer and waits out the double-click
+        /// interval first, so a sweep of nearby clicks is not coalesced into one.
+        func click(_ point: NSPoint, isolate: Bool = true) async throws {
+            let height = NSScreen.screens[0].frame.height
+            let screen = window.convertPoint(toScreen: point)
+            if isolate {
+                CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                        mouseCursorPosition: CGPoint(x: screen.x + 600, y: height - screen.y - 300),
+                        mouseButton: .left)?.post(tap: .cghidEventTap)
+                try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.12))
+            }
+            for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+                CGEvent(mouseEventSource: nil, mouseType: type,
+                        mouseCursorPosition: CGPoint(x: screen.x, y: height - screen.y),
+                        mouseButton: .left)?.post(tap: .cghidEventTap)
+                try await Task.sleep(for: .milliseconds(45))
+            }
+            try await settle()
+        }
+        func responder() -> NSView? { window.firstResponder as? NSView }
+        func isSectionList(_ view: NSView?) -> Bool { view?.accessibilityRole() == .outline }
+        func isFieldEditor(_ view: NSView?) -> Bool {
+            view.map { String(describing: type(of: $0)).contains("FieldEditor") || $0 is NSTextView } ?? false
+        }
+        /// Tab until `ready`, so the assertions do not depend on the traversal length,
+        /// which grows when Full Keyboard Access adds buttons to the loop.
+        func tab(until ready: @autoclosure () -> Bool, _ description: String, limit: Int = 14) async throws {
+            for _ in 0..<limit where !ready() { try await key(48) }
+            precondition(ready(), "Tab never reached \(description); stopped at \(String(describing: responder()))")
+        }
+        let conversation = workspace.selected ?? workspace.newConversation()
+        conversation.store.mainDraft = ""
+        main.showSettings()
+        try await settle()
+        precondition(NSApp.isActive && window.isKeyWindow, "Real key events need the settings window to be key")
+
+        // 1. The page owns typing: a queued composer focus request cannot pull
+        // keystrokes back into the hidden conversation behind it.
+        precondition(!(window.firstResponder is ComposerTextView), "Settings takes focus off the hidden composer")
+        try await key(0)
+        try await key(1)
+        precondition(conversation.store.mainDraft.isEmpty,
+                     "Typing on the settings page must not reach the chat draft: \(conversation.store.mainDraft)")
+
+        // 2. The section sidebar is a real system source list, selected by the store.
+        guard let list = findAccessibility("settings.sections", in: window.contentView!) as? NSTableView
+                ?? (findView(window.contentView!) { $0.accessibilityRole() == .outline }) as? NSTableView else {
+            preconditionFailure("Settings sections must be a system list")
+        }
+        precondition(list.selectedRow == 0 && settings.selectedSection == "模型")
+        for name in SettingsView.sections {
+            precondition(findAccessibility("settings.section.\(name)", in: window.contentView!) != nil,
+                         "Section row \(name) is missing from the list")
+        }
+
+        // 3. The whole row is the hit target, not just the label.
+        for (row, name) in zip(0..., SettingsView.sections) {
+            let rect = list.convert(list.rect(ofRow: row), to: nil)
+            for x in [rect.minX + 20, rect.midX, rect.maxX - 6] {
+                settings.selectedSection = name == "模型" ? "语音" : "模型"
+                try await settle()
+                try await click(NSPoint(x: x, y: rect.midY))
+                precondition(settings.selectedSection == name,
+                             "Clicking \(name) at x=\(Int(x - rect.minX)) of \(Int(rect.width))pt missed the row")
+            }
+            // The row's full height counts too, including its top and bottom edge.
+            for y in [rect.minY + 3, rect.maxY - 3] {
+                settings.selectedSection = name == "模型" ? "语音" : "模型"
+                try await settle()
+                try await click(NSPoint(x: rect.maxX - 6, y: y))
+                precondition(settings.selectedSection == name, "The row edge at the far right of \(name) missed")
+            }
+        }
+        // Consecutive clicks down the far right of the list keep landing.
+        var visited: [String] = []
+        for (row, _) in zip(0..., SettingsView.sections) {
+            let rect = list.convert(list.rect(ofRow: row), to: nil)
+            try await click(NSPoint(x: rect.maxX - 6, y: rect.midY), isolate: false)
+            visited.append(settings.selectedSection)
+        }
+        precondition(visited == SettingsView.sections, "Rapid clicks across the rows: \(visited)")
+        // Empty space under the last row must not clear the section.
+        let lastRow = list.convert(list.rect(ofRow: SettingsView.sections.count - 1), to: nil)
+        try await click(NSPoint(x: lastRow.midX, y: lastRow.minY - 60))
+        precondition(settings.selectedSection == SettingsView.sections.last)
+        // A pointer click leaves the list focused; Tab must still be able to leave it.
+        precondition(isSectionList(responder()), "Clicking the list focuses it")
+        let firstRow = list.convert(list.rect(ofRow: 0), to: nil)
+        try await click(NSPoint(x: firstRow.maxX - 6, y: firstRow.midY))
+        precondition(settings.selectedSection == "模型")
+
+        // 4. Tab reaches the list and the model fields, and returns to the list.
+        try await tab(until: isSectionList(responder()), "the section list")
+        try await tab(until: isFieldEditor(responder()), "a model text field")
+        try await tab(until: isSectionList(responder()), "the section list again")
+
+        // 5. Arrow keys move the selection the way a source list does.
+        try await key(125)
+        precondition(settings.selectedSection == "语音" && list.selectedRow == 1, "Down arrow selects the next section")
+        try await key(125)
+        precondition(settings.selectedSection == "精灵" && list.selectedRow == 2)
+        try await key(126)
+        precondition(settings.selectedSection == "语音" && list.selectedRow == 1, "Up arrow selects the previous section")
+
+        // 6. The swapped pane rejoins the key view loop, so Tab still leaves the list.
+        try await tab(until: isFieldEditor(responder()), "the voice speaker field")
+        let speaker = settings.voiceDraft.speaker
+        try await key(0)
+        precondition(settings.voiceDraft.speaker != speaker, "The voice field takes typed text")
+        settings.restoreVoice()
+
+        // 7. Typing reaches the model fields, including the secure field.
+        settings.selectedSection = "模型"
+        try await settle()
+        try await tab(until: isFieldEditor(responder()), "the Base URL field")
+        let baseURL = settings.draft.baseURL
+        try await key(0)
+        precondition(settings.draft.baseURL != baseURL && settings.isDirty, "Base URL edits mark the model settings dirty")
+        try await tab(until: (responder() as? NSTextView)?.isFieldEditor == true
+                      && String(describing: type(of: responder()!)).contains("Secure"), "the API Key secure field")
+        let apiKey = settings.apiKey
+        try await key(0)
+        precondition(settings.apiKey != apiKey, "The secure field takes typed text")
+        settings.restore()
+        try await settle()
+        precondition(!settings.isDirty)
+
+        // 8. Disabled controls stay inert, and become live again when they apply.
+        let saved = settings.snapshot.model.model
+        precondition(findAccessibility("settings.save", in: window.contentView!)?.accessibilityPerformPress?() != true
+                     || settings.snapshot.model.model == saved, "Save does nothing while the form is unchanged")
+        precondition(findAccessibility("settings.apiKey.clear", in: window.contentView!) != nil)
+        settings.apiKey = ""
+        try await settle()
+        _ = findAccessibility("settings.apiKey.clear", in: window.contentView!)?.accessibilityPerformPress?()
+        precondition(settings.apiKey.isEmpty, "The clear button is disabled once the key is empty")
+        settings.restore()
+        try await settle()
+
+        // 9. Space activates the focused control when Full Keyboard Access is on;
+        // Return stays reserved for a default button, as it is system wide.
+        let keyboardUIMode = UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain)
+            .flatMap { $0["AppleKeyboardUIMode"] as? Int } ?? 0
+        let fullKeyboardAccess = keyboardUIMode & 2 != 0
+        if fullKeyboardAccess {
+            settings.selectedSection = "精灵"
+            try await settle()
+            let hotKey = settings.snapshot.quickComposerHotKey
+            try await tab(until: responder().map { String(describing: type(of: $0)).contains("PlatformSwitch") } ?? false,
+                          "the quick composer switch")
+            try await key(49)
+            precondition(settings.snapshot.quickComposerHotKey != hotKey, "Space flips the focused switch")
+            try await key(49)
+            precondition(settings.snapshot.quickComposerHotKey == hotKey)
+            let pet = pets.selectedID
+            try await tab(until: (responder()?.frame.width ?? 0) > 150 && (responder()?.frame.height ?? 0) > 150,
+                          "a pet card")
+            try await key(49)
+            precondition(pets.selectedID != pet, "Space activates the focused pet card")
+            try await tab(until: responder()?.frame.width == 103, "the back button")
+            try await key(36)
+            precondition(main.isSettingsVisible, "Return is not a shortcut for an ordinary focused button")
+            try await key(49)
+            precondition(!main.isSettingsVisible, "Space activates the focused back button")
+            main.showSettings()
+            try await settle()
+        }
+
+        // 10. Leaving the page returns typing to the conversation.
+        precondition(findAccessibility("settings.back", in: window.contentView!)?.accessibilityPerformPress?() == true)
+        try await settle()
+        precondition(!main.isSettingsVisible)
+        workspace.requestComposerFocus(conversationID: conversation.id)
+        try await settle()
+        precondition(window.firstResponder is ComposerTextView, "Returning to the workspace restores composer focus")
+        print("PASS: settings page owns typing, full-row pointer targets, system section list arrow/Tab traversal, pane swap keeps the key view loop,"
+              + " field editing, disabled controls\(fullKeyboardAccess ? ", Space activation under Full Keyboard Access" : "")")
+    }
+
+    @MainActor private static func findView(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {
+        if match(view) { return view }
+        for child in view.subviews { if let found = findView(child, match) { return found } }
+        return nil
     }
 
     /// SwiftUI AX nodes answer the selector without declaring the protocol, so dispatch it directly.
