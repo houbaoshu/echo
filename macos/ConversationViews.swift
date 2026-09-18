@@ -361,7 +361,9 @@ struct WorkspaceSearchField: NSViewRepresentable {
 /// responder where it was, so ↑ / ↓ would not follow the pointer and the rows
 /// would never show a focus ring. Hand the list focus whenever the person drives
 /// it, and never when the app selects a conversation on its own.
-@MainActor private final class SidebarListFocus {
+///
+/// Shared with the project file tree, which is the same kind of list.
+@MainActor final class SidebarListFocus {
     fileprivate weak var anchor: NSView?
     func take() {
         // First responder settles after AppKit finishes dispatching the click.
@@ -371,7 +373,7 @@ struct WorkspaceSearchField: NSViewRepresentable {
             window.makeFirstResponder(list)
         }
     }
-    /// The nearest list in the anchor's own branch: the sidebar hosts exactly one.
+    /// The nearest list in the anchor's own branch: each column hosts exactly one.
     private static func list(near view: NSView) -> NSTableView? {
         var scope = view.superview
         while let current = scope {
@@ -387,7 +389,7 @@ struct WorkspaceSearchField: NSViewRepresentable {
     }
 }
 
-private struct SidebarListFocusAnchor: NSViewRepresentable {
+struct SidebarListFocusAnchor: NSViewRepresentable {
     let focus: SidebarListFocus
     func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
     func updateNSView(_ view: NSView, context: Context) { focus.anchor = view }

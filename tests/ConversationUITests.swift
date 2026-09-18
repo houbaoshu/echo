@@ -2588,6 +2588,61 @@ import SwiftUI
         precondition(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
         try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
         precondition(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil)
+
+        // The tree is a system source list; that is what supplies the disclosure triangle,
+        // the child indentation, the selection fill, the focus ring and keyboard traversal.
+        guard let tree = findAccessibility("projectFiles.tree", in: inspector) as? NSTableView
+                ?? findView(inspector, { $0.accessibilityRole() == .outline }) as? NSTableView else {
+            preconditionFailure("The project tree must be a system source list")
+        }
+        precondition(tree.accessibilityRole() == .outline, "The tree reports itself as a source list")
+        func treeRow(_ identifier: String) -> Int? {
+            guard let node = findAccessibility(identifier, in: inspector),
+                  let screen = node.accessibilityFrame?() else { return nil }
+            let inTree = tree.convert(window.convertFromScreen(screen), from: nil)
+            let row = tree.row(at: NSPoint(x: inTree.midX, y: inTree.midY))
+            return row >= 0 ? row : nil
+        }
+        func treeKey(_ code: UInt16, _ characters: String) async throws {
+            window.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
+            try await Task.sleep(for: .milliseconds(200)); content.layoutSubtreeIfNeeded()
+        }
+        // Opening a folder highlights it, and the list agrees about which row that is.
+        // The pointer handing this list the first responder is the shared SidebarListFocus,
+        // which the chat sidebar's own pointer test covers.
+        precondition(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
+        try await Task.sleep(for: .milliseconds(200)); content.layoutSubtreeIfNeeded()
+        precondition(workspace.fileBrowser.state.expanded.contains("folder")
+                     && workspace.fileBrowser.state.selectedPath == "folder", "Opening a folder selects it")
+        precondition(tree.selectedRow == treeRow("projectFiles.entry.folder"),
+                     "The list highlights the row the tree calls selected")
+        window.makeFirstResponder(tree)
+        precondition(window.firstResponder === tree, "The tree takes keyboard focus")
+        // ← and → drive the system disclosure, and expanding is still what loads a folder.
+        try await treeKey(123, "\u{F702}")
+        precondition(!workspace.fileBrowser.state.expanded.contains("folder"), "← closes the selected folder")
+        try await treeKey(124, "\u{F703}")
+        precondition(workspace.fileBrowser.state.expanded.contains("folder"), "→ opens it again")
+        // ↑ / ↓ move the highlight only: walking the tree never replaces it with a preview.
+        try await treeKey(125, "\u{F701}")
+        precondition(workspace.fileBrowser.state.selectedPath == "folder/child.txt"
+                     && !workspace.fileBrowser.state.showingFile, "↓ highlights the next row without opening it")
+        try await treeKey(126, "\u{F700}")
+        precondition(workspace.fileBrowser.state.selectedPath == "folder"
+                     && !workspace.fileBrowser.state.showingFile, "↑ comes back to the folder above")
+        try await treeKey(125, "\u{F701}")
+        try await treeKey(36, "\r")
+        precondition(workspace.fileBrowser.state.showingFile
+                     && workspace.fileBrowser.state.selectedPath == "folder/child.txt",
+                     "Return opens the file the arrow keys reached")
+        workspace.fileBrowser.returnToDirectory()
+        try await Task.sleep(for: .milliseconds(200)); content.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
+        try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil,
+                     "The tree is closed again for the checks that follow")
         func openPicker() async throws -> NSWindow {
             precondition(picker.accessibilityPerformPress?() == true)
             try await Task.sleep(for: .milliseconds(200))
@@ -2897,7 +2952,7 @@ import SwiftUI
         precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "echo-project-ui") == [.project(projectID), .add])
         precondition(ProjectPickerOption.filtered(projects: workspace.projects, query: "unmatched query") == [.add])
 
-        print("PASS: project picker placement, multiline/narrow layout, fixed attribution, populated inspector, read-only preview and refresh")
+        print("PASS: project picker placement, multiline/narrow layout, fixed attribution, populated inspector, system file tree — outline role, selection, ← / → disclosure, arrow traversal without opening and Return — read-only preview and refresh")
     }
 
 

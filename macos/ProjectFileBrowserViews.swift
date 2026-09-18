@@ -20,6 +20,7 @@ struct WorkspaceInspector: View {
 private struct ProjectFileBrowserView: View {
     @ObservedObject var workspace: WorkspaceStore
     @ObservedObject var browser: ProjectFileBrowserStore
+    @State private var listFocus = SidebarListFocus()
     private var project: WorkspaceProject? { workspace.selectedID.flatMap { workspace.project(for: $0) } }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -32,19 +33,61 @@ private struct ProjectFileBrowserView: View {
             .accessibilityIdentifier("workspace.projectFiles")
     }
     private var directoryPage: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    directoryContents("", depth: 0)
-                }.padding(8).scrollTargetLayout()
-            }.scrollPosition(id: Binding(get: { browser.state.scrollID }, set: { browser.setScrollID($0) }), anchor: .top)
-                .accessibilityIdentifier("projectFiles.tree")
+        // A system source list owns the tree: the disclosure triangle, the child
+        // indentation, the selection fill, hover, active and inactive window appearance,
+        // ↑ / ↓ and ← / → traversal, the focus ring and the sidebar row metrics all come
+        // from AppKit instead of being drawn here.
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                List(selection: selection) {
+                    directoryContents("")
+                }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                    .accessibilityIdentifier("projectFiles.tree")
+                    .onKeyPress(.return) { activateSelection(); return .handled }
+                    .onAppear {
+                        // Rows restored from a saved expansion exist only once the list lays out.
+                        guard let path = browser.state.scrollID else { return }
+                        DispatchQueue.main.async { proxy.scrollTo(path, anchor: .top) }
+                    }
+                SidebarListFocusAnchor(focus: listFocus).frame(height: 0).accessibilityHidden(true)
+            }
         }
     }
-    @ViewBuilder private func directoryContents(_ path: String, depth: Int) -> some View {
+    /// The highlight, which the pointer and the arrow keys move. A click on the background
+    /// hands back nil; the row that was selected stays selected.
+    private var selection: Binding<String?> {
+        Binding(get: { browser.state.selectedPath }, set: { path in
+            guard let path else { return }
+            listFocus.take()
+            browser.highlight(path)
+            browser.setScrollID(path)
+        })
+    }
+    /// Expanding loads on demand, and only ever from here, so a collapsed folder is
+    /// never read and the list's own ← / → collapse travels the same path as a click.
+    private func expansion(_ path: String) -> Binding<Bool> {
+        Binding(get: { browser.state.expanded.contains(path) },
+                set: { expanded in
+                    guard expanded != browser.state.expanded.contains(path) else { return }
+                    browser.toggleDirectory(path)
+                })
+    }
+    /// A click, Return or an accessibility press activates a row: a folder opens or
+    /// closes, a file opens its preview. The list's own triangle only ever discloses.
+    private func activate(_ entry: ProjectFileEntry) {
+        if entry.kind == .directory { browser.toggleDirectory(entry.path) }
+        else { browser.openFile(entry.path) }
+    }
+    private func activateSelection() {
+        guard let path = browser.state.selectedPath,
+              case .loaded(let entries) = browser.state.directories[(path as NSString).deletingLastPathComponent],
+              let entry = entries.first(where: { $0.path == path }) else { return }
+        activate(entry)
+    }
+    @ViewBuilder private func directoryContents(_ path: String) -> some View {
         switch browser.state.directories[path] {
         case .none, .loading:
-            ProgressView().controlSize(.small).padding(12)
+            ProgressView().controlSize(.small)
         case .failed(let message):
             VStack(alignment: .leading, spacing: 8) {
                 Text(message).foregroundStyle(WorkspaceStyle.secondary)
@@ -54,52 +97,32 @@ private struct ProjectFileBrowserView: View {
                         WorkspaceActions.chooseFolder { workspace.relocateProject(project.id, to: $0) }
                     }.disabled(workspace.projectIsActive(project.id))
                 }
-            }.font(WorkspaceStyle.caption).padding(10)
+            }.font(WorkspaceStyle.caption).padding(.vertical, 6)
         case .loaded(let entries):
             if entries.isEmpty {
-                Text("空文件夹")
-                    .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
-                    .padding(.leading, CGFloat(depth) * 14 + 8).padding(.vertical, 8)
+                Text("空文件夹").font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
             } else {
                 ForEach(entries) { entry in
-                    entryRow(entry, depth: depth)
-                    if entry.kind == .directory && browser.state.expanded.contains(entry.path) {
-                        // Type erasure terminates the recursive view type; loading stays lazy.
-                        AnyView(directoryContents(entry.path, depth: depth + 1))
+                    if entry.kind == .directory {
+                        DisclosureGroup(isExpanded: expansion(entry.path)) {
+                            // A collapsed subtree stays unbuilt; nothing here reads the disk.
+                            if browser.state.expanded.contains(entry.path) {
+                                // Type erasure terminates the recursive view type.
+                                AnyView(directoryContents(entry.path))
+                            }
+                        } label: {
+                            entryRow(entry)
+                        }.tag(entry.path)
+                    } else {
+                        entryRow(entry).tag(entry.path)
                     }
                 }
             }
         }
     }
-    private func entryRow(_ entry: ProjectFileEntry, depth: Int) -> some View {
-        Button {
-            if entry.kind == .directory { browser.toggleDirectory(entry.path) }
-            else { browser.openFile(entry.path) }
-        } label: {
-            HStack(spacing: 6) {
-                if entry.kind == .directory {
-                    Image(systemName: browser.state.expanded.contains(entry.path) ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9)).frame(width: 10)
-                } else { Color.clear.frame(width: 10, height: 1) }
-                Group {
-                    if entry.kind == .directory {
-                        ProjectFolderIcon(isExpanded: browser.state.expanded.contains(entry.path), isAvailable: true)
-                            .foregroundStyle(WorkspaceStyle.secondary)
-                    } else if entry.kind == .symbolicLink {
-                        Image(systemName: "link").foregroundStyle(WorkspaceStyle.secondary)
-                    } else {
-                        ProjectFileIcon(name: entry.name)
-                    }
-                }.frame(width: 18, height: 16)
-                Text(entry.name).lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 0)
-            }.padding(.leading, CGFloat(depth) * 14 + 6).padding(.trailing, 6).frame(height: 28)
-                .background(RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.accentColor.opacity(browser.state.selectedPath == entry.path ? 0.12 : 0)))
-                .contentShape(Rectangle())
-        }.buttonStyle(.plain).id(entry.path).help(entry.path)
-            .accessibilityIdentifier("projectFiles.entry.\(entry.path)")
-            .accessibilityValue(entry.kind == .directory ? (browser.state.expanded.contains(entry.path) ? "已展开" : "已折叠") : "")
+    private func entryRow(_ entry: ProjectFileEntry) -> some View {
+        ProjectFileRow(entry: entry, isExpanded: browser.state.expanded.contains(entry.path),
+                       url: { browser.url(for: entry.path) }, activate: { activate(entry) })
     }
     private var filePage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -148,8 +171,8 @@ private struct ProjectFileBrowserView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(message).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
                     Button("在 Finder 中显示") {
-                        guard let root = browser.location?.root, let path = browser.state.selectedPath else { return }
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root).appendingPathComponent(path)])
+                        guard let path = browser.state.selectedPath, let url = browser.url(for: path) else { return }
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
                     if case .failed = browser.state.preview {
                         Button("重试") { if let path = browser.state.selectedPath { browser.openFile(path) } }
@@ -158,6 +181,57 @@ private struct ProjectFileBrowserView: View {
                 Spacer()
             }
         }
+    }
+}
+
+/// One row of the tree. The list draws the selection, the triangle and the indentation;
+/// the row supplies the icon, the name, and what a click, Return or a press means.
+private struct ProjectFileRow: View {
+    let entry: ProjectFileEntry
+    let isExpanded: Bool
+    let url: () -> URL?
+    let activate: () -> Void
+    /// The source list raises this on the row it fills with the accent colour, so the
+    /// icons switch to the selected-row tint the way a label does.
+    @Environment(\.backgroundProminence) private var prominence
+    private var secondary: Color {
+        prominence == .increased ? Color(nsColor: .alternateSelectedControlTextColor) : WorkspaceStyle.secondary
+    }
+    var body: some View {
+        HStack(spacing: 6) {
+            Group {
+                if entry.kind == .directory {
+                    ProjectFolderIcon(isExpanded: isExpanded, isAvailable: true).foregroundStyle(secondary)
+                } else if entry.kind == .symbolicLink {
+                    Image(systemName: "link").foregroundStyle(secondary)
+                } else {
+                    ProjectFileIcon(name: entry.name)
+                }
+            }.frame(width: 18, height: 16)
+            Text(entry.name).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 0)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            // The list keeps click-to-select; this adds what activation means on top.
+            .simultaneousGesture(TapGesture().onEnded { activate() })
+            .help(entry.path)
+            // Keep the content one element so assistive technology reads and selects the
+            // row, not its label, and so a press activates it.
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("projectFiles.entry.\(entry.path)")
+            .accessibilityValue(entry.kind == .directory ? (isExpanded ? "已展开" : "已折叠") : "")
+            .contextMenu {
+                // The two Finder commands a read-only tree can honour. Nothing writes to disk.
+                Button("在 Finder 中显示") {
+                    guard let url = url() else { return }
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+                Button("拷贝路径") {
+                    guard let url = url() else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.path, forType: .string)
+                }
+            }
     }
 }
 

@@ -79,7 +79,20 @@ enum ProjectFilePreview: Equatable, Sendable {
         refresh()
     }
     func setScrollID(_ path: String?) { state.scrollID = path }
+    /// The entry's place on disk, for Finder and the pasteboard. Reads still go through
+    /// ProjectFileIO's descriptor-relative opens, which refuse links at every component.
+    func url(for path: String) -> URL? {
+        guard let location else { return nil }
+        return URL(fileURLWithPath: location.root).appendingPathComponent(path)
+    }
+    /// The tree's highlight, which the pointer and the arrow keys move. Opening a file
+    /// is a separate step, so walking the tree never replaces it with a preview.
+    func highlight(_ path: String) { state.selectedPath = path }
     func toggleDirectory(_ path: String) {
+        // A click selects the row whether it opens or closes, the way Finder does. In the
+        // tree the selection is only the highlight; the preview page reads selectedPath
+        // solely while showingFile is set, so a folder never becomes a previewed file.
+        state.selectedPath = path
         if state.expanded.contains(path) { state.expanded.remove(path) }
         else {
             state.expanded.insert(path)
