@@ -5,6 +5,9 @@ struct WorkspaceInspector: View {
     @ObservedObject var workspace: WorkspaceStore
     var body: some View {
         ProjectFileBrowserView(workspace: workspace, browser: workspace.fileBrowser)
+            // macOS 27's inspector split item paints its own grey backdrop; cover it so the
+            // column matches the sidebar rather than the shade AppKit happens to pick.
+            .background { WorkspaceStyle.sideColumn.ignoresSafeArea().allowsHitTesting(false) }
             .onChange(of: workspace.selectedID, initial: true) { _, _ in synchronize() }
             .onChange(of: workspace.projects) { _, _ in synchronize() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
