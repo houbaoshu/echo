@@ -28,16 +28,19 @@ enum WorkspaceStyle {
 
 @MainActor enum WorkspaceActions {
     /// `asSheet: false` runs a standalone dialog, e.g. from the pet, whose panels cannot host a sheet.
-    static func chooseFolder(asSheet: Bool = true, completion: @escaping (URL) -> Void) {
+    /// `cancelled` runs when the panel closes without a folder, for callers that must release a
+    /// waiting task instead of leaving it paused.
+    static func chooseFolder(asSheet: Bool = true, cancelled: (() -> Void)? = nil,
+                             completion: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.allowsMultipleSelection = false; panel.prompt = "选择文件夹"
         if !asSheet { NSApp.activate(ignoringOtherApps: true) }
         if asSheet, let window = NSApp.keyWindow {
             panel.beginSheetModal(for: window) { response in
-                if response == .OK, let url = panel.url { completion(url) }
+                if response == .OK, let url = panel.url { completion(url) } else { cancelled?() }
             }
-        } else if panel.runModal() == .OK, let url = panel.url { completion(url) }
+        } else if panel.runModal() == .OK, let url = panel.url { completion(url) } else { cancelled?() }
     }
     static func rename(_ current: String, completion: @escaping (String) -> Void) {
         let alert = NSAlert(); alert.messageText = "重命名"
@@ -435,12 +438,11 @@ struct ConversationView: View {
                             }
                         }.disabled(workspace.projects.filter(\.isAvailable).isEmpty)
                         Button("选择文件夹…") {
-                            let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
-                            panel.allowsMultipleSelection = false
-                            panel.begin { response in
-                                MainActor.assumeIsolated {
-                                    workspace.provideDirectory(response == .OK ? panel.url : nil, conversationID: conversationID)
-                                }
+                            // Cancelling has to reach the store too, or the paused tool call keeps waiting.
+                            WorkspaceActions.chooseFolder(cancelled: {
+                                workspace.provideDirectory(nil, conversationID: conversationID)
+                            }) { url in
+                                workspace.provideDirectory(url, conversationID: conversationID)
                             }
                         }
                         Button("取消执行") { workspace.provideDirectory(nil, conversationID: conversationID) }
@@ -513,7 +515,7 @@ struct ConversationView: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.borderless)
                     .accessibilityLabel("关闭语音提示")
                     .accessibilityIdentifier("voice.error.close")
                 }
@@ -523,7 +525,8 @@ struct ConversationView: View {
                 HStack(alignment: .top) {
                     Text(error).font(WorkspaceStyle.caption).textSelection(.enabled)
                     Spacer()
-                    Button { dictation.clearError() } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("关闭转写提示")
+                    Button { dictation.clearError() } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
+                        .accessibilityLabel("关闭转写提示")
                 }
             }
             HStack(spacing: 12) {
