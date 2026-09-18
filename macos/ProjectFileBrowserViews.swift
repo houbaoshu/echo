@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct WorkspaceInspector: View {
     @ObservedObject var workspace: WorkspaceStore
@@ -83,10 +84,13 @@ private struct ProjectFileBrowserView: View {
                 Group {
                     if entry.kind == .directory {
                         ProjectFolderIcon(isExpanded: browser.state.expanded.contains(entry.path), isAvailable: true)
+                            .foregroundStyle(WorkspaceStyle.secondary)
+                    } else if entry.kind == .symbolicLink {
+                        Image(systemName: "link").foregroundStyle(WorkspaceStyle.secondary)
                     } else {
-                        Image(systemName: entry.kind == .symbolicLink ? "link" : "doc")
+                        ProjectFileIcon(name: entry.name)
                     }
-                }.frame(width: 18, height: 16).foregroundStyle(WorkspaceStyle.secondary)
+                }.frame(width: 18, height: 16)
                 Text(entry.name).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
             }.padding(.leading, CGFloat(depth) * 14 + 6).padding(.trailing, 6).frame(height: 28)
@@ -156,6 +160,23 @@ private struct ProjectFileBrowserView: View {
     }
 }
 
+/// Finder's own icon for the file's type, so the browser reads like the Finder sidebar.
+/// Keyed by extension — the icon describes the type, so one lookup serves every file of it.
+private struct ProjectFileIcon: View {
+    let name: String
+    @MainActor private static var cache: [String: NSImage] = [:]
+    var body: some View {
+        Image(nsImage: Self.icon(forExtension: (name as NSString).pathExtension.lowercased()))
+            .resizable().scaledToFit().accessibilityHidden(true)
+    }
+    @MainActor private static func icon(forExtension pathExtension: String) -> NSImage {
+        if let cached = cache[pathExtension] { return cached }
+        let icon = NSWorkspace.shared.icon(for: UTType(filenameExtension: pathExtension) ?? .data)
+        cache[pathExtension] = icon
+        return icon
+    }
+}
+
 struct ProjectReadOnlyImage: NSViewRepresentable {
     let image: CGImage
     func makeNSView(context: Context) -> NSImageView {
@@ -193,6 +214,7 @@ struct ProjectReadOnlyText: NSViewRepresentable {
         view.minSize = .zero; view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.textContainer?.widthTracksTextView = false
         view.textContainer?.containerSize = view.maxSize
+        view.usesFindBar = true
         view.setAccessibilityIdentifier("projectFiles.text")
         scroll.documentView = view
         return scroll

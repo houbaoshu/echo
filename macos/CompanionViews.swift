@@ -53,6 +53,7 @@ struct ActivityCapsule: View {
     @ObservedObject var placement: ActivityPlacement
     @State private var hovered = false
     @State private var followUpFocusRequest = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var showActions: Bool { hovered || store.isFollowUpExpanded }
     private var isRunning: Bool { store.isGenerating || canStop }
     private var outcome: TaskStatus? {
@@ -147,8 +148,8 @@ struct ActivityCapsule: View {
         .padding(12).contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onChange(of: store.isFollowUpExpanded) { _, expanded in if expanded { followUpFocusRequest += 1 } }
-        .animation(.easeInOut(duration: 0.18), value: showActions)
-        .animation(.easeInOut(duration: 0.2), value: store.isFollowUpExpanded)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: showActions)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: store.isFollowUpExpanded)
         .frame(maxWidth: .infinity, maxHeight: .infinity,
                alignment: placement.isBelowPet ? .top : .bottom)
     }
@@ -258,10 +259,6 @@ private struct PetCircle<Label: View>: View {
     }
 }
 
-private struct SegmentDivider: View {
-    var body: some View { Rectangle().fill(.primary.opacity(0.12)).frame(width: 0.75, height: 14) }
-}
-
 struct PetControls: View {
     @ObservedObject var store: TaskStore
     @ObservedObject var voice: VoiceSessionController
@@ -272,6 +269,7 @@ struct PetControls: View {
     /// Supplies the composer's + project menu; without it the composer has no + button.
     var workspace: WorkspaceStore?
     var actions = PetControlActions()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var surface: PetSurfacePresentation {
         PetSurfacePresentation(hovered: presentation.isHovered, composerOpen: presentation.isComposerOpen,
                                draft: presentation.draft, activityCount: store.activityCount,
@@ -289,8 +287,8 @@ struct PetControls: View {
             .position(x: PetSurfacePresentation.contentCenter(petCenter: presentation.petCenterX, width: surface.width),
                       y: PetSurfacePresentation.canvasHeight / 2)
             .frame(width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight)
-            .animation(.easeInOut(duration: 0.18), value: surface.mode)
-            .animation(.easeInOut(duration: 0.18), value: surface.showsActions)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: surface.mode)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: surface.showsActions)
     }
 
     @ViewBuilder private func content(_ surface: PetSurfacePresentation) -> some View {
@@ -299,7 +297,7 @@ struct PetControls: View {
             if surface.showsActions {
                 HStack(spacing: 0) {
                     composeSegment
-                    SegmentDivider()
+                    Divider().frame(height: 14)
                     if surface.voiceConnecting, let owner = voice.snapshot.session.owner {
                         PetSegment(label: Self.connectingLabel, identifier: "voice.connecting", action: { actions.endVoice(owner) }) {
                             VoiceConnectingIndicator().frame(width: 16, height: 16)
@@ -311,7 +309,7 @@ struct PetControls: View {
                         }
                     }
                     if surface.tray != .none {
-                        SegmentDivider()
+                        Divider().frame(height: 14)
                         PetSegment(label: trayLabel(surface.tray), identifier: trayIdentifier(surface.tray),
                                    action: toggleTray) { trayIcon(surface) }
                             .accessibilityValue(surface.tray == .collapse ? "" : badgeValue(surface.badge))
@@ -427,7 +425,7 @@ struct PetControls: View {
             Button(action: send) {
                 Image(systemName: "arrow.up").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
                     .frame(width: 22, height: 22)
-                    .background(Color.blue.opacity(surface.canSend ? 1 : 0.35), in: Circle())
+                    .background(Color.accentColor.opacity(surface.canSend ? 1 : 0.35), in: Circle())
                     .contentShape(Circle())
             }
             .buttonStyle(.plain).disabled(!surface.canSend)

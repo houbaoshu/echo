@@ -599,7 +599,7 @@ struct ConversationView: View {
                             Image(systemName: output == .stop ? "stop.fill" : "play.fill")
                                 .font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
                                 .offset(x: output == .stop ? 0 : 1)
-                                .frame(width: 22, height: 22).background(Color.blue, in: Circle())
+                                .frame(width: 22, height: 22).background(Color.accentColor, in: Circle())
                                 .frame(width: 28, height: 32).contentShape(Rectangle())
                         }.buttonStyle(.plain).disabled(output == .stop && !presentation.stopEnabled)
                             .help(output.label).accessibilityLabel(output.label)
@@ -617,7 +617,7 @@ struct ConversationView: View {
                         }
                     }.font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
                         .frame(width: 32, height: 32)
-                        .background(presentation.primaryEnabled ? Color.blue : Color.secondary.opacity(0.4), in: Circle())
+                        .background(presentation.primaryEnabled ? Color.accentColor : Color.secondary.opacity(0.4), in: Circle())
                         .contentShape(Circle())
                 }.buttonStyle(.plain).disabled(!presentation.primaryEnabled)
                     .help(presentation.primary.label).accessibilityLabel(presentation.primary.label)

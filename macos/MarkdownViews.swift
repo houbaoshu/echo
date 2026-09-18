@@ -98,17 +98,7 @@ private struct MarkdownCodeBlock: View {
                         .contentShape(Circle())
                 }.buttonStyle(.plain).foregroundStyle(WorkspaceStyle.secondary)
                     .onHover { isHovered = $0 }
-                    .overlay(alignment: .topTrailing) {
-                        if isHovered || copiedAt != nil {
-                            Text(copiedAt == nil ? "复制代码" : "已复制")
-                                .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.primary)
-                                .textSelection(.disabled).fixedSize()
-                                .padding(.horizontal, 9).padding(.vertical, 5)
-                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
-                                .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
-                                .offset(y: -34).allowsHitTesting(false).accessibilityHidden(true)
-                        }
-                    }
+                    .help(copiedAt == nil ? "复制代码" : "已复制")
                     .accessibilityLabel(copiedAt == nil ? "复制代码" : "已复制")
                     .accessibilityIdentifier("conversation.code.copy")
             }.padding(.horizontal, 12).padding(.top, 8)
