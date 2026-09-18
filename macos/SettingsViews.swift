@@ -1,42 +1,78 @@
 import AppKit
 import SwiftUI
 
-struct SettingsView: View {
+/// The settings page's section list, hosted in a real system sidebar column.
+///
+/// NSSplitViewItem's sidebar owns the column: the material, its inactive-window
+/// appearance, the hairline divider to the detail pane and the titlebar region all
+/// come from AppKit, the same way the workspace sidebar gets them. Nothing here
+/// paints a background or fixes a width, or that material would be covered up.
+struct SettingsSidebar: View {
     @ObservedObject var settings: SettingsStore
-    @ObservedObject var voice: VoiceSessionController
-    @ObservedObject var pets: PetCatalog
-    var workspace: WorkspaceStore? = nil
     /// Owned by the window controller, so showing the page can hand the first
     /// responder to this list instead of to the hosting container.
     let sectionFocus: SidebarListFocus
     var onBack: () -> Void
-    var onReturnToVoice: (() -> Void)? = nil
-    /// The section order the sidebar and its keyboard traversal both follow.
-    static let sections = ["模型", "语音", "精灵"]
-    private var section: String { settings.selectedSection }
     /// The sidebar is a system source list, so it hands back an optional selection.
     /// Clearing it (⌘-click on the selected row) keeps the current section.
     private var sectionSelection: Binding<String?> {
         Binding(get: { settings.selectedSection },
                 set: { if let value = $0 { settings.selectedSection = value } })
     }
+    /// A system source list owns section selection: it supplies the standard
+    /// selection fill, hover, focus ring, arrow-key traversal and selected trait.
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: onBack) { Label("返回应用", systemImage: "arrow.left").fontWeight(.medium) }
+                .buttonStyle(.accessoryBar).controlSize(.large)
+                .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 14)
+                .accessibilityIdentifier("settings.back")
+            List(selection: sectionSelection) {
+                ForEach(SettingsView.sections, id: \.self) { name in
+                    Label { Text(name) } icon: { icon(name).accessibilityHidden(true) }
+                        // Fill the row so the blank space beside the label selects too.
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .accessibilityIdentifier("settings.section.\(name)")
+                }
+            }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                .accessibilityLabel("设置分区").accessibilityIdentifier("settings.sections")
+            SidebarListFocusAnchor(focus: sectionFocus).frame(height: 0).accessibilityHidden(true)
+        }.padding(.vertical, 6)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
+    }
+    @ViewBuilder private func icon(_ name: String) -> some View {
+        switch name {
+        case "模型": Image(systemName: "slider.horizontal.3")
+        case "语音": Image(systemName: "waveform")
+        default: SpiritCapsuleIcon().frame(width: 20, height: 20)
+        }
+    }
+}
+
+/// The settings page's detail pane: the selected section, and the voice attribution
+/// bar under it. The sidebar is its own column, so this is only the right-hand side.
+struct SettingsView: View {
+    @ObservedObject var settings: SettingsStore
+    @ObservedObject var voice: VoiceSessionController
+    @ObservedObject var pets: PetCatalog
+    var workspace: WorkspaceStore? = nil
+    var onBack: () -> Void
+    var onReturnToVoice: (() -> Void)? = nil
+    /// The section order the sidebar and its keyboard traversal both follow.
+    static let sections = ["模型", "语音", "精灵"]
+    private var section: String { settings.selectedSection }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                sidebar
-                // The page sits under a full-size transparent titlebar. Neighbouring
-                // backgrounds bleed into that top safe area by default while plain
-                // content does not, so the rule has to opt in or it starts 32pt down.
-                Divider().ignoresSafeArea(.container, edges: .top)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
-                        Text(section).font(WorkspaceStyle.pageTitle)
-                        if section == "模型" { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
-                        else if section == "语音" { VoiceSettingsView(settings: settings, voice: voice) }
-                        else { PetSettingsView(pets: pets, settings: settings) }
-                    }.frame(maxWidth: 820, alignment: .leading).padding(32).frame(maxWidth: .infinity, alignment: .topLeading)
-                }.background(Color(nsColor: .textBackgroundColor))
-            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    Text(section).font(WorkspaceStyle.pageTitle)
+                    if section == "模型" { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
+                    else if section == "语音" { VoiceSettingsView(settings: settings, voice: voice) }
+                    else { PetSettingsView(pets: pets, settings: settings) }
+                }.frame(maxWidth: 820, alignment: .leading).padding(32).frame(maxWidth: .infinity, alignment: .topLeading)
+            }.background(Color(nsColor: .textBackgroundColor))
             if let owner = voice.snapshot.session.owner, let ws = workspace {
                 Divider()
                 VoiceAttributionBar(workspace: ws, voice: voice, owner: owner) {
@@ -53,36 +89,6 @@ struct SettingsView: View {
         }
         .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-    /// A system source list owns section selection: it supplies the standard
-    /// selection fill, hover, focus ring, arrow-key traversal and selected trait.
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button(action: onBack) { Label("返回应用", systemImage: "arrow.left").fontWeight(.medium) }
-                .buttonStyle(.accessoryBar).controlSize(.large)
-                .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 14)
-                .accessibilityIdentifier("settings.back")
-            List(selection: sectionSelection) {
-                ForEach(Self.sections, id: \.self) { name in
-                    Label { Text(name) } icon: { icon(name).accessibilityHidden(true) }
-                        // Fill the row so the blank space beside the label selects too.
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .accessibilityIdentifier("settings.section.\(name)")
-                }
-            }.listStyle(.sidebar).scrollContentBackground(.hidden)
-                .accessibilityLabel("设置分区").accessibilityIdentifier("settings.sections")
-            SidebarListFocusAnchor(focus: sectionFocus).frame(height: 0).accessibilityHidden(true)
-        }.padding(.vertical, 6).frame(width: 200, alignment: .leading)
-            .frame(maxHeight: .infinity).background(Color.primary.opacity(0.035))
-            .background(Color(nsColor: .windowBackgroundColor))
-    }
-    @ViewBuilder private func icon(_ name: String) -> some View {
-        switch name {
-        case "模型": Image(systemName: "slider.horizontal.3")
-        case "语音": Image(systemName: "waveform")
-        default: SpiritCapsuleIcon().frame(width: 20, height: 20)
-        }
     }
 }
 

@@ -69,7 +69,10 @@ struct MainWindowLayout {
     private let rootController = NSViewController()
     private var workspaceConstraints: [NSLayoutConstraint] = []
     private var workspaceBottomConstraint: NSLayoutConstraint!
-    private var settingsHost: NSHostingController<SettingsView>!
+    /// The settings page is its own split view controller, so its section column is
+    /// a real system sidebar instead of a panel painted to look like one.
+    private var settingsSplit: NSSplitViewController!
+    private var settingsSidebarItem: NSSplitViewItem!
     private var settingsButtonHost: NSHostingController<SettingsEntryButton>!
     let splitController = MainSplitController()
     private(set) var sidebarItem: NSSplitViewItem!
@@ -141,15 +144,27 @@ struct MainWindowLayout {
         rootController.view.addSubview(splitController.view)
         workspaceConstraints = pin(splitController.view, to: rootController.view)
         workspaceBottomConstraint = workspaceConstraints.last
-        settingsHost = NSHostingController(rootView: SettingsView(settings: self.settings, voice: workspace.voice, pets: self.pets,
-                                                                  workspace: self.workspace,
-                                                                  sectionFocus: settingsSectionFocus,
-                                                                  onBack: { [weak self] in self?.showWorkspace() },
-                                                                  onReturnToVoice: { [weak self] in self?.revealVoice() }))
-        settingsHost.sizingOptions = []
-        rootController.addChild(settingsHost); rootController.view.addSubview(settingsHost.view)
-        pin(settingsHost.view, to: rootController.view)
-        settingsHost.view.isHidden = true
+        let settingsSidebarHost = NSHostingController(rootView: SettingsSidebar(settings: self.settings,
+                                                                                sectionFocus: settingsSectionFocus,
+                                                                                onBack: { [weak self] in self?.showWorkspace() }))
+        let settingsDetailHost = NSHostingController(rootView: SettingsView(settings: self.settings, voice: workspace.voice,
+                                                                            pets: self.pets, workspace: self.workspace,
+                                                                            onBack: { [weak self] in self?.showWorkspace() },
+                                                                            onReturnToVoice: { [weak self] in self?.revealVoice() }))
+        settingsSidebarHost.sizingOptions = []; settingsDetailHost.sizingOptions = []
+        settingsSplit = NSSplitViewController()
+        // The same sidebar item the workspace column uses: AppKit supplies the material,
+        // the inactive-window appearance, the hairline divider and the titlebar region.
+        // The page has no toolbar to resize against, and a settings sidebar is not a
+        // place to hide, so it is fixed at the width the workspace column is showing.
+        settingsSidebarItem = NSSplitViewItem(sidebarWithViewController: settingsSidebarHost)
+        settingsSidebarItem.canCollapse = false; settingsSidebarItem.canCollapseFromWindowResize = false
+        settingsSplit.splitView.dividerStyle = .thin
+        settingsSplit.addSplitViewItem(settingsSidebarItem)
+        settingsSplit.addSplitViewItem(NSSplitViewItem(viewController: settingsDetailHost))
+        rootController.addChild(settingsSplit); rootController.view.addSubview(settingsSplit.view)
+        pin(settingsSplit.view, to: rootController.view)
+        settingsSplit.view.isHidden = true
         settingsButtonHost = NSHostingController(rootView: SettingsEntryButton { [weak self] in self?.showSettings() })
         settingsButtonHost.sizingOptions = []
         rootController.addChild(settingsButtonHost); rootController.view.addSubview(settingsButtonHost.view)
@@ -214,7 +229,11 @@ struct MainWindowLayout {
         isSettingsVisible = true
         splitController.view.isHidden = true; settingsButtonHost.view.isHidden = true
         NSLayoutConstraint.deactivate(workspaceConstraints)
-        settingsHost.view.isHidden = false
+        // Carry the workspace column's current width across, so switching pages does
+        // not shift the left edge of the window's content.
+        settingsSidebarItem.minimumThickness = layout.sidebarWidth
+        settingsSidebarItem.maximumThickness = layout.sidebarWidth
+        settingsSplit.view.isHidden = false
         window?.toolbar?.isVisible = false
         window?.title = "设置"
         present()
@@ -222,7 +241,7 @@ struct MainWindowLayout {
         // behind the page would keep taking keystrokes and swallow Tab. Hand the key
         // view loop to the settings page instead.
         window?.recalculateKeyViewLoop()
-        window?.makeFirstResponder(settingsHost.view)
+        window?.makeFirstResponder(settingsSplit.view)
         // The host is a container: it draws no focus ring and answers no key. Hand the
         // first responder to the page's own section list, so its selection reads as
         // active and ↑ / ↓ move sections without needing a Tab or a click first.
@@ -240,7 +259,7 @@ struct MainWindowLayout {
         prepareResize(window?.frame.width ?? 1280)
         applyingLayout = true
         NSLayoutConstraint.activate(workspaceConstraints)
-        settingsHost.view.isHidden = true
+        settingsSplit.view.isHidden = true
         settings.presentationRevision += 1
         splitController.view.isHidden = false; settingsButtonHost.view.isHidden = false
         window?.toolbar?.isVisible = true
