@@ -335,7 +335,7 @@ struct WorkspaceConversationView: View {
                     Text(notice).textSelection(.enabled)
                     Spacer()
                     Button("重试保存") { workspace.persistenceNotice = nil; workspace.flush() }
-                    Button { workspace.persistenceNotice = nil } label: { Image(systemName: "xmark") }
+                    Button(role: .close) { workspace.persistenceNotice = nil } label: { Image(systemName: "xmark") }
                         .accessibilityLabel("关闭保存提示")
                 }.font(WorkspaceStyle.body).padding(12).background(Color.orange.opacity(0.12))
             }

@@ -150,10 +150,10 @@ struct ModelSettingsView: View {
                             else { SecureField("输入 API Key", text: $settings.apiKey) }
                         }.accessibilityLabel("API Key").accessibilityIdentifier("settings.apiKey")
                         Button { revealsKey.toggle() } label: { Image(systemName: revealsKey ? "eye.slash" : "eye") }
-                            .buttonStyle(.plain).help(revealsKey ? "隐藏 API Key" : "显示 API Key")
+                            .buttonStyle(.borderless).help(revealsKey ? "隐藏 API Key" : "显示 API Key")
                             .accessibilityLabel(revealsKey ? "隐藏 API Key" : "显示 API Key")
                         Button { settings.apiKey = "" } label: { Image(systemName: "xmark.circle") }
-                            .buttonStyle(.plain).disabled(settings.apiKey.isEmpty).help("清除 API Key，保存后生效")
+                            .buttonStyle(.borderless).disabled(settings.apiKey.isEmpty).help("清除 API Key，保存后生效")
                             .accessibilityLabel("清除 API Key")
                     }.disabled(!settings.selectedProvider.requiresKey)
                 }

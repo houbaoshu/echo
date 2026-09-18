@@ -105,17 +105,18 @@ private struct ProjectFileBrowserView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 Button { browser.returnToDirectory() } label: { Image(systemName: "chevron.left") }
-                    .buttonStyle(.plain).help("返回目录").accessibilityLabel("返回目录")
+                    .buttonStyle(.borderless).help("返回目录").accessibilityLabel("返回目录")
                     .accessibilityIdentifier("projectFiles.back")
                 Text(browser.state.selectedPath ?? "").font(WorkspaceStyle.caption).lineLimit(3)
                     .textSelection(.enabled).help(browser.state.selectedPath ?? "")
                 Spacer(minLength: 0)
                 Button { browser.togglePreviewExpansion() } label: {
+                    // The diagonal the pane grows along, drawn by the symbol itself rather
+                    // than by mirroring the opposite one.
                     Image(systemName: browser.isPreviewExpanded
-                          ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                        .scaleEffect(x: -1, y: 1)
+                          ? "arrow.up.right.and.arrow.down.left" : "arrow.down.left.and.arrow.up.right")
                         .font(.system(size: 12)).frame(width: 24, height: 24).contentShape(Rectangle())
-                }.buttonStyle(.plain).foregroundStyle(WorkspaceStyle.secondary)
+                }.buttonStyle(.borderless).foregroundStyle(WorkspaceStyle.secondary)
                     .help(browser.isPreviewExpanded ? "收起预览" : "展开预览")
                     .accessibilityLabel(browser.isPreviewExpanded ? "收起预览" : "展开预览")
                     .accessibilityIdentifier("projectFiles.toggleExpansion")
