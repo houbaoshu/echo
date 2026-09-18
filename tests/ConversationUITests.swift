@@ -83,6 +83,7 @@ import SwiftUI
             do {
                 if !CommandLine.arguments.contains("--pet-focus-only") {
                     try await testNativeMenuShortcuts(); try await testProjectDetachPointer()
+                    try await testWorkspaceSidebarPointerAndKeyboard()
                     try await testSettingsKeyboardAndFocus()
                 }
                 try await testPetComposerPointerFocus(); exit(0)
@@ -1035,6 +1036,238 @@ import SwiftUI
         try await Task.sleep(for: .milliseconds(200))
         precondition(!presentation.isComposerOpen && presentation.draft == "4", "Losing focus collapses the composer and keeps the draft")
         print("PASS: real pointer composer focus/Escape, Enter send, status on exit, completion bell count, expand, ⌃ and focus loss")
+    }
+
+    /// The chat sidebar is a system source list, so these assertions describe what a
+    /// person sees rather than the view tree: the whole row selects, ↑ / ↓ walk the
+    /// chats across both groups, the groups open and close, the hover actions still
+    /// work, and none of it disturbs the search field.
+    @MainActor private static func testWorkspaceSidebarPointerAndKeyboard() async throws {
+        precondition(CGPreflightPostEventAccess(), "Sidebar pointer test needs Accessibility permission to post events")
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sidebar-keys-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        defer { workspace.shutdown() }
+        let projectID = workspace.addProject(url: root)
+        var ids: [String: UUID] = [:]
+        for title in ["项目甲", "项目乙"] {
+            let chat = workspace.newConversation(projectID: projectID)
+            chat.store.send(title); ids[title] = chat.id
+        }
+        for title in ["最近丙", "最近丁"] {
+            let chat = workspace.newConversation()
+            chat.store.send(title); ids[title] = chat.id
+        }
+        // Park the pending composer focus on a blank draft, so opening a chat from the
+        // sidebar is the only thing moving focus during the run.
+        workspace.newConversation()
+        let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "sidebar-keys-\(UUID())")!)
+        defer { main.shutdown() }
+        let window = main.window!
+        let sidebar = main.sidebarItem.viewController.view
+        main.present()
+        NSApp.activate(ignoringOtherApps: true)
+        func settle() async throws {
+            try await Task.sleep(for: .milliseconds(150)); window.contentView?.layoutSubtreeIfNeeded()
+        }
+        try await settle(); try await settle()
+        precondition(NSApp.isActive && window.isKeyWindow, "Real events need the workspace window to be key")
+        func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) async throws {
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)!
+                event.flags = flags
+                event.post(tap: .cghidEventTap)
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            try await settle()
+        }
+        func move(_ point: NSPoint) async throws {
+            let height = NSScreen.screens[0].frame.height
+            let screen = window.convertPoint(toScreen: point)
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                    mouseCursorPosition: CGPoint(x: screen.x, y: height - screen.y), mouseButton: .left)?
+                .post(tap: .cghidEventTap)
+            try await settle()
+        }
+        /// One click. `isolate` parks the pointer and waits out the double-click
+        /// interval first, so a sweep of nearby clicks is not coalesced into one.
+        func click(_ point: NSPoint, isolate: Bool = true) async throws {
+            let height = NSScreen.screens[0].frame.height
+            let screen = window.convertPoint(toScreen: point)
+            if isolate {
+                CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                        mouseCursorPosition: CGPoint(x: screen.x + 700, y: height - screen.y - 300),
+                        mouseButton: .left)?.post(tap: .cghidEventTap)
+                try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.12))
+            }
+            for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+                CGEvent(mouseEventSource: nil, mouseType: type,
+                        mouseCursorPosition: CGPoint(x: screen.x, y: height - screen.y), mouseButton: .left)?
+                    .post(tap: .cghidEventTap)
+                try await Task.sleep(for: .milliseconds(45))
+            }
+            try await settle()
+        }
+
+        // 1. The chat list is a system source list; that is what supplies row selection,
+        // hover, arrow-key traversal and the focus ring.
+        guard let list = findAccessibility("workspace.sidebar", in: sidebar) as? NSTableView
+                ?? findView(sidebar, { $0.accessibilityRole() == .outline }) as? NSTableView else {
+            preconditionFailure("The chat sidebar must be a system source list")
+        }
+        precondition(list.accessibilityRole() == .outline, "The chat list reports itself as a source list")
+
+        /// The element carrying an identifier is the row's label; the row the person
+        /// clicks is the whole band the list lays out around it.
+        func rowIndex(_ identifier: String) -> Int? {
+            guard let node = findAccessibility(identifier, in: sidebar), let screen = node.accessibilityFrame?() else { return nil }
+            let inList = list.convert(window.convertFromScreen(screen), from: nil)
+            let row = list.row(at: NSPoint(x: inList.midX, y: inList.midY))
+            return row >= 0 ? row : nil
+        }
+        func rowRect(_ identifier: String) -> NSRect? {
+            guard let row = rowIndex(identifier) else { return nil }
+            return list.convert(list.rect(ofRow: row), to: nil)
+        }
+        func chat(_ title: String, in group: UUID? = nil) -> String {
+            "conversation.\(group?.uuidString ?? "recent").\(ids[title]!)"
+        }
+        func openTitle() -> String { workspace.conversation(id: workspace.selectedID ?? UUID())?.title ?? "nil" }
+
+        // 2. Every part of a row opens its chat, including the blank space beside the
+        // title and the row's top and bottom edges.
+        for title in ["最近丙", "最近丁", "项目甲"] {
+            guard let rect = rowRect(chat(title)) else { preconditionFailure("\(title) is missing from 最近") }
+            for point in [NSPoint(x: rect.minX + 4, y: rect.midY), NSPoint(x: rect.midX, y: rect.midY),
+                          NSPoint(x: rect.maxX - 6, y: rect.midY), NSPoint(x: rect.maxX - 6, y: rect.minY + 2),
+                          NSPoint(x: rect.maxX - 6, y: rect.maxY - 2)] {
+                workspace.select(ids[title == "最近丙" ? "最近丁" : "最近丙"]!)
+                try await settle()
+                try await click(point)
+                precondition(openTitle() == title,
+                             "Clicking \(title) at x=\(Int(point.x - rect.minX)) y=\(Int(point.y - rect.minY)) of \(Int(rect.width))×\(Int(rect.height))pt missed the row")
+            }
+        }
+
+        // 3. A chat listed under its project and again under 最近 highlights the copy
+        // that was clicked, and the list agrees about which row that is.
+        guard let inProject = rowIndex(chat("项目甲", in: projectID)), let inRecent = rowIndex(chat("项目甲")) else {
+            preconditionFailure("项目甲 must appear under its project and under 最近")
+        }
+        precondition(inProject != inRecent, "The two copies are different rows")
+        try await click(NSPoint(x: list.convert(list.rect(ofRow: inProject), to: nil).maxX - 6,
+                                y: list.convert(list.rect(ofRow: inProject), to: nil).midY))
+        precondition(workspace.selectedID == ids["项目甲"] && list.selectedRow == inProject,
+                     "Opening 项目甲 from its project highlights the project copy")
+        try await click(NSPoint(x: list.convert(list.rect(ofRow: inRecent), to: nil).maxX - 6,
+                                y: list.convert(list.rect(ofRow: inRecent), to: nil).midY))
+        precondition(workspace.selectedID == ids["项目甲"] && list.selectedRow == inRecent,
+                     "Opening the same chat from 最近 highlights the 最近 copy")
+
+        // 4. A pointer click hands the list focus, so ↑ / ↓ keep walking the chats,
+        // including across the project and 最近 groups.
+        // Every chat row, top to bottom, with the group it is listed under.
+        var order: [(row: Int, title: String, group: UUID?)] = []
+        for title in ["项目甲", "项目乙"] {
+            if let row = rowIndex(chat(title, in: projectID)) { order.append((row, title, projectID)) }
+        }
+        for title in ["项目甲", "项目乙", "最近丙", "最近丁"] {
+            if let row = rowIndex(chat(title)) { order.append((row, title, nil)) }
+        }
+        order.sort { $0.row < $1.row }
+        precondition(order.count == 6, "Both groups list their chats: \(order.map(\.title))")
+        guard let start = order.firstIndex(where: { $0.title == "最近丙" }), start + 1 < order.count else {
+            preconditionFailure("最近丙 must have a chat below it")
+        }
+        let startRect = list.convert(list.rect(ofRow: order[start].row), to: nil)
+        try await click(NSPoint(x: startRect.maxX - 6, y: startRect.midY))
+        precondition(openTitle() == "最近丙" && window.firstResponder === list, "Clicking a chat focuses the chat list")
+        try await key(125)
+        precondition(list.selectedRow == order[start + 1].row && openTitle() == order[start + 1].title,
+                     "↓ opens the next chat, not \(openTitle())")
+        try await key(126)
+        precondition(list.selectedRow == order[start].row && openTitle() == "最近丙", "↑ comes back to the chat above")
+
+        // The group boundary is not a wall: ↑ from the first chat under 最近 reaches
+        // the last chat listed under the project, and the group headers are skipped.
+        guard let firstRecent = order.firstIndex(where: { $0.group == nil }), firstRecent > 0 else {
+            preconditionFailure("最近 must follow the project group")
+        }
+        let boundary = list.convert(list.rect(ofRow: order[firstRecent].row), to: nil)
+        try await click(NSPoint(x: boundary.maxX - 6, y: boundary.midY))
+        precondition(openTitle() == order[firstRecent].title)
+        try await key(126)
+        precondition(list.selectedRow == order[firstRecent - 1].row && order[firstRecent - 1].group == projectID,
+                     "↑ crosses from 最近 into the project chats, landing on \(openTitle())")
+
+        // 5. The blank space under the last row is not a chat; the open one stays open.
+        let below = list.convert(list.rect(ofRow: list.numberOfRows - 1), to: nil)
+        let openBeforeBlank = workspace.selectedID
+        try await click(NSPoint(x: below.midX, y: below.minY - 40))
+        precondition(workspace.selectedID == openBeforeBlank, "Clicking under the rows keeps the chat open")
+
+        // 6. A project row opens and closes its chats without changing the open chat.
+        workspace.select(ids["最近丁"]!); try await settle()
+        guard let projectRow = rowRect("workspace.project.\(projectID)") else { preconditionFailure("The project row is missing") }
+        precondition(rowIndex(chat("项目甲", in: projectID)) != nil, "The project starts open")
+        // Aim at the blank space beside the project's name, clear of its hover button.
+        try await click(NSPoint(x: projectRow.midX, y: projectRow.midY))
+        precondition(rowIndex(chat("项目甲", in: projectID)) == nil, "Clicking the project closes its chats")
+        precondition(workspace.selectedID == ids["最近丁"], "Closing a project does not change the open chat")
+        try await click(NSPoint(x: projectRow.midX, y: projectRow.midY))
+        precondition(rowIndex(chat("项目甲", in: projectID)) != nil, "Clicking it again reopens its chats")
+        precondition(workspace.selectedID == ids["最近丁"], "Reopening a project does not change the open chat")
+
+        // 7. Hovering a project still reveals its new-chat button, and it still works.
+        try await move(NSPoint(x: projectRow.midX, y: projectRow.midY - 260))
+        precondition(findAccessibility("workspace.project.newConversation.\(projectID)", in: sidebar) == nil,
+                     "The project's new-chat button stays hidden without hover")
+        try await move(NSPoint(x: projectRow.midX, y: projectRow.midY))
+        guard let add = findAccessibility("workspace.project.newConversation.\(projectID)", in: sidebar) else {
+            preconditionFailure("Hovering a project must reveal its new-chat button")
+        }
+        let chatsBefore = workspace.conversations.count
+        precondition(add.accessibilityPerformPress?() == true, "The project's new-chat button presses")
+        try await settle()
+        precondition(workspace.selected?.projectID == projectID && workspace.conversations.count == chatsBefore,
+                     "It opens an unsent chat inside that project")
+
+        // 8. A search opens both groups and narrows them, and clearing it restores them.
+        workspace.searchText = "项目甲"
+        try await settle(); try await settle()
+        precondition(rowIndex(chat("项目甲")) != nil && rowIndex(chat("最近丙")) == nil,
+                     "A search narrows 最近 to the matching chats")
+        precondition(rowIndex(chat("项目甲", in: projectID)) != nil, "A search opens a project that was closed")
+        workspace.searchText = ""
+        try await settle(); try await settle()
+        precondition(rowIndex(chat("最近丙")) != nil, "Clearing the search restores the chats")
+
+        // 9. Tab still leaves the list, the search field still takes typing, and Escape
+        // in the field does not disturb the open chat.
+        guard let fourth = rowRect(chat("最近丁")) else { preconditionFailure("最近丁 is missing") }
+        try await click(NSPoint(x: fourth.maxX - 6, y: fourth.midY))
+        precondition(window.firstResponder === list)
+        var left = false
+        for _ in 0..<6 where !left {
+            try await key(48)
+            left = window.firstResponder !== list
+        }
+        precondition(left, "Tab leaves the chat list")
+        guard let search = findAccessibility("workspace.search", in: sidebar), let searchFrame = search.accessibilityFrame?() else {
+            preconditionFailure("The search field is missing")
+        }
+        try await click(NSPoint(x: window.convertFromScreen(searchFrame).midX, y: window.convertFromScreen(searchFrame).midY))
+        try await key(0)
+        precondition(!workspace.searchText.isEmpty, "The search field still takes typing")
+        let openBeforeEscape = workspace.selectedID
+        try await key(53)
+        precondition(workspace.selectedID == openBeforeEscape, "Escape in the search field leaves the open chat alone")
+        workspace.searchText = ""
+        try await settle()
+        print("PASS: system chat list — full-row pointer targets, duplicate-row selection, arrow traversal across groups,"
+              + " project open/close, hover actions, search, Tab and Escape")
     }
 
     @MainActor private static func testProjectDetachPointer() async throws {

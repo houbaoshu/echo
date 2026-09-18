@@ -80,6 +80,7 @@ struct WorkspaceSidebar: View {
     @FocusState private var newConversationFocused: Bool
     @FocusState private var addProjectFocused: Bool
     @State private var selectedRow: RowID?
+    @State private var listFocus = SidebarListFocus()
     private var selection: Binding<RowID?> {
         Binding(get: {
             guard let id = workspace.selectedID, workspace.conversations.contains(where: { $0.id == id }) else { return nil }
@@ -89,7 +90,9 @@ struct WorkspaceSidebar: View {
             }
             return RowID(conversationID: id, projectID: nil)
         }, set: { row in
+            // A click on the background hands back nil; the open chat stays open.
             guard let row else { return }
+            listFocus.take()
             selectedRow = row
             workspace.select(row.conversationID)
         })
@@ -119,23 +122,36 @@ struct WorkspaceSidebar: View {
             }.font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
                 .padding(8).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal, 12).padding(.bottom, 10)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    projectHeader.padding(.horizontal, 8)
-                    if projectsExpanded || !workspace.searchText.isEmpty {
-                        ForEach(workspace.projects) { project in
-                            projectRow(project)
-                            if projectExpanded(project) {
-                                rows(workspace.filteredConversations(projectID: project.id), projectID: project.id)
-                            }
-                        }
-                    }
-                    recentHeader.padding(.horizontal, 8).padding(.top, 16)
-                    if recentExpanded || !workspace.searchText.isEmpty {
-                        rows(workspace.recentConversations)
-                    }
-                }.padding(.horizontal, 10).padding(.bottom, 8)
-            }.font(WorkspaceStyle.body)
+            // A system source list owns the rows: the whole row is the hit target, and
+            // hover, the selection fill, active and inactive window appearance, arrow-key
+            // traversal, the focus ring, the selected trait and sidebar metrics all come
+            // from AppKit instead of being drawn here.
+            //
+            // This list logs "Application performed a reentrant operation in its NSTableView
+            // delegate" when more than one collapsible group gains rows in a single SwiftUI
+            // update, which is what sending the first message inside a project does: the chat
+            // joins this group and 最近 at once. The bug is in SwiftUI's own bridge —
+            // OutlineListCoordinator expands a group item while applying its row diff, and
+            // NSOutlineView inserts rows from inside that call's delegate callbacks.
+            // docs/repros/swiftui-outline-list-reentrancy.swift reproduces it in a plain
+            // two-Section List with none of Echo in it. Nothing visible misbehaves, and the
+            // fix does not belong here: do not reshape Echo's state updates, split publishes
+            // or delay them to dodge it.
+            List(selection: selection) {
+                Section(isExpanded: searching($projectsExpanded)) {
+                    ForEach(workspace.projects) { project in projectRow(project) }
+                } header: {
+                    projectHeader
+                }
+                Section(isExpanded: searching($recentExpanded)) {
+                    rows(workspace.recentConversations)
+                } header: {
+                    recentHeader
+                }
+            }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                .font(WorkspaceStyle.body)
+                .accessibilityIdentifier("workspace.sidebar").accessibilityLabel("聊天")
+            SidebarListFocusAnchor(focus: listFocus).frame(height: 0).accessibilityHidden(true)
             Color.clear.frame(height: 48)
         }
         .onChange(of: workspace.searchFocusRequest) { _, _ in searchFocused = true }
@@ -143,18 +159,15 @@ struct WorkspaceSidebar: View {
             workspace.objectWillChange.send()
         }
     }
+    /// A search opens both groups without discarding the collapse the user chose.
+    private func searching(_ stored: Binding<Bool>) -> Binding<Bool> {
+        Binding(get: { stored.wrappedValue || !workspace.searchText.isEmpty },
+                set: { stored.wrappedValue = $0 })
+    }
     private var recentHeader: some View {
         HStack(spacing: 4) {
-            Button { recentExpanded.toggle() } label: {
-                HStack(spacing: 6) {
-                    Text("最近").font(.system(size: 13))
-                    Image(systemName: recentExpanded || !workspace.searchText.isEmpty ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .medium))
-                    Spacer(minLength: 0)
-                }.frame(height: 28).contentShape(Rectangle())
-            }.buttonStyle(.plain).foregroundStyle(WorkspaceStyle.tertiary)
-                .accessibilityLabel(recentExpanded ? "收起最近" : "展开最近")
-                .accessibilityIdentifier("workspace.recent.toggle")
+            Text("最近").accessibilityIdentifier("workspace.recent.title")
+            Spacer(minLength: 8)
             Button { workspace.newConversation(projectID: workspace.selected?.projectID) } label: {
                 Image(systemName: "square.and.pencil").font(.system(size: 13))
                     .frame(width: 24, height: 24).contentShape(Rectangle())
@@ -164,64 +177,65 @@ struct WorkspaceSidebar: View {
                 .accessibilityIdentifier("workspace.recent.newConversation")
                 .opacity(recentHeaderHovered || newConversationFocused ? 1 : 0)
                 .allowsHitTesting(recentHeaderHovered || newConversationFocused)
-        }.padding(.trailing, 10).frame(height: 28)
+        }.frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onHover { recentHeaderHovered = $0 }
     }
     private var projectHeader: some View {
         HStack(spacing: 4) {
-            Button { projectsExpanded.toggle() } label: {
-                HStack(spacing: 6) {
-                    Text("项目").font(.system(size: 13))
-                    Image(systemName: projectsExpanded || !workspace.searchText.isEmpty ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .medium))
-                }.contentShape(Rectangle())
-            }.buttonStyle(.plain).foregroundStyle(WorkspaceStyle.tertiary)
-                .accessibilityLabel(projectsExpanded ? "收起项目" : "展开项目")
-                .accessibilityIdentifier("workspace.projects.toggle")
+            Text("项目").accessibilityIdentifier("workspace.projects.title")
             Spacer(minLength: 8)
-            HStack(spacing: 4) {
-                Button { WorkspaceActions.chooseFolder { _ = workspace.addProject(url: $0) } } label: {
-                    Image(systemName: "plus").font(.system(size: 13))
-                        .frame(width: 24, height: 24).contentShape(Rectangle())
-                }.buttonStyle(.plain).focused($addProjectFocused)
-                    .help("添加项目文件夹").accessibilityLabel("添加项目文件夹")
-                    .accessibilityIdentifier("workspace.projects.add")
-            }.foregroundStyle(WorkspaceStyle.secondary)
+            Button { WorkspaceActions.chooseFolder { _ = workspace.addProject(url: $0) } } label: {
+                Image(systemName: "plus").font(.system(size: 13))
+                    .frame(width: 24, height: 24).contentShape(Rectangle())
+            }.buttonStyle(.plain).focused($addProjectFocused)
+                .foregroundStyle(WorkspaceStyle.secondary)
+                .help("添加项目文件夹").accessibilityLabel("添加项目文件夹")
+                .accessibilityIdentifier("workspace.projects.add")
                 .opacity(projectHeaderHovered || addProjectFocused ? 1 : 0)
                 .allowsHitTesting(projectHeaderHovered || addProjectFocused)
-        }.padding(.trailing, 10).frame(height: 28)
+        }.frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onHover { projectHeaderHovered = $0 }
     }
     private func projectExpanded(_ project: WorkspaceProject) -> Bool {
         !collapsedProjects.contains(project.id) || !workspace.searchText.isEmpty
     }
+    private func projectExpansion(_ project: WorkspaceProject) -> Binding<Bool> {
+        Binding(get: { projectExpanded(project) },
+                set: { expanded in
+                    if expanded { collapsedProjects.remove(project.id) } else { collapsedProjects.insert(project.id) }
+                })
+    }
+    /// The system disclosure supplies the triangle, the child indentation and ← / → ;
+    /// the folder icon keeps its own open-flap and missing-folder meaning.
     private func projectRow(_ project: WorkspaceProject) -> some View {
-        HStack(spacing: 0) {
-        Button {
-            if collapsedProjects.contains(project.id) { collapsedProjects.remove(project.id) }
-            else { collapsedProjects.insert(project.id) }
+        DisclosureGroup(isExpanded: projectExpansion(project)) {
+            rows(workspace.filteredConversations(projectID: project.id), projectID: project.id)
         } label: {
             HStack(spacing: 8) {
                 ProjectFolderIcon(isExpanded: projectExpanded(project), isAvailable: project.isAvailable)
                     .foregroundStyle(WorkspaceStyle.secondary).frame(width: 18, height: 16)
                     .accessibilityHidden(true)
-                Text(project.name).font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary).lineLimit(1)
+                Text(project.name).lineLimit(1)
                 Spacer(minLength: 0)
-            }.padding(.horizontal, 8).frame(minHeight: 32).contentShape(Rectangle())
-        }.buttonStyle(.plain).modifier(SidebarRowHighlight())
-            .help(project.path)
-            .accessibilityLabel(project.name)
-            .accessibilityValue(projectExpanded(project) ? "已展开聊天" : "已收起聊天")
-            .accessibilityHint("点击展开或收起项目聊天")
-            .accessibilityIdentifier("workspace.project.\(project.id)")
-            ProjectRowNewConversation(visible: hoveredProject == project.id) {
-                newProjectConversation(project.id)
-            }.accessibilityIdentifier("workspace.project.newConversation.\(project.id)")
-                .padding(.trailing, 8)
-        }.onHover { hoveredProject = $0 ? project.id : nil }
-            .contextMenu { projectMenu(project) }
+                ProjectRowNewConversation(visible: hoveredProject == project.id) {
+                    newProjectConversation(project.id)
+                }.accessibilityIdentifier("workspace.project.newConversation.\(project.id)")
+            }.frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                // The project is not a chat, so it carries no selection tag. A click
+                // anywhere on it still opens or closes its chats.
+                .onTapGesture { listFocus.take(); projectExpansion(project).wrappedValue.toggle() }
+                .accessibilityElement(children: .contain)
+                .onHover { hoveredProject = $0 ? project.id : nil }
+                .help(project.path)
+                .accessibilityLabel(project.name)
+                .accessibilityValue(projectExpanded(project) ? "已展开聊天" : "已收起聊天")
+                .accessibilityHint("点击展开或收起项目聊天")
+                .accessibilityIdentifier("workspace.project.\(project.id)")
+                .contextMenu { projectMenu(project) }
+        }
     }
     private func newProjectConversation(_ id: UUID) {
         projectsExpanded = true; collapsedProjects.remove(id)
@@ -230,25 +244,25 @@ struct WorkspaceSidebar: View {
     @ViewBuilder private func rows(_ conversations: [WorkspaceConversation], projectID: UUID? = nil) -> some View {
         ForEach(conversations) { conversation in
             let rowID = RowID(conversationID: conversation.id, projectID: projectID)
-            Button { selection.wrappedValue = rowID } label: {
-                HStack(spacing: 8) {
-                    Text(conversation.title).font(WorkspaceStyle.body)
-                        .foregroundStyle(WorkspaceStyle.primary).lineLimit(1)
-                    Spacer(minLength: 0)
-                    if conversation.store.task?.status == .running,
-                       projectID != nil || conversation.projectID == nil {
-                        ConversationActivityIndicator()
-                    }
-                }.padding(.leading, projectID == nil ? 8 : 34).padding(.trailing, 8)
-                    .frame(minHeight: 32).contentShape(Rectangle())
-            }.buttonStyle(.plain).modifier(SidebarRowHighlight(selected: selection.wrappedValue == rowID))
-                .id(rowID).accessibilityAddTraits(selection.wrappedValue == rowID ? [.isSelected] : [])
-                .help(conversation.title)
-                .accessibilityIdentifier("conversation.\(projectID?.uuidString ?? "recent").\(conversation.id)")
-                .contextMenu {
-                    Button("重命名") { WorkspaceActions.rename(conversation.title) { workspace.renameConversation(conversation.id, to: $0) } }
-                    Button("删除会话…", role: .destructive) { WorkspaceActions.delete(conversation, workspace: workspace) }
+            HStack(spacing: 8) {
+                Text(conversation.title).lineLimit(1)
+                Spacer(minLength: 0)
+                if conversation.store.task?.status == .running,
+                   projectID != nil || conversation.projectID == nil {
+                    ConversationActivityIndicator()
                 }
+            }
+            // The source list row is already the hit target. Keep the content one
+            // element so assistive technology reads and selects the row, not its label.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .tag(rowID)
+            .help(conversation.title)
+            .accessibilityIdentifier("conversation.\(projectID?.uuidString ?? "recent").\(conversation.id)")
+            .contextMenu {
+                Button("重命名") { WorkspaceActions.rename(conversation.title) { workspace.renameConversation(conversation.id, to: $0) } }
+                Button("删除会话…", role: .destructive) { WorkspaceActions.delete(conversation, workspace: workspace) }
+            }
         }
     }
     @ViewBuilder private func projectMenu(_ project: WorkspaceProject) -> some View {
@@ -262,8 +276,50 @@ struct WorkspaceSidebar: View {
     }
 }
 
+/// SwiftUI's source list moves its selection on a click but leaves the first
+/// responder where it was, so ↑ / ↓ would not follow the pointer and the rows
+/// would never show a focus ring. Hand the list focus whenever the person drives
+/// it, and never when the app selects a conversation on its own.
+@MainActor private final class SidebarListFocus {
+    fileprivate weak var anchor: NSView?
+    func take() {
+        // First responder settles after AppKit finishes dispatching the click.
+        DispatchQueue.main.async { [weak self] in
+            guard let anchor = self?.anchor, let window = anchor.window,
+                  let list = Self.list(near: anchor), window.firstResponder !== list else { return }
+            window.makeFirstResponder(list)
+        }
+    }
+    /// The nearest list in the anchor's own branch: the sidebar hosts exactly one.
+    private static func list(near view: NSView) -> NSTableView? {
+        var scope = view.superview
+        while let current = scope {
+            if let table = table(in: current) { return table }
+            scope = current.superview
+        }
+        return nil
+    }
+    private static func table(in view: NSView) -> NSTableView? {
+        if let table = view as? NSTableView { return table }
+        for child in view.subviews { if let table = table(in: child) { return table } }
+        return nil
+    }
+}
+
+private struct SidebarListFocusAnchor: NSViewRepresentable {
+    let focus: SidebarListFocus
+    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
+    func updateNSView(_ view: NSView, context: Context) { focus.anchor = view }
+}
+
 private struct ConversationActivityIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The source list raises this on the row it fills with the accent colour, so the
+    /// spinner can switch to the selected-row tint the way a label does.
+    @Environment(\.backgroundProminence) private var prominence
+    private var tint: Color {
+        prominence == .increased ? Color(nsColor: .alternateSelectedControlTextColor) : WorkspaceStyle.secondary
+    }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
@@ -279,7 +335,7 @@ private struct ConversationActivityIndicator: View {
                     var arc = Path()
                     arc.move(to: CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius))
                     arc.addLine(to: CGPoint(x: center.x + cos(nextAngle) * radius, y: center.y + sin(nextAngle) * radius))
-                    context.stroke(arc, with: .color(WorkspaceStyle.secondary.opacity(0.15 + 0.85 * fraction)),
+                    context.stroke(arc, with: .color(tint.opacity(0.15 + 0.85 * fraction)),
                                    style: StrokeStyle(lineWidth: 0.4 + 1.4 * fraction, lineCap: .round))
                 }
             }
@@ -288,18 +344,8 @@ private struct ConversationActivityIndicator: View {
     }
 }
 
-private struct SidebarRowHighlight: ViewModifier {
-    var selected = false
-    @State private var hovered = false
-    func body(content: Content) -> some View {
-        content
-            .background(RoundedRectangle(cornerRadius: 12)
-                .fill(WorkspaceStyle.primary.opacity(selected ? 0.09 : hovered ? 0.045 : 0)))
-            .onHover { hovered = $0 }
-    }
-}
-
-// SF Symbols supplies the closed folder; the open flap makes expansion visible without a chevron.
+// SF Symbols supplies the closed folder; the open flap repeats the disclosure state
+// beside the system triangle, and a missing folder reads as a badged question mark.
 struct ProjectFolderIcon: View {
     let isExpanded: Bool
     let isAvailable: Bool
