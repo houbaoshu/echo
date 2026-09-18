@@ -3025,8 +3025,17 @@ import SwiftUI
         precondition(NSApp.isActive && window.isKeyWindow, "Real key events need the settings window to be key")
 
         // 1. The page owns typing: a queued composer focus request cannot pull
-        // keystrokes back into the hidden conversation behind it.
+        // keystrokes back into the hidden conversation behind it. What it hands the
+        // first responder to is the page's own section list, not the hosting
+        // container, so the selection reads as active and the arrow keys drive it
+        // with no Tab and no click first.
         precondition(!(window.firstResponder is ComposerTextView), "Settings takes focus off the hidden composer")
+        precondition(isSectionList(responder()),
+                     "Opening settings focuses its section list, not the host: \(String(describing: responder()))")
+        try await key(125)
+        precondition(settings.selectedSection == "语音", "↓ moves sections as soon as the page opens")
+        try await key(126)
+        precondition(settings.selectedSection == "模型")
         try await key(0)
         try await key(1)
         precondition(conversation.store.mainDraft.isEmpty,
@@ -3158,15 +3167,35 @@ import SwiftUI
             try await settle()
         }
 
-        // 10. Leaving the page returns typing to the conversation.
+        // 10. A voice test started from the page keeps running on its own: the stub
+        // recognizer never returns, so only a cancel can end it. While it runs the
+        // chat cannot start Live Voice.
+        settings.selectedSection = "语音"
+        try await settle()
+        precondition(settings.canTestVoice, "The saved model credential is the voice test's fallback key")
+        precondition(findAccessibility("voiceSettings.test", in: window.contentView!)?.accessibilityPerformPress?() == true,
+                     "The voice connection check must be pressable")
+        try await settle()
+        precondition(voice.testing, "The connection check runs until something cancels it")
+        precondition(!main.canToggleVoice, "A running voice test blocks Live Voice")
+
+        // 11. Leaving the page cancels that test and returns typing to the conversation.
+        // The page is only hidden, never unmounted, so neither can come from a SwiftUI
+        // onDisappear or from the caller asking for composer focus afterwards.
         precondition(findAccessibility("settings.back", in: window.contentView!)?.accessibilityPerformPress?() == true)
         try await settle()
         precondition(!main.isSettingsVisible)
-        workspace.requestComposerFocus(conversationID: conversation.id)
-        try await settle()
-        precondition(window.firstResponder is ComposerTextView, "Returning to the workspace restores composer focus")
-        print("PASS: settings page owns typing, full-row pointer targets, system section list arrow/Tab traversal, pane swap keeps the key view loop,"
-              + " field editing, disabled controls\(fullKeyboardAccess ? ", Space activation under Full Keyboard Access" : "")")
+        precondition(!voice.testing, "Leaving the settings page cancels the running voice test")
+        precondition(main.canToggleVoice, "Live Voice is available again once the test is cancelled")
+        precondition(window.firstResponder is ComposerTextView,
+                     "Returning to the workspace restores composer focus: \(String(describing: responder()))")
+        try await key(18)
+        precondition(conversation.store.mainDraft.contains("1"),
+                     "Typing after 返回应用 reaches the chat draft without a click: \(conversation.store.mainDraft)")
+        conversation.store.mainDraft = ""
+        print("PASS: settings page owns typing and focuses its section list, full-row pointer targets, system section list arrow/Tab traversal,"
+              + " pane swap keeps the key view loop, field editing, disabled controls,"
+              + " leaving cancels a running voice test and restores composer focus\(fullKeyboardAccess ? ", Space activation under Full Keyboard Access" : "")")
     }
 
     @MainActor private static func findView(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {

@@ -365,11 +365,20 @@ struct WorkspaceSearchField: NSViewRepresentable {
 /// Shared with the project file tree, which is the same kind of list.
 @MainActor final class SidebarListFocus {
     fileprivate weak var anchor: NSView?
-    func take() {
+    /// `retries` waits for a list that has not been built yet. A click already has
+    /// one, so the pointer path keeps the single attempt; the settings page asks the
+    /// moment it is shown, which can be the first time SwiftUI builds its section list.
+    func take(retries: Int = 0) {
         // First responder settles after AppKit finishes dispatching the click.
-        DispatchQueue.main.async { [weak self] in
-            guard let anchor = self?.anchor, let window = anchor.window,
-                  let list = Self.list(near: anchor), window.firstResponder !== list else { return }
+        let delay: DispatchTime = retries > 0 ? .now() + 0.02 : .now()
+        DispatchQueue.main.asyncAfter(deadline: delay) { [weak self] in
+            guard let self else { return }
+            guard let anchor = self.anchor, let window = anchor.window,
+                  let list = Self.list(near: anchor), !list.isHiddenOrHasHiddenAncestor else {
+                if retries > 0 { self.take(retries: retries - 1) }
+                return
+            }
+            guard window.firstResponder !== list else { return }
             window.makeFirstResponder(list)
         }
     }

@@ -84,6 +84,9 @@ struct MainWindowLayout {
     private var sectionObservation: AnyCancellable?
     /// Holds the sidebar's real search field, so ⌘F and Escape address it directly.
     let searchFocus = WorkspaceSearchFocus()
+    /// Addresses the settings page's own section list, the same way the workspace
+    /// sidebar and the project file tree address theirs.
+    let settingsSectionFocus = SidebarListFocus()
     private let projectIcon = NSImageView()
     private let titleField = NSTextField(labelWithString: "新会话")
     private var manualColumn: MainWindowLayout.Column?
@@ -140,6 +143,7 @@ struct MainWindowLayout {
         workspaceBottomConstraint = workspaceConstraints.last
         settingsHost = NSHostingController(rootView: SettingsView(settings: self.settings, voice: workspace.voice, pets: self.pets,
                                                                   workspace: self.workspace,
+                                                                  sectionFocus: settingsSectionFocus,
                                                                   onBack: { [weak self] in self?.showWorkspace() },
                                                                   onReturnToVoice: { [weak self] in self?.revealVoice() }))
         settingsHost.sizingOptions = []
@@ -219,10 +223,19 @@ struct MainWindowLayout {
         // view loop to the settings page instead.
         window?.recalculateKeyViewLoop()
         window?.makeFirstResponder(settingsHost.view)
+        // The host is a container: it draws no focus ring and answers no key. Hand the
+        // first responder to the page's own section list, so its selection reads as
+        // active and ↑ / ↓ move sections without needing a Tab or a click first.
+        settingsSectionFocus.take(retries: 10)
     }
     func showWorkspace() {
         guard isSettingsVisible else { return }
         window?.makeFirstResponder(nil)
+        // Leaving only hides the page, so its views never disappear and the voice
+        // section's own onDisappear cancel never runs. Cancel here, the way opening
+        // the page cancels dictation: a running preview would keep playing, and its
+        // testing flag keeps the chat's microphone and Live Voice disabled meanwhile.
+        workspace.voice.cancelTest()
         isSettingsVisible = false
         prepareResize(window?.frame.width ?? 1280)
         applyingLayout = true
@@ -233,6 +246,11 @@ struct MainWindowLayout {
         window?.toolbar?.isVisible = true
         applyingLayout = false
         refreshTitle(); applyLayout()
+        // The page took the key view loop and the first responder, and hiding it hands
+        // neither back. Rebuild the loop over the workspace and return typing to the
+        // composer, or Tab and every keystroke would land nowhere until it is clicked.
+        window?.recalculateKeyViewLoop()
+        if let selected = workspace.selected { workspace.requestComposerFocus(conversationID: selected.id) }
     }
     func revealVoice() {
         guard let owner = workspace.voice.snapshot.session.owner else { return }

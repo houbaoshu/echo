@@ -6,6 +6,9 @@ struct SettingsView: View {
     @ObservedObject var voice: VoiceSessionController
     @ObservedObject var pets: PetCatalog
     var workspace: WorkspaceStore? = nil
+    /// Owned by the window controller, so showing the page can hand the first
+    /// responder to this list instead of to the hosting container.
+    let sectionFocus: SidebarListFocus
     var onBack: () -> Void
     var onReturnToVoice: (() -> Void)? = nil
     /// The section order the sidebar and its keyboard traversal both follow.
@@ -69,6 +72,7 @@ struct SettingsView: View {
                 }
             }.listStyle(.sidebar).scrollContentBackground(.hidden)
                 .accessibilityLabel("设置分区").accessibilityIdentifier("settings.sections")
+            SidebarListFocusAnchor(focus: sectionFocus).frame(height: 0).accessibilityHidden(true)
         }.padding(.vertical, 6).frame(width: 200, alignment: .leading)
             .frame(maxHeight: .infinity).background(Color.primary.opacity(0.035))
             .background(Color(nsColor: .windowBackgroundColor))
