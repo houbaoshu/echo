@@ -120,7 +120,8 @@ struct VoiceSettingsView: View {
             }
             HStack(spacing: 12) {
                 Button("保存") { settings.saveVoice() }.buttonStyle(.borderedProminent)
-                    .disabled(!settings.isVoiceDirty).accessibilityIdentifier("voiceSettings.save")
+                    .disabled(!settings.isVoiceDirty).keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("voiceSettings.save")
                 Button("还原修改") { settings.restoreVoice() }.disabled(!settings.isVoiceDirty)
                     .accessibilityIdentifier("voiceSettings.restore")
             }
@@ -136,11 +137,7 @@ struct VoiceSettingsView: View {
                     .accessibilityIdentifier("voiceSettings.preview")
             }.disabled(testsDisabled)
             if voice.testing {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("正在测试…").font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
-                    Button("取消") { voice.cancelTest() }.accessibilityIdentifier("voiceSettings.cancelTest")
-                }
+                SettingsTestProgress(identifier: "voiceSettings.cancelTest") { voice.cancelTest() }
             }
             if let result = voice.testResult {
                 Text(result).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)

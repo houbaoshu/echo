@@ -1521,16 +1521,16 @@ import SwiftUI
         precondition(conversationA.store.isGenerating, "A is NOT stopped by Esc in B")
         workspace.stop(conversationID: conversationA.id)
 
-        // Test 7: In Settings, Esc does NOT stop background conversation A
+        // Test 7: In Settings, Esc closes the page and does NOT stop background conversation A
         conversationA.store.send("Another A request")
         sourceA.receive?(.progress("streaming A again"))
         precondition(conversationA.store.isGenerating, "A is generating")
         main.showSettings()
         precondition(main.isSettingsVisible, "Settings is visible")
+        precondition(!main.canHandleEscape, "停止回复 stays unavailable while the settings page is up")
         let escInSettings = main.handleEscape()
-        precondition(!escInSettings, "Esc in Settings returns false")
+        precondition(escInSettings && !main.isSettingsVisible, "Esc in Settings closes the page")
         precondition(conversationA.store.isGenerating, "A is NOT stopped by Esc in Settings")
-        main.showWorkspace()
         workspace.stop(conversationID: conversationA.id)
 
         print("PASS: Esc scope isolation, IME protection, Shift/Option+Enter, and whitespace submission guard")
@@ -3108,6 +3108,12 @@ import SwiftUI
         // assertions hold whichever input source the machine is on.
         try await key(18)
         precondition(settings.voiceDraft.speaker != speaker, "The voice field takes typed text")
+        // Return is the section's default action, the way it is in any system form
+        // with a save button — including from inside the field being edited.
+        precondition(settings.isVoiceDirty)
+        try await key(36)
+        precondition(!settings.isVoiceDirty && settings.snapshot.voice?.speaker == settings.voiceDraft.speaker,
+                     "Return saves the section from inside its text field")
         settings.restoreVoice()
 
         // 7. Typing reaches the model fields, including the secure field.
@@ -3193,9 +3199,18 @@ import SwiftUI
         precondition(conversation.store.mainDraft.contains("1"),
                      "Typing after 返回应用 reaches the chat draft without a click: \(conversation.store.mainDraft)")
         conversation.store.mainDraft = ""
+
+        // 12. Escape closes the page too, so it can be left without the pointer.
+        main.showSettings()
+        try await settle()
+        precondition(main.isSettingsVisible && isSectionList(responder()))
+        try await key(53)
+        precondition(!main.isSettingsVisible, "Escape leaves the settings page")
+        precondition(window.firstResponder is ComposerTextView, "Escape returns focus with the page")
+
         print("PASS: settings page owns typing and focuses its section list, full-row pointer targets, system section list arrow/Tab traversal,"
               + " pane swap keeps the key view loop, field editing, disabled controls,"
-              + " leaving cancels a running voice test and restores composer focus\(fullKeyboardAccess ? ", Space activation under Full Keyboard Access" : "")")
+              + " Return saves and Escape leaves, leaving cancels a running voice test and restores composer focus\(fullKeyboardAccess ? ", Space activation under Full Keyboard Access" : "")")
     }
 
     @MainActor private static func findView(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {

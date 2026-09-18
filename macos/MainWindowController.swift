@@ -300,6 +300,17 @@ struct MainWindowLayout {
         if let owner = workspace.voice.snapshot.session.owner { workspace.endVoice(owner: owner) }
         else if let selected = workspace.selected { workspace.startVoice(conversationID: selected.id) }
     }
+    /// Escape closes the settings page, the way ⌘, opened it — the page covers the
+    /// whole window, and its only other way out is the pointer. A sheet or an input
+    /// method mid-composition owns Escape first. This is deliberately not part of
+    /// `canHandleEscape`, which answers for the 停止回复 command: that command stays
+    /// unavailable here, so the menu declines Escape and the window sees it.
+    var canEscapeSettings: Bool {
+        guard isSettingsVisible, let window else { return false }
+        if window.attachedSheet != nil { return false }
+        if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
+        return true
+    }
     var canHandleEscape: Bool {
         guard !isSettingsVisible else { return false }
         guard let window else { return false }
@@ -312,6 +323,7 @@ struct MainWindowLayout {
         return presentation.canStop && presentation.stopEnabled
     }
     func handleEscape() -> Bool {
+        if canEscapeSettings { showWorkspace(); return true }
         guard canHandleEscape, let selected = workspace.selected else { return false }
         workspace.stop(conversationID: selected.id)
         return true

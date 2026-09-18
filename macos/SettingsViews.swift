@@ -174,9 +174,27 @@ struct SettingsCard<Content: View>: View {
     }
 }
 
+/// While a section's connection test runs: what is happening, and the one way to
+/// stop it. Both sections show this instead of each inventing its own cancel.
+struct SettingsTestProgress: View {
+    let identifier: String
+    var cancel: () -> Void
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("正在测试…").font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+            Button("取消", action: cancel).accessibilityIdentifier(identifier)
+        }
+    }
+}
+
 struct ModelSettingsView: View {
     @ObservedObject var settings: SettingsStore
     @State private var revealsKey = false
+    /// Revealing swaps the secure field for a plain one — a different view, which
+    /// takes the first responder with it when it goes. Hand it back to whichever
+    /// field replaced it, so the caret does not vanish mid-edit.
+    @FocusState private var keyFieldFocused: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             SettingsCard {
@@ -208,8 +226,15 @@ struct ModelSettingsView: View {
                         Group {
                             if revealsKey { TextField("输入 API Key", text: $settings.apiKey) }
                             else { SecureField("输入 API Key", text: $settings.apiKey) }
-                        }.accessibilityLabel("API Key").accessibilityIdentifier("settings.apiKey")
-                        Button { revealsKey.toggle() } label: { Image(systemName: revealsKey ? "eye.slash" : "eye") }
+                        }.focused($keyFieldFocused)
+                            .accessibilityLabel("API Key").accessibilityIdentifier("settings.apiKey")
+                        Button {
+                            let editing = keyFieldFocused
+                            revealsKey.toggle()
+                            // The replacement exists only after this update; asking any
+                            // earlier focuses the field that is on its way out.
+                            if editing { DispatchQueue.main.async { keyFieldFocused = true } }
+                        } label: { Image(systemName: revealsKey ? "eye.slash" : "eye") }
                             .buttonStyle(.borderless).help(revealsKey ? "隐藏 API Key" : "显示 API Key")
                             .accessibilityLabel(revealsKey ? "隐藏 API Key" : "显示 API Key")
                             .accessibilityIdentifier("settings.apiKey.reveal")
@@ -229,6 +254,9 @@ struct ModelSettingsView: View {
                 HStack { saveActions; Spacer(); testAction }
                 VStack(alignment: .leading, spacing: 12) { saveActions; testAction }
             }
+            if settings.testing {
+                SettingsTestProgress(identifier: "settings.cancelTest") { settings.cancelTest() }
+            }
             if let result = settings.testResult {
                 Label(result, systemImage: settings.testSucceeded ? "checkmark.circle" : "info.circle")
                     .font(WorkspaceStyle.caption).foregroundStyle(settings.testSucceeded ? Color.green : .secondary)
@@ -245,19 +273,16 @@ struct ModelSettingsView: View {
     private var saveActions: some View {
         HStack(spacing: 12) {
             Button("保存") { settings.save() }.buttonStyle(.borderedProminent).disabled(!settings.isDirty)
-                .accessibilityIdentifier("settings.save")
+                .keyboardShortcut(.defaultAction).accessibilityIdentifier("settings.save")
             Button("还原修改") { settings.restore() }.disabled(!settings.canRestoreModel)
                 .accessibilityIdentifier("settings.restore")
         }
     }
     private var testAction: some View {
-        HStack(spacing: 8) {
-            if settings.testing { ProgressView().controlSize(.small) }
-            Button(settings.testing ? "取消测试" : "测试连接") {
-                if settings.testing { settings.cancelTest() } else { settings.testConnection() }
-            }.help("验证当前协议的工具调用能力，不执行命令，也不自动保存")
-                .accessibilityIdentifier("settings.test")
-        }
+        Button("测试连接") { settings.testConnection() }
+            .disabled(settings.testing)
+            .help("验证当前协议的工具调用能力，不执行命令，也不自动保存")
+            .accessibilityIdentifier("settings.test")
     }
 }
 
@@ -266,14 +291,21 @@ struct PetSettingsView: View {
     @ObservedObject var settings: SettingsStore
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框",
-                       isOn: Binding(get: { settings.snapshot.quickComposerHotKey }, set: { settings.setQuickComposerHotKey($0) }))
-                    .toggleStyle(.switch).accessibilityIdentifier("settings.quickComposerHotKey")
-                if let notice = settings.hotKeyNotice {
-                    Label(notice, systemImage: "exclamationmark.triangle").font(WorkspaceStyle.caption)
-                        .foregroundStyle(.orange).accessibilityIdentifier("settings.quickComposerHotKey.notice")
+            SettingsCard {
+                SettingsRow(title: "使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框") {
+                    Toggle("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框",
+                           isOn: Binding(get: { settings.snapshot.quickComposerHotKey }, set: { settings.setQuickComposerHotKey($0) }))
+                        .toggleStyle(.switch).labelsHidden()
+                        // The row's control column ends where every other section's
+                        // fields end, so the switch lines up with them.
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .accessibilityLabel("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框")
+                        .accessibilityIdentifier("settings.quickComposerHotKey")
                 }
+            }
+            if let notice = settings.hotKeyNotice {
+                Label(notice, systemImage: "exclamationmark.triangle").font(WorkspaceStyle.caption)
+                    .foregroundStyle(.orange).accessibilityIdentifier("settings.quickComposerHotKey.notice")
             }
             HStack {
                 Text("我的精灵").font(WorkspaceStyle.medium)
