@@ -1244,8 +1244,7 @@ import SwiftUI
         try await settle(); try await settle()
         precondition(rowIndex(chat("最近丙")) != nil, "Clearing the search restores the chats")
 
-        // 9. Tab still leaves the list, the search field still takes typing, and Escape
-        // in the field does not disturb the open chat.
+        // 9. Tab still leaves the list.
         guard let fourth = rowRect(chat("最近丁")) else { preconditionFailure("最近丁 is missing") }
         try await click(NSPoint(x: fourth.maxX - 6, y: fourth.midY))
         precondition(window.firstResponder === list)
@@ -1255,19 +1254,124 @@ import SwiftUI
             left = window.firstResponder !== list
         }
         precondition(left, "Tab leaves the chat list")
-        guard let search = findAccessibility("workspace.search", in: sidebar), let searchFrame = search.accessibilityFrame?() else {
-            preconditionFailure("The search field is missing")
+
+        // 10. The search box is the system control, not a drawing of one: AppKit owns
+        // the magnifier, the placeholder, the clear button and the Escape semantics.
+        guard let search = findView(sidebar, { $0 is NSSearchField }) as? NSSearchField else {
+            preconditionFailure("The sidebar search box must be a system NSSearchField")
         }
-        try await click(NSPoint(x: window.convertFromScreen(searchFrame).midX, y: window.convertFromScreen(searchFrame).midY))
-        try await key(0)
-        precondition(!workspace.searchText.isEmpty, "The search field still takes typing")
+        guard let searchCell = search.cell as? NSSearchFieldCell else { preconditionFailure("NSSearchField must carry its cell") }
+        precondition(searchCell.searchButtonCell != nil, "The magnifier comes from the system cell")
+        precondition(searchCell.cancelButtonCell != nil, "The clear button comes from the system cell")
+        precondition(search.placeholderString == "搜索聊天", "The placeholder is the field's own")
+        let searchRect = search.convert(search.bounds, to: nil)
+
+        // A click puts the insertion point in the field, and the window agrees: the
+        // field editor being edited keeps the field as its delegate.
+        try await click(NSPoint(x: searchRect.midX, y: searchRect.midY))
+        precondition(main.searchFocus.isFocused, "Clicking the search box focuses it")
+        precondition((window.firstResponder as? NSTextView)?.isFieldEditor == true,
+                     "AppKit hands the field its field editor, which is what focus is read from")
+        // "1" is the keystroke no input method absorbs into a composition, so this
+        // asserts the same thing whichever input source the machine is on.
+        try await key(18)
+        precondition(!workspace.searchText.isEmpty && search.stringValue == workspace.searchText,
+                     "Typing in the system field reaches the store — stringValue='\(search.stringValue)'"
+                     + " searchText='\(workspace.searchText)'")
+
+        // 11. Escape belongs to the search field: it clears the query and leaves the
+        // open chat and its running reply alone, even though a reply is stoppable.
+        workspace.searchText = "项目甲"
+        try await settle(); try await settle()
+        precondition(rowIndex(chat("最近丙")) == nil, "The typed query narrows the list")
         let openBeforeEscape = workspace.selectedID
+        precondition(workspace.selected?.store.task?.status == .running,
+                     "This chat has a reply running, so Escape would otherwise stop it")
+        precondition(!main.canHandleEscape, "Escape in the search field is not the global stop")
         try await key(53)
+        precondition(workspace.searchText.isEmpty && search.stringValue.isEmpty,
+                     "Escape clears the query, drawn by nobody but AppKit")
         precondition(workspace.selectedID == openBeforeEscape, "Escape in the search field leaves the open chat alone")
+        precondition(workspace.selected?.store.task?.status == .running, "Escape in the search field does not stop the reply")
+        try await settle()
+        precondition(rowIndex(chat("最近丙")) != nil, "Clearing the query restores the chats")
+
+        // Escape again, on an empty field, still belongs to the field: the query is
+        // already gone and the reply keeps running.
+        precondition(main.searchFocus.isFocused, "Escape keeps the insertion point in the field")
+        precondition(!main.canHandleEscape, "An empty search field still owns Escape")
+        try await key(53)
+        precondition(workspace.selected?.store.task?.status == .running,
+                     "Escape on an empty search field does not stop the reply either")
+
+        // 12. The system clear button empties the query.
+        try await key(18)
+        precondition(!workspace.searchText.isEmpty, "The field takes a second query")
+        let cancel = search.convert(searchCell.cancelButtonRect(forBounds: search.bounds), to: nil)
+        try await click(NSPoint(x: cancel.midX, y: cancel.midY))
+        precondition(workspace.searchText.isEmpty && search.stringValue.isEmpty,
+                     "The system clear button empties the query and the store")
+
+        // 13. An input method still composing is left alone: its text does not filter
+        // yet — the SwiftUI field this replaces held the query back the same way — and
+        // no store update cuts the composition short.
+        precondition(window.makeFirstResponder(search))
+        guard let fieldEditor = search.currentEditor() as? NSTextView else { preconditionFailure("The field must be editing") }
+        fieldEditor.setMarkedText("xiangmu", selectedRange: NSRange(location: 7, length: 0),
+                                  replacementRange: NSRange(location: 0, length: 0))
+        precondition(fieldEditor.hasMarkedText(), "The field editor is composing")
+        precondition(workspace.searchText.isEmpty, "Composing text does not filter the chats yet")
+        precondition(!main.canHandleEscape, "Escape never leaves a composing field")
+        workspace.searchText = "别的查询"
+        try await settle(); try await settle()
+        precondition(fieldEditor.hasMarkedText() && search.stringValue.contains("xiangmu"),
+                     "A store update does not commit the composing text")
+        fieldEditor.unmarkText()
         workspace.searchText = ""
         try await settle()
+
+        // 14. ⌘F reaches the field without walking the view tree, and Tab from the
+        // field comes back to the chat list, where ↑ / ↓ still open chats.
+        precondition(window.makeFirstResponder(list))
+        precondition(!main.searchFocus.isFocused)
+        main.focusSearch()
+        try await settle(); try await settle()
+        precondition(main.searchFocus.isFocused, "⌘F focuses the search field")
+        var reachedList = false
+        for _ in 0..<6 where !reachedList {
+            try await key(48)
+            reachedList = window.firstResponder === list
+        }
+        precondition(reachedList, "Tab from the search field comes back to the chat list")
+        let rowBeforeArrow = list.selectedRow
+        try await key(125)
+        precondition(list.selectedRow != rowBeforeArrow && workspace.selectedID != nil,
+                     "↓ walks the chats again once focus is back in the list")
+        // Shift+Tab leaves the list the other way and lands back in the search field.
+        var returned = false
+        for _ in 0..<6 where !returned {
+            try await key(48, .maskShift)
+            returned = main.searchFocus.isFocused
+        }
+        precondition(returned, "Shift+Tab from the chat list reaches the search field")
+
+        // 15. A query that matches nothing empties both groups without disturbing the
+        // open chat, and clearing it brings them back.
+        let openBeforeEmptyQuery = workspace.selectedID
+        workspace.searchText = "没有任何会话匹配这个查询"
+        try await settle(); try await settle()
+        for title in ["项目甲", "项目乙", "最近丙", "最近丁"] {
+            precondition(rowIndex(chat(title)) == nil && rowIndex(chat(title, in: projectID)) == nil,
+                         "No chat matches the query, so \(title) is not listed")
+        }
+        precondition(workspace.selectedID == openBeforeEmptyQuery, "An empty result does not close the open chat")
+        workspace.searchText = ""
+        try await settle(); try await settle()
+        precondition(rowIndex(chat("最近丙")) != nil && rowIndex(chat("项目甲", in: projectID)) != nil,
+                     "Clearing the query restores both groups")
         print("PASS: system chat list — full-row pointer targets, duplicate-row selection, arrow traversal across groups,"
-              + " project open/close, hover actions, search, Tab and Escape")
+              + " project open/close, hover actions, system search field, Escape, clear button, input-method composition,"
+              + " ⌘F, Tab and empty results")
     }
 
     @MainActor private static func testProjectDetachPointer() async throws {
@@ -2936,7 +3040,9 @@ import SwiftUI
         // 6. The swapped pane rejoins the key view loop, so Tab still leaves the list.
         try await tab(until: isFieldEditor(responder()), "the voice speaker field")
         let speaker = settings.voiceDraft.speaker
-        try await key(0)
+        // "1" is the keystroke no input method absorbs into a composition, so these
+        // assertions hold whichever input source the machine is on.
+        try await key(18)
         precondition(settings.voiceDraft.speaker != speaker, "The voice field takes typed text")
         settings.restoreVoice()
 
@@ -2945,12 +3051,12 @@ import SwiftUI
         try await settle()
         try await tab(until: isFieldEditor(responder()), "the Base URL field")
         let baseURL = settings.draft.baseURL
-        try await key(0)
+        try await key(18)
         precondition(settings.draft.baseURL != baseURL && settings.isDirty, "Base URL edits mark the model settings dirty")
         try await tab(until: (responder() as? NSTextView)?.isFieldEditor == true
                       && String(describing: type(of: responder()!)).contains("Secure"), "the API Key secure field")
         let apiKey = settings.apiKey
-        try await key(0)
+        try await key(18)
         precondition(settings.apiKey != apiKey, "The secure field takes typed text")
         settings.restore()
         try await settle()

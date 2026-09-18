@@ -70,7 +70,9 @@ struct WorkspaceSidebar: View {
         let projectID: UUID?
     }
     @ObservedObject var workspace: WorkspaceStore
-    @FocusState private var searchFocused: Bool
+    /// Owned by the window controller, so ⌘F and Escape can address the real
+    /// search field instead of guessing at the focused view.
+    let searchFocus: WorkspaceSearchFocus
     @State private var collapsedProjects: Set<UUID> = []
     @State private var projectsExpanded = true
     @State private var recentExpanded = true
@@ -110,17 +112,14 @@ struct WorkspaceSidebar: View {
                         .contentShape(Rectangle())
                 }.buttonStyle(.borderless).help("新对话 ⌘N").accessibilityLabel("新对话")
             }.padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 16)
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").foregroundStyle(WorkspaceStyle.secondary)
-                TextField("搜索聊天", text: $workspace.searchText,
-                          prompt: Text("搜索聊天").foregroundStyle(WorkspaceStyle.secondary)).textFieldStyle(.plain)
-                    .focused($searchFocused).accessibilityIdentifier("workspace.search")
-                if !workspace.searchText.isEmpty {
-                    Button { workspace.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(WorkspaceStyle.secondary).accessibilityLabel("清除搜索")
-                }
-            }.font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
-                .padding(8).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            // A system search field owns the magnifier, the placeholder, the clear button,
+            // the focus ring and the Escape-clears-the-query semantics. SwiftUI's own
+            // .searchable cannot be used here: it only renders inside a navigation
+            // container, and the one placement that draws in the column
+            // (.searchable(placement: .sidebar)) needs a NavigationSplitView nested
+            // inside this AppKit sidebar column, which squeezes the chat list into that
+            // container's own sidebar pane. See the note on WorkspaceSearchField.
+            WorkspaceSearchField(text: $workspace.searchText, focus: searchFocus)
                 .padding(.horizontal, 12).padding(.bottom, 10)
             // A system source list owns the rows: the whole row is the hit target, and
             // hover, the selection fill, active and inactive window appearance, arrow-key
@@ -154,7 +153,6 @@ struct WorkspaceSidebar: View {
             SidebarListFocusAnchor(focus: listFocus).frame(height: 0).accessibilityHidden(true)
             Color.clear.frame(height: 48)
         }
-        .onChange(of: workspace.searchFocusRequest) { _, _ in searchFocused = true }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             workspace.objectWillChange.send()
         }
@@ -273,6 +271,89 @@ struct WorkspaceSidebar: View {
         Button("重新定位文件夹…") { WorkspaceActions.chooseFolder { workspace.relocateProject(project.id, to: $0) } }
         Divider()
         Button("移除项目，保留会话") { workspace.removeProject(project.id) }
+    }
+}
+
+/// The sidebar's search field, addressed by identity.
+///
+/// Escape and ⌘F both need to know whether the person is typing a query, and
+/// which control to hand focus to. Walking the view tree for an accessibility
+/// identifier answered neither reliably: it reads SwiftUI's private hierarchy and
+/// only reports anything once accessibility is switched on. AppKit already answers
+/// both — an NSControl being edited stays its field editor's delegate — so the
+/// question becomes an identity check against the field this sidebar built.
+@MainActor final class WorkspaceSearchFocus {
+    fileprivate weak var field: NSSearchField?
+    /// True while the insertion point is in the sidebar's search field.
+    var isFocused: Bool {
+        guard let field, let window = field.window else { return false }
+        if window.firstResponder === field { return true }
+        guard let editor = window.firstResponder as? NSTextView, editor.isFieldEditor else { return false }
+        return editor.delegate as AnyObject? === field
+    }
+    /// ⌘F. The column may still be expanding from a collapse when this runs, and a
+    /// hidden view refuses first responder, so retry briefly before giving up.
+    func focus(attempt: Int = 0) {
+        let delay = attempt == 0 ? DispatchTime.now() : .now() + 0.02
+        DispatchQueue.main.asyncAfter(deadline: delay) { [weak self] in
+            guard let self else { return }
+            if let field = self.field, let window = field.window, !field.isHiddenOrHasHiddenAncestor {
+                // AppKit selects the existing query, so typing replaces it.
+                window.makeFirstResponder(field)
+                return
+            }
+            if attempt < 10 { self.focus(attempt: attempt + 1) }
+        }
+    }
+}
+
+/// The system search control, drawn by AppKit: the magnifier, the placeholder, the
+/// clear button, the focus ring, the Escape-clears-the-query semantics and the
+/// input-method handling all come from NSSearchField instead of being redrawn here.
+///
+/// SwiftUI's .searchable is the obvious candidate and does not fit this window.
+/// Measured on macOS 26: with no navigation container around it — which is this
+/// sidebar, an NSHostingController inside an AppKit NSSplitViewItem — .searchable
+/// renders nothing at all, at either placement. Inside a NavigationSplitView the
+/// default placement moves the field into the window toolbar, and
+/// .searchable(placement: .sidebar) draws it in the column but brings that
+/// NavigationSplitView's own NSSplitView with it, nesting a second split inside this
+/// column and squeezing the chat list to roughly half its width. NSSearchField is
+/// what .searchable itself renders, so taking it directly costs nothing but the
+/// container.
+struct WorkspaceSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let focus: WorkspaceSearchFocus
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField()
+        field.delegate = context.coordinator
+        field.placeholderString = "搜索聊天"
+        // The sidebar runs one point larger than the AppKit default.
+        field.font = .systemFont(ofSize: WorkspaceStyle.bodySize)
+        field.setAccessibilityLabel("搜索聊天")
+        field.setAccessibilityIdentifier("workspace.search")
+        focus.field = field
+        return field
+    }
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        context.coordinator.text = $text
+        focus.field = field
+        // Writing to stringValue commits marked text, so leave a composing input
+        // method alone; its own edits already report through the delegate.
+        if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
+        if field.stringValue != text { field.stringValue = text }
+    }
+    @MainActor final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var text: Binding<String>
+        init(text: Binding<String>) { self.text = text }
+        /// Committed typing, the clear button and Escape all arrive here. AppKit
+        /// posts nothing for text an input method is still composing, so the query
+        /// waits for the candidate — which is what the SwiftUI field it replaces did.
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSSearchField else { return }
+            text.wrappedValue = field.stringValue
+        }
     }
 }
 

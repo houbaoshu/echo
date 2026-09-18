@@ -82,6 +82,8 @@ struct MainWindowLayout {
     private var observation: AnyCancellable?
     private var previewObservation: AnyCancellable?
     private var sectionObservation: AnyCancellable?
+    /// Holds the sidebar's real search field, so ⌘F and Escape address it directly.
+    let searchFocus = WorkspaceSearchFocus()
     private let projectIcon = NSImageView()
     private let titleField = NSTextField(labelWithString: "新会话")
     private var manualColumn: MainWindowLayout.Column?
@@ -104,7 +106,7 @@ struct MainWindowLayout {
         window.titlebarAppearsTransparent = true; window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false; window.minSize = NSSize(width: 720, height: 520)
         window.collectionBehavior = [.fullScreenPrimary]; window.delegate = self
-        let sidebarHost = NSHostingController(rootView: WorkspaceSidebar(workspace: workspace))
+        let sidebarHost = NSHostingController(rootView: WorkspaceSidebar(workspace: workspace, searchFocus: searchFocus))
         let conversationHost = NSHostingController(rootView: WorkspaceConversationView(workspace: workspace))
         let inspectorHost = NSHostingController(rootView: WorkspaceInspector(workspace: workspace))
         // AppKit owns column constraints; SwiftUI content must not impose its ideal
@@ -266,15 +268,9 @@ struct MainWindowLayout {
         guard let window else { return false }
         if window.attachedSheet != nil { return false }
         if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
-        if let responder = window.firstResponder as? NSView {
-            var current: NSView? = responder
-            while let view = current {
-                if view.accessibilityIdentifier() == "workspace.search" {
-                    return false
-                }
-                current = view.superview
-            }
-        }
+        // Escape belongs to the search field while the person is typing a query: the
+        // field clears itself, and an empty one must still not stop a reply.
+        if searchFocus.isFocused { return false }
         guard let presentation = composerPresentation else { return false }
         return presentation.canStop && presentation.stopEnabled
     }
@@ -309,7 +305,7 @@ struct MainWindowLayout {
     func focusSearch() {
         showWorkspace()
         layout.sidebarPreferred = true; manualColumn = .sidebar; applyLayout(); saveLayout()
-        workspace.searchFocusRequest += 1
+        searchFocus.focus()
     }
     private func setVisibility(sidebar: Bool, inspector: Bool) {
         if !sidebar && !sidebarItem.isCollapsed { sidebarItem.isCollapsed = true }

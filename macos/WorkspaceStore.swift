@@ -179,7 +179,6 @@ struct WorkspaceSnapshot: Codable {
         }
     }
     @Published var searchText = ""
-    @Published var searchFocusRequest = 0
     @Published var persistenceNotice: String?
     var onRevealVoice: ((UUID) -> Void)?
     private let emptyActivity = TaskStore()
