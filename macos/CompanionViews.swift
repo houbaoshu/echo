@@ -15,6 +15,36 @@ struct CompanionBackground<SurfaceShape: InsettableShape>: View {
     }
 }
 
+/// The companion panels are borderless floating panels that are almost never the key window, so
+/// a system button style would draw its inactive, washed-out variant there even though the control
+/// is live. The controls are always live, so they render as if their window were active.
+private extension View {
+    func companionControlActive() -> some View { environment(\.controlActiveState, .active) }
+}
+
+/// The bordered system styles inset their label by 4 pt on every side. Taking that back out of the
+/// label keeps a control's outer size exactly what the companion layout reserves for it.
+private let systemButtonInset: CGFloat = 8
+
+/// A round control drawn on top of a companion Liquid Glass surface. A system glass style here
+/// would stack glass on glass, so the fill stays hand-drawn; the style exists to give the control
+/// the pressed state that `.plain` does not provide.
+private struct CompanionRoundButtonStyle: ButtonStyle {
+    let size: CGFloat
+    let hovered: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: size * 0.46, weight: .medium))
+            .foregroundStyle(.primary)
+            .frame(width: size, height: size)
+            .background {
+                Circle().fill(Color(nsColor: .controlBackgroundColor).opacity(hovered ? 0.95 : 0.75))
+                    .overlay { if configuration.isPressed { Circle().fill(.primary.opacity(0.16)) } }
+            }
+            .contentShape(Circle())
+    }
+}
+
 struct RoundControl: View {
     let symbol: String
     let label: String
@@ -25,19 +55,29 @@ struct RoundControl: View {
     let action: () -> Void
     @State private var hovered = false
     var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol).font(.system(size: size * 0.46, weight: .medium))
-                .foregroundStyle(emphasized ? Color(nsColor: .windowBackgroundColor) : .primary)
-                .frame(width: size, height: size)
-                .background {
-                    if emphasized { Circle().fill(.primary.opacity(hovered ? 0.9 : 0.75)) }
-                    else { Circle().fill(Color(nsColor: .controlBackgroundColor).opacity(hovered ? 0.95 : 0.75)) }
-                }
-                .contentShape(Circle())
+        control
+            .disabled(!enabled)
+            .help(label).accessibilityLabel(label)
+            .accessibilityIdentifier(identifier ?? "")
+    }
+
+    /// The main action follows the system accent color through the prominent style, which also
+    /// brings its own hover, pressed and disabled appearance. The secondary actions sit on glass
+    /// and keep their own fill, so they stay legible against the surface behind them.
+    @ViewBuilder private var control: some View {
+        if emphasized {
+            Button(action: action) {
+                Image(systemName: symbol).font(.system(size: size * 0.46, weight: .medium))
+                    .frame(width: size - systemButtonInset, height: size - systemButtonInset)
+            }
+            .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
+            .companionControlActive()
+        } else {
+            Button(action: action) { Image(systemName: symbol) }
+                .buttonStyle(CompanionRoundButtonStyle(size: size, hovered: hovered))
+                .opacity(enabled ? 1 : 0.4)
+                .onHover { hovered = $0 }
         }
-        .buttonStyle(.plain).disabled(!enabled).opacity(enabled ? 1 : 0.4)
-        .onHover { hovered = $0 }.help(label).accessibilityLabel(label)
-        .accessibilityIdentifier(identifier ?? "")
     }
 }
 
@@ -219,6 +259,24 @@ private struct PetControlBackground: View {
     }
 }
 
+/// One icon slot inside a pill. The pill draws the shared background, so a segment only tints the
+/// slot it occupies; a system glass style would put a second pane of glass inside the first one.
+private struct PetSegmentStyle: ButtonStyle {
+    let hovered: Bool
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
+            .frame(width: PetSurfacePresentation.segment, height: PetSurfacePresentation.circle)
+            .background {
+                if enabled, hovered || configuration.isPressed {
+                    Circle().fill(.primary.opacity(configuration.isPressed ? 0.16 : 0.08)).padding(3)
+                }
+            }
+            .contentShape(Rectangle())
+    }
+}
+
 /// One icon slot inside a pill; the pill draws the shared background.
 private struct PetSegment<Label: View>: View {
     let label: String
@@ -228,35 +286,30 @@ private struct PetSegment<Label: View>: View {
     @ViewBuilder let content: () -> Label
     @State private var hovered = false
     var body: some View {
-        Button(action: action) {
-            content().font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
-                .frame(width: PetSurfacePresentation.segment, height: PetSurfacePresentation.circle)
-                .background { if hovered && enabled { Circle().fill(.primary.opacity(0.08)).padding(3) } }
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain).disabled(!enabled).opacity(enabled ? 1 : 0.4)
-        .onHover { hovered = $0 }
-        .help(label).accessibilityLabel(label).accessibilityIdentifier(identifier)
+        Button(action: action) { content() }
+            .buttonStyle(PetSegmentStyle(hovered: hovered)).disabled(!enabled).opacity(enabled ? 1 : 0.4)
+            .onHover { hovered = $0 }
+            .help(label).accessibilityLabel(label).accessibilityIdentifier(identifier)
     }
 }
 
-/// A standalone round control beside a pill.
+/// A standalone round control beside a pill. It sits directly on the desktop rather than on another
+/// companion surface, so the system glass button style draws the same material the hand-drawn
+/// background did, and adds the hover, pressed and disabled states it was missing.
 private struct PetCircle<Label: View>: View {
     let label: String
     let identifier: String
     var enabled = true
     let action: () -> Void
     @ViewBuilder let content: () -> Label
-    @State private var hovered = false
     var body: some View {
         Button(action: action) {
-            content().font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
-                .frame(width: PetSurfacePresentation.circle, height: PetSurfacePresentation.circle)
-                .background { CompanionBackground(shape: Circle(), hovered: hovered) }
-                .contentShape(Circle())
+            content().font(.system(size: 13, weight: .medium))
+                .frame(width: PetSurfacePresentation.circle - systemButtonInset,
+                       height: PetSurfacePresentation.circle - systemButtonInset)
         }
-        .buttonStyle(.plain).disabled(!enabled).opacity(enabled ? 1 : 0.4)
-        .onHover { hovered = $0 }
+        .buttonStyle(.glass).buttonBorderShape(.circle)
+        .companionControlActive().disabled(!enabled)
         .help(label).accessibilityLabel(label).accessibilityIdentifier(identifier)
     }
 }
