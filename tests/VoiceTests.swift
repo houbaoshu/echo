@@ -188,11 +188,86 @@ actor PendingModelTester: ConnectionTesting {
         await probeTests()
         await speakerPreviewTests()
         try await captureDiagnosticsTests()
+        try await configurationChangeTests()
         try await AppleSpeechTests.run()
         try await DictationTests.run()
         try await agentVoiceTests()
         print("Passed \(checks) voice checks (no network, keychain, microphone or playback used).")
     }
+    /// Starting capture flips a Bluetooth headset from A2DP to HFP, so Core Audio reconfigures
+    /// the route the call just started on and AVAudioEngine stops itself about a second after
+    /// start(). Recovering from that must not weaken the protection against a real device switch.
+    @MainActor static func configurationChangeTests() async throws {
+        let policy = VoiceConfigurationChangePolicy()
+        let headset = VoiceAudioRoute(input: 111, output: 105)
+        func change(current: VoiceAudioRoute = headset, elapsed: TimeInterval = 1.2, restarts: Int = 0,
+                    queued: Int = 0, graphRate: Double? = 16000, inputRate: Double = 16000)
+        -> VoiceConfigurationChangePolicy.Change {
+            VoiceConfigurationChangePolicy.Change(baseline: headset, current: current, elapsed: elapsed,
+                                                  restarts: restarts, queuedPlaybackFrames: queued,
+                                                  graphSampleRate: graphRate, inputSampleRate: inputRate)
+        }
+        func endsCall(_ decision: VoiceConfigurationChangePolicy.Decision) -> Bool {
+            if case .endCall = decision { return true }
+            return false
+        }
+
+        check(policy.decide(change()) == .restartEngine,
+              "startup reconfiguration of the same Bluetooth route restarts the engine instead of ending the call")
+        check(policy.decide(change(graphRate: nil)) == .restartEngine,
+              "a playback-only graph recovers from the same startup reconfiguration")
+        check(policy.decide(change(elapsed: 9.9)) == .restartEngine
+              && endsCall(policy.decide(change(elapsed: 10))),
+              "recovery is bounded by the initialization window")
+        check(endsCall(policy.decide(change(current: VoiceAudioRoute(input: 100, output: 105)))),
+              "a different default input device is a real switch and still ends the call")
+        check(endsCall(policy.decide(change(current: VoiceAudioRoute(input: 111, output: 93)))),
+              "a different default output device is a real switch and still ends the call")
+        check(endsCall(policy.decide(change(current: VoiceAudioRoute(input: 100, output: 93), elapsed: 0.1))),
+              "a real device switch inside the initialization window still ends the call")
+        check(policy.decide(change(restarts: 2)) == .restartEngine
+              && endsCall(policy.decide(change(restarts: 3))),
+              "repeated reconfiguration stops retrying after the restart budget")
+        check(endsCall(policy.decide(change(queued: 4800))),
+              "recovery never drops reply audio the user is still hearing")
+        check(endsCall(policy.decide(change(inputRate: 48000))),
+              "a sample rate change needs a rebuilt graph, so it still ends the call")
+
+        // The controller side: only a decision of endCall reaches onFailure, exactly as VoiceAudio wires it.
+        func report(_ audio: FakeAudio, _ decision: VoiceConfigurationChangePolicy.Decision) {
+            if case .endCall = decision { audio.onFailure?("音频设备已变化，通话已结束，请重新开始。") }
+        }
+        do {
+            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            var recognizers: [FakeRecognizer] = []
+            let voice = VoiceSessionController(audio: audio, recognizer: {
+                let r = FakeRecognizer(); recognizers.append(r); return r
+            }, synthesizer: { FakeSynthesizer() }, permission: { true })
+            let conversation = WorkspaceConversation(store: store)
+            defer { voice.shutdown(); store.shutdown() }
+            voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
+            await tick()
+            check(voice.isActive && audio.capturing, "call started")
+
+            report(audio, policy.decide(change(elapsed: 0.8)))
+            await tick()
+            check(voice.isActive && voice.error == nil && audio.capturing,
+                  "a startup configuration change on the unchanged route keeps Live Voice running")
+
+            // Capture keeps flowing across the reconfiguration.
+            audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 1, count: 6400), epoch: audio.captureEpoch))
+            await tick()
+            check(recognizers.last?.packets == 1, "audio captured after the reconfiguration still reaches recognition")
+
+            // A genuine device switch once initialization settled keeps the existing protection.
+            report(audio, policy.decide(change(current: VoiceAudioRoute(input: 100, output: 93), elapsed: 30)))
+            await tick()
+            check(!voice.isActive && voice.error == "音频设备已变化，通话已结束，请重新开始。",
+                  "a real device switch after initialization still ends the call")
+            check(!audio.capturing, "the ended call released the microphone")
+        }
+    }
+
     @MainActor static func snapshotTests() {
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
         let run = UUID()

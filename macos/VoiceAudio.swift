@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 
 // AVAudioConverter invokes its input block synchronously during convert(). This box never
@@ -82,6 +83,75 @@ final class VoicePCMConverter: @unchecked Sendable {
     }
 }
 
+/// The system default devices an engine graph was built on. Only the device identities
+/// matter here: a Bluetooth headset keeps its identity across a profile switch, while
+/// picking another output in Control Center changes it.
+struct VoiceAudioRoute: Equatable, Sendable {
+    var input: UInt32
+    var output: UInt32
+    static var current: VoiceAudioRoute {
+        VoiceAudioRoute(input: defaultDevice(kAudioHardwarePropertyDefaultInputDevice),
+                        output: defaultDevice(kAudioHardwarePropertyDefaultOutputDevice))
+    }
+    private static func defaultDevice(_ selector: AudioObjectPropertySelector) -> UInt32 {
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(mSelector: selector,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
+                                         0, nil, &size, &device) == noErr else { return 0 }
+        return device
+    }
+}
+
+/// Opening the microphone drives a Bluetooth headset from A2DP to HFP, so Core Audio
+/// reconfigures the very route the call just started on and AVAudioEngine stops itself
+/// roughly a second after start(). That is Echo's own recording doing it, not the user
+/// choosing another device, and restarting the engine on the unchanged route recovers the
+/// call. Every other configuration change still ends it, so a real device switch is not
+/// masked: the check is device identity, not the notification.
+struct VoiceConfigurationChangePolicy: Sendable {
+    enum Decision: Equatable, Sendable {
+        case restartEngine
+        case endCall(String)
+    }
+    struct Change: Sendable {
+        var baseline: VoiceAudioRoute
+        var current: VoiceAudioRoute
+        /// Seconds since the engine started, bounding recovery to initialization.
+        var elapsed: TimeInterval
+        var restarts: Int
+        var queuedPlaybackFrames: Int
+        /// Sample rate the duplex graph was built with; nil for a playback-only graph.
+        var graphSampleRate: Double?
+        var inputSampleRate: Double
+    }
+    var initializationWindow: TimeInterval = 10
+    var maximumRestarts: Int = 3
+    func decide(_ change: Change) -> Decision {
+        guard change.current == change.baseline else {
+            return .endCall("默认设备已切换 输入 \(change.baseline.input)→\(change.current.input) 输出 \(change.baseline.output)→\(change.current.output)")
+        }
+        guard change.elapsed < initializationWindow else {
+            return .endCall("同一设备在初始化窗口 \(Int(initializationWindow)) 秒之后重新配置 elapsed=\(Int(change.elapsed))")
+        }
+        guard change.restarts < maximumRestarts else {
+            return .endCall("启动期已恢复 \(change.restarts) 次仍在重新配置，超出上限")
+        }
+        // Restarting drops whatever the player still holds, so never recover over audible audio.
+        guard change.queuedPlaybackFrames == 0 else {
+            return .endCall("重新配置时仍有 \(change.queuedPlaybackFrames) 帧回复音频未播完")
+        }
+        // A different rate invalidates the tap and the duplex connection, which a plain restart
+        // cannot fix; rebuilding the graph is deliberately left out of this change.
+        if let rate = change.graphSampleRate, rate != change.inputSampleRate {
+            return .endCall("采集采样率已从 \(rate) Hz 变为 \(change.inputSampleRate) Hz")
+        }
+        return .restartEngine
+    }
+}
+
 @MainActor protocol VoiceAudioHandling: AnyObject {
     var onFailure: ((String) -> Void)? { get set }
     var inputOutputLatency: TimeInterval { get }
@@ -126,6 +196,21 @@ extension VoiceAudioHandling {
     private var trailingByte = Data()
     private var playbackPaused = false
     private let playbackFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
+    private let changePolicy: VoiceConfigurationChangePolicy
+    /// Core Audio can post the change before it actually stops the engine; settle first.
+    private let restartDelay: Duration
+    private var routeBaseline: VoiceAudioRoute?
+    private var graphSampleRate: Double?
+    private var startedAt: Date?
+    private var restarts = 0
+    private var restartTask: Task<Void, Never>?
+
+    init(policy: VoiceConfigurationChangePolicy = VoiceConfigurationChangePolicy(),
+         restartDelay: Duration = .milliseconds(300)) {
+        changePolicy = policy
+        self.restartDelay = restartDelay
+        super.init()
+    }
 
     func resetCapture(epoch: Int, paused: Bool) {
         captureConverter?.reset(epoch: epoch, paused: paused)
@@ -197,6 +282,13 @@ extension VoiceAudioHandling {
             operation = "start 音频引擎"
             try engine.start(); player.play()
             VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "AVAudioEngine running=\(engine.isRunning) player=\(player.isPlaying)")
+            // The route the running graph sits on. Starting capture is what flips a Bluetooth
+            // headset to HFP, so this is sampled after start, once that flip has happened.
+            routeBaseline = .current
+            graphSampleRate = duplexFormat?.sampleRate
+            startedAt = Date()
+            restarts = 0
+            VoiceDiagnostics.shared.record("2 服务初始化", "INFO", "音频路由基线 输入=\(routeBaseline!.input) 输出=\(routeBaseline!.output)")
             NotificationCenter.default.addObserver(self, selector: #selector(configurationChanged(_:)),
                 name: .AVAudioEngineConfigurationChange, object: engine)
             return stream
@@ -211,8 +303,51 @@ extension VoiceAudioHandling {
         let sourceID = notification.object.map { ObjectIdentifier($0 as AnyObject) }
         Task { @MainActor [weak self] in
             guard let self, let engine = self.engine, ObjectIdentifier(engine) == sourceID else { return }
-            VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", "AVAudioEngineConfigurationChange：音频设备变化")
-            self.onFailure?("音频设备已变化，通话已结束，请重新开始。")
+            self.handleConfigurationChange(engine)
+        }
+    }
+    private func handleConfigurationChange(_ engine: AVAudioEngine) {
+        guard let routeBaseline, let startedAt else {
+            endCall(reason: "没有可比较的路由基线")
+            return
+        }
+        let change = VoiceConfigurationChangePolicy.Change(
+            baseline: routeBaseline, current: .current,
+            elapsed: Date().timeIntervalSince(startedAt), restarts: restarts,
+            queuedPlaybackFrames: queuedFrames, graphSampleRate: graphSampleRate,
+            inputSampleRate: engine.inputNode.outputFormat(forBus: 0).sampleRate)
+        switch changePolicy.decide(change) {
+        case .endCall(let reason):
+            endCall(reason: reason)
+        case .restartEngine:
+            VoiceDiagnostics.shared.record("2 服务初始化", "INFO",
+                "AVAudioEngineConfigurationChange：启动期同一设备重新配置（蓝牙 A2DP→HFP 等）running=\(engine.isRunning)")
+            scheduleRestart(engine)
+        }
+    }
+    private func endCall(reason: String) {
+        VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", "AVAudioEngineConfigurationChange：音频设备变化（\(reason)）")
+        onFailure?("音频设备已变化，通话已结束，请重新开始。")
+    }
+    private func scheduleRestart(_ engine: AVAudioEngine) {
+        restartTask?.cancel()
+        restartTask = Task { @MainActor [weak self, restartDelay] in
+            try? await Task.sleep(for: restartDelay)
+            guard let self, !Task.isCancelled, self.engine === engine else { return }
+            guard !engine.isRunning else {
+                VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "重新配置后引擎仍在运行，无需恢复")
+                return
+            }
+            self.restarts += 1
+            do {
+                try engine.start()
+                if !self.playbackPaused { self.player?.play() }
+                VoiceDiagnostics.shared.record("2 服务初始化", "PASS",
+                    "启动期设备重新配置后已恢复引擎 attempt=\(self.restarts) running=\(engine.isRunning)")
+            } catch {
+                VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", "恢复引擎失败：\(VoiceDiagnostics.reason(error))")
+                self.onFailure?("音频设备已变化，通话已结束，请重新开始。")
+            }
         }
     }
     func play(_ data: Data) async throws {
@@ -295,6 +430,8 @@ extension VoiceAudioHandling {
     func stop() { stop(flushCapture: false) }
     private func stop(flushCapture: Bool) {
         NotificationCenter.default.removeObserver(self)
+        restartTask?.cancel(); restartTask = nil
+        routeBaseline = nil; startedAt = nil; graphSampleRate = nil; restarts = 0
         generation = UUID(); queuedFrames = 0; trailingByte = Data(); playbackPaused = false
         scheduledBuffers = []; playedBackFrames = 0; headStartSample = nil
         if tapped { engine?.inputNode.removeTap(onBus: 0); tapped = false }
