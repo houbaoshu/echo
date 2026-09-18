@@ -84,8 +84,6 @@ struct MainWindowLayout {
     private let projectIcon = NSImageView()
     private let titleField = NSTextField(labelWithString: "新会话")
     private var manualColumn: MainWindowLayout.Column?
-    private static let leftID = NSToolbarItem.Identifier("chiyan.sidebar")
-    private static let rightID = NSToolbarItem.Identifier("chiyan.inspector")
     private static let titleID = NSToolbarItem.Identifier("chiyan.title")
 
     init(workspace: WorkspaceStore, defaults: UserDefaults = .standard, windowOverride: WorkspaceWindow? = nil,
@@ -397,18 +395,12 @@ struct MainWindowLayout {
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.leftID, .sidebarTrackingSeparator, Self.titleID, .flexibleSpace, .inspectorTrackingSeparator, .flexibleSpace, Self.rightID]
+        [.sidebarTrackingSeparator, Self.titleID, .flexibleSpace, .inspectorTrackingSeparator, .flexibleSpace]
     }
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         let item = NSToolbarItem(itemIdentifier: id)
         item.target = self
         switch id {
-        case Self.leftID:
-            item.label = "切换侧栏"; item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: item.label)
-            item.action = #selector(toggleSidebar); item.isNavigational = true
-        case Self.rightID:
-            item.label = "切换项目文件"; item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: item.label)
-            item.action = #selector(toggleInspector)
         case Self.titleID:
             item.label = "当前会话"; item.isBordered = false
             titleField.font = .systemFont(ofSize: WorkspaceStyle.bodySize, weight: .medium)
