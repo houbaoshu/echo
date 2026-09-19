@@ -18,7 +18,10 @@ final class PetPanel: NSPanel {
 
     init(store: PetStore,
          pointerLocation: @escaping () -> NSPoint = { NSEvent.mouseLocation },
-         showMenu: @escaping PetMenuPresenter = { NSMenu.popUpContextMenu($0, with: $1, for: $2) },
+         showMenu: @escaping PetMenuPresenter = { menu, event, view in
+             // `popUpContextMenu(_:with:for:)` has been discouraged since 10.11.
+             _ = menu.popUp(positioning: nil, at: view.convert(event.locationInWindow, from: nil), in: view)
+         },
          terminate: @escaping () -> Void = { NSApplication.shared.terminate(nil) }) {
         self.pointerLocation = pointerLocation
         self.menuPresenter = showMenu; self.terminateApplication = terminate

@@ -26,6 +26,14 @@ enum WorkspaceStyle {
     }
 }
 
+extension NSFont {
+    /// TextKit 2 has no `defaultLineHeight(for:)`, and reaching for `NSLayoutManager`
+    /// only to read one would migrate a text view back to TextKit 1. Measured against
+    /// `NSLayoutManager.defaultLineHeight(for:)` on macOS 27.0: identical for the
+    /// 11-14 pt system fonts this app draws with.
+    var defaultLineHeight: CGFloat { ceil(ascender - descender + leading) }
+}
+
 @MainActor enum WorkspaceActions {
     /// `asSheet: false` runs a standalone dialog, e.g. from the pet, whose panels cannot host a sheet.
     /// `cancelled` runs when the panel closes without a folder, for callers that must release a
@@ -405,7 +413,6 @@ struct SidebarListFocusAnchor: NSViewRepresentable {
 }
 
 private struct ConversationActivityIndicator: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The source list raises this on the row it fills with the accent colour, so the
     /// spinner can switch to the selected-row tint the way a label does.
     @Environment(\.backgroundProminence) private var prominence
@@ -414,24 +421,9 @@ private struct ConversationActivityIndicator: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
-            Canvas { context, size in
-                let rotation = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
-                    .truncatingRemainder(dividingBy: 1) * 2 * Double.pi
-                let center = CGPoint(x: size.width / 2, y: size.height / 2)
-                let radius = (min(size.width, size.height) - 2) / 2
-                for segment in 0..<48 {
-                    let fraction = Double(segment) / 48
-                    let angle = rotation + fraction * 1.5 * Double.pi
-                    let nextAngle = rotation + Double(segment + 1) / 48 * 1.5 * Double.pi
-                    var arc = Path()
-                    arc.move(to: CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius))
-                    arc.addLine(to: CGPoint(x: center.x + cos(nextAngle) * radius, y: center.y + sin(nextAngle) * radius))
-                    context.stroke(arc, with: .color(tint.opacity(0.15 + 0.85 * fraction)),
-                                   style: StrokeStyle(lineWidth: 0.4 + 1.4 * fraction, lineCap: .round))
-                }
-            }
-        }.frame(width: 14, height: 14)
+        // The system spinner already owns the indeterminate progress role and the
+        // Reduce Motion behaviour, so it needs no TimelineView of its own.
+        ProgressView().progressViewStyle(.circular).controlSize(.small).tint(tint)
             .accessibilityLabel("正在回复")
     }
 }

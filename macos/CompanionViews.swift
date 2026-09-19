@@ -706,7 +706,7 @@ struct CompanionBubble: View {
         .frame(width: canvasWidth, height: CompanionBubbleContent.canvasHeight, alignment: tailOnTop ? .top : .bottom)
     }
 
-    static let replyHeight = 3 * NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: 12))
+    static let replyHeight = 3 * NSFont.systemFont(ofSize: 12).defaultLineHeight
 
     /// The rendered reply up to what speech has covered.
     private var shownReply: AttributedString? {
