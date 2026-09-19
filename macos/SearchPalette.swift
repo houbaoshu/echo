@@ -239,10 +239,12 @@ struct ChatSearchPalette: View {
     private let hostWindow: () -> NSWindow?
     private var panel: SearchPalettePanel?
     private var observation: AnyCancellable?
-    /// The top-left corner the panel hangs from, in screen coordinates. The panel resizes
-    /// itself as results narrow, and a palette that grew upwards from its bottom edge
-    /// would walk up the screen as you type.
-    private var anchor: NSPoint?
+    /// The top edge the panel hangs from, in screen coordinates. The panel resizes itself
+    /// as results narrow, and a palette that grew upwards from its bottom edge would walk
+    /// up the screen as you type. Only the vertical edge is remembered: the horizontal
+    /// placement is measured again on every move, so a width the hosting controller
+    /// settles on after the window is first placed cannot leave the panel off centre.
+    private var anchorTop: CGFloat?
 
     init(workspace: WorkspaceStore, presentation: SearchPalettePresentation,
          hostWindow: @escaping () -> NSWindow?) {
@@ -270,7 +272,7 @@ struct ChatSearchPalette: View {
     private func dismiss() {
         guard let panel else { return }
         self.panel = nil
-        anchor = nil
+        anchorTop = nil
         panel.delegate = nil
         panel.orderOut(nil)
         // Hand the keyboard back to the chat window — but only when Echo is still the app
@@ -281,13 +283,25 @@ struct ChatSearchPalette: View {
     /// Centred on the chat window and a little above its middle, which is where macOS puts
     /// a summoned palette.
     private func position(_ panel: SearchPalettePanel) {
-        let host = hostWindow()?.frame ?? (NSScreen.main?.visibleFrame ?? .zero)
-        anchor = NSPoint(x: host.midX - panel.frame.width / 2, y: host.maxY - host.height * 0.22)
+        anchorTop = hostFrame().maxY - hostFrame().height * 0.22
         applyAnchor(panel)
     }
+    /// The whole window, titlebar included — not its content, and not any one column.
+    /// Collapsing the sidebar or opening the inspector resizes what is inside the window
+    /// and leaves this rectangle alone, which is what keeps the palette from shifting
+    /// when a column comes and goes.
+    private func hostFrame() -> NSRect {
+        hostWindow()?.frame ?? (NSScreen.main?.visibleFrame ?? .zero)
+    }
     private func applyAnchor(_ panel: SearchPalettePanel) {
-        guard let anchor else { return }
-        var origin = NSPoint(x: anchor.x, y: anchor.y - panel.frame.height)
+        guard let anchorTop else { return }
+        let host = hostFrame()
+        // Both the window's centre and the panel's width are read now rather than
+        // remembered: the hosting controller settles the width from its SwiftUI content,
+        // which can land after the panel was first placed. Rounded, so the panel lands on
+        // whole points instead of straddling a pixel.
+        var origin = NSPoint(x: (host.midX - panel.frame.width / 2).rounded(),
+                             y: anchorTop - panel.frame.height)
         if let visible = (panel.screen ?? hostWindow()?.screen ?? NSScreen.main)?.visibleFrame {
             origin.x = min(max(origin.x, visible.minX + 12), max(visible.minX, visible.maxX - panel.frame.width - 12))
             origin.y = min(max(origin.y, visible.minY + 12), max(visible.minY, visible.maxY - panel.frame.height - 12))

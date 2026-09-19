@@ -97,11 +97,14 @@ struct WorkspaceSidebarHeader: View {
             HStack(spacing: 4) {
                 Text("Echo").font(.system(size: 18, weight: .medium)).foregroundStyle(WorkspaceStyle.primary)
                 Spacer(minLength: 8)
-                Button { palette.isOpen.toggle() } label: {
+                // A system button. The hover highlight, the pressed state and the tint it
+                // takes while the palette is up are all the accessory-bar style's own
+                // drawing; nothing here paints a state. It is a Toggle because the
+                // palette's open flag IS the button's on state, which is the one thing
+                // the style needs to be told.
+                Toggle(isOn: $palette.isOpen) {
                     Image(systemName: "magnifyingglass").font(.system(size: 14))
-                        .frame(width: 24, height: 24).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                    .foregroundStyle(palette.isOpen ? Color.accentColor : WorkspaceStyle.secondary)
+                }.toggleStyle(.button).buttonStyle(.accessoryBar)
                     .help("搜索聊天 ⌘K").accessibilityLabel("搜索聊天")
                     .accessibilityValue(palette.isOpen ? "已打开" : "已关闭")
                     .accessibilityHint("打开或关闭聊天搜索")

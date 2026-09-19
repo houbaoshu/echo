@@ -312,7 +312,7 @@ private struct ComposerHeightHost: View {
     /// The sidebar's header and footer are NSSplitViewItemAccessoryViewControllers rather
     /// than views stacked with the list and a floating button pinned to the root view; the
     /// toolbar carries the standard sidebar/inspector toggles and no custom title item; the
-    /// title and subtitle are the window's own; and the frame is NSWindow's to persist.
+    /// title is the window's own, on one line; and the frame is NSWindow's to persist.
     /// None of this needs a real pointer, so it stays deterministic.
     @MainActor private static func testWindowChromeAndSidebarAccessories() async throws {
         // The gear is a SwiftUI button, and SwiftUI only publishes AX nodes once this is on.
@@ -374,6 +374,13 @@ private struct ComposerHeightHost: View {
         precondition(searchFields(in: window.contentView!).isEmpty,
                      "The palette's field is in its own panel, never in this window")
         precondition(searchFields(in: header[0].view).isEmpty, "...and certainly not in the header accessory")
+        // The panel hangs centred on the whole window, not on the chat column: the columns
+        // divide what is inside the window and leave its frame alone, so the palette sits
+        // in the same place whatever they are doing.
+        func palettePanel() -> NSWindow? { NSApp.windows.first { $0 is SearchPalettePanel && $0.isVisible } }
+        func paletteOffset() -> CGFloat? { palettePanel().map { abs($0.frame.midX - window.frame.midX) } }
+        guard let openOffset = paletteOffset() else { preconditionFailure("⌘K must put a panel on screen") }
+        precondition(openOffset <= 1, "The palette is centred on the window: off by \(openOffset)pt")
         main.searchPalette.isOpen = false
         try await Task.sleep(for: .milliseconds(400))
         window.contentView?.layoutSubtreeIfNeeded()
@@ -392,6 +399,11 @@ private struct ComposerHeightHost: View {
         window.contentView?.layoutSubtreeIfNeeded()
         precondition(main.searchPalette.isOpen, "⌘K opens the palette with the column collapsed")
         precondition(main.sidebarItem.isCollapsed, "⌘K does not open the sidebar")
+        guard let collapsedOffset = paletteOffset() else {
+            preconditionFailure("⌘K must put a panel on screen with the column collapsed too")
+        }
+        precondition(collapsedOffset <= 1,
+                     "A collapsed column does not move the palette: off by \(collapsedOffset)pt")
         precondition(defaults.object(forKey: "main.sidebarVisible") as? Bool == false,
                      "⌘K does not write a layout the person did not ask for")
         main.searchPalette.isOpen = false
@@ -482,7 +494,13 @@ private struct ComposerHeightHost: View {
             findAccessibility("conversation.composer", in: window.contentView!) as? NSView
         }
 
-        // --- P1-4: the title and the subtitle are the window's ---
+        // --- P1-4: the title is the window's, and it is one line ---
+        //
+        // The project used to ride under the chat's name as a subtitle, which gave every
+        // chat in a project a two-line titlebar for something the column and the search
+        // results already say. The titlebar is the chat, and nothing else: no subtitle,
+        // and no represented file either — a chat is not a document, and a proxy icon
+        // would offer a drag source and a path menu for a folder it does not own.
         precondition(window.titleVisibility == .visible, "AppKit draws the title")
         let plain = workspace.selected ?? workspace.newConversation()
         workspace.select(plain.id)
@@ -496,15 +514,19 @@ private struct ComposerHeightHost: View {
         let projectID = workspace.addProject(url: root)
         precondition(workspace.associateProject(projectID, conversationID: plain.id))
         try await Task.sleep(for: .milliseconds(150))
-        precondition(window.subtitle == workspace.projects.first { $0.id == projectID }?.name,
-                     "Associating a project fills the subtitle, got \(window.subtitle)")
+        precondition(window.title == "无项目会话",
+                     "Associating a project leaves the chat's own title, got \(window.title)")
+        precondition(window.subtitle.isEmpty,
+                     "A project is not a subtitle, got \(window.subtitle)")
+        precondition(window.representedURL == nil && window.representedFilename.isEmpty,
+                     "...and it is not a proxy icon either, got \(String(describing: window.representedURL))")
         main.showSettings()
         try await Task.sleep(for: .milliseconds(150))
-        precondition(window.title == "设置" && window.subtitle.isEmpty, "The settings page drops the chat's subtitle")
+        precondition(window.title == "设置" && window.subtitle.isEmpty, "The settings page has the page's title alone")
         main.showWorkspace()
         try await Task.sleep(for: .milliseconds(150))
-        precondition(window.subtitle == workspace.projects.first { $0.id == projectID }?.name,
-                     "Returning restores the subtitle")
+        precondition(window.title == "无项目会话" && window.subtitle.isEmpty,
+                     "Returning restores the chat's single-line title, got \(window.title)/\(window.subtitle)")
 
         // --- Tab makes a complete cycle over the window's areas, and nothing is a trap ---
         //
@@ -593,7 +615,7 @@ private struct ComposerHeightHost: View {
         precondition(defaults.object(forKey: "main.sidebarWidth") != nil,
                      "The remaining layout keys are still this controller's to save")
 
-        print("PASS: sidebar header/footer accessories with list insets, standard toolbar toggles and their routing, system title/subtitle, NSWindow-owned frame")
+        print("PASS: sidebar header/footer accessories with list insets, standard toolbar toggles and their routing, single-line system title, window-centred palette, NSWindow-owned frame")
     }
 
     @MainActor private static func testConsecutiveDictationAppends() async throws {
@@ -1712,6 +1734,29 @@ private struct ComposerHeightHost: View {
         precondition(queryCell.cancelButtonCell != nil, "The clear button comes from the system cell")
         precondition((queryWindow.firstResponder as? NSTextView)?.isFieldEditor == true,
                      "Opening the palette puts the insertion point in its field, with nothing forced")
+
+        // 10b. It hangs centred on the WHOLE window, and the columns cannot move it.
+        // Collapsing the sidebar or opening the inspector redistributes what is inside the
+        // window and leaves the window's own frame alone, so a palette centred on that
+        // frame stays put — and ⌘K still writes no layout of its own.
+        func paletteOffset() -> CGFloat { abs(queryWindow.frame.midX - window.frame.midX) }
+        precondition(paletteOffset() <= 1,
+                     "The palette is centred on the window: off by \(paletteOffset())pt")
+        let inspectorWasCollapsed = main.inspectorItem.isCollapsed
+        main.toggleInspector()
+        try await settle(); try await settle()
+        precondition(main.inspectorItem.isCollapsed != inspectorWasCollapsed, "The inspector moved for this check")
+        precondition(main.searchPalette.isOpen, "...with the palette still up")
+        precondition(paletteOffset() <= 1,
+                     "The inspector does not shift the palette: off by \(paletteOffset())pt")
+        main.toggleInspector()
+        try await settle(); try await settle()
+        precondition(main.inspectorItem.isCollapsed == inspectorWasCollapsed,
+                     "The inspector is put back for the rest of this test")
+        precondition(paletteOffset() <= 1, "...and it is centred again: off by \(paletteOffset())pt")
+        // The sidebar's half of this — the palette centred with the column collapsed — is
+        // in testWindowChromeAndSidebarAccessories, which already runs ⌘K with the column
+        // shut and does not go on to walk this window's own chat list.
 
         // 11. The main window's Tab order is untouched while the palette is open: there is
         // no field of its own to join the loop, and the column's own controls are all that
@@ -3426,12 +3471,14 @@ private struct ComposerHeightHost: View {
         precondition(findAccessibility("conversation.project", in: content) == nil,
                      "Established conversation has no composer project picker")
         precondition(findAccessibility("conversation.project.detach", in: content) == nil)
-        // The folder glyph in the old custom title item is now the window's own subtitle,
-        // drawn by AppKit under the title in the unified toolbar.
+        // The titlebar is the chat's name on one line. A project chat says where it lives
+        // in the column and in the search results; it does not carry a second title line,
+        // a folder glyph or a proxy icon for the folder up here.
         try await Task.sleep(for: .milliseconds(120))
-        precondition(window.subtitle == workspace.projects.first { $0.id == projectID }?.name,
-                     "The window subtitle names the chat's project, got \(window.subtitle)")
-        precondition(!window.subtitle.isEmpty, "A project chat has a subtitle")
+        precondition(window.title == conversation.title,
+                     "The window title is the chat, got \(window.title)")
+        precondition(window.subtitle.isEmpty, "A project chat has no subtitle, got \(window.subtitle)")
+        precondition(window.representedURL == nil, "...and no proxy icon for the project folder")
         let another = workspace.newConversation()
         workspace.select(conversation.id)
         try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()

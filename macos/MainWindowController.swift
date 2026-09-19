@@ -155,8 +155,8 @@ struct MainWindowLayout {
         layout.inspectorPreferred = defaults.object(forKey: "main.inspectorVisible") as? Bool ?? false
         layout.sidebarWidth = min(340, max(220, defaults.object(forKey: "main.sidebarWidth") as? Double ?? 250))
         layout.inspectorWidth = min(380, max(260, defaults.object(forKey: "main.inspectorWidth") as? Double ?? 280))
-        // AppKit draws the title and the subtitle in a unified toolbar; Echo used to hide
-        // them and repaint both in a custom toolbar item. See P1-4 measurements in
+        // AppKit draws the title in a unified toolbar; Echo used to hide it and repaint it
+        // in a custom toolbar item. See P1-4 measurements in
         // docs/repros/split-accessory-window-chrome.swift [C].
         window.title = "新会话"; window.titleVisibility = .visible
         window.titlebarAppearsTransparent = true; window.toolbarStyle = .unified
@@ -491,10 +491,11 @@ struct MainWindowLayout {
     private func refreshTitle() {
         guard !isSettingsVisible else { return }
         window?.title = workspace.selected?.title ?? "新会话"
-        // The project name, where the custom title item used to draw a folder glyph. An
-        // empty subtitle removes the second line, which is how a chat with no project
-        // reads.
-        window?.subtitle = workspace.selectedID.flatMap { workspace.project(for: $0)?.name } ?? ""
+        // One line, the chat's own. The project used to ride here as a subtitle, which
+        // gave every chat in a project a permanently two-line titlebar for something the
+        // column and the search results already say. An empty subtitle is what removes
+        // the second line.
+        window?.subtitle = ""
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { hideMainWindow(); return false }
     func windowDidMiniaturize(_ notification: Notification) { workspace.isMainWindowVisible = false; workspace.flush() }
@@ -513,7 +514,7 @@ struct MainWindowLayout {
     /// AppKit's own column toggles, in the places it puts them: the sidebar's at the
     /// leading edge before its tracking separator, the inspector's at the trailing edge
     /// after its own. They carry the system icon, the stateful tooltip and the validation,
-    /// and the title and subtitle are drawn by the window between the two separators.
+    /// and the title is drawn by the window between the two separators.
     ///
     /// They are here because without them a collapsed sidebar is a dead end: the settings
     /// gear rides in that column's footer accessory and disappears with it, Echo is an
