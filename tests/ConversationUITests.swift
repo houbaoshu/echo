@@ -73,6 +73,22 @@ import SwiftUI
     func cancel() { pending?.resume(throwing: CancellationError()); pending = nil }
 }
 
+@MainActor private final class ComposerDraft: ObservableObject { @Published var text = "" }
+
+/// Hosts a bare `NativeComposer` so its height comes straight from `sizeThatFits`,
+/// without a surrounding layout that could clamp it.
+private struct ComposerHeightHost: View {
+    @ObservedObject var draft: ComposerDraft
+    let fontSize: CGFloat
+    let minHeight: CGFloat
+    let maxLines: Int
+    var body: some View {
+        NativeComposer(text: $draft.text, fontSize: fontSize, minHeight: minHeight, maxLines: maxLines,
+                       label: "测量输入框", identifier: "height.composer", onSend: {})
+            .frame(width: 400)
+    }
+}
+
 @main struct ConversationUITests {
     #if NATIVE_SHORTCUT_TESTS
     @MainActor static func main() {
@@ -115,6 +131,7 @@ import SwiftUI
             try await testCompanionBubblePanelAndHotKey()
             return
         }
+        try await testComposerAdaptiveHeight()
         try await testConsecutiveDictationAppends()
         try await testComposerActionMatrix()
         try await testStoppingAndDictationEscape()
@@ -226,6 +243,69 @@ import SwiftUI
         print("PASS: Enter, Shift+Enter, IME, Markdown blocks; preview: build/chat-v1-preview.png")
     }
 
+    /// The composer grows with its content and stops at `maxLines`. Nothing covered this
+    /// before, and the migration to TextKit 2 replaced the engine that measures it.
+    @MainActor private static func testComposerAdaptiveHeight() async throws {
+        for (fontSize, minHeight, maxLines) in [(WorkspaceStyle.bodySize, CGFloat(44), 6), (CGFloat(13), CGFloat(20), 1)] {
+            let draft = ComposerDraft()
+            let host = NSHostingView(rootView: ComposerHeightHost(draft: draft, fontSize: fontSize,
+                                                                  minHeight: minHeight, maxLines: maxLines))
+            host.frame = NSRect(x: 0, y: 0, width: 400, height: 400)
+            let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            window.contentView = host
+            defer { window.orderOut(nil) }
+            func find(in view: NSView) -> ComposerTextView? {
+                if let editor = view as? ComposerTextView { return editor }
+                return view.subviews.lazy.compactMap { find(in: $0) }.first
+            }
+            func height(_ text: String) async throws -> CGFloat {
+                draft.text = text
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(50))
+                host.layoutSubtreeIfNeeded()
+                guard let editor = find(in: host), let scroll = editor.enclosingScrollView else {
+                    preconditionFailure("Missing native composer")
+                }
+                precondition(editor.textLayoutManager != nil, "Composer runs on TextKit 2")
+                return scroll.frame.height
+            }
+            let lineHeight = NSFont.systemFont(ofSize: fontSize).defaultLineHeight
+            let cap = ceil(lineHeight * CGFloat(maxLines)) + 8
+            let context = "fontSize=\(fontSize) maxLines=\(maxLines)"
+
+            let empty = try await height("")
+            let single = try await height("a")
+            precondition(empty == single, "An empty draft measures as one line: \(context)")
+            precondition(single == max(minHeight, lineHeight + 8), "One line sits at the floor: \(context) got \(single)")
+
+            let full = try await height((1...maxLines).map(String.init).joined(separator: "\n"))
+            let overflowing = try await height((1...(maxLines + 4)).map(String.init).joined(separator: "\n"))
+            precondition(full == cap, "\(maxLines) lines reach exactly the cap: \(context) got \(full) want \(cap)")
+            precondition(overflowing == full, "Growth stops at maxLines: \(context)")
+
+            // A trailing newline is a line of its own.
+            let trailing = try await height((1...maxLines).map(String.init).joined(separator: "\n") + "\n")
+            precondition(trailing == cap, "A trailing newline cannot exceed the cap: \(context)")
+            // Soft-wrapped CJK reaches the cap exactly like hard breaks do.
+            let wrappedLong = try await height(String(repeating: "中文自动换行测试", count: 60))
+            precondition(wrappedLong == cap, "Enough wrapped CJK reaches the cap: \(context) got \(wrappedLong)")
+
+            if maxLines > 1 {
+                let middle = try await height("1\n2\n3")
+                precondition(middle > single && middle < cap, "The composer grows between the floor and the cap: got \(middle)")
+                precondition(middle == ceil(lineHeight * 3) + 8, "Intermediate growth is whole lines: got \(middle)")
+                let openEnded = try await height("1\n2\n3\n"), closed = try await height("1\n2\n3\n4")
+                precondition(openEnded == closed, "A trailing newline counts as a line")
+                // A wrap that lands short of the cap still measures in whole lines.
+                let wrapped = try await height(String(repeating: "中文自动换行测试", count: 12))
+                precondition(wrapped > single && wrapped < cap, "Partially wrapped CJK sits between floor and cap: got \(wrapped)")
+                precondition((wrapped - 8).truncatingRemainder(dividingBy: lineHeight) == 0,
+                             "Wrapped lines measure as whole lines: got \(wrapped)")
+            }
+        }
+        print("PASS: composer adaptive height — floor, whole-line growth, maxLines cap, trailing newline and wrapped CJK, chat and pet configurations")
+    }
+
     @MainActor private static func testConsecutiveDictationAppends() async throws {
         let source = PreviewSource(), recognizer = ComposerRecognizer()
         let store = TaskStore(source: source)
@@ -245,6 +325,8 @@ import SwiftUI
         guard let editor = findAccessibility("conversation.composer", in: window.contentView!) as? ComposerTextView else {
             preconditionFailure("Missing native composer")
         }
+        precondition(editor.textLayoutManager != nil,
+                     "Composer runs on TextKit 2; reading NSTextView.layoutManager downgrades it silently")
         for initial in ["", "已有草稿🙂", "已有草稿\n"] {
             store.mainDraft = initial
             try await refresh()
@@ -430,6 +512,8 @@ import SwiftUI
         }
         try await refresh()
         let original = editor(in: host)!
+        precondition(original.textLayoutManager != nil,
+                     "Composer runs on TextKit 2; reading NSTextView.layoutManager downgrades it silently")
         let primaryFrame = node("voice.start")!.accessibilityFrame!()
         func check(_ primary: String, present: [String], absent: [String], enabled: Bool = true) {
             precondition(node("conversation.actions") != nil)
@@ -511,8 +595,15 @@ import SwiftUI
         recognizer.finish(); try await refresh()
         precondition(original.isEditable && original.selectedRange() == selection && window.firstResponder === original)
         precondition(store.mainDraft.hasPrefix(draft + "\n") && source.histories.count == 1)
+        let appended = store.mainDraft
         original.undoManager?.undo()
         precondition(store.mainDraft == draft, "Final transcript append is independently undoable")
+        precondition(store.mainDraft == original.string, "Undo keeps the draft store and the editor in step")
+        original.undoManager?.redo()
+        precondition(store.mainDraft == appended && store.mainDraft == original.string,
+                     "Redo restores the transcript in both the editor and the draft store")
+        original.undoManager?.undo()
+        precondition(store.mainDraft == draft && store.mainDraft == original.string)
         original.setSelectedRange(selection)
         press("dictation.start"); try await refresh()
         key(original, 53); try await refresh()
