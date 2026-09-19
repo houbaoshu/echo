@@ -85,7 +85,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             editMenu.addItem(withTitle: title, action: NSSelectorFromString(selector), keyEquivalent: key)
         }
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "搜索聊天", action: #selector(search), keyEquivalent: "f").target = self
+        // ⌘K, not ⌘F: this opens a palette that switches between chats, which is what ⌘K
+        // means across editors. ⌘F on macOS means "find inside what I am looking at", so it
+        // stays free for a find in the open conversation.
+        let quickOpen = editMenu.addItem(withTitle: "快速打开会话…", action: #selector(search), keyEquivalent: "k")
+        quickOpen.keyEquivalentModifierMask = [.command]
+        quickOpen.target = self
         editMenu.addItem(.separator())
         let palette = editMenu.addItem(withTitle: "表情与符号",
                                        action: #selector(NSApplication.orderFrontCharacterPalette(_:)), keyEquivalent: " ")

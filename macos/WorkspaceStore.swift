@@ -178,7 +178,6 @@ struct WorkspaceSnapshot: Codable {
             markViewedActivitySeen()
         }
     }
-    @Published var searchText = ""
     @Published var persistenceNotice: String?
     var onRevealVoice: ((UUID) -> Void)?
     private let emptyActivity = TaskStore()
@@ -526,16 +525,26 @@ struct WorkspaceSnapshot: Codable {
         do { try persistence.refreshBackup(); try persistence.removeSession(id) }
         catch { persistenceNotice = "会话记录删除失败：\(error.localizedDescription)" }
     }
-    var recentConversations: [WorkspaceConversation] { filteredAndSorted(conversations) }
+    /// The sidebar always lists everything. Searching is a separate surface — a palette
+    /// with its own query and its own results — so the column never hides chats behind a
+    /// filter the person cannot see.
+    var recentConversations: [WorkspaceConversation] { byRecency(conversations) }
     func filteredConversations(projectID: UUID?) -> [WorkspaceConversation] {
-        filteredAndSorted(conversations.filter { $0.projectID == projectID })
+        byRecency(conversations.filter { $0.projectID == projectID })
     }
-    private func filteredAndSorted(_ conversations: [WorkspaceConversation]) -> [WorkspaceConversation] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return conversations.filter {
-            query.isEmpty || $0.title.localizedStandardContains(query)
-                || $0.store.messages.contains(where: { $0.content.localizedStandardContains(query) })
-        }.sorted {
+    /// The search palette's results: every chat whose title or transcript contains the
+    /// query, most recently used first. An empty query answers with all of them, which is
+    /// what the palette shows before anything is typed.
+    func conversations(matching query: String) -> [WorkspaceConversation] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return byRecency(conversations) }
+        return byRecency(conversations.filter {
+            $0.title.localizedStandardContains(query)
+                || $0.store.messages.contains { $0.content.localizedStandardContains(query) }
+        })
+    }
+    private func byRecency(_ conversations: [WorkspaceConversation]) -> [WorkspaceConversation] {
+        conversations.sorted {
             if $0.lastUsed != $1.lastUsed { return $0.lastUsed > $1.lastUsed }
             return $0.id.uuidString < $1.id.uuidString
         }

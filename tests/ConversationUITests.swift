@@ -132,6 +132,7 @@ private struct ComposerHeightHost: View {
             return
         }
         try await testComposerAdaptiveHeight()
+        try await testWindowChromeAndSidebarAccessories()
         try await testConsecutiveDictationAppends()
         try await testComposerActionMatrix()
         try await testStoppingAndDictationEscape()
@@ -304,6 +305,295 @@ private struct ComposerHeightHost: View {
             }
         }
         print("PASS: composer adaptive height — floor, whole-line growth, maxLines cap, trailing newline and wrapped CJK, chat and pet configurations")
+    }
+
+    /// 阶段 2 (P1-1…P1-5): the window's structure comes from system parts.
+    ///
+    /// The sidebar's header and footer are NSSplitViewItemAccessoryViewControllers rather
+    /// than views stacked with the list and a floating button pinned to the root view; the
+    /// toolbar carries the standard sidebar/inspector toggles and no custom title item; the
+    /// title and subtitle are the window's own; and the frame is NSWindow's to persist.
+    /// None of this needs a real pointer, so it stays deterministic.
+    @MainActor private static func testWindowChromeAndSidebarAccessories() async throws {
+        // The gear is a SwiftUI button, and SwiftUI only publishes AX nodes once this is on.
+        let accessibilitySetter = NSSelectorFromString("accessibilitySetValue:forAttribute:")
+        if NSApp.responds(to: accessibilitySetter) {
+            NSApp.perform(accessibilitySetter, with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        }
+        let store = TaskStore(source: PreviewSource())
+        let voice = VoiceSessionController(), dictation = DictationController()
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
+        defer { workspace.shutdown(); voice.shutdown() }
+        let suite = "chrome-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let main = MainWindowController(workspace: workspace, defaults: defaults)
+        defer { main.shutdown() }
+        guard let window = main.window else { preconditionFailure("No window") }
+        main.present()
+        try await Task.sleep(for: .milliseconds(300))
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        // --- P1-1 / P1-2: the column's header and footer are accessories ---
+        let header = main.sidebarItem.topAlignedAccessoryViewControllers
+        let footer = main.sidebarItem.bottomAlignedAccessoryViewControllers
+        precondition(header.count == 1 && footer.count == 1,
+                     "The sidebar column carries one header and one footer accessory, got \(header.count)/\(footer.count)")
+        precondition(header[0].view.frame.height > 0 && footer[0].view.frame.height > 0,
+                     "Accessories size themselves from their hosted SwiftUI content")
+        precondition(findAccessibility("workspace.search.toggle", in: header[0].view) != nil,
+                     "The header accessory carries the search entry")
+        precondition(findAccessibility("workspace.settings", in: footer[0].view) != nil,
+                     "The settings gear lives in the footer accessory")
+        let body = main.sidebarItem.viewController.view
+        precondition(findAccessibility("workspace.settings", in: window.contentView!) != nil,
+                     "The gear is reachable while the column is open")
+
+        // No text control may live in this window's column chrome. An accessory's
+        // contents are ordered after the column body in the key view loop, which would
+        // drop the chat composer between this column's header and its list. Search opens
+        // in a floating panel of its own instead — so nothing it does can reach this
+        // window's Tab order. The structural guard is here; the real pointer and key walk
+        // is in testWorkspaceSidebarPointerAndKeyboard.
+        func searchFields(in view: NSView) -> [NSSearchField] {
+            var found: [NSSearchField] = []
+            func walk(_ v: NSView) {
+                if let field = v as? NSSearchField { found.append(field) }
+                for child in v.subviews { walk(child) }
+            }
+            walk(view)
+            return found
+        }
+        precondition(searchFields(in: window.contentView!).isEmpty,
+                     "The main window carries no search field at all")
+        precondition(!main.searchPalette.isOpen, "The palette rests closed")
+        main.focusSearch()
+        try await Task.sleep(for: .milliseconds(500))
+        window.contentView?.layoutSubtreeIfNeeded()
+        precondition(main.searchPalette.isOpen, "⌘K opens the palette")
+        precondition(searchFields(in: window.contentView!).isEmpty,
+                     "The palette's field is in its own panel, never in this window")
+        precondition(searchFields(in: header[0].view).isEmpty, "...and certainly not in the header accessory")
+        main.searchPalette.isOpen = false
+        try await Task.sleep(for: .milliseconds(400))
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        // ⌘K must leave the window's layout exactly as it found it. The palette this
+        // replaced was a popover anchored to the column header, so opening it had to expand
+        // the sidebar and write that back — pressing a search key changed what the person
+        // would see on the next launch.
+        main.toggleSidebar()
+        try await Task.sleep(for: .milliseconds(200))
+        precondition(main.sidebarItem.isCollapsed, "The column starts this check collapsed")
+        precondition(defaults.object(forKey: "main.sidebarVisible") as? Bool == false,
+                     "...and that is what was saved")
+        main.focusSearch()
+        try await Task.sleep(for: .milliseconds(500))
+        window.contentView?.layoutSubtreeIfNeeded()
+        precondition(main.searchPalette.isOpen, "⌘K opens the palette with the column collapsed")
+        precondition(main.sidebarItem.isCollapsed, "⌘K does not open the sidebar")
+        precondition(defaults.object(forKey: "main.sidebarVisible") as? Bool == false,
+                     "⌘K does not write a layout the person did not ask for")
+        main.searchPalette.isOpen = false
+        try await Task.sleep(for: .milliseconds(300))
+        main.toggleSidebar()
+        try await Task.sleep(for: .milliseconds(300))
+        window.contentView?.layoutSubtreeIfNeeded()
+        precondition(!main.sidebarItem.isCollapsed, "The column comes back for the rest of this test")
+
+        // The sidebar lists every chat, always: searching is a separate surface, so the
+        // column can never hide chats behind a filter that is not on screen.
+        precondition(workspace.recentConversations.count == workspace.conversations.count,
+                     "The sidebar lists every chat")
+        precondition(workspace.conversations(matching: "no chat has this in it").isEmpty,
+                     "The palette's matching is what narrows results")
+
+        // The accessories are expressed as safe-area insets, so the list must be inset by
+        // them or its first and last rows would sit under the header and the footer.
+        func sidebarScrollView() -> NSScrollView? {
+            func search(_ view: NSView) -> NSScrollView? {
+                if let scroll = view as? NSScrollView { return scroll }
+                for child in view.subviews { if let found = search(child) { return found } }
+                return nil
+            }
+            return search(body)
+        }
+        guard let scroll = sidebarScrollView() else { preconditionFailure("No scroll view in the sidebar column") }
+        precondition(scroll.contentInsets.top >= header[0].view.frame.height,
+                     "The list is inset below the header, got \(scroll.contentInsets.top) for a \(header[0].view.frame.height)pt header")
+        precondition(scroll.contentInsets.bottom >= footer[0].view.frame.height,
+                     "The list is inset above the footer, got \(scroll.contentInsets.bottom) for a \(footer[0].view.frame.height)pt footer")
+
+        // A collapsed column takes its footer with it. That is the accepted cost of putting
+        // the gear in the sidebar: ⌘, and the Echo menu are the entries that always work.
+        main.toggleSidebar()
+        try await Task.sleep(for: .milliseconds(200))
+        window.contentView?.layoutSubtreeIfNeeded()
+        precondition(main.sidebarItem.isCollapsed, "⌘B collapses the column")
+        precondition(footer[0].view.isHiddenOrHasHiddenAncestor,
+                     "The footer goes away with the column")
+        main.toggleSidebar()
+        try await Task.sleep(for: .milliseconds(200))
+        window.contentView?.layoutSubtreeIfNeeded()
+        precondition(!main.sidebarItem.isCollapsed && !footer[0].view.isHiddenOrHasHiddenAncestor,
+                     "Reopening the column brings the footer back")
+
+        // --- P1-3: the toolbar carries AppKit's own column toggles ---
+        // Without them a collapsed sidebar is a dead end: the settings gear rides in that
+        // column's footer accessory and goes away with it (asserted just above), and Echo
+        // is an LSUIElement app with no Dock tile to fall back on.
+        guard let toolbar = window.toolbar else { preconditionFailure("No toolbar") }
+        let identifiers = toolbar.items.map(\.itemIdentifier)
+        precondition(identifiers == [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace,
+                                     .inspectorTrackingSeparator, .toggleInspector],
+                     "The toolbar is AppKit's two toggles around the tracking separators, got \(identifiers.map(\.rawValue))")
+        precondition(!identifiers.contains { $0.rawValue == "chiyan.title" }, "No hand-drawn title item")
+
+        // Both items carry a nil target, so AppKit sends their selector up the responder
+        // chain from the key window's first responder. Each has to arrive at THIS
+        // controller — the only place that owns layout.sidebarPreferred, manualColumn and
+        // saveLayout() — from every focus state, including none at all, where NSWindow
+        // forwards toggleSidebar: but not toggleInspector:.
+        let toggleSidebarSelector = #selector(MainWindowController.toggleSidebar(_:))
+        let toggleInspectorSelector = #selector(MainWindowController.toggleInspector(_:))
+        // Each state is re-established immediately before the selector is sent, and the
+        // column is put back through a direct call rather than a second trip through the
+        // chain: collapsing a column detaches the view that was focused, so a second
+        // message from that same stale first responder measures nothing.
+        func assertRouting(_ label: String, focus: () -> NSView?) {
+            for (name, selector, collapsed, restore) in
+                [("sidebar", toggleSidebarSelector, { main.sidebarItem.isCollapsed }, { main.toggleSidebar() }),
+                 ("inspector", toggleInspectorSelector, { main.inspectorItem.isCollapsed }, { main.toggleInspector() })]
+                as [(String, Selector, () -> Bool, () -> Void)] {
+                window.makeFirstResponder(focus())
+                let before = collapsed()
+                precondition((window.firstResponder ?? window).tryToPerform(selector, with: nil),
+                             "\(label): the \(name) toggle must be answered by somebody")
+                precondition(collapsed() != before,
+                             "\(label): the \(name) toggle must reach the window controller, not stop at the split view")
+                restore()
+                precondition(collapsed() == before,
+                             "\(label): the \(name) column is put back for the next check")
+            }
+        }
+        assertRouting("nothing focused") { nil }
+        assertRouting("the chat list focused") { findAccessibility("workspace.sidebar", in: body) as? NSView }
+        assertRouting("the composer focused") {
+            findAccessibility("conversation.composer", in: window.contentView!) as? NSView
+        }
+
+        // --- P1-4: the title and the subtitle are the window's ---
+        precondition(window.titleVisibility == .visible, "AppKit draws the title")
+        let plain = workspace.selected ?? workspace.newConversation()
+        workspace.select(plain.id)
+        workspace.renameConversation(plain.id, to: "无项目会话")
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(window.title == "无项目会话", "The window title is the open chat, got \(window.title)")
+        precondition(window.subtitle.isEmpty, "A chat with no project has no subtitle, got \(window.subtitle)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-chrome-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let projectID = workspace.addProject(url: root)
+        precondition(workspace.associateProject(projectID, conversationID: plain.id))
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(window.subtitle == workspace.projects.first { $0.id == projectID }?.name,
+                     "Associating a project fills the subtitle, got \(window.subtitle)")
+        main.showSettings()
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(window.title == "设置" && window.subtitle.isEmpty, "The settings page drops the chat's subtitle")
+        main.showWorkspace()
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(window.subtitle == workspace.projects.first { $0.id == projectID }?.name,
+                     "Returning restores the subtitle")
+
+        // --- Tab makes a complete cycle over the window's areas, and nothing is a trap ---
+        //
+        // Driven through window.selectNextKeyView, which is the entry point AppKit itself
+        // uses for Tab, so this also exercises the loop rebuild that happens there. Reading
+        // nextValidKeyView directly would skip that rebuild and hide the very bug: SwiftUI
+        // replaces these controls constantly and the loop is stale far more often than not.
+        //
+        // Stops are identified by the COLUMN they live in, not by class or identifier. The
+        // chat transcript's stop is the key view SwiftUI builds for `.focusable()`, and that
+        // view carries neither the SwiftUI view's accessibility identifier nor any public
+        // type (measured in docs/repros/window-focus-ring.swift [F1]).
+        func area(of view: NSView) -> String {
+            for (name, root) in [("sidebar", main.sidebarItem.viewController.view),
+                                 ("conversation", main.conversationItem.viewController.view),
+                                 ("inspector", main.inspectorItem.viewController.view)]
+            where view.isDescendant(of: root) { return name }
+            return "window"
+        }
+        func tabRing(from start: NSView, limit: Int = 12) -> [(area: String, view: NSView)] {
+            precondition(window.makeFirstResponder(start), "\(start) must take focus")
+            var walked: [(area: String, view: NSView)] = [(area(of: start), start)]
+            for _ in 0..<limit {
+                window.selectNextKeyView(nil)
+                guard let landed = window.firstResponder as? NSView else { break }
+                walked.append((area(of: landed), landed))
+                if landed === start { break }
+            }
+            return walked
+        }
+        func assertCompleteCycle(_ label: String, inspector: Bool = false) {
+            guard let list = findAccessibility("workspace.sidebar", in: body) as? NSView else {
+                preconditionFailure("\(label): the chat list must be on screen")
+            }
+            guard let composer = findAccessibility("conversation.composer", in: window.contentView!) as? NSView else {
+                preconditionFailure("\(label): the composer must be on screen")
+            }
+            let ring = tabRing(from: list)
+            let description = ring.map { "\($0.area)/\(type(of: $0.view))" }.joined(separator: " -> ")
+            precondition(ring.count > 1 && ring.last?.view === list,
+                         "\(label): Tab must come back round to where it started — \(description)")
+            precondition(ring.contains { $0.view === composer },
+                         "\(label): Tab must reach the composer — \(description)")
+            // The transcript: a stop in the conversation column that is not the composer.
+            precondition(ring.contains { $0.area == "conversation" && $0.view !== composer },
+                         "\(label): Tab must stop on the conversation itself, not jump the chat — \(description)")
+            precondition(ring.contains { $0.area == "inspector" } == inspector,
+                         "\(label): the inspector is a stop only while it is open — \(description)")
+        }
+        guard let composerView = findAccessibility("conversation.composer", in: window.contentView!) as? ComposerTextView else {
+            preconditionFailure("The composer must be on screen")
+        }
+        // The composer used to answer Tab by typing U+0009, which made it the one control
+        // keyboard traversal could enter and never leave.
+        precondition(window.makeFirstResponder(composerView))
+        let draftBeforeTab = plain.store.mainDraft
+        composerView.insertTab(nil)
+        precondition(window.firstResponder !== composerView, "Tab leaves the composer")
+        precondition(plain.store.mainDraft == draftBeforeTab, "Tab types nothing into the draft")
+        precondition(window.makeFirstResponder(composerView))
+        composerView.insertBacktab(nil)
+        precondition(window.firstResponder !== composerView, "⇧Tab leaves the composer")
+        precondition(plain.store.mainDraft == draftBeforeTab, "⇧Tab types nothing into the draft either")
+
+        assertCompleteCycle("resting")
+        try Data("plain text preview".utf8).write(to: root.appendingPathComponent("notes.txt"))
+        main.toggleInspector()
+        try await Task.sleep(for: .milliseconds(600))
+        window.contentView?.layoutSubtreeIfNeeded()
+        assertCompleteCycle("inspector open", inspector: true)
+        workspace.fileBrowser.openFile("notes.txt")
+        try await Task.sleep(for: .milliseconds(600))
+        window.contentView?.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("projectFiles.text", in: main.inspectorItem.viewController.view) != nil,
+                     "The plain-text preview is on screen")
+        assertCompleteCycle("text preview open", inspector: true)
+        workspace.fileBrowser.returnToDirectory()
+        main.toggleInspector()
+        try await Task.sleep(for: .milliseconds(400))
+
+        // --- P1-5: NSWindow owns the frame ---
+        precondition(defaults.string(forKey: "main.frame") == nil,
+                     "The hand-rolled frame key is gone")
+        precondition(window.frameAutosaveName.isEmpty,
+                     "Autosave writes to standard defaults, so an injected suite must not arm it")
+        precondition(defaults.object(forKey: "main.sidebarWidth") != nil,
+                     "The remaining layout keys are still this controller's to save")
+
+        print("PASS: sidebar header/footer accessories with list insets, standard toolbar toggles and their routing, system title/subtitle, NSWindow-owned frame")
     }
 
     @MainActor private static func testConsecutiveDictationAppends() async throws {
@@ -1159,12 +1449,17 @@ private struct ComposerHeightHost: View {
         defer { main.shutdown() }
         let window = main.window!
         let sidebar = main.sidebarItem.viewController.view
+        // The column's header is its own top-aligned accessory, so the search field is a
+        // sibling of the list rather than a view inside it.
+        let sidebarHeader = main.sidebarItem.topAlignedAccessoryViewControllers[0].view
         main.present()
         NSApp.activate(ignoringOtherApps: true)
         func settle() async throws {
             try await Task.sleep(for: .milliseconds(150)); window.contentView?.layoutSubtreeIfNeeded()
         }
         try await settle(); try await settle()
+        precondition(!main.searchPalette.isOpen && findView(sidebar, { $0 is NSSearchField }) == nil,
+                     "A fresh column rests with the palette closed and no field in it")
         try await waitForPointerTarget(window)
         func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) async throws {
             for down in [true, false] {
@@ -1335,144 +1630,163 @@ private struct ComposerHeightHost: View {
         precondition(workspace.selected?.projectID == projectID && workspace.conversations.count == chatsBefore,
                      "It opens an unsent chat inside that project")
 
-        // 8. A search opens both groups and narrows them, and clearing it restores them.
-        workspace.searchText = "项目甲"
-        try await settle(); try await settle()
-        precondition(rowIndex(chat("项目甲")) != nil && rowIndex(chat("最近丙")) == nil,
-                     "A search narrows 最近 to the matching chats")
-        precondition(rowIndex(chat("项目甲", in: projectID)) != nil, "A search opens a project that was closed")
-        workspace.searchText = ""
-        try await settle(); try await settle()
-        precondition(rowIndex(chat("最近丙")) != nil, "Clearing the search restores the chats")
+        // 8. The sidebar lists every chat, always. Narrowing belongs to the search
+        // palette, so the column can never hide chats behind a filter that is not visible.
+        for title in ["项目甲", "项目乙", "最近丙", "最近丁"] {
+            precondition(rowIndex(chat(title)) != nil || rowIndex(chat(title, in: projectID)) != nil,
+                         "\(title) is listed")
+        }
+        precondition(workspace.recentConversations.count == workspace.conversations.count,
+                     "The sidebar's 最近 group is every chat, unfiltered")
 
-        // 9. Tab still leaves the list.
+        // 9. Tab leaves the list, and comes back: the window's key view loop is a cycle
+        // with no dead end in it. The composer used to answer Tab by typing a tab
+        // character, which made it a one-way trap.
         guard let fourth = rowRect(chat("最近丁")) else { preconditionFailure("最近丁 is missing") }
         try await click(NSPoint(x: fourth.maxX - 6, y: fourth.midY))
         precondition(window.firstResponder === list)
-        var left = false
-        for _ in 0..<6 where !left {
+        try await key(48)
+        precondition(window.firstResponder !== list,
+                     "Tab leaves the chat list — list.nextValidKeyView=\(String(describing: list.nextValidKeyView))")
+        let afterOneTab = window.firstResponder
+        var returned = false
+        for _ in 0..<5 where !returned {
             try await key(48)
-            left = window.firstResponder !== list
+            returned = window.firstResponder === list
         }
-        precondition(left, "Tab leaves the chat list")
-
-        // 10. The search box is the system control, not a drawing of one: AppKit owns
-        // the magnifier, the placeholder, the clear button and the Escape semantics.
-        guard let search = findView(sidebar, { $0 is NSSearchField }) as? NSSearchField else {
-            preconditionFailure("The sidebar search box must be a system NSSearchField")
-        }
-        guard let searchCell = search.cell as? NSSearchFieldCell else { preconditionFailure("NSSearchField must carry its cell") }
-        precondition(searchCell.searchButtonCell != nil, "The magnifier comes from the system cell")
-        precondition(searchCell.cancelButtonCell != nil, "The clear button comes from the system cell")
-        precondition(search.placeholderString == "搜索聊天", "The placeholder is the field's own")
-        let searchRect = search.convert(search.bounds, to: nil)
-
-        // A click puts the insertion point in the field, and the window agrees: the
-        // field editor being edited keeps the field as its delegate.
-        try await click(NSPoint(x: searchRect.midX, y: searchRect.midY))
-        precondition(main.searchFocus.isFocused, "Clicking the search box focuses it")
-        precondition((window.firstResponder as? NSTextView)?.isFieldEditor == true,
-                     "AppKit hands the field its field editor, which is what focus is read from")
-        // "1" is the keystroke no input method absorbs into a composition, so this
-        // asserts the same thing whichever input source the machine is on.
-        try await key(18)
-        precondition(!workspace.searchText.isEmpty && search.stringValue == workspace.searchText,
-                     "Typing in the system field reaches the store — stringValue='\(search.stringValue)'"
-                     + " searchText='\(workspace.searchText)'")
-
-        // 11. Escape belongs to the search field: it clears the query and leaves the
-        // open chat and its running reply alone, even though a reply is stoppable.
-        workspace.searchText = "项目甲"
-        try await settle(); try await settle()
-        precondition(rowIndex(chat("最近丙")) == nil, "The typed query narrows the list")
-        let openBeforeEscape = workspace.selectedID
-        precondition(workspace.selected?.store.task?.status == .running,
-                     "This chat has a reply running, so Escape would otherwise stop it")
-        precondition(!main.canHandleEscape, "Escape in the search field is not the global stop")
-        try await key(53)
-        precondition(workspace.searchText.isEmpty && search.stringValue.isEmpty,
-                     "Escape clears the query, drawn by nobody but AppKit")
-        precondition(workspace.selectedID == openBeforeEscape, "Escape in the search field leaves the open chat alone")
-        precondition(workspace.selected?.store.task?.status == .running, "Escape in the search field does not stop the reply")
-        try await settle()
-        precondition(rowIndex(chat("最近丙")) != nil, "Clearing the query restores the chats")
-
-        // Escape again, on an empty field, still belongs to the field: the query is
-        // already gone and the reply keeps running.
-        precondition(main.searchFocus.isFocused, "Escape keeps the insertion point in the field")
-        precondition(!main.canHandleEscape, "An empty search field still owns Escape")
-        try await key(53)
-        precondition(workspace.selected?.store.task?.status == .running,
-                     "Escape on an empty search field does not stop the reply either")
-
-        // 12. The system clear button empties the query.
-        try await key(18)
-        precondition(!workspace.searchText.isEmpty, "The field takes a second query")
-        let cancel = search.convert(searchCell.cancelButtonRect(forBounds: search.bounds), to: nil)
-        try await click(NSPoint(x: cancel.midX, y: cancel.midY))
-        precondition(workspace.searchText.isEmpty && search.stringValue.isEmpty,
-                     "The system clear button empties the query and the store")
-
-        // 13. An input method still composing is left alone: its text does not filter
-        // yet — the SwiftUI field this replaces held the query back the same way — and
-        // no store update cuts the composition short.
-        precondition(window.makeFirstResponder(search))
-        guard let fieldEditor = search.currentEditor() as? NSTextView else { preconditionFailure("The field must be editing") }
-        fieldEditor.setMarkedText("xiangmu", selectedRange: NSRange(location: 7, length: 0),
-                                  replacementRange: NSRange(location: 0, length: 0))
-        precondition(fieldEditor.hasMarkedText(), "The field editor is composing")
-        precondition(workspace.searchText.isEmpty, "Composing text does not filter the chats yet")
-        precondition(!main.canHandleEscape, "Escape never leaves a composing field")
-        workspace.searchText = "别的查询"
-        try await settle(); try await settle()
-        precondition(fieldEditor.hasMarkedText() && search.stringValue.contains("xiangmu"),
-                     "A store update does not commit the composing text")
-        fieldEditor.unmarkText()
-        workspace.searchText = ""
-        try await settle()
-
-        // 14. ⌘F reaches the field without walking the view tree, and Tab from the
-        // field comes back to the chat list, where ↑ / ↓ still open chats.
+        precondition(returned, "Tab comes back round to the chat list, stuck at \(String(describing: window.firstResponder))")
         precondition(window.makeFirstResponder(list))
-        precondition(!main.searchFocus.isFocused)
+        try await key(48, .maskShift)
+        precondition(window.firstResponder !== list, "⇧Tab leaves the chat list too")
+        var came = false
+        for _ in 0..<5 where !came {
+            try await key(48, .maskShift)
+            came = window.firstResponder === list
+        }
+        precondition(came, "⇧Tab comes back round as well, stuck at \(String(describing: window.firstResponder))")
+        // Whatever Tab landed on first, typing a tab there must not have gone into a draft.
+        if let editor = afterOneTab as? ComposerTextView {
+            precondition(!editor.string.contains("\t"), "Tab moved on instead of typing into the composer")
+        }
+
+        // 10. Search is a command palette in a floating panel, opened from the column
+        // header's magnifier or ⌘K.
+        // The main window carries no search field of its own, which is what keeps the
+        // column's Tab order out of it.
+        func paletteField() -> NSSearchField? {
+            for candidate in NSApp.windows {
+                guard let content = candidate.contentView, candidate.isVisible else { continue }
+                if let field = findView(content, { $0 is NSSearchField }) as? NSSearchField { return field }
+            }
+            return nil
+        }
+        /// The panel is ordered out a beat after the state says it is closed.
+        func paletteClosed() async throws -> Bool {
+            for _ in 0..<12 {
+                if !main.searchPalette.isOpen && paletteField() == nil { return true }
+                try await settle()
+            }
+            return false
+        }
+        precondition(findView(window.contentView!, { $0 is NSSearchField }) == nil,
+                     "The main window has no search field")
+        let restsClosed = try await paletteClosed()
+        precondition(restsClosed, "The palette rests closed")
+        guard let magnifier = findAccessibility("workspace.search.toggle", in: sidebarHeader),
+              let magnifierFrame = magnifier.accessibilityFrame?(), magnifierFrame != .zero else {
+            preconditionFailure("The column header must carry the search entry")
+        }
+        // accessibilityFrame is in screen coordinates; click takes window coordinates.
+        try await click(window.convertPoint(fromScreen: NSPoint(x: magnifierFrame.midX, y: magnifierFrame.midY)))
+        try await settle(); try await settle()
+        precondition(main.searchPalette.isOpen, "The magnifier opens the palette")
+        guard let query = paletteField(), let queryWindow = query.window else {
+            preconditionFailure("The palette must carry a system NSSearchField")
+        }
+        precondition(queryWindow is SearchPalettePanel && queryWindow !== window,
+                     "The palette lives in its own floating panel, not in this window")
+        precondition(findView(window.contentView!, { $0 is NSSearchField }) == nil,
+                     "...so the main window still has no search field in it")
+        guard let queryCell = query.cell as? NSSearchFieldCell else { preconditionFailure("NSSearchField must carry its cell") }
+        precondition(queryCell.searchButtonCell != nil, "The magnifier comes from the system cell")
+        precondition(queryCell.cancelButtonCell != nil, "The clear button comes from the system cell")
+        precondition((queryWindow.firstResponder as? NSTextView)?.isFieldEditor == true,
+                     "Opening the palette puts the insertion point in its field, with nothing forced")
+
+        // 11. The main window's Tab order is untouched while the palette is open: there is
+        // no field of its own to join the loop, and the column's own controls are all that
+        // is in it. Identity comparisons are useless here — SwiftUI rebuilds the composer
+        // whenever a chat opens — so this is asserted by walking, below and after closing.
+        precondition(findView(window.contentView!, { $0 is NSSearchField }) == nil)
+
+        // 12. Typing narrows the palette's own results; the sidebar does not move.
+        let listedBefore = (0..<list.numberOfRows).count
+        query.stringValue = "最近丙"
+        NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: query)
+        try await settle(); try await settle()
+        precondition(workspace.conversations(matching: "最近丙").map(\.id) == [ids["最近丙"]!],
+                     "The query matches exactly the one chat")
+        precondition((0..<list.numberOfRows).count == listedBefore,
+                     "The sidebar does not narrow with the palette's query")
+        precondition(rowIndex(chat("最近丁")) != nil, "Every chat is still listed in the column")
+
+        // 13. Return opens the highlighted result and closes the palette.
+        let openBeforeReturn = workspace.selectedID
+        try await key(36)
+        try await settle(); try await settle()
+        precondition(workspace.selectedID == ids["最近丙"], "Return opens the matched chat")
+        precondition(workspace.selectedID != openBeforeReturn)
+        let closedAfterReturn = try await paletteClosed()
+        precondition(closedAfterReturn, "Return closes the palette")
+
+        // 14. ⌘K opens it again, and Escape backs out in two stages: the field clears its
+        // own query first, and only an empty field closes the palette.
         main.focusSearch()
         try await settle(); try await settle()
-        precondition(main.searchFocus.isFocused, "⌘F focuses the search field")
-        var reachedList = false
-        for _ in 0..<6 where !reachedList {
+        precondition(main.searchPalette.isOpen, "⌘K opens the palette")
+        guard let reopened = paletteField() else { preconditionFailure("⌘K must open a palette with a field") }
+        reopened.stringValue = "项目甲"
+        NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: reopened)
+        try await settle()
+        try await key(53)
+        try await settle()
+        precondition(main.searchPalette.isOpen, "The first Escape belongs to the query, not the palette")
+        precondition(paletteField()?.stringValue.isEmpty == true, "It clears the query, drawn by nobody but AppKit")
+        try await key(53)
+        try await settle(); try await settle()
+        let closedAfterEscape = try await paletteClosed()
+        precondition(closedAfterEscape, "The second Escape closes the palette")
+        // The column still has its cycle: Tab leaves the list and comes back round, exactly
+        // as it did before the palette was ever opened.
+        precondition(window.makeFirstResponder(list))
+        try await key(48)
+        precondition(window.firstResponder !== list, "Tab still leaves the chat list after a search")
+        var cameBack = false
+        for _ in 0..<5 where !cameBack {
             try await key(48)
-            reachedList = window.firstResponder === list
+            cameBack = window.firstResponder === list
         }
-        precondition(reachedList, "Tab from the search field comes back to the chat list")
-        let rowBeforeArrow = list.selectedRow
-        try await key(125)
-        precondition(list.selectedRow != rowBeforeArrow && workspace.selectedID != nil,
-                     "↓ walks the chats again once focus is back in the list")
-        // Shift+Tab leaves the list the other way and lands back in the search field.
-        var returned = false
-        for _ in 0..<6 where !returned {
-            try await key(48, .maskShift)
-            returned = main.searchFocus.isFocused
-        }
-        precondition(returned, "Shift+Tab from the chat list reaches the search field")
+        precondition(cameBack, "...and still comes back round, stuck at \(String(describing: window.firstResponder))")
 
-        // 15. A query that matches nothing empties both groups without disturbing the
-        // open chat, and clearing it brings them back.
-        let openBeforeEmptyQuery = workspace.selectedID
-        workspace.searchText = "没有任何会话匹配这个查询"
+        // 15. The palette says so when nothing matches, and the column is untouched.
+        main.focusSearch()
         try await settle(); try await settle()
+        guard let empty = paletteField() else { preconditionFailure("⌘K must open the palette") }
+        empty.stringValue = "没有任何会话匹配这个查询"
+        NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: empty)
+        try await settle(); try await settle()
+        precondition(workspace.conversations(matching: "没有任何会话匹配这个查询").isEmpty,
+                     "No chat matches the query")
         for title in ["项目甲", "项目乙", "最近丙", "最近丁"] {
-            precondition(rowIndex(chat(title)) == nil && rowIndex(chat(title, in: projectID)) == nil,
-                         "No chat matches the query, so \(title) is not listed")
+            precondition(rowIndex(chat(title)) != nil || rowIndex(chat(title, in: projectID)) != nil,
+                         "An empty result leaves \(title) listed in the column")
         }
-        precondition(workspace.selectedID == openBeforeEmptyQuery, "An empty result does not close the open chat")
-        workspace.searchText = ""
-        try await settle(); try await settle()
-        precondition(rowIndex(chat("最近丙")) != nil && rowIndex(chat("项目甲", in: projectID)) != nil,
-                     "Clearing the query restores both groups")
+        main.searchPalette.isOpen = false
+        try await settle()
+
         print("PASS: system chat list — full-row pointer targets, duplicate-row selection, arrow traversal across groups,"
-              + " project open/close, hover actions, system search field, Escape, clear button, input-method composition,"
-              + " ⌘F, Tab and empty results")
+              + " project open/close, hover actions, a complete Tab cycle with no dead end, and the search palette:"
+              + " own floating panel, system field, narrowing, Return, two-stage Escape and empty results")
     }
 
     @MainActor private static func testProjectDetachPointer() async throws {
@@ -3112,9 +3426,12 @@ private struct ComposerHeightHost: View {
         precondition(findAccessibility("conversation.project", in: content) == nil,
                      "Established conversation has no composer project picker")
         precondition(findAccessibility("conversation.project.detach", in: content) == nil)
-        let titleItem = window.toolbar!.items.first { $0.itemIdentifier.rawValue == "chiyan.title" }!
-        precondition(findAccessibility("conversation.projectIcon", in: titleItem.view!) != nil,
-                     "Project folder indicator appears beside the title")
+        // The folder glyph in the old custom title item is now the window's own subtitle,
+        // drawn by AppKit under the title in the unified toolbar.
+        try await Task.sleep(for: .milliseconds(120))
+        precondition(window.subtitle == workspace.projects.first { $0.id == projectID }?.name,
+                     "The window subtitle names the chat's project, got \(window.subtitle)")
+        precondition(!window.subtitle.isEmpty, "A project chat has a subtitle")
         let another = workspace.newConversation()
         workspace.select(conversation.id)
         try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()

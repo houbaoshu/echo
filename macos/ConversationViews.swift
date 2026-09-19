@@ -74,15 +74,61 @@ extension NSFont {
     }
 }
 
+/// The column's permanent header, carried by the sidebar item's own top-aligned accessory
+/// rather than riding in the same VStack as the list. AppKit pins it above the scroll
+/// area, applies the column's standard content insets and draws the scroll edge effect as
+/// rows pass under it.
+///
+/// No text control lives here, and none may. An accessory's contents are ordered after
+/// the column body in the window's key view loop, which would put the chat composer
+/// between this column's header and this column's list; measured, with no app code in it,
+/// in docs/repros/split-accessory-window-chrome.swift [E]. The magnifier is a button, and
+/// buttons do not join the loop, so the header cannot disturb it. Search itself opens in a
+/// floating panel of its own (SearchPalette.swift), so it is not in this window at all.
+///
+/// The paddings are the old ones minus what the accessory contributes — 10pt
+/// leading/trailing and 9pt top/bottom (measured in the same file, [A]) — so the title and
+/// the button land exactly where they did before: 18pt in, 16pt down.
+struct WorkspaceSidebarHeader: View {
+    @ObservedObject var workspace: WorkspaceStore
+    @ObservedObject var palette: SearchPalettePresentation
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Text("Echo").font(.system(size: 18, weight: .medium)).foregroundStyle(WorkspaceStyle.primary)
+                Spacer(minLength: 8)
+                Button { palette.isOpen.toggle() } label: {
+                    Image(systemName: "magnifyingglass").font(.system(size: 14))
+                        .frame(width: 24, height: 24).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                    .foregroundStyle(palette.isOpen ? Color.accentColor : WorkspaceStyle.secondary)
+                    .help("搜索聊天 ⌘K").accessibilityLabel("搜索聊天")
+                    .accessibilityValue(palette.isOpen ? "已打开" : "已关闭")
+                    .accessibilityHint("打开或关闭聊天搜索")
+                    .accessibilityIdentifier("workspace.search.toggle")
+            }.frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8).padding(.top, 7)
+            HStack {
+                Button { workspace.newConversation(projectID: workspace.selected?.projectID) } label: {
+                    Label("新对话", systemImage: "square.and.pencil")
+                        .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.borderless).help("新对话 ⌘N").accessibilityLabel("新对话")
+            }.padding(.horizontal, 8).padding(.top, 16).padding(.bottom, 1)
+        }
+    }
+}
+
 struct WorkspaceSidebar: View {
     private struct RowID: Hashable {
         let conversationID: UUID
         let projectID: UUID?
     }
     @ObservedObject var workspace: WorkspaceStore
-    /// Owned by the window controller, so ⌘F and Escape can address the real
-    /// search field instead of guessing at the focused view.
-    let searchFocus: WorkspaceSearchFocus
+    /// Owned by the window controller, so anything outside this view can hand the
+    /// keyboard back to the chat list.
+    let listFocus: SidebarListFocus
     @State private var collapsedProjects: Set<UUID> = []
     @State private var projectsExpanded = true
     @State private var recentExpanded = true
@@ -92,7 +138,6 @@ struct WorkspaceSidebar: View {
     @FocusState private var newConversationFocused: Bool
     @FocusState private var addProjectFocused: Bool
     @State private var selectedRow: RowID?
-    @State private var listFocus = SidebarListFocus()
     private var selection: Binding<RowID?> {
         Binding(get: {
             guard let id = workspace.selectedID, workspace.conversations.contains(where: { $0.id == id }) else { return nil }
@@ -111,26 +156,6 @@ struct WorkspaceSidebar: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            Text("Echo").font(.system(size: 18, weight: .medium)).foregroundStyle(WorkspaceStyle.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 18).padding(.top, 16)
-            HStack {
-                Button { workspace.newConversation(projectID: workspace.selected?.projectID) } label: {
-                    Label("新对话", systemImage: "square.and.pencil")
-                        .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }.buttonStyle(.borderless).help("新对话 ⌘N").accessibilityLabel("新对话")
-            }.padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 16)
-            // A system search field owns the magnifier, the placeholder, the clear button,
-            // the focus ring and the Escape-clears-the-query semantics. SwiftUI's own
-            // .searchable cannot be used here: it only renders inside a navigation
-            // container, and the one placement that draws in the column
-            // (.searchable(placement: .sidebar)) needs a NavigationSplitView nested
-            // inside this AppKit sidebar column, which squeezes the chat list into that
-            // container's own sidebar pane. See the note on WorkspaceSearchField.
-            WorkspaceSearchField(text: $workspace.searchText, focus: searchFocus)
-                .padding(.horizontal, 12).padding(.bottom, 10)
             // A system source list owns the rows: the whole row is the hit target, and
             // hover, the selection fill, active and inactive window appearance, arrow-key
             // traversal, the focus ring, the selected trait and sidebar metrics all come
@@ -147,12 +172,12 @@ struct WorkspaceSidebar: View {
             // fix does not belong here: do not reshape Echo's state updates, split publishes
             // or delay them to dodge it.
             List(selection: selection) {
-                Section(isExpanded: searching($projectsExpanded)) {
+                Section(isExpanded: $projectsExpanded) {
                     ForEach(workspace.projects) { project in projectRow(project) }
                 } header: {
                     projectHeader
                 }
-                Section(isExpanded: searching($recentExpanded)) {
+                Section(isExpanded: $recentExpanded) {
                     rows(workspace.recentConversations)
                 } header: {
                     recentHeader
@@ -161,16 +186,10 @@ struct WorkspaceSidebar: View {
                 .font(WorkspaceStyle.body)
                 .accessibilityIdentifier("workspace.sidebar").accessibilityLabel("聊天")
             SidebarListFocusAnchor(focus: listFocus).frame(height: 0).accessibilityHidden(true)
-            Color.clear.frame(height: 48)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             workspace.objectWillChange.send()
         }
-    }
-    /// A search opens both groups without discarding the collapse the user chose.
-    private func searching(_ stored: Binding<Bool>) -> Binding<Bool> {
-        Binding(get: { stored.wrappedValue || !workspace.searchText.isEmpty },
-                set: { stored.wrappedValue = $0 })
     }
     private var recentHeader: some View {
         HStack(spacing: 4) {
@@ -207,7 +226,7 @@ struct WorkspaceSidebar: View {
             .onHover { projectHeaderHovered = $0 }
     }
     private func projectExpanded(_ project: WorkspaceProject) -> Bool {
-        !collapsedProjects.contains(project.id) || !workspace.searchText.isEmpty
+        !collapsedProjects.contains(project.id)
     }
     private func projectExpansion(_ project: WorkspaceProject) -> Binding<Bool> {
         Binding(get: { projectExpanded(project) },
@@ -281,89 +300,6 @@ struct WorkspaceSidebar: View {
         Button("重新定位文件夹…") { WorkspaceActions.chooseFolder { workspace.relocateProject(project.id, to: $0) } }
         Divider()
         Button("移除项目，保留会话") { workspace.removeProject(project.id) }
-    }
-}
-
-/// The sidebar's search field, addressed by identity.
-///
-/// Escape and ⌘F both need to know whether the person is typing a query, and
-/// which control to hand focus to. Walking the view tree for an accessibility
-/// identifier answered neither reliably: it reads SwiftUI's private hierarchy and
-/// only reports anything once accessibility is switched on. AppKit already answers
-/// both — an NSControl being edited stays its field editor's delegate — so the
-/// question becomes an identity check against the field this sidebar built.
-@MainActor final class WorkspaceSearchFocus {
-    fileprivate weak var field: NSSearchField?
-    /// True while the insertion point is in the sidebar's search field.
-    var isFocused: Bool {
-        guard let field, let window = field.window else { return false }
-        if window.firstResponder === field { return true }
-        guard let editor = window.firstResponder as? NSTextView, editor.isFieldEditor else { return false }
-        return editor.delegate as AnyObject? === field
-    }
-    /// ⌘F. The column may still be expanding from a collapse when this runs, and a
-    /// hidden view refuses first responder, so retry briefly before giving up.
-    func focus(attempt: Int = 0) {
-        let delay = attempt == 0 ? DispatchTime.now() : .now() + 0.02
-        DispatchQueue.main.asyncAfter(deadline: delay) { [weak self] in
-            guard let self else { return }
-            if let field = self.field, let window = field.window, !field.isHiddenOrHasHiddenAncestor {
-                // AppKit selects the existing query, so typing replaces it.
-                window.makeFirstResponder(field)
-                return
-            }
-            if attempt < 10 { self.focus(attempt: attempt + 1) }
-        }
-    }
-}
-
-/// The system search control, drawn by AppKit: the magnifier, the placeholder, the
-/// clear button, the focus ring, the Escape-clears-the-query semantics and the
-/// input-method handling all come from NSSearchField instead of being redrawn here.
-///
-/// SwiftUI's .searchable is the obvious candidate and does not fit this window.
-/// Measured on macOS 26: with no navigation container around it — which is this
-/// sidebar, an NSHostingController inside an AppKit NSSplitViewItem — .searchable
-/// renders nothing at all, at either placement. Inside a NavigationSplitView the
-/// default placement moves the field into the window toolbar, and
-/// .searchable(placement: .sidebar) draws it in the column but brings that
-/// NavigationSplitView's own NSSplitView with it, nesting a second split inside this
-/// column and squeezing the chat list to roughly half its width. NSSearchField is
-/// what .searchable itself renders, so taking it directly costs nothing but the
-/// container.
-struct WorkspaceSearchField: NSViewRepresentable {
-    @Binding var text: String
-    let focus: WorkspaceSearchFocus
-    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
-    func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
-        field.delegate = context.coordinator
-        field.placeholderString = "搜索聊天"
-        // The sidebar runs one point larger than the AppKit default.
-        field.font = .systemFont(ofSize: WorkspaceStyle.bodySize)
-        field.setAccessibilityLabel("搜索聊天")
-        field.setAccessibilityIdentifier("workspace.search")
-        focus.field = field
-        return field
-    }
-    func updateNSView(_ field: NSSearchField, context: Context) {
-        context.coordinator.text = $text
-        focus.field = field
-        // Writing to stringValue commits marked text, so leave a composing input
-        // method alone; its own edits already report through the delegate.
-        if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
-        if field.stringValue != text { field.stringValue = text }
-    }
-    @MainActor final class Coordinator: NSObject, NSSearchFieldDelegate {
-        var text: Binding<String>
-        init(text: Binding<String>) { self.text = text }
-        /// Committed typing, the clear button and Escape all arrive here. AppKit
-        /// posts nothing for text an input method is still composing, so the query
-        /// waits for the candidate — which is what the SwiftUI field it replaces did.
-        func controlTextDidChange(_ notification: Notification) {
-            guard let field = notification.object as? NSSearchField else { return }
-            text.wrappedValue = field.stringValue
-        }
     }
 }
 
@@ -505,6 +441,16 @@ struct ConversationView: View {
     @State private var followTail = true
     @State private var userScrolling = false
     @State private var microphoneHovered = false
+    /// The transcript is one of the window's focus stops, so it carries the state a
+    /// focused scroll area needs: where it is, and how to move.
+    @State private var scrollPosition = ScrollPosition()
+    @State private var transcriptGeometry = TranscriptGeometry()
+    /// What the transcript's key handling needs to know about the scroll area. Read from a
+    /// second geometry observer so the tail-following one above stays exactly as it was.
+    private struct TranscriptGeometry: Equatable {
+        var visible: CGRect = .zero
+        var contentHeight: CGFloat = 0
+    }
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -532,6 +478,22 @@ struct ConversationView: View {
                 } action: { _, nearBottom in
                     if userScrolling { followTail = nearBottom }
                 }
+                .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
+                    TranscriptGeometry(visible: geometry.visibleRect, contentHeight: geometry.contentSize.height)
+                } action: { _, value in transcriptGeometry = value }
+                .scrollPosition($scrollPosition)
+                // The chat itself is a Tab stop, which is what makes the window's focus
+                // ring 侧栏列表 → 会话记录 → 输入框 → 检查器 instead of skipping the
+                // conversation. SwiftUI builds a real key view for `.focusable()` and
+                // AppKit places it geometrically, with no traversal code of Echo's own —
+                // measured, with Full Keyboard Access off, in
+                // docs/repros/window-focus-ring.swift [F1].
+                .focusable()
+                // That key view is NOT inside the scroll view, so scrollPageDown: and
+                // friends reach nobody ([F3]). SwiftUI's own path is the one that works.
+                .onKeyPress(keys: [.upArrow, .downArrow, .pageUp, .pageDown, .home, .end]) { transcriptKey($0) }
+                .accessibilityIdentifier("conversation.transcript")
+                .accessibilityLabel("会话记录")
                 .overlay(alignment: .bottom) {
                     if !followTail {
                         Button("回到最新消息", systemImage: "arrow.down") {
@@ -588,6 +550,37 @@ struct ConversationView: View {
             .frame(maxWidth: 760).padding(.horizontal, 24).padding(.bottom, 20).padding(.top, 8)
             .frame(maxWidth: .infinity)
         }
+    }
+    /// The keys a focused scroll area answers on macOS: arrows by a line, Page Up / Page
+    /// Down by a screenful, Home / End and ⌘↑ / ⌘↓ to the ends.
+    private func transcriptKey(_ press: KeyPress) -> KeyPress.Result {
+        let page = max(40, transcriptGeometry.visible.height - 40)
+        // One comfortable line of chat, matching the transcript's own body metrics.
+        let line = WorkspaceStyle.bodySize * 3
+        switch press.key {
+        case .home: scrollTranscript(toBottom: false)
+        case .end: scrollTranscript(toBottom: true)
+        case .upArrow where press.modifiers.contains(.command): scrollTranscript(toBottom: false)
+        case .downArrow where press.modifiers.contains(.command): scrollTranscript(toBottom: true)
+        case .upArrow: scrollTranscript(by: -line)
+        case .downArrow: scrollTranscript(by: line)
+        case .pageUp: scrollTranscript(by: -page)
+        case .pageDown: scrollTranscript(by: page)
+        default: return .ignored
+        }
+        return .handled
+    }
+    private func scrollTranscript(by delta: CGFloat) {
+        let maxOffset = max(0, transcriptGeometry.contentHeight - transcriptGeometry.visible.height)
+        let target = min(max(0, transcriptGeometry.visible.minY + delta), maxOffset)
+        scrollPosition.scrollTo(y: target)
+        // Scrolling by keyboard is the person driving, the same as dragging: only a move
+        // that ends at the bottom keeps new replies pulling the view down.
+        followTail = target >= maxOffset - 1
+    }
+    private func scrollTranscript(toBottom: Bool) {
+        scrollPosition.scrollTo(edge: toBottom ? .bottom : .top)
+        followTail = toBottom
     }
     private var voiceOwner: VoiceSessionSnapshot.Owner? { voice.snapshot.session.owner }
     private var isVoiceOwner: Bool { voiceOwner?.conversationID == conversationID }
@@ -875,6 +868,16 @@ final class ComposerTextView: NSTextView {
         defer { reportFocus() }
         return super.resignFirstResponder()
     }
+    /// Tab moves on instead of typing a tab.
+    ///
+    /// An NSTextView that is not a field editor answers Tab by inserting U+0009, which
+    /// makes this the one control in the window that keyboard traversal can enter and
+    /// never leave — measured: four Tabs from the search field and four ⇧Tabs from the
+    /// chat list all stayed here, and the draft came out as "\t\t\t". A chat draft has
+    /// no use for a literal tab, so hand both directions to the key view loop, which is
+    /// what every non-editor text control on macOS does.
+    override func insertTab(_ sender: Any?) { window?.selectNextKeyView(sender) }
+    override func insertBacktab(_ sender: Any?) { window?.selectPreviousKeyView(sender) }
     private func reportFocus() {
         guard onFocusChange != nil else { return }
         // First-responder changes finish after these overrides return.
