@@ -5,7 +5,7 @@ project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 source scripts/swift-env.sh
 # Compile the production adapter against a controllable bridge for receipt races.
-swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
+swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx27.0 \
     macos/AgentWire.swift macos/AgentTaskSource.swift macos/AgentConnectionTester.swift \
     macos/TaskStore.swift macos/ModelTaskSource.swift macos/SettingsStore.swift \
     macos/VoiceProtocol.swift macos/VoiceDiagnostics.swift tests/AgentTaskSourceTests.swift \

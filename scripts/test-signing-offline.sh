@@ -13,7 +13,7 @@ cp macos/Info.plist "$app/Contents/Info.plist"
 cat > "$temp_dir/main.swift" <<'SWIFT'
 print("PASS: ad-hoc executable runs")
 SWIFT
-swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
+swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx27.0 \
     "$temp_dir/main.swift" -o "$app/Contents/MacOS/Echo"
 echo original > "$app/Contents/Resources/marker"
 

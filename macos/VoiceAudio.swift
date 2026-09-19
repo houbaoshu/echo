@@ -175,6 +175,15 @@ extension VoiceAudioHandling {
     func resetCapture(epoch: Int, paused: Bool) {}
 }
 
+extension AVAudioNode {
+    func installTapChecked(onBus bus: AVAudioNodeBus, bufferSize: AVAudioFrameCount,
+                           format: AVAudioFormat?, block: @escaping AVAudioNodeTapBlock) throws {
+        // Xcode 27.0 ships no Swift overlay for installTapOnBus:…:error:block:; the
+        // NS_REFINED_FOR_SWIFT method imports as throwing with an empty error label.
+        try __installTap(onBus: bus, bufferSize: bufferSize, format: format, error: (), block: block)
+    }
+}
+
 @MainActor final class VoiceAudio: NSObject, VoiceAudioHandling {
     var onFailure: ((String) -> Void)?
     var inputOutputLatency: TimeInterval {
@@ -223,7 +232,17 @@ extension VoiceAudioHandling {
     func setPlaybackPaused(_ paused: Bool) {
         playbackPaused = paused
         if paused { player?.pause() }
-        else if engine?.isRunning == true { player?.play() }
+        else if engine?.isRunning == true { resumePlayer("恢复播放") }
+    }
+
+    /// playAudio() reports failures the old play() swallowed; surface them on the
+    /// diagnostics chain instead of leaving a silently stopped player behind.
+    private func resumePlayer(_ operation: String) {
+        guard let player else { return }
+        do { try player.playAudio() } catch {
+            VoiceDiagnostics.shared.record("6 播放器", "FAIL", "\(operation)：\(VoiceDiagnostics.reason(error))")
+            onFailure?("音频播放器无法恢复，请重新开始。")
+        }
     }
 
     func setOutputMuted(_ muted: Bool) {
@@ -264,14 +283,14 @@ extension VoiceAudioHandling {
                 captureConverter = processor
                 // The tap runs on CoreAudio's queue. Explicit Sendable prevents Swift 6
                 // from inheriting this method's MainActor isolation and trapping.
-                input.installTap(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in processor.accept(buffer) }
+                try input.installTapChecked(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in processor.accept(buffer) }
                 tapped = true
             } else { continuation.finish() }
             operation = "连接播放器与输出设备"
             engine.attach(player)
-            engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+            try engine.connectNode(player, to: engine.mainMixerNode, format: playbackFormat)
             if let duplexFormat {
-                engine.connect(engine.mainMixerNode, to: engine.outputNode, format: duplexFormat)
+                try engine.connectNode(engine.mainMixerNode, to: engine.outputNode, format: duplexFormat)
                 VoiceDiagnostics.shared.record("2 服务初始化", "INFO", "统一双向音频格式 rate=\(duplexFormat.sampleRate) channels=\(duplexFormat.channelCount)；混音器将 24 kHz TTS 重采样")
             }
             let output = engine.outputNode.inputFormat(forBus: 0)
@@ -280,7 +299,7 @@ extension VoiceAudioHandling {
             operation = "prepare / start 音频引擎"
             engine.prepare()
             operation = "start 音频引擎"
-            try engine.start(); player.play()
+            try engine.start(); try player.playAudio()
             VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "AVAudioEngine running=\(engine.isRunning) player=\(player.isPlaying)")
             // The route the running graph sits on. Starting capture is what flips a Bluetooth
             // headset to HFP, so this is sampled after start, once that flip has happened.
@@ -341,7 +360,7 @@ extension VoiceAudioHandling {
             self.restarts += 1
             do {
                 try engine.start()
-                if !self.playbackPaused { self.player?.play() }
+                if !self.playbackPaused { try self.player?.playAudio() }
                 VoiceDiagnostics.shared.record("2 服务初始化", "PASS",
                     "启动期设备重新配置后已恢复引擎 attempt=\(self.restarts) running=\(engine.isRunning)")
             } catch {
@@ -424,7 +443,7 @@ extension VoiceAudioHandling {
         generation = UUID(); queuedFrames = 0; trailingByte = Data(); playbackPaused = false
         scheduledBuffers = []; playedBackFrames = 0; headStartSample = nil
         player?.stop()
-        if engine?.isRunning == true { player?.play() }
+        if engine?.isRunning == true { resumePlayer("打断后重启播放器") }
     }
     func finishCapture() { stop(flushCapture: true) }
     func stop() { stop(flushCapture: false) }

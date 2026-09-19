@@ -13,7 +13,7 @@ done
 compile_ui_tests() {
     local output="$1"
     shift
-    swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
+    swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx27.0 \
         "$@" -I runtime/include -I agent-bridge/include "${sources[@]}" tests/ConversationUITests.swift \
         target/aarch64-apple-darwin/release/libecho_runtime.a \
         target/aarch64-apple-darwin/release/libecho_agent.a \

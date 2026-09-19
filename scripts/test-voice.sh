@@ -13,7 +13,7 @@ typeset -a sources=()
 for source_file in macos/*.swift; do
     if [[ "$source_file" != macos/main.swift ]]; then sources+=("$source_file"); fi
 done
-swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
+swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx27.0 \
     -I runtime/include -I agent-bridge/include "${sources[@]}" tests/VoiceTests.swift tests/VoiceBargeInTests.swift tests/DictationTests.swift tests/AppleSpeechTests.swift tests/AgentVoiceTests.swift \
     target/aarch64-apple-darwin/release/libecho_runtime.a \
     target/aarch64-apple-darwin/release/libecho_agent.a \

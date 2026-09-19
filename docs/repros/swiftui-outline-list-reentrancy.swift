@@ -1,3 +1,4 @@
+//Reconfirmed on macOS 27.0 with Xcode 27.0: the reentrancy warning is still reproducible.
 // SwiftUI List: two collapsible groups gaining rows in one update log an AppKit
 // reentrancy warning.
 //

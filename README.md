@@ -21,7 +21,7 @@ Mini Agent 主线迁移已完成[第 5 阶段自动验收](docs/mini-agent-mainl
 
 ## 构建与运行
 
-需要 Apple Silicon Mac、macOS 26 或更新版本、Rust/Cargo，以及支持 Swift 6 的 Xcode Command Line Tools 和 macOS 26 SDK。脚本默认选择 macOS 26 SDK，也可通过 `SDKROOT` 指定兼容 SDK；首次构建需要下载 Rust 依赖。
+需要 Apple Silicon Mac、macOS 27 或更新版本、Rust/Cargo，以及支持 Swift 6 的 Xcode Command Line Tools 和 macOS 27 SDK。脚本默认选择当前开发者目录的默认 SDK（macOS 27），也可通过 `SDKROOT` 指定兼容 SDK；首次构建需要下载 Rust 依赖。
 
 当前构建还依赖相邻目录中的 `mini-agent-rs`：
 
@@ -166,4 +166,4 @@ cargo clippy --locked --workspace -- -D warnings
 - 本地 Ollama 模型不是当前正式支持目标。每个 Provider 仅保存一组配置，同一时刻只有一个 active provider，不支持多账号管理或自动获取模型 / 音色列表。
 - Live Voice 依赖 Agent Plan ASR/TTS，未完全移除模型 Key 复用逻辑，也不是端到端语音模型。Apple 本地听写准确率受语言资源和语音内容影响；真人插话延迟、扬声器回声及多设备切换尚未完成系统性体验评估。
 - 部分资源清理和缓存淘汰留待后续版本：删除会话尚不清理独立历史文件，项目浏览缓存尚无容量淘汰策略。
-- 当前没有公证、安装器或自动更新，不支持 Intel Mac 或 macOS 26 之前的系统。
+- 当前没有公证、安装器或自动更新，不支持 Intel Mac 或 macOS 27 之前的系统。

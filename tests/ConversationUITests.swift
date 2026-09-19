@@ -1074,7 +1074,7 @@ import SwiftUI
             try await Task.sleep(for: .milliseconds(150)); window.contentView?.layoutSubtreeIfNeeded()
         }
         try await settle(); try await settle()
-        precondition(NSApp.isActive && window.isKeyWindow, "Real events need the workspace window to be key")
+        try await waitForPointerTarget(window)
         func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) async throws {
             for down in [true, false] {
                 let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)!
@@ -1087,6 +1087,7 @@ import SwiftUI
         func move(_ point: NSPoint) async throws {
             let height = NSScreen.screens[0].frame.height
             let screen = window.convertPoint(toScreen: point)
+            try await waitForPointerTarget(window, at: screen)
             CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                     mouseCursorPosition: CGPoint(x: screen.x, y: height - screen.y), mouseButton: .left)?
                 .post(tap: .cghidEventTap)
@@ -1097,6 +1098,9 @@ import SwiftUI
         func click(_ point: NSPoint, isolate: Bool = true) async throws {
             let height = NSScreen.screens[0].frame.height
             let screen = window.convertPoint(toScreen: point)
+            // Another app can take activation back between interactions; the event has
+            // to land on this window, not on whatever is sitting over the same pixels.
+            try await waitForPointerTarget(window, at: screen)
             if isolate {
                 CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                         mouseCursorPosition: CGPoint(x: screen.x + 700, y: height - screen.y - 300),
@@ -1140,12 +1144,17 @@ import SwiftUI
         // 2. Every part of a row opens its chat, including the blank space beside the
         // title and the row's top and bottom edges.
         for title in ["最近丙", "最近丁", "项目甲"] {
-            guard let rect = rowRect(chat(title)) else { preconditionFailure("\(title) is missing from 最近") }
-            for point in [NSPoint(x: rect.minX + 4, y: rect.midY), NSPoint(x: rect.midX, y: rect.midY),
-                          NSPoint(x: rect.maxX - 6, y: rect.midY), NSPoint(x: rect.maxX - 6, y: rect.minY + 2),
-                          NSPoint(x: rect.maxX - 6, y: rect.maxY - 2)] {
+            precondition(rowRect(chat(title)) != nil, "\(title) is missing from 最近")
+            for spot in 0..<5 {
                 workspace.select(ids[title == "最近丙" ? "最近丁" : "最近丙"]!)
                 try await settle()
+                // Measure the row immediately before aiming at it: opening a chat can
+                // relayout the sidebar, and a person clicks where the row is now, not
+                // where it sat several clicks ago.
+                guard let rect = rowRect(chat(title)) else { preconditionFailure("\(title) is missing from 最近") }
+                let point = [NSPoint(x: rect.minX + 4, y: rect.midY), NSPoint(x: rect.midX, y: rect.midY),
+                             NSPoint(x: rect.maxX - 6, y: rect.midY), NSPoint(x: rect.maxX - 6, y: rect.minY + 2),
+                             NSPoint(x: rect.maxX - 6, y: rect.maxY - 2)][spot]
                 try await click(point)
                 precondition(openTitle() == title,
                              "Clicking \(title) at x=\(Int(point.x - rect.minX)) y=\(Int(point.y - rect.minY)) of \(Int(rect.width))×\(Int(rect.height))pt missed the row")
@@ -1389,6 +1398,7 @@ import SwiftUI
         conversation.store.mainDraft = "保留输入草稿"
         precondition(workspace.associateProject(workspace.addProject(url: root), conversationID: conversation.id))
         main.present()
+        try await waitForPointerTarget(window)
         let restoreCursor = NSEvent.mouseLocation
         func move(_ type: CGEventType, to point: NSPoint) {
             let flipped = CGPoint(x: point.x, y: NSScreen.screens[0].frame.maxY - point.y)
@@ -1407,19 +1417,28 @@ import SwiftUI
             preconditionFailure("Project picker or composer missing")
         }
         let pickerFrame = picker.accessibilityFrame?() ?? .zero
-        move(.mouseMoved, to: NSPoint(x: pickerFrame.minX - 40, y: pickerFrame.midY))
-        try await refresh()
+        /// Closing the previous test's window hands activation back to whatever was in
+        /// front before, and that lands asynchronously — so re-establish the window as
+        /// the pointer's target and hover again instead of trusting a single attempt.
+        func hover(_ point: NSPoint) async throws {
+            for _ in 0..<25 {
+                try await waitForPointerTarget(window, at: point)
+                move(.mouseMoved, to: point)
+                try await refresh()
+                if NSWindow.windowNumber(at: NSEvent.mouseLocation,
+                                         belowWindowWithWindowNumber: 0) == window.windowNumber { return }
+            }
+            preconditionFailure("Main window is under the pointer")
+        }
+        try await hover(NSPoint(x: pickerFrame.minX - 40, y: pickerFrame.midY))
         precondition(findAccessibility("conversation.project.detach", in: content) == nil, "Detach stays hidden without hover")
-        move(.mouseMoved, to: NSPoint(x: pickerFrame.midX, y: pickerFrame.midY))
-        try await refresh()
-        precondition(NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber,
-                     "Main window is under the pointer")
+        try await hover(NSPoint(x: pickerFrame.midX, y: pickerFrame.midY))
         guard let detach = findAccessibility("conversation.project.detach", in: content) else {
             preconditionFailure("Pointer hover reveals project detach action")
         }
         let detachFrame = detach.accessibilityFrame?() ?? .zero
         let target = NSPoint(x: detachFrame.midX, y: detachFrame.midY)
-        move(.mouseMoved, to: target)
+        try await hover(target)
         try await refresh(150)
         move(.leftMouseDown, to: target)
         try await Task.sleep(for: .milliseconds(50))
@@ -2851,15 +2870,30 @@ import SwiftUI
         func assertMarkdownPreview() {
             precondition(findAccessibility("projectFiles.text", in: inspector) == nil, "Markdown is rendered, not shown in the source text view")
             precondition(findAccessibility("conversation.code.copy", in: inspector) != nil, "File preview reuses the Markdown code block component")
-            func fields(in view: NSView) -> [NSTextField] {
-                (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap { fields(in: $0) }
+            /// SwiftUI no longer backs rendered text with NSTextField, so match on what the
+            /// person gets instead of the backing class: a run of static — not editable —
+            /// text carrying the rendered string, which they can select and copy. Text that
+            /// is not selectable contributes no view here at all.
+            func renderedText(in view: NSView) -> [String] {
+                var found: [String] = []
+                func visit(_ candidate: NSView) {
+                    if candidate.accessibilityRole() == .staticText,
+                       let value = candidate.accessibilityValue() as? String, !value.isEmpty,
+                       candidate.responds(to: NSSelectorFromString("selectAll:")),
+                       candidate.responds(to: NSSelectorFromString("copy:")) {
+                        found.append(value)
+                    }
+                    candidate.subviews.forEach(visit)
+                }
+                visit(view)
+                return found
             }
-            let texts = fields(in: inspector)
-            precondition(texts.contains { $0.stringValue == "Project preview" && $0.isSelectable && !$0.isEditable },
+            let texts = renderedText(in: inspector)
+            precondition(texts.contains { $0 == "Project preview" },
                          "Markdown heading is rendered without its source marker and remains selectable/read-only")
-            precondition(texts.contains { $0.stringValue.contains("引用内容") })
-            precondition(texts.contains { $0.stringValue.contains("第一项") })
-            precondition(texts.contains { $0.stringValue.contains("只读 粗体 和 链接") })
+            precondition(texts.contains { $0.contains("引用内容") })
+            precondition(texts.contains { $0.contains("第一项") })
+            precondition(texts.contains { $0.contains("只读 粗体 和 链接") })
         }
         assertMarkdownPreview()
         try await togglePreview()
@@ -3285,6 +3319,25 @@ import SwiftUI
         print("PASS: settings page owns typing and focuses its section list, full-row pointer targets, system section list arrow/Tab traversal,"
               + " pane swap keeps the key view loop, field editing, disabled controls,"
               + " Return saves and Escape leaves, leaving cancels a running voice test and restores composer focus\(fullKeyboardAccess ? ", Space activation under Full Keyboard Access" : "")")
+    }
+
+    /// Posted pointer events go to whichever window the window server has on top at
+    /// that screen point, and activation reaches it asynchronously — a fixed sleep
+    /// races any window already covering the same region. Wait for the workspace
+    /// window to actually be the one under the pointer before driving it.
+    @MainActor private static func waitForPointerTarget(_ window: NSWindow, at point: NSPoint? = nil,
+                                                        timeout: Duration = .seconds(5)) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        let probe = point ?? NSPoint(x: window.frame.midX, y: window.frame.midY)
+        while clock.now < deadline {
+            if NSApp.isActive, window.isKeyWindow,
+               NSWindow.windowNumber(at: probe, belowWindowWithWindowNumber: 0) == window.windowNumber { return }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        preconditionFailure("Real events need the workspace window frontmost under the pointer")
     }
 
     @MainActor private static func findView(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {

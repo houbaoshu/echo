@@ -41,7 +41,7 @@ cargo build --locked --release --target aarch64-apple-darwin
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources/pets/chiyan"
 # Include new app sources automatically, matching the test scripts' discovery.
 typeset -a sources=(macos/*.swift)
-swiftc -swift-version 6 -O -target arm64-apple-macosx26.0 \
+swiftc -swift-version 6 -O -target arm64-apple-macosx27.0 \
     -I runtime/include -I agent-bridge/include "${sources[@]}" \
     target/aarch64-apple-darwin/release/libecho_runtime.a \
     target/aarch64-apple-darwin/release/libecho_agent.a \

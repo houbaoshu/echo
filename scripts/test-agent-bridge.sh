@@ -12,7 +12,7 @@ probe_app="$probe_root/BridgeProbe.app"
 mkdir -p "$probe_app/Contents/MacOS" "$probe_app/Contents/Resources/agent"
 cp "$(/bin/zsh "$project_dir/scripts/agent-prompt-path.sh")" "$probe_app/Contents/Resources/agent/conversation.md"
 cp macos/Info.plist "$probe_app/Contents/Info.plist"
-swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx26.0 \
+swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx27.0 \
     -I agent-bridge/include macos/AgentWire.swift macos/AgentBridge.swift tests/AgentBridgeTests.swift \
     target/aarch64-apple-darwin/release/libecho_agent.a \
     -framework Security -framework SystemConfiguration \
