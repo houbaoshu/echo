@@ -17,65 +17,173 @@ func voiceDeadline<T: Sendable>(_ seconds: Double = 30, socket: URLSessionWebSoc
     } onCancel: { socket.cancel(with: .goingAway, reason: nil) }
 }
 
+/// Which of the three concurrent socket operations a failure came from. A dead socket
+/// fails send, receive and ping at once and the task group keeps only whichever finishes
+/// first, so the origin is the only way to tell a first cause from ENOTCONN reported by
+/// a later operation on a socket that was already gone.
+enum VoiceIO: String, Sendable { case send, receive, ping }
+
+/// Blocks redirects exactly as `NoRedirectDelegate` does, and additionally records the
+/// WebSocket lifecycle that `URLSessionWebSocketTask` never reports to its caller: the
+/// handshake, the peer's close frame and code, and the error the task completed with.
+/// A close reason is remote payload, so its length is recorded and its bytes are not.
+final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable {
+    private let label: String
+    private let connection: String
+    init(label: String, connection: String) {
+        self.label = label
+        self.connection = connection
+        super.init()
+    }
+    private func record(_ status: String, _ message: String) {
+        let line = "\(label) [\(connection)] \(message)"
+        Task { @MainActor in VoiceDiagnostics.shared.record("3 连接", status, line) }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol proto: String?) {
+        record("EVENT", "delegate open")
+    }
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        // The only authoritative statement that the peer, rather than the network or this
+        // client, ended the connection. `task.closeCode` is read synchronously inside a
+        // catch and can still be .invalid by the time this arrives.
+        record("EVENT", "delegate close code=\(closeCode.rawValue) reasonBytes=\(reason?.count ?? 0)")
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let error else { record("EVENT", "delegate complete 无错误"); return }
+        record("FAIL", "delegate complete \(VoiceDiagnostics.reason(error))")
+    }
+}
+
 @MainActor final class VoiceSocket {
     private let session: URLSession
     let task: URLSessionWebSocketTask
     private let label: String
+    /// First eight characters of `X-Api-Connect-Id`, so overlapping ASR and TTS sockets
+    /// stay apart in the log and a line can be matched against the service's own records.
+    private let connection: String
+    private let opened = ContinuousClock.now
     private var receivedFrames = 0
     private var sentFrames = 0
+    private var pongs = 0
+    private var lastSend: ContinuousClock.Instant?
+    private var lastReceive: ContinuousClock.Instant?
+    private var lastPong: ContinuousClock.Instant?
+    private var noted = false
+    /// Set as `close` begins, before the task is cancelled, so an operation failed by that
+    /// cancellation can tell this client's own teardown from a fault it discovered.
+    private var closing = false
     init(path: String, resource: String, key: String) throws {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !key.contains("\r"), !key.contains("\n") else { throw SettingsError("请在模型设置中保存可用于语音服务的 API Key。") }
         label = path.hasPrefix("tts") ? "TTS" : "ASR"
-        VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "\(label) path=/api/v3/plan/\(path) resource=\(resource)")
+        let connectID = UUID().uuidString
+        connection = String(connectID.prefix(8))
+        VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "\(label) [\(connection)] path=/api/v3/plan/\(path) resource=\(resource)")
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 86400
-        session = URLSession(configuration: config, delegate: NoRedirectDelegate(), delegateQueue: nil)
+        session = URLSession(configuration: config, delegate: VoiceSocketDelegate(label: label, connection: connection),
+                             delegateQueue: nil)
         var request = URLRequest(url: URL(string: "wss://openspeech.bytedance.com/api/v3/plan/\(path)")!)
         request.setValue(key, forHTTPHeaderField: "X-Api-Key")
         request.setValue(resource, forHTTPHeaderField: "X-Api-Resource-Id")
-        request.setValue(UUID().uuidString, forHTTPHeaderField: "X-Api-Connect-Id")
+        request.setValue(connectID, forHTTPHeaderField: "X-Api-Connect-Id")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "X-Api-Request-Id")
         task = session.webSocketTask(with: request)
         task.maximumMessageSize = VoiceWire.limit
-        VoiceDiagnostics.shared.record("3 连接", "START", "\(label) WebSocket 正在握手")
+        VoiceDiagnostics.shared.record("3 连接", "START", "\(label) [\(connection)] WebSocket 正在握手")
         task.resume()
+    }
+    private var age: String { "age=\(opened.duration(to: .now).components.seconds)s" }
+    private func since(_ instant: ContinuousClock.Instant?) -> String {
+        guard let instant else { return "never" }
+        let elapsed = instant.duration(to: .now).components
+        return "\(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000)ms"
+    }
+    private var counters: String {
+        "\(age) sent=\(sentFrames) received=\(receivedFrames) pongs=\(pongs)" +
+        " sinceSend=\(since(lastSend)) sinceReceive=\(since(lastReceive)) sincePong=\(since(lastPong))"
+    }
+    /// Records a failure where it happened. The task group surfaces only the first of the
+    /// three concurrent operations to finish, and an already-dead socket answers ENOTCONN,
+    /// so without this the line naming the real cause is discarded unseen.
+    ///
+    /// Once `close` has begun, the operations still in flight are being failed by this
+    /// client's own teardown. Those are ordinary events: an orderly end of call must not
+    /// fill the log with the same ENOTCONN that a real drop reports.
+    private func note(_ origin: VoiceIO, _ error: Error) {
+        guard !(error is CancellationError) else { return }
+        if !closing { noted = true }
+        VoiceDiagnostics.shared.record("3 连接", closing ? "EVENT" : "FAIL",
+            "\(label) [\(connection)] origin=\(origin.rawValue)\(closing ? " afterClose=true" : "") cancelled=\(Task.isCancelled) \(counters)；\(VoiceDiagnostics.reason(error))")
     }
     func send(_ data: Data) async throws {
         let task = task
-        try await voiceDeadline(socket: task) { try await task.send(.data(data)) }
+        do { try await voiceDeadline(socket: task) { try await task.send(.data(data)) } }
+        catch { note(.send, error); throw error }
         sentFrames += 1
-        if sentFrames == 1 { VoiceDiagnostics.shared.record("3 连接", "PASS", "\(label) 首包发送成功；HTTP=\((task.response as? HTTPURLResponse)?.statusCode ?? 0)") }
+        lastSend = .now
+        if sentFrames == 1 { VoiceDiagnostics.shared.record("3 连接", "PASS", "\(label) [\(connection)] 首包发送成功；HTTP=\((task.response as? HTTPURLResponse)?.statusCode ?? 0)") }
     }
     func receive(tts: Bool, timeout: Double? = 30) async throws -> VoiceWire.Frame {
         let task = task
         let message: URLSessionWebSocketTask.Message
-        if let timeout { message = try await voiceDeadline(timeout, socket: task) { try await task.receive() } }
-        else {
-            message = try await withTaskCancellationHandler { try await task.receive() }
-                onCancel: { task.cancel(with: .goingAway, reason: nil) }
+        do {
+            if let timeout { message = try await voiceDeadline(timeout, socket: task) { try await task.receive() } }
+            else {
+                message = try await withTaskCancellationHandler { try await task.receive() }
+                    onCancel: { task.cancel(with: .goingAway, reason: nil) }
+            }
+        } catch { note(.receive, error); throw error }
+        lastReceive = .now
+        guard case .data(let data) = message else {
+            let failure = SettingsError("语音服务没有返回二进制数据。")
+            note(.receive, failure); throw failure
         }
-        guard case .data(let data) = message else { throw SettingsError("语音服务没有返回二进制数据。") }
-        let frame = try VoiceWire.decode(data, tts: tts)
+        // A type 15 frame decodes into the service's own refusal code. That is the first
+        // cause worth having, so it is recorded before the group can discard it.
+        let frame: VoiceWire.Frame
+        do { frame = try VoiceWire.decode(data, tts: tts) } catch { note(.receive, error); throw error }
         receivedFrames += 1
         if receivedFrames == 1 || (tts && frame.type != 11) {
-            VoiceDiagnostics.shared.record("3 连接", "EVENT", "\(label) frame=\(receivedFrames) type=\(frame.type) event=\(frame.event ?? -1) bytes=\(frame.payload.count)")
+            VoiceDiagnostics.shared.record("3 连接", "EVENT", "\(label) [\(connection)] frame=\(receivedFrames) type=\(frame.type) event=\(frame.event ?? -1) bytes=\(frame.payload.count)")
         }
         return frame
     }
     func ping() async throws {
         let task = task
-        try await voiceDeadline(10, socket: task) {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                task.sendPing { error in
-                    if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+        let sent = ContinuousClock.now
+        do {
+            try await voiceDeadline(10, socket: task) {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    task.sendPing { error in
+                        if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                    }
                 }
             }
+        } catch { note(.ping, error); throw error }
+        pongs += 1
+        lastPong = .now
+        // A silent heartbeat leaves no evidence of how long the socket was provably alive
+        // before a drop. Every third pong is one line a minute at the 20 second interval.
+        if pongs == 1 || pongs % 3 == 0 {
+            VoiceDiagnostics.shared.record("3 连接", "EVENT", "\(label) [\(connection)] pong \(pongs) rtt=\(since(sent)) \(age)")
         }
     }
-    func close() { task.cancel(with: .goingAway, reason: nil); session.invalidateAndCancel() }
+    func close() {
+        // Distinguishes a teardown this client chose from one it discovered, and marks every
+        // later failure as a consequence of this call. `closing` is set before the cancel
+        // that causes those failures, so none of them can be read back as a new fault.
+        if !noted, !closing { VoiceDiagnostics.shared.record("3 连接", "EVENT", "\(label) [\(connection)] 客户端主动关闭 \(counters)") }
+        closing = true
+        task.cancel(with: .goingAway, reason: nil); session.invalidateAndCancel()
+    }
     func friendlyError(_ error: Error) -> String {
-        VoiceDiagnostics.shared.record("3 连接", "FAIL", "\(label) HTTP=\((task.response as? HTTPURLResponse)?.statusCode ?? 0) close=\(task.closeCode.rawValue) sent=\(sentFrames) received=\(receivedFrames)；\(VoiceDiagnostics.reason(error))")
+        VoiceDiagnostics.shared.record("3 连接", "FAIL", "\(label) [\(connection)] 上报 HTTP=\((task.response as? HTTPURLResponse)?.statusCode ?? 0) close=\(task.closeCode.rawValue) \(counters)；\(VoiceDiagnostics.reason(error))")
         if let http = task.response as? HTTPURLResponse {
             switch http.statusCode {
             case 401, 403: return "语音鉴权失败，请检查 Agent Plan 专属密钥和套餐权限。"
