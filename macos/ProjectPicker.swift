@@ -69,7 +69,7 @@ struct ConversationProjectPicker: View {
         HStack(spacing: 6) {
             Image(systemName: project?.isAvailable == false ? "folder.badge.questionmark" : "folder")
             Text(project?.name ?? "选择项目").lineLimit(1)
-            if project?.isAvailable == false { Text("不可用").foregroundStyle(.orange) }
+            if project?.isAvailable == false { Text("不可用").foregroundStyle(WorkspaceStyle.warning) }
             if editable { Image(systemName: "chevron.down").font(.system(size: 9)) }
         }.font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
             .padding(.horizontal, 7).frame(height: 28).contentShape(Rectangle())
@@ -97,6 +97,12 @@ struct ProjectSelectionPanel: View {
     @State private var query = ""
     @State private var highlighted: ProjectPickerOption = .add
     @FocusState private var searchFocused: Bool
+    /// The list is a system source list, so it hands back an optional selection. A click
+    /// on its background clears it; the option that was highlighted stays highlighted,
+    /// because Return has to keep meaning something.
+    private var selection: Binding<ProjectPickerOption?> {
+        Binding(get: { highlighted }, set: { if let value = $0 { highlighted = value } })
+    }
     private var options: [ProjectPickerOption] { ProjectPickerOption.filtered(projects: workspace.projects, query: query) }
     private func project(_ option: ProjectPickerOption) -> WorkspaceProject? {
         guard case .project(let id) = option else { return nil }
@@ -114,28 +120,24 @@ struct ProjectSelectionPanel: View {
             TextField("搜索项目名称或路径", text: $query).textFieldStyle(.roundedBorder)
                 .focused($searchFocused).accessibilityIdentifier("projectPicker.search")
                 .onSubmit { choose(highlighted) }
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 3) {
-                        ForEach(options, id: \.self) { option in
-                            Button { choose(option) } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: option == .add ? "folder.badge.plus" : "folder")
-                                    Text(project(option)?.name ?? "添加项目文件夹…").lineLimit(1)
-                                    Spacer(minLength: 0)
-                                    if !enabled(option) { Text("不可用").font(WorkspaceStyle.caption) }
-                                    if selected(option) { Image(systemName: "checkmark") }
-                                }.padding(8).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.accentColor.opacity(highlighted == option ? 0.12 : 0)))
-                            }.buttonStyle(.plain).disabled(!enabled(option)).id(option)
-                                .accessibilityIdentifier(project(option).map { "projectPicker.project.\($0.id)" } ?? "projectPicker.add")
-                                .accessibilityAddTraits(selected(option) ? .isSelected : [])
-                                .onHover { if $0 && enabled(option) { highlighted = option } }
-                        }
-                    }
-                }.frame(maxHeight: 280)
-                    .onChange(of: highlighted) { _, value in proxy.scrollTo(value) }
-            }
+            // A system source list owns the highlight: the selection fill, hover, the
+            // focus ring and scrolling the highlight back into view all come from AppKit
+            // instead of being drawn here. `move(_:)` stays because the keyboard focus
+            // belongs to the search field above, not to the list — the list never sees
+            // the arrow keys, so something has to write the same selection a click does.
+            List(selection: selection) {
+                ForEach(options, id: \.self) { option in
+                    row(option).tag(option)
+                }
+            }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                // A list cannot size itself to its rows, so the panel's height comes from
+                // here — the same reason SearchPalette computes its own. Measured for
+                // `.listStyle(.sidebar)` at 14pt body: a row is 32pt, the list adds 20pt
+                // of its own insets, and vertical intercell spacing is 0. Left to a bare
+                // `maxHeight:` the list fills instead of hugging, which moves the popover
+                // off its anchor.
+                .frame(height: min(CGFloat(options.count) * 32 + 20, 280))
+                .accessibilityIdentifier("projectPicker.list")
         }.padding(12).frame(width: 320).font(WorkspaceStyle.body)
             .onAppear {
                 highlighted = selectedProjectID.map(ProjectPickerOption.project) ?? options.first(where: enabled) ?? .add
@@ -145,6 +147,30 @@ struct ProjectSelectionPanel: View {
             .onKeyPress(.downArrow) { move(1); return .handled }
             .onKeyPress(.upArrow) { move(-1); return .handled }
             .onExitCommand(perform: close)
+    }
+    /// One row of the list. The list draws the selection, the hover and the row metrics;
+    /// the row supplies the icon, the name and what a click means.
+    private func row(_ option: ProjectPickerOption) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: option == .add ? "folder.badge.plus" : "folder")
+            Text(project(option)?.name ?? "添加项目文件夹…").lineLimit(1)
+            Spacer(minLength: 0)
+            if !enabled(option) { Text("不可用").font(WorkspaceStyle.caption) }
+            if selected(option) { Image(systemName: "checkmark") }
+        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            // The row is already the hit target; this is what a click means on top of
+            // selecting — the same shape the project file tree uses.
+            .simultaneousGesture(TapGesture().onEnded { if enabled(option) { choose(option) } })
+            .disabled(!enabled(option))
+            // Keep the row one element so assistive technology reads and selects the row
+            // rather than its label.
+            .accessibilityElement(children: .combine)
+            // A list row is a table row, not a button: a tap gesture on it is reachable by
+            // the pointer and by nothing else, so assistive technology gets the same
+            // activation spelled out as the row's default action.
+            .accessibilityAction { if enabled(option) { choose(option) } }
+            .accessibilityIdentifier(project(option).map { "projectPicker.project.\($0.id)" } ?? "projectPicker.add")
+            .accessibilityAddTraits(selected(option) ? .isSelected : [])
     }
     private func move(_ delta: Int) {
         let selectable = options.filter(enabled)

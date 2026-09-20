@@ -44,6 +44,17 @@ private struct ProjectFileBrowserView: View {
                 }.listStyle(.sidebar).scrollContentBackground(.hidden)
                     .accessibilityIdentifier("projectFiles.tree")
                     .onKeyPress(.return) { activateSelection(); return .handled }
+                    // The list owns the menu, which is what brings the system's own
+                    // right-click semantics with it: right-clicking an unselected row
+                    // selects it first, and a menu raised over a multiple selection acts
+                    // on the whole selection rather than on the row under the pointer.
+                    //
+                    // No `primaryAction:`. The system would fire it on a double click,
+                    // and this tree opens on a single one — the row's own tap gesture
+                    // stays the activation, so clicking a file still previews it at once.
+                    .contextMenu(forSelectionType: String.self) { paths in
+                        entryMenu(paths)
+                    }
                     // The list keeps its identity when the project changes, so `onAppear`
                     // fires once for the window's whole life. Restoring on the location
                     // covers the first appearance and every later switch alike.
@@ -125,7 +136,21 @@ private struct ProjectFileBrowserView: View {
     }
     private func entryRow(_ entry: ProjectFileEntry) -> some View {
         ProjectFileRow(entry: entry, isExpanded: browser.state.expanded.contains(entry.path),
-                       url: { browser.url(for: entry.path) }, activate: { activate(entry) })
+                       activate: { activate(entry) })
+    }
+    /// The two Finder commands a read-only tree can honour. Nothing writes to disk.
+    /// The system hands in the selection the menu was raised over — one row for this
+    /// single-selection list, and nothing at all when it was raised over the background,
+    /// which is why an empty selection produces no menu rather than inert commands.
+    @ViewBuilder private func entryMenu(_ paths: Set<String>) -> some View {
+        let urls = paths.sorted().compactMap { browser.url(for: $0) }
+        if !urls.isEmpty {
+            Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            Button("拷贝路径") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
+            }
+        }
     }
     private var filePage: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -187,12 +212,12 @@ private struct ProjectFileBrowserView: View {
     }
 }
 
-/// One row of the tree. The list draws the selection, the triangle and the indentation;
-/// the row supplies the icon, the name, and what a click, Return or a press means.
+/// One row of the tree. The list draws the selection, the triangle, the indentation and
+/// the context menu; the row supplies the icon, the name, and what a click, Return or a
+/// press means.
 private struct ProjectFileRow: View {
     let entry: ProjectFileEntry
     let isExpanded: Bool
-    let url: () -> URL?
     let activate: () -> Void
     /// The source list raises this on the row it fills with the accent colour, so the
     /// icons switch to the selected-row tint the way a label does.
@@ -223,18 +248,6 @@ private struct ProjectFileRow: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("projectFiles.entry.\(entry.path)")
             .accessibilityValue(entry.kind == .directory ? (isExpanded ? "已展开" : "已折叠") : "")
-            .contextMenu {
-                // The two Finder commands a read-only tree can honour. Nothing writes to disk.
-                Button("在 Finder 中显示") {
-                    guard let url = url() else { return }
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                }
-                Button("拷贝路径") {
-                    guard let url = url() else { return }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(url.path, forType: .string)
-                }
-            }
     }
 }
 

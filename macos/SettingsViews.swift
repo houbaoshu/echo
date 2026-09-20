@@ -65,14 +65,26 @@ struct SettingsView: View {
     private var section: String { settings.selectedSection }
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    Text(section).font(WorkspaceStyle.pageTitle)
+            // Each section is its own `Form`, so the card grouping, the label column and
+            // its width, the control column, the row separators and the narrow-pane
+            // stacking all come from `.formStyle(.grouped)`. The form scrolls itself,
+            // which is why there is no ScrollView here any more; the page title sits
+            // above it and stays put, the way a System Settings pane's title does.
+            VStack(alignment: .leading, spacing: 0) {
+                Text(section).font(WorkspaceStyle.pageTitle)
+                    .padding(.horizontal, 32).padding(.top, 28).padding(.bottom, 4)
+                Group {
+                    // `revealsKey` and its focus are @State on a page that is only ever
+                    // hidden, never unmounted, so `onDisappear` does not run and this
+                    // `.id` stays the thing that resets them. The form migration changes
+                    // the rows, not that lifetime.
                     if section == "模型" { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
                     else if section == "语音" { VoiceSettingsView(settings: settings, voice: voice) }
                     else { PetSettingsView(pets: pets, settings: settings) }
-                }.frame(maxWidth: 820, alignment: .leading).padding(32).frame(maxWidth: .infinity, alignment: .topLeading)
-            }.background(Color(nsColor: .textBackgroundColor))
+                }.formStyle(.grouped)
+            }.frame(maxWidth: 820, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .background(Color(nsColor: .textBackgroundColor))
             if let owner = voice.snapshot.session.owner, let ws = workspace {
                 Divider()
                 VoiceAttributionBar(workspace: ws, voice: voice, owner: owner) {
@@ -144,36 +156,6 @@ struct SpiritCapsuleIcon: View {
     }
 }
 
-/// One labelled settings row. Every section uses it so labels, control width and
-/// row padding match, and so a narrow pane stacks each row the same way.
-struct SettingsRow<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 24) {
-                Text(title).font(WorkspaceStyle.body).frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
-                content.frame(width: 270)
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                Text(title).font(WorkspaceStyle.body)
-                content.frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }.padding(16)
-    }
-}
-
-/// The grouping box the settings rows sit in.
-struct SettingsCard<Content: View>: View {
-    @ViewBuilder let content: Content
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) { content }
-            .textFieldStyle(.roundedBorder)
-            .background(RoundedRectangle(cornerRadius: 16).fill(Color(nsColor: .controlBackgroundColor).opacity(0.35)))
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.09)))
-    }
-}
-
 /// While a section's connection test runs: what is happening, and the one way to
 /// stop it. Both sections show this instead of each inventing its own cancel.
 struct SettingsTestProgress: View {
@@ -196,37 +178,29 @@ struct ModelSettingsView: View {
     /// field replaced it, so the caret does not vanish mid-edit.
     @FocusState private var keyFieldFocused: Bool
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            SettingsCard {
-                SettingsRow(title: "Provider") {
-                    Picker("Provider", selection: Binding(get: { settings.selectedProvider }, set: { settings.selectProvider($0) })) {
-                        ForEach(ModelProvider.allCases, id: \.self) { provider in
-                            Text(provider.title).tag(provider)
-                        }
-                    }.pickerStyle(.menu).labelsHidden()
-                        .accessibilityLabel("Provider").accessibilityIdentifier("settings.provider")
-                }
-                Divider()
-                SettingsRow(title: "协议") {
-                    Picker("协议", selection: $settings.draft.apiProtocol) {
-                        ForEach(ModelAPIProtocol.allCases, id: \.self) { apiProtocol in
-                            Text(apiProtocol.title).tag(apiProtocol)
-                        }
-                    }.pickerStyle(.menu).labelsHidden()
-                        .accessibilityLabel("协议").accessibilityIdentifier("settings.protocol")
-                }
-                Divider()
-                SettingsRow(title: "Base URL") {
-                    TextField("https://api.openai.com/v1", text: $settings.draft.baseURL)
-                        .accessibilityLabel("Base URL").accessibilityIdentifier("settings.baseURL")
-                }
-                Divider()
-                SettingsRow(title: "API Key") {
+        // A control that takes its own label keeps it, so the form — not this view —
+        // decides where the label column ends and how a narrow pane stacks the row.
+        // `LabeledContent` is only for the one row whose control is a composite.
+        Form {
+            Section {
+                Picker("Provider", selection: Binding(get: { settings.selectedProvider }, set: { settings.selectProvider($0) })) {
+                    ForEach(ModelProvider.allCases, id: \.self) { provider in
+                        Text(provider.title).tag(provider)
+                    }
+                }.accessibilityLabel("Provider").accessibilityIdentifier("settings.provider")
+                Picker("协议", selection: $settings.draft.apiProtocol) {
+                    ForEach(ModelAPIProtocol.allCases, id: \.self) { apiProtocol in
+                        Text(apiProtocol.title).tag(apiProtocol)
+                    }
+                }.accessibilityLabel("协议").accessibilityIdentifier("settings.protocol")
+                TextField("Base URL", text: $settings.draft.baseURL, prompt: Text("https://api.openai.com/v1"))
+                    .accessibilityLabel("Base URL").accessibilityIdentifier("settings.baseURL")
+                LabeledContent("API Key") {
                     HStack(spacing: 8) {
                         Group {
-                            if revealsKey { TextField("输入 API Key", text: $settings.apiKey) }
-                            else { SecureField("输入 API Key", text: $settings.apiKey) }
-                        }.focused($keyFieldFocused)
+                            if revealsKey { TextField("API Key", text: $settings.apiKey, prompt: Text("输入 API Key")) }
+                            else { SecureField("API Key", text: $settings.apiKey, prompt: Text("输入 API Key")) }
+                        }.labelsHidden().focused($keyFieldFocused)
                             .accessibilityLabel("API Key").accessibilityIdentifier("settings.apiKey")
                         Button {
                             let editing = keyFieldFocused
@@ -244,29 +218,32 @@ struct ModelSettingsView: View {
                             .accessibilityIdentifier("settings.apiKey.clear")
                     }.disabled(!settings.selectedProvider.requiresKey)
                 }
-                Divider()
-                SettingsRow(title: "默认模型") {
-                    TextField("输入 Model ID", text: $settings.draft.model)
-                        .accessibilityLabel("默认模型").accessibilityIdentifier("settings.model")
+                TextField("默认模型", text: $settings.draft.model, prompt: Text("输入 Model ID"))
+                    .accessibilityLabel("默认模型").accessibilityIdentifier("settings.model")
+            }
+            Section {
+                ViewThatFits(in: .horizontal) {
+                    HStack { saveActions; Spacer(); testAction }
+                    VStack(alignment: .leading, spacing: 12) { saveActions; testAction }
+                }
+                if settings.testing {
+                    SettingsTestProgress(identifier: "settings.cancelTest") { settings.cancelTest() }
+                }
+                if let result = settings.testResult {
+                    Label(result, systemImage: settings.testSucceeded ? "checkmark.circle" : "info.circle")
+                        .font(WorkspaceStyle.caption).foregroundStyle(settings.testSucceeded ? WorkspaceStyle.success : WorkspaceStyle.secondary)
+                        .textSelection(.enabled).accessibilityIdentifier("settings.testResult")
+                }
+                if let notice = settings.notice {
+                    Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                        .accessibilityIdentifier("settings.notice")
                 }
             }
-            ViewThatFits(in: .horizontal) {
-                HStack { saveActions; Spacer(); testAction }
-                VStack(alignment: .leading, spacing: 12) { saveActions; testAction }
-            }
-            if settings.testing {
-                SettingsTestProgress(identifier: "settings.cancelTest") { settings.cancelTest() }
-            }
-            if let result = settings.testResult {
-                Label(result, systemImage: settings.testSucceeded ? "checkmark.circle" : "info.circle")
-                    .font(WorkspaceStyle.caption).foregroundStyle(settings.testSucceeded ? Color.green : .secondary)
-                    .textSelection(.enabled).accessibilityIdentifier("settings.testResult")
-            }
-            if let notice = settings.notice {
-                Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
-                    .accessibilityIdentifier("settings.notice")
-            }
         }
+        // A grouped form draws a text field as plain trailing-aligned text, which reads
+        // as a value rather than something editable. These are all credentials and
+        // endpoints the user types into, so they keep the bordered field the card used.
+        .textFieldStyle(.roundedBorder)
         .onDisappear { revealsKey = false }
         .onChange(of: settings.selectedProvider) { _, _ in revealsKey = false }
     }
@@ -290,53 +267,54 @@ struct PetSettingsView: View {
     @ObservedObject var pets: PetCatalog
     @ObservedObject var settings: SettingsStore
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            SettingsCard {
-                SettingsRow(title: "使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框") {
-                    Toggle("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框",
-                           isOn: Binding(get: { settings.snapshot.quickComposerHotKey }, set: { settings.setQuickComposerHotKey($0) }))
-                        .toggleStyle(.switch).labelsHidden()
-                        // The row's control column ends where every other section's
-                        // fields end, so the switch lines up with them.
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .accessibilityLabel("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框")
-                        .accessibilityIdentifier("settings.quickComposerHotKey")
+        Form {
+            // The switch keeps its own label, so the form aligns it with every other
+            // section's control column instead of this view padding it into place.
+            Section {
+                Toggle("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框",
+                       isOn: Binding(get: { settings.snapshot.quickComposerHotKey }, set: { settings.setQuickComposerHotKey($0) }))
+                    .toggleStyle(.switch)
+                    .accessibilityLabel("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框")
+                    .accessibilityIdentifier("settings.quickComposerHotKey")
+            } footer: {
+                if let notice = settings.hotKeyNotice {
+                    Label(notice, systemImage: "exclamationmark.triangle").font(WorkspaceStyle.caption)
+                        .foregroundStyle(WorkspaceStyle.warning).accessibilityIdentifier("settings.quickComposerHotKey.notice")
                 }
             }
-            if let notice = settings.hotKeyNotice {
-                Label(notice, systemImage: "exclamationmark.triangle").font(WorkspaceStyle.caption)
-                    .foregroundStyle(.orange).accessibilityIdentifier("settings.quickComposerHotKey.notice")
-            }
-            HStack {
-                Text("我的精灵").font(WorkspaceStyle.medium)
-                Spacer()
-                Button("导入精灵…", systemImage: "plus") {
-                    WorkspaceActions.chooseFolder { pets.importPet(from: $0) }
-                }.accessibilityIdentifier("settings.importPet")
-            }
-            if let notice = pets.notice { Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled) }
-            ScrollViewReader { proxy in
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 16) {
-                    ForEach(pets.entries) { pet in
-                        let selected = pets.selectedID == pet.id
-                        Button { pets.activate(pet.id) } label: {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Image(decorative: pet.preview, scale: 1).resizable().interpolation(.high).scaledToFit()
-                                    .frame(height: 130).frame(maxWidth: .infinity).padding(.top, 8)
-                                HStack {
-                                    Text(pet.name).font(WorkspaceStyle.medium).lineLimit(1)
-                                    Spacer()
-                                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
-                                }
-                            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(PetCardButtonStyle(selected: selected)).id(pet.id)
-                            // Keep the system focus ring on the card's own shape.
-                            .contentShape(.focusEffect, RoundedRectangle(cornerRadius: 16))
-                            .accessibilityAddTraits(selected ? [.isSelected] : [])
-                            .accessibilityLabel("\(pet.name)，\(selected ? "当前精灵" : "点击切换")")
-                            .accessibilityIdentifier("settings.pet.\(pet.id)")
-                    }
-                }.onChange(of: pets.highlightedID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
+            Section {
+                if let notice = pets.notice { Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled) }
+                ScrollViewReader { proxy in
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 16) {
+                        ForEach(pets.entries) { pet in
+                            let selected = pets.selectedID == pet.id
+                            Button { pets.activate(pet.id) } label: {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Image(decorative: pet.preview, scale: 1).resizable().interpolation(.high).scaledToFit()
+                                        .frame(height: 130).frame(maxWidth: .infinity).padding(.top, 8)
+                                    HStack {
+                                        Text(pet.name).font(WorkspaceStyle.medium).lineLimit(1)
+                                        Spacer()
+                                        if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
+                                    }
+                                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                            }.buttonStyle(PetCardButtonStyle(selected: selected)).id(pet.id)
+                                // Keep the system focus ring on the card's own shape.
+                                .contentShape(.focusEffect, RoundedRectangle(cornerRadius: 16))
+                                .accessibilityAddTraits(selected ? [.isSelected] : [])
+                                .accessibilityLabel("\(pet.name)，\(selected ? "当前精灵" : "点击切换")")
+                                .accessibilityIdentifier("settings.pet.\(pet.id)")
+                        }
+                    }.onChange(of: pets.highlightedID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
+                }
+            } header: {
+                HStack {
+                    Text("我的精灵")
+                    Spacer()
+                    Button("导入精灵…", systemImage: "plus") {
+                        WorkspaceActions.chooseFolder { pets.importPet(from: $0) }
+                    }.accessibilityIdentifier("settings.importPet")
+                }
             }
         }
     }

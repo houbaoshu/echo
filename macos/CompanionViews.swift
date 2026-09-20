@@ -129,9 +129,9 @@ struct ActivityCapsule: View {
                 if let outcome {
                     Image(systemName: outcome == .completed ? "checkmark" : "exclamationmark")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(outcome == .completed ? Color.green : .orange)
+                        .foregroundStyle(outcome == .completed ? WorkspaceStyle.success : WorkspaceStyle.warning)
                         .frame(width: 26, height: 26)
-                        .background((outcome == .completed ? Color.green : .orange).opacity(0.16), in: Circle())
+                        .background(outcome == .completed ? WorkspaceStyle.successFill : WorkspaceStyle.warningFill, in: Circle())
                         .opacity(showActions ? 0 : 1)
                         .accessibilityLabel(outcome == .completed ? "已完成" : "失败")
                         .accessibilityIdentifier("activity.outcome")
@@ -392,7 +392,7 @@ struct PetControls: View {
                         PetSegment(label: surface.micMuted ? "开启麦克风" : "关闭麦克风", identifier: "voice.mute",
                                    enabled: surface.muteEnabled, action: { actions.toggleMute(owner) }) {
                             Image(systemName: surface.micMuted ? "mic.slash" : "mic")
-                                .foregroundStyle(surface.micMuted ? Color.orange : .primary)
+                                .foregroundStyle(surface.micMuted ? WorkspaceStyle.warning : .primary)
                         }
                         PetSegment(label: "结束语音", identifier: "voice.end", action: { actions.endVoice(owner) }) {
                             VoiceOrb(indicator: surface.voice, muted: surface.micMuted).frame(width: 22, height: 22)
@@ -400,7 +400,7 @@ struct PetControls: View {
                         PetSegment(label: surface.speakerMuted ? "开启扬声器" : "静音扬声器", identifier: "voice.speaker",
                                    enabled: surface.muteEnabled, action: { actions.toggleSpeaker(owner) }) {
                             Image(systemName: surface.speakerMuted ? "speaker.slash" : "speaker.wave.2")
-                                .foregroundStyle(surface.speakerMuted ? Color.orange : .primary)
+                                .foregroundStyle(surface.speakerMuted ? WorkspaceStyle.warning : .primary)
                         }
                     }
                     .padding(.horizontal, PetSurfacePresentation.pillPadding)
@@ -521,7 +521,7 @@ struct PetControls: View {
             .buttonStyle(.plain).help("取消关联项目").accessibilityLabel("取消关联项目")
             .accessibilityIdentifier("pet.project.detach")
         }
-        .font(.system(size: 11)).foregroundStyle(project.isAvailable ? Color.secondary : .orange)
+        .font(.system(size: 11)).foregroundStyle(project.isAvailable ? Color.secondary : WorkspaceStyle.warning)
         .padding(.leading, 6).padding(.trailing, 2).frame(height: 20).frame(maxWidth: 104)
         .background(.primary.opacity(0.06), in: Capsule())
         .help(project.isAvailable ? project.path : "项目不可用：\(project.path)")
@@ -555,7 +555,7 @@ struct PetControls: View {
                     case .running(let count), .completed(let count):
                         Text("\(count)").font(.system(size: 7, weight: .bold)).foregroundStyle(.white)
                             .padding(.horizontal, 3).frame(minWidth: 11, minHeight: 11)
-                            .background(surface.badge == .running(count) ? Color.blue : .green, in: Capsule())
+                            .background(surface.badge == .running(count) ? WorkspaceStyle.running : WorkspaceStyle.success, in: Capsule())
                             .offset(x: 5, y: -4).accessibilityHidden(true)
                     }
                 }

@@ -15,14 +15,55 @@ enum WorkspaceStyle {
     static let secondary = Color(nsColor: secondaryTextColor)
     static let tertiary = Color(nsColor: tertiaryTextColor)
     static let secondaryTextColor = NSColor(name: nil) { appearance in
-        let contrast = appearance.bestMatch(from: [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua, .aqua, .darkAqua])
-        let increased = contrast == .accessibilityHighContrastAqua || contrast == .accessibilityHighContrastDarkAqua
-        return NSColor.labelColor.withAlphaComponent(increased ? 0.85 : 0.65)
+        NSColor.labelColor.withAlphaComponent(increasesContrast(appearance) ? 0.85 : 0.65)
     }
     static let tertiaryTextColor = NSColor(name: nil) { appearance in
+        NSColor.labelColor.withAlphaComponent(increasesContrast(appearance) ? 0.75 : 0.5)
+    }
+
+    // MARK: Status colours
+    //
+    // Warning, success and running are states, not decoration, so they name a meaning
+    // instead of a hue at each call site. The hue itself stays the system's —
+    // `NSColor.systemOrange` / `.systemGreen` / `.systemBlue` already track light and
+    // dark, which is why nothing below spells out components.
+    //
+    // The ink deliberately does NOT get the Increase Contrast branch the text colours
+    // above have, and that is a measurement, not an oversight. Increase Contrast is a
+    // system-wide accessibility setting, not an appearance a view can be handed: with it
+    // off, `NSAppearance(named: .accessibilityHighContrastAqua)` hands back plain aqua
+    // (`docs/repros/status-color-contrast.swift` [C1]). So a run on a machine that has
+    // the setting off cannot tell whether a system colour carries its own high-contrast
+    // variant ([C2] is inconclusive for exactly that reason) — and if it does, deepening
+    // the hue here as well would correct it twice. Adjusting a colour the system already
+    // adjusts is the worse failure, so this defers to the system for the hue.
+    //
+    // The fill below is the opposite case: its alpha is a number this app invented, with
+    // no system counterpart that could double up, so it is raised here.
+
+    /// The mark itself: an icon, a piece of status text, a badge fill.
+    static let warning = Color(nsColor: .systemOrange)
+    static let success = Color(nsColor: .systemGreen)
+    static let running = Color(nsColor: .systemBlue)
+    /// The tint a status message sits on. Derived from the same hue rather than written
+    /// out as `Color.orange.opacity(0.12)`, so ink and ground cannot drift apart, and
+    /// deepened under Increase Contrast so a 12% wash does not vanish there.
+    static let warningFill = Color(nsColor: statusFill(.systemOrange))
+    static let successFill = Color(nsColor: statusFill(.systemGreen))
+
+    private static func increasesContrast(_ appearance: NSAppearance) -> Bool {
         let contrast = appearance.bestMatch(from: [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua, .aqua, .darkAqua])
-        let increased = contrast == .accessibilityHighContrastAqua || contrast == .accessibilityHighContrastDarkAqua
-        return NSColor.labelColor.withAlphaComponent(increased ? 0.75 : 0.5)
+        return contrast == .accessibilityHighContrastAqua || contrast == .accessibilityHighContrastDarkAqua
+    }
+    private static func statusFill(_ base: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            // A nested system colour resolves against the appearance being asked about:
+            // the provider already runs with it current for drawing ([C3]), so this picks
+            // up the light or dark variant without setting an appearance itself — and
+            // must not, since the provider is called on whatever thread draws.
+            let resolved = base.usingColorSpace(.sRGB) ?? base
+            return resolved.withAlphaComponent(increasesContrast(appearance) ? 0.2 : 0.12)
+        }
     }
 }
 
@@ -187,6 +228,17 @@ struct WorkspaceSidebar: View {
                 }
             }.listStyle(.sidebar).scrollContentBackground(.hidden)
                 .font(WorkspaceStyle.body)
+                // The chat rows' menu belongs to the list, so right-clicking one that is
+                // not selected selects it first and the menu acts on the selection — the
+                // system's own semantics rather than a per-row menu that ignores both.
+                //
+                // Only chats. A project row carries no selection tag (it is not a chat),
+                // so the system never hands one to this closure and it keeps a menu of
+                // its own. No `primaryAction:` either: a chat opens on the single click
+                // that selects it, which the selection binding already does.
+                .contextMenu(forSelectionType: RowID.self) { rows in
+                    conversationMenu(rows)
+                }
                 .accessibilityIdentifier("workspace.sidebar").accessibilityLabel("聊天")
             SidebarListFocusAnchor(focus: listFocus).frame(height: 0).accessibilityHidden(true)
         }
@@ -289,10 +341,16 @@ struct WorkspaceSidebar: View {
             .tag(rowID)
             .help(conversation.title)
             .accessibilityIdentifier("conversation.\(projectID?.uuidString ?? "recent").\(conversation.id)")
-            .contextMenu {
-                Button("重命名") { WorkspaceActions.rename(conversation.title) { workspace.renameConversation(conversation.id, to: $0) } }
-                Button("删除会话…", role: .destructive) { WorkspaceActions.delete(conversation, workspace: workspace) }
-            }
+        }
+    }
+    /// The menu the list raises over a chat row. Rename and delete are both single-chat
+    /// commands — the rename sheet edits one title and the delete alert names one chat —
+    /// so a selection that is not exactly one row produces no menu instead of a command
+    /// that would silently pick one of them.
+    @ViewBuilder private func conversationMenu(_ rows: Set<RowID>) -> some View {
+        if rows.count == 1, let row = rows.first, let conversation = workspace.conversation(id: row.conversationID) {
+            Button("重命名") { WorkspaceActions.rename(conversation.title) { workspace.renameConversation(conversation.id, to: $0) } }
+            Button("删除会话…", role: .destructive) { WorkspaceActions.delete(conversation, workspace: workspace) }
         }
     }
     @ViewBuilder private func projectMenu(_ project: WorkspaceProject) -> some View {
@@ -411,7 +469,7 @@ struct WorkspaceConversationView: View {
                     Button("重试保存") { workspace.persistenceNotice = nil; workspace.flush() }
                     Button(role: .close) { workspace.persistenceNotice = nil } label: { Image(systemName: "xmark") }
                         .accessibilityLabel("关闭保存提示")
-                }.font(WorkspaceStyle.body).padding(12).background(Color.orange.opacity(0.12))
+                }.font(WorkspaceStyle.body).padding(12).background(WorkspaceStyle.warningFill)
             }
             if let conversation = workspace.selected {
                 ConversationView(store: conversation.store, workspace: workspace, voice: workspace.voice, dictation: workspace.dictation,
@@ -448,6 +506,9 @@ struct ConversationView: View {
     /// focused scroll area needs: where it is, and how to move.
     @State private var scrollPosition = ScrollPosition()
     @State private var transcriptGeometry = TranscriptGeometry()
+    /// The composer card's shape, named once so its fill, its border and the container
+    /// shape its contents round against are all literally the same shape.
+    private static let card = RoundedRectangle(cornerRadius: 22)
     /// What the transcript's key handling needs to know about the scroll area. Read from a
     /// second geometry observer so the tail-following one above stays exactly as it was.
     private struct TranscriptGeometry: Equatable {
@@ -524,7 +585,7 @@ struct ConversationView: View {
                     }
                 }
                 if let notice = store.notice ?? store.agentLoadError {
-                    Text(notice).font(WorkspaceStyle.caption).foregroundStyle(.orange).textSelection(.enabled)
+                    Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.warning).textSelection(.enabled)
                 }
                 if store.needsDirectory, let workspace {
                     HStack {
@@ -635,7 +696,7 @@ struct ConversationView: View {
             }
             if let error = voice.snapshot.error, error.conversationID == nil || error.conversationID == conversationID {
                 HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
+                    Image(systemName: "exclamationmark.circle").foregroundStyle(WorkspaceStyle.warning)
                     Text(error.message).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.primary).textSelection(.enabled)
                     Spacer()
                     Button {
@@ -647,7 +708,13 @@ struct ConversationView: View {
                     .accessibilityLabel("关闭语音提示")
                     .accessibilityIdentifier("voice.error.close")
                 }
-                .padding(8).background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                // Concentric with the composer card this sits inside: the card publishes
+                // its shape as the container shape, so this radius follows the card's
+                // instead of being a second number to keep in step by hand. The floor is
+                // the 8pt it was drawn at, for the inset that would otherwise round it
+                // tighter than the box reads well at.
+                .padding(8).background(WorkspaceStyle.warningFill,
+                                       in: ConcentricRectangle(corners: .concentric(minimum: .fixed(8)), isUniform: true))
             }
             if let error = dictation.error {
                 HStack(alignment: .top) {
@@ -686,7 +753,7 @@ struct ConversationView: View {
                     if presentation.mode == .voice, let owner = voiceOwner {
                         HStack(spacing: 6) {
                             VoiceWaveform().frame(width: 14, height: 14)
-                                .foregroundStyle(voice.isMuted ? .orange : Color.accentColor)
+                                .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : Color.accentColor)
                             Text(voice.status).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
                                 .lineLimit(1).accessibilityIdentifier("voice.status")
                         }
@@ -697,7 +764,7 @@ struct ConversationView: View {
                             Image(systemName: voice.snapshot.speakerMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                                 .frame(width: 28, height: 32)
                         }.buttonStyle(.plain).disabled(!presentation.muteEnabled)
-                            .foregroundStyle(voice.snapshot.speakerMuted ? .orange : WorkspaceStyle.secondary)
+                            .foregroundStyle(voice.snapshot.speakerMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
                             .help(voice.snapshot.speakerMuted ? "开启扬声器" : "静音扬声器")
                             .accessibilityLabel(voice.snapshot.speakerMuted ? "开启扬声器" : "静音扬声器")
                             .accessibilityIdentifier("voice.speaker")
@@ -707,7 +774,7 @@ struct ConversationView: View {
                             Image(systemName: voice.isMuted ? "mic.slash.fill" : "mic.fill")
                                 .frame(width: 28, height: 32)
                         }.buttonStyle(.plain).disabled(!presentation.muteEnabled)
-                            .foregroundStyle(voice.isMuted ? .orange : WorkspaceStyle.secondary)
+                            .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
                             .help(voice.isMuted ? "开启麦克风" : "关闭麦克风")
                             .accessibilityLabel(voice.isMuted ? "开启麦克风" : "关闭麦克风")
                             .accessibilityIdentifier("voice.mute")
@@ -755,8 +822,12 @@ struct ConversationView: View {
                     .accessibilityIdentifier(presentation.primary.identifier)
             }.accessibilityElement(children: .contain).accessibilityIdentifier("conversation.actions")
         }.padding(16)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 22))
-            .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.primary.opacity(0.08), lineWidth: 1))
+            .background(Color(nsColor: .controlBackgroundColor), in: Self.card)
+            .overlay(Self.card.strokeBorder(.primary.opacity(0.08), lineWidth: 1))
+            // Publishing the card's shape is what lets everything drawn inside it round
+            // concentrically with it, instead of each inner box repeating a number that
+            // has to be changed in step when the card's does.
+            .containerShape(Self.card)
             .shadow(color: .black.opacity(0.05), radius: 10, y: 3)
             .onDisappear {
                 if dictation.conversationID == conversationID { dictation.cancel() }
@@ -793,7 +864,7 @@ struct AgentToolView: View {
                             Text(stdout).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                         }
                         if let stderr = json["stderr"] as? String, !stderr.isEmpty {
-                            Text(stderr).font(.system(.caption, design: .monospaced)).foregroundStyle(.orange).textSelection(.enabled)
+                            Text(stderr).font(.system(.caption, design: .monospaced)).foregroundStyle(WorkspaceStyle.warning).textSelection(.enabled)
                         }
                         if let detail = json["detail"] as? String ?? json["message"] as? String {
                             Text(detail).font(.caption).textSelection(.enabled)

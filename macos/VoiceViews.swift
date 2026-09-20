@@ -55,7 +55,7 @@ struct VoiceAttributionBar: View {
     var body: some View {
         HStack(spacing: 10) {
             VoiceWaveform().frame(width: 14, height: 14)
-                .foregroundStyle(voice.isMuted ? .orange : Color.accentColor)
+                .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : Color.accentColor)
             Button(action: onReturn) {
                 HStack(spacing: 4) {
                     Text("\(conversationTitle) 的 Live Voice")
@@ -82,7 +82,7 @@ struct VoiceAttributionBar: View {
                     .font(.system(size: 13))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(voice.isMuted ? .orange : WorkspaceStyle.secondary)
+            .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
             .help(voice.isMuted ? "取消静音" : "静音麦克风")
             .accessibilityLabel(voice.isMuted ? "取消静音" : "静音麦克风")
             .accessibilityIdentifier("voice.mute")
@@ -110,54 +110,60 @@ struct VoiceSettingsView: View {
     @ObservedObject private var diagnostics = VoiceDiagnostics.shared
     private var testsDisabled: Bool { voice.testing || voice.isActive || voice.isDictating || !settings.canTestVoice }
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            SettingsCard {
-                SettingsRow(title: "音色 ID") {
-                    TextField("输入音色 ID", text: $settings.voiceDraft.speaker)
-                        .accessibilityLabel("音色 ID")
-                        .accessibilityIdentifier("voiceSettings.speaker")
+        // Each group of the section is a `Section`, so the separator between them is the
+        // form's own rather than a hand-placed `Divider()`.
+        Form {
+            Section {
+                TextField("音色 ID", text: $settings.voiceDraft.speaker, prompt: Text("输入音色 ID"))
+                    .accessibilityLabel("音色 ID")
+                    .accessibilityIdentifier("voiceSettings.speaker")
+            }
+            Section {
+                HStack(spacing: 12) {
+                    Button("保存") { settings.saveVoice() }.buttonStyle(.borderedProminent)
+                        .disabled(!settings.isVoiceDirty).keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier("voiceSettings.save")
+                    Button("还原修改") { settings.restoreVoice() }.disabled(!settings.isVoiceDirty)
+                        .accessibilityIdentifier("voiceSettings.restore")
+                }
+                if let notice = settings.voiceNotice {
+                    Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                        .accessibilityIdentifier("voiceSettings.notice")
                 }
             }
-            HStack(spacing: 12) {
-                Button("保存") { settings.saveVoice() }.buttonStyle(.borderedProminent)
-                    .disabled(!settings.isVoiceDirty).keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("voiceSettings.save")
-                Button("还原修改") { settings.restoreVoice() }.disabled(!settings.isVoiceDirty)
-                    .accessibilityIdentifier("voiceSettings.restore")
-            }
-            if let notice = settings.voiceNotice {
-                Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
-                    .accessibilityIdentifier("voiceSettings.notice")
-            }
-            Divider()
-            HStack(spacing: 12) {
-                Button("检查连接") { test(preview: false) }
-                    .accessibilityIdentifier("voiceSettings.test")
-                Button("试听音色") { test(preview: true) }
-                    .accessibilityIdentifier("voiceSettings.preview")
-            }.disabled(testsDisabled)
-            if voice.testing {
-                SettingsTestProgress(identifier: "voiceSettings.cancelTest") { voice.cancelTest() }
-            }
-            if let result = voice.testResult {
-                Text(result).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
-                    .accessibilityIdentifier("voiceSettings.testResult")
-            }
-            DisclosureGroup("诊断日志") {
-                HStack {
-                    Spacer()
-                    Button("复制日志") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(diagnostics.text, forType: .string)
-                    }.disabled(diagnostics.lines.isEmpty).accessibilityIdentifier("voiceSettings.copyLog")
+            Section {
+                HStack(spacing: 12) {
+                    Button("检查连接") { test(preview: false) }
+                        .accessibilityIdentifier("voiceSettings.test")
+                    Button("试听音色") { test(preview: true) }
+                        .accessibilityIdentifier("voiceSettings.preview")
+                }.disabled(testsDisabled)
+                if voice.testing {
+                    SettingsTestProgress(identifier: "voiceSettings.cancelTest") { voice.cancelTest() }
                 }
-                ScrollView {
-                    Text(diagnostics.text)
-                        .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(height: 220)
-            }.accessibilityIdentifier("voiceSettings.diagnostics")
-        }.onChange(of: settings.voiceAPIKey) { _, _ in voice.invalidateTest() }
+                if let result = voice.testResult {
+                    Text(result).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                        .accessibilityIdentifier("voiceSettings.testResult")
+                }
+            }
+            Section {
+                DisclosureGroup("诊断日志") {
+                    HStack {
+                        Spacer()
+                        Button("复制日志") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(diagnostics.text, forType: .string)
+                        }.disabled(diagnostics.lines.isEmpty).accessibilityIdentifier("voiceSettings.copyLog")
+                    }
+                    ScrollView {
+                        Text(diagnostics.text)
+                            .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(height: 220)
+                }.accessibilityIdentifier("voiceSettings.diagnostics")
+            }
+        }.textFieldStyle(.roundedBorder)
+            .onChange(of: settings.voiceAPIKey) { _, _ in voice.invalidateTest() }
             .onChange(of: settings.voiceDraft) { _, _ in voice.invalidateTest() }
             .onDisappear { voice.cancelTest() }
     }
