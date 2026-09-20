@@ -509,6 +509,8 @@ struct ConversationView: View {
                         }
                     }
                     ForEach(store.tools.filter { $0.afterMessageID == nil }) { tool in AgentToolView(tool: tool) }
+                    // The reply as it is written, until the projected message carries the text.
+                    StreamingReplyView(stream: store.replyStream)
                 }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
                     .frame(maxWidth: .infinity)
             }

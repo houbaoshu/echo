@@ -31,6 +31,58 @@ import SwiftUI
     func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
 }
 
+/// An Agent session that streams a running step's text and only checkpoints the reply
+/// once the step is final, the way the core's poll responses do.
+@MainActor private final class StreamingAgent: AgentSessionSource {
+    private var receive: ((AgentBatch) -> Void)?
+    private var streamReceiver: ((AgentStream) -> Void)?
+    private var sessionID = ""
+    private var generation = ""
+    private var receipts: [AgentInputReceipt] = []
+    private var entries: [AgentDisplayEntry] = []
+    private var nextID: UInt64 = 1
+    private var revision: UInt64 = 0
+    private let turnID: UInt64 = 1
+    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {}
+    func cancel() {}
+    func observeStream(_ receive: @escaping (AgentStream) -> Void) { streamReceiver = receive }
+    func open(sessionID: String, generation: String, restore: AgentRestore,
+              receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws {
+        self.sessionID = sessionID; self.generation = generation; self.receive = receive
+    }
+    func control(_ command: AgentCommand) throws {
+        guard case .sendMessage(let input) = command else { return }
+        let id = nextID; nextID += 1
+        receipts.append(.init(client_message_id: input.client_message_id, message_id: id, turn_id: turnID))
+        entries.append(.init(type: .message, message_id: id, turn_id: turnID, role: .user, text: input.text))
+        emit([.init(type: .turn_started), .init(type: .model_started)])
+    }
+    func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
+    /// A coalesced stream snapshot: everything the running step has written so far.
+    func stream(_ text: String, operation: UInt64 = 2, toolCall: Bool = false) {
+        streamReceiver?(AgentStream(turn_id: turnID, operation_id: operation, text: text, tool_call: toolCall))
+    }
+    /// The final reply, with the projection that carries it, in one batch.
+    func finish(_ text: String, operation: UInt64 = 2) {
+        let id = nextID; nextID += 1
+        entries.append(.init(type: .message, message_id: id, turn_id: turnID, role: .assistant,
+                             text: text, final_reply: true))
+        revision += 1
+        emit([.init(type: .assistant, message_id: id, content: text, final_reply: true),
+              .init(type: .finished, outcome: AgentOutcome(status: .completed, reply: text))],
+             operation: operation,
+             checkpoint: AgentCheckpoint(id: .init(generation: generation, revision: revision), history: "{}",
+                                         input_receipts: receipts, projection: entries))
+    }
+    private func emit(_ kinds: [AgentEvent.Kind], operation: UInt64? = nil, checkpoint: AgentCheckpoint? = nil) {
+        receive?(AgentBatch(session_id: sessionID, generation: generation, turn_id: turnID,
+            kind: .init(type: .update),
+            events: kinds.map { AgentEvent(version: 1, session_id: sessionID, turn_id: turnID,
+                                           operation_id: operation, kind: $0) },
+            checkpoint: checkpoint))
+    }
+}
+
 @MainActor private final class ComposerAudio: VoiceAudioHandling {
     var onFailure: ((String) -> Void)?
     var inputOutputLatency: TimeInterval { 0 }
@@ -180,6 +232,7 @@ private struct ComposerHeightHost: View {
         try await testProjectTreeScrollRestoration()
         try await testCodeCopyAndSyntaxPreview()
         try await testChatStatusTextIsExceptionOnly()
+        try await testStreamingReplyRendersInTranscript()
         let editor = ComposerTextView()
         editor.isRichText = false
         var sends = 0
@@ -2835,25 +2888,35 @@ private struct ComposerHeightHost: View {
 
         // The reply stream: rounds, withdrawn tool steps and late snapshots.
         let stream = AssistantReplyStream()
+        precondition(stream.live == nil, "Nothing is being written before the first delta")
         stream.receive(operationID: 3, text: "第一轮", toolCall: false)
         stream.receive(operationID: 3, text: "第一轮回复", toolCall: false)
+        precondition(stream.live == "第一轮回复", "Live text follows the step being written")
         stream.complete(operationID: 3, text: "第一轮回复完成")
         precondition(stream.text == "第一轮回复完成", "The final reply settles the round")
+        precondition(stream.live == nil, "A settled step leaves its text to the conversation")
         stream.receive(operationID: 5, text: "\n ", toolCall: false)
-        precondition(stream.text == "第一轮回复完成", "Whitespace does not start the next round")
+        precondition(stream.text == "第一轮回复完成" && stream.live == nil, "Whitespace does not start the next round")
         stream.receive(operationID: 5, text: "先看看", toolCall: false)
-        precondition(stream.text == "先看看", "The next round's first real delta clears the previous reply")
+        precondition(stream.text == "先看看" && stream.live == "先看看",
+                     "The next round's first real delta clears the previous reply")
         stream.receive(operationID: 5, text: "先看看", toolCall: true)
-        precondition(stream.text == "第一轮回复完成", "A tool call withdraws its step and restores the previous reply")
+        precondition(stream.text == "第一轮回复完成" && stream.live == nil,
+                     "A tool call withdraws its step and restores the previous reply")
         stream.receive(operationID: 7, text: "结果", toolCall: false)
         stream.withdraw(7)
         stream.receive(operationID: 7, text: "结果更多", toolCall: false)
-        precondition(stream.text == "第一轮回复完成", "A withdrawn step never returns")
-        stream.complete(operationID: 9, text: "未流式的最终回复")
-        precondition(stream.text == "未流式的最终回复", "A reply without deltas still arrives when it completes")
-        stream.receive(operationID: 11, text: "半截", toolCall: false)
+        precondition(stream.text == "第一轮回复完成" && stream.live == nil, "A withdrawn step never returns")
+        stream.receive(operationID: 9, text: "下一步", toolCall: false)
+        stream.withdraw(11)
+        precondition(stream.live == nil, "Settling past the written step also retires its live text")
+        stream.complete(operationID: 13, text: "未流式的最终回复")
+        precondition(stream.text == "未流式的最终回复" && stream.live == nil,
+                     "A reply without deltas still arrives when it completes")
+        stream.receive(operationID: 15, text: "半截", toolCall: false)
+        precondition(stream.live == "半截", "A new round writes again")
         stream.abandon()
-        precondition(stream.text == "未流式的最终回复", "A stopped round keeps no partial reply")
+        precondition(stream.text == "未流式的最终回复" && stream.live == nil, "A stopped round keeps no partial reply")
 
         // The reply renders Markdown through the chat's parser instead of showing its syntax.
         let rendered = CompanionBubble.renderedReply("先看 **重点**，运行 `ls -la`：\n\n- 第一项\n- 第二项")
@@ -2954,6 +3017,65 @@ private struct ComposerHeightHost: View {
         precondition(agentBroken.contains { $0.contains("已中断 · 可继续跟进") },
                      "An interrupted Agent task keeps its status row: \(agentBroken)")
         print("PASS: normal chat shows no 已接收 / 已完成 caption, exceptions keep theirs")
+    }
+
+    /// The chat shows the reply while the model writes it. An Agent session's messages come
+    /// from the core's checkpoint projection, which carries a reply only once the step is
+    /// final, so the streamed snapshots have to reach the transcript on their own — and give
+    /// the bubble back to the settled message without leaving a second copy behind.
+    @MainActor private static func testStreamingReplyRendersInTranscript() async throws {
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let dictation = DictationController()
+        defer { voice.shutdown(); dictation.shutdown() }
+        let agent = StreamingAgent(), store = TaskStore(source: agent)
+        defer { store.shutdown() }
+        let view = NSHostingView(rootView: ConversationView(store: store, voice: voice, dictation: dictation,
+            startDictation: {}, startVoice: {}, conversationID: UUID(),
+            send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
+        view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = view
+        defer { window.orderOut(nil) }
+        func texts() async throws -> [String] {
+            view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+            view.layoutSubtreeIfNeeded()
+            return accessibilityText(in: view)
+        }
+        precondition(store.usesAgent, "The transcript under test is an Agent session")
+        store.send("讲讲今天的天气")
+        let asked = try await texts()
+        precondition(asked.contains { $0.contains("讲讲今天的天气") }, "The question is on screen: \(asked)")
+        precondition(!asked.contains { $0.contains("正在回复…") },
+                     "Nothing stands in for the reply before the model writes: \(asked)")
+
+        agent.stream("今天")
+        precondition(store.replyStream.live == "今天" && store.messages.allSatisfy { $0.role == .user },
+                     "A stream snapshot is live text, not yet a conversation message")
+        let firstDelta = try await texts()
+        precondition(firstDelta.contains { $0.contains("今天") }, "The first delta reaches the chat: \(firstDelta)")
+        precondition(firstDelta.contains { $0.contains("正在回复…") },
+                     "The streamed bubble says the reply is still being written: \(firstDelta)")
+
+        agent.stream("今天**天气**不错，")
+        let grown = try await texts()
+        precondition(grown.contains { $0.contains("今天天气不错，") },
+                     "A later snapshot grows the same bubble, with Markdown rendered: \(grown)")
+        precondition(!grown.contains { $0.contains("**") }, "The bubble renders Markdown, not its syntax: \(grown)")
+
+        agent.finish("今天**天气**不错，适合散步。")
+        precondition(store.replyStream.live == nil, "The settled step stops supplying live text")
+        precondition(store.messages.last?.role == .assistant && store.messages.last?.status == .completed
+                     && store.messages.last?.content == "今天**天气**不错，适合散步。",
+                     "The final reply settles into the conversation itself: \(store.messages)")
+        let done = try await texts()
+        precondition(done.contains { $0.contains("今天天气不错，适合散步。") }, "The settled reply is on screen: \(done)")
+        precondition(!done.contains { $0.contains("正在回复…") },
+                     "The streamed bubble hands over instead of doubling the reply: \(done)")
+        precondition(findAccessibility("conversation.stream", in: view) == nil,
+                     "No streamed bubble is left in the transcript: \(done)")
+        print("PASS: the chat streams the reply as it is written and hands it to the settled message")
     }
 
     @MainActor private static func testLiveVoiceTurnKeepsTaskCardHidden() async throws {

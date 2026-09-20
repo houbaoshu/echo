@@ -88,6 +88,10 @@ struct ActivityTask: Codable {
 /// Its own publisher keeps streamed text out of the conversation's save path.
 @MainActor final class AssistantReplyStream: ObservableObject {
     @Published private(set) var text = ""
+    /// What the running model step has written so far, for surfaces that show the reply
+    /// while it is being written. Nil once the step settles, because from then on the
+    /// conversation itself carries the text; `text` keeps the last reply instead.
+    @Published private(set) var live: String?
     /// The unsettled operation that currently supplies `text`.
     private var operationID: UInt64?
     /// What was shown before `operationID` replaced it.
@@ -105,6 +109,7 @@ struct ActivityTask: Codable {
             self.operationID = operationID
         }
         if text != next { text = next }
+        if live != next { live = next }
     }
     /// The final reply of a step, which also covers models that did not stream.
     func complete(operationID: UInt64, text final: String) {
@@ -114,10 +119,14 @@ struct ActivityTask: Codable {
             if self.operationID == operationID { text = retained }
         } else if text != final { text = final }
         self.operationID = nil
+        if live != nil { live = nil }
     }
     func withdraw(_ operationID: UInt64) {
         guard operationID > settledThrough else { return }
         settledThrough = operationID
+        // A settled operation never streams again, so its live text stops standing in for a reply
+        // even when the step that settled is not the one being written.
+        if let current = self.operationID, current <= settledThrough, live != nil { live = nil }
         guard self.operationID == operationID else { return }
         if text != retained { text = retained }
         self.operationID = nil

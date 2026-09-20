@@ -355,15 +355,18 @@ extension VoiceTests {
         f.voice.toggleSpeakerMute(); f.speak("第一个问题")
         source.emit(.init(type: .turn_started)); source.emit(.init(type: .model_started))
         let stream = f.store.replyStream
-        check(stream.text.isEmpty, "requesting the model has no reply text")
+        check(stream.text.isEmpty && stream.live == nil, "requesting the model has no reply text")
         source.stream(operation: 10, "今天")
-        check(stream.text == "今天" && f.synths.isEmpty, "the first real delta arrives without starting speech")
+        check(stream.text == "今天" && stream.live == "今天" && f.synths.isEmpty,
+              "the first real delta arrives without starting speech")
         source.stream(operation: 10, "今天**天气**不错，")
         check(stream.text == "今天**天气**不错，" && f.synths.isEmpty, "each delta grows the same reply")
         source.complete("今天**天气**不错，适合散步。", operation: 10)
         await tick()
-        check(stream.text == "今天**天气**不错，适合散步。" && f.synths.count == 1
+        check(stream.text == "今天**天气**不错，适合散步。" && stream.live == nil && f.synths.count == 1
               && f.synths[0].chunks == ["今天**天气**不错，适合散步。"], "speech still receives only the final reply")
+        check(f.store.messages.last?.content == "今天**天气**不错，适合散步。",
+              "the settled reply is the conversation's own message, so nothing streams beside it")
         source.stream(operation: 10, "今天**天气**不错，适合")
         check(stream.text == "今天**天气**不错，适合散步。", "a late snapshot of a finished step is ignored")
         f.releasePlayback(); await tick()
@@ -375,20 +378,24 @@ extension VoiceTests {
         }
         f.speak("第二个问题", start: 400)
         source.emit(.init(type: .turn_started)); source.emit(.init(type: .model_started))
-        check(f.store.isGenerating && stream.text == "今天**天气**不错，适合散步。", "a new request keeps the previous reply")
+        check(f.store.isGenerating && stream.text == "今天**天气**不错，适合散步。" && stream.live == nil,
+              "a new request keeps the previous reply and streams nothing yet")
         source.stream(operation: 12, " \n")
         check(stream.text == "今天**天气**不错，适合散步。", "whitespace is not the first real text")
         source.stream(operation: 12, "我先看看目录。")
         check(stream.text == "我先看看目录。", "the next turn's first real delta replaces the previous reply")
         source.stream(operation: 12, "我先看看目录。", toolCall: true)
-        check(stream.text == "今天**天气**不错，适合散步。", "text that turns into a tool call is withdrawn")
+        check(stream.text == "今天**天气**不错，适合散步。" && stream.live == nil,
+              "text that turns into a tool call is withdrawn")
         source.emit(operation: 12, .init(type: .assistant, message_id: 90, content: "我先看看目录。", final_reply: false))
         source.stream(operation: 12, "我先看看目录。补充")
         check(stream.text == "今天**天气**不错，适合散步。", "a withdrawn step never returns")
         source.stream(operation: 14, "目录里有三个文件")
-        check(stream.text == "目录里有三个文件", "the final step streams from a blank bubble")
+        check(stream.text == "目录里有三个文件" && stream.live == "目录里有三个文件",
+              "the final step streams from a blank bubble")
         source.emit(operation: 14, .init(type: .stopping))
-        check(stream.text == "今天**天气**不错，适合散步。", "a stopped step keeps no partial reply")
+        check(stream.text == "今天**天气**不错，适合散步。" && stream.live == nil,
+              "a stopped step keeps no partial reply")
 
         let otherTurn = AgentStream(turn_id: source.currentTurn + 5, operation_id: 20, text: "别的轮次", tool_call: false)
         source.observeStreamForTest(otherTurn)

@@ -147,3 +147,26 @@ struct ConversationMessageView: View {
         }.accessibilityIdentifier("conversation.message.\(message.id)")
     }
 }
+
+/// The tail reply while the model is still writing it. An Agent session's messages come from
+/// the core's checkpoint projection, which only carries a reply once the step is final, so the
+/// stream's snapshot stands in for that message until the projected one takes its place.
+struct StreamingReplyView: View {
+    @ObservedObject var stream: AssistantReplyStream
+    /// One identity for the whole reply, so arriving text grows the same bubble.
+    private static let messageID = UUID()
+    private var message: ConversationMessage? {
+        guard let live = stream.live else { return nil }
+        var message = ConversationMessage(role: .assistant, content: live, status: .streaming)
+        message.id = Self.messageID
+        return message
+    }
+    var body: some View {
+        if let message {
+            HStack(alignment: .top) {
+                ConversationMessageView(message: message, retry: nil)
+                Spacer(minLength: 0)
+            }.id(message.id).accessibilityIdentifier("conversation.stream")
+        }
+    }
+}
