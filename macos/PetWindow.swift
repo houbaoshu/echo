@@ -9,7 +9,8 @@ final class PetPanel: NSPanel {
     var onMove: (() -> Void)?
     var onPointerSample: ((NSPoint) -> Void)?
     var constrainOrigin: ((NSPoint) -> NSPoint)?
-    private var pointerTimer: Timer?
+    private var globalPointerMonitor: Any?
+    private var localPointerMonitor: Any?
     private let pointerLocation: () -> NSPoint
     private let menuPresenter: PetMenuPresenter
     private let terminateApplication: () -> Void
@@ -68,15 +69,30 @@ final class PetPanel: NSPanel {
 
     override func orderFrontRegardless() {
         super.orderFrontRegardless()
-        pointerTimer?.invalidate()
-        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.isVisible else { return }
-                self.samplePointer(at: self.pointerLocation())
+        startFollowingPointer()
+    }
+
+    private func startFollowingPointer() {
+        let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        // Global events cover the background app; local events cover the active app,
+        // even when the pointer is outside its windows. AppKit calls both on main.
+        if globalPointerMonitor == nil {
+            globalPointerMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] _ in
+                MainActor.assumeIsolated { self?.sampleVisiblePointer() }
             }
         }
-        pointerTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
+        if localPointerMonitor == nil {
+            localPointerMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
+                MainActor.assumeIsolated { self?.sampleVisiblePointer() }
+                return event
+            }
+        }
+        sampleVisiblePointer()
+    }
+
+    private func sampleVisiblePointer() {
+        guard isVisible else { return }
+        samplePointer(at: pointerLocation())
     }
 
     func samplePointer(at point: NSPoint) {
@@ -85,8 +101,10 @@ final class PetPanel: NSPanel {
     }
 
     override func close() {
-        pointerTimer?.invalidate()
-        pointerTimer = nil
+        if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor) }
+        if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor) }
+        globalPointerMonitor = nil
+        localPointerMonitor = nil
         super.close()
     }
 

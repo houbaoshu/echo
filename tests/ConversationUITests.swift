@@ -97,7 +97,14 @@ private struct ComposerHeightHost: View {
         // Native menu routing needs AppKit's event loop and a real key window.
         Task { @MainActor in
             do {
+                if CommandLine.arguments.contains("--phase4-only") {
+                    try await testTranscriptTailAnchors()
+                    try await testPointerMonitorLifecycle()
+                    exit(0)
+                }
                 if !CommandLine.arguments.contains("--pet-focus-only") {
+                    try await testTranscriptTailAnchors()
+                    try await testPointerMonitorLifecycle()
                     try await testNativeMenuShortcuts(); try await testProjectDetachPointer()
                     try await testWorkspaceSidebarPointerAndKeyboard()
                     try await testSettingsKeyboardAndFocus()
@@ -131,6 +138,7 @@ private struct ComposerHeightHost: View {
             try await testCompanionBubblePanelAndHotKey()
             return
         }
+        testAutomaticColumnThresholds()
         try await testComposerAdaptiveHeight()
         try await testWindowChromeAndSidebarAccessories()
         try await testConsecutiveDictationAppends()
@@ -1180,6 +1188,155 @@ private struct ComposerHeightHost: View {
         print("PASS: hosted Enter, assistant progress/completed/failed/stopped, explicit Retry and user input isolation")
     }
 
+    private static func testAutomaticColumnThresholds() {
+        var layout = MainWindowLayout()
+        precondition(layout.visibleColumns(width: 781) == (true, false))
+        precondition(layout.visibleColumns(width: 780) == (false, false), "Default two-column layout collapses before the 720pt floor")
+        layout.inspectorPreferred = true
+        precondition(layout.visibleColumns(width: 1042) == (true, true))
+        precondition(layout.visibleColumns(width: 1041) == (false, true))
+        precondition(layout.visibleColumns(width: 821) == (false, true))
+        precondition(layout.visibleColumns(width: 820) == (false, false))
+        precondition(layout.visibleColumns(width: 760, manual: .sidebar) == (true, false))
+        precondition(layout.visibleColumns(width: 760, manual: .inspector) == (false, true))
+        precondition(layout.visibleColumns(width: 922, manual: .sidebar) == (true, true))
+        layout.sidebarWidth = 340; layout.inspectorWidth = 380
+        precondition(layout.visibleColumns(width: 1042) == (true, true), "Saved divider widths do not change collapse thresholds")
+        layout.sidebarPreferred = false; layout.inspectorPreferred = false
+        precondition(layout.visibleColumns(width: 1280) == (false, false), "Resize does not reopen explicitly hidden columns")
+        print("PASS: automatic column thresholds, comfortable versus hard minimums, manual priority and hidden preferences")
+    }
+
+    @MainActor private static func testPointerMonitorLifecycle() async throws {
+        let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+        let point = NSPoint(x: 10, y: 10)
+        let panel = PetPanel(store: pet, pointerLocation: { point })
+        var samples = 0
+        panel.onPointerSample = { _ in samples += 1 }
+        defer { panel.close(); pet.stop() }
+        panel.orderFrontRegardless()
+        precondition(samples == 1, "Showing the pet immediately samples the stationary pointer")
+        panel.orderFrontRegardless()
+        // sendEvent exercises the app's local monitor without moving the user's cursor.
+        func move(_ type: NSEvent.EventType) {
+            let event = NSEvent.mouseEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
+            NSApp.sendEvent(event)
+        }
+        for type: NSEvent.EventType in [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged] {
+            let before = samples
+            move(type)
+            precondition(samples == before + 1, "Each move/drag samples once, even after repeated orderFront")
+        }
+        panel.orderOut(nil)
+        let hidden = samples
+        move(.mouseMoved)
+        try await Task.sleep(for: .milliseconds(120))
+        precondition(samples == hidden, "Hidden pets do not sample pointer events")
+        panel.close()
+        // Show via orderFront, which deliberately does not install the monitors again.
+        panel.orderFront(nil)
+        move(.mouseMoved)
+        precondition(samples == hidden, "Close removes monitors even if the panel becomes visible again")
+        panel.orderFrontRegardless()
+        let reopened = samples
+        move(.mouseMoved)
+        precondition(samples == reopened + 1, "Reopening installs exactly one local monitor")
+        print("PASS: immediate pointer sample, move/drag monitors, repeated show, hidden gating, close cleanup and reopen")
+    }
+
+    @MainActor private static func testTranscriptTailAnchors() async throws {
+        let source = PreviewSource()
+        let store = TaskStore(source: source)
+        let workspace = WorkspaceStore(initialStore: store)
+        let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "scroll-\(UUID())")!)
+        let window = main.window!
+        defer { main.shutdown(); workspace.shutdown() }
+        store.send("滚动验证")
+        source.receive?(.progress("短回复"))
+        main.present()
+        func settle() async throws {
+            try await Task.sleep(for: .milliseconds(200))
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        func findScroll(_ view: NSView) -> NSScrollView? {
+            if let scroll = view as? NSScrollView { return scroll }
+            return view.subviews.lazy.compactMap { findScroll($0) }.first
+        }
+        try await settle()
+        let root = main.conversationItem.viewController.view
+        guard let scroll = findScroll(root), let document = scroll.documentView else {
+            preconditionFailure("The transcript must have a native scroll view")
+        }
+        func gap() -> CGFloat { max(0, document.bounds.height - scroll.contentView.bounds.maxY) }
+        func assertTail(_ context: String) {
+            precondition(gap() < 3, "\(context): tail gap=\(gap()), clip=\(scroll.contentView.bounds), document=\(document.bounds)")
+        }
+        if let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds) {
+            root.cacheDisplay(in: root.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/stage4-short-transcript.png"))
+        }
+        precondition(abs(scroll.contentView.bounds.minY + scroll.contentInsets.top) < 1, "Short conversations remain top aligned")
+        var reply = (1...70).map { "回复第 \($0) 行" }.joined(separator: "\n\n")
+        source.receive?(.progress(reply))
+        try await settle()
+        precondition(document.bounds.height > scroll.contentView.bounds.height + 500, "The long fixture must overflow the transcript")
+        assertTail("Streaming growth follows the initial bottom anchor")
+        // Real scroll phases are essential: mutating the clip origin bypasses SwiftUI's
+        // gesture state and does not model a user disarming the default anchor.
+        func wheel(_ delta: Int32, _ phase: Int64) {
+            let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: delta, wheel2: 0, wheel3: 0)!
+            event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+            let screen = window.convertPoint(toScreen: scroll.convert(NSPoint(x: 80, y: 80), to: nil))
+            event.location = CGPoint(x: screen.x, y: NSScreen.screens[0].frame.maxY - screen.y)
+            scroll.scrollWheel(with: NSEvent(cgEvent: event)!)
+        }
+        func gesture(_ delta: Int32) async throws {
+            wheel(0, 1)
+            for _ in 0..<8 { wheel(delta, 2); try await Task.sleep(for: .milliseconds(15)) }
+            wheel(0, 4)
+            try await settle()
+        }
+        try await gesture(60)
+        precondition(gap() > 100, "A phased upward gesture moves away from the tail")
+        let offset = scroll.contentView.bounds.minY
+        reply += "\n" + (71...85).map { "追加第 \($0) 行" }.joined(separator: "\n\n")
+        source.receive?(.progress(reply))
+        try await settle()
+        precondition(abs(scroll.contentView.bounds.minY - offset) < 3, "Streaming never pulls a user away from history")
+        try await gesture(-400)
+        assertTail("A gesture can return to the bottom")
+        reply += "\n回到底部后继续回复\n再一行"
+        source.receive?(.progress(reply))
+        try await settle()
+        assertTail("Returning by gesture re-arms following")
+        // Focus the transcript via the same Tab loop used by the user.
+        let editor = findAccessibility("conversation.composer", in: root) as! ComposerTextView
+        window.makeFirstResponder(editor)
+        window.selectPreviousKeyView(nil)
+        precondition(window.firstResponder !== editor)
+        func key(_ text: String, code: UInt16) {
+            NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: text, charactersIgnoringModifiers: text,
+                isARepeat: false, keyCode: code)!)
+        }
+        key("\u{f729}", code: 115) // Home
+        try await settle()
+        precondition(scroll.contentView.bounds.minY < 3, "Home reaches the beginning")
+        reply += "\nHome 后追加"
+        source.receive?(.progress(reply))
+        try await settle()
+        precondition(scroll.contentView.bounds.minY < 3, "Keyboard navigation disarms following")
+        key("\u{f72b}", code: 119) // End
+        try await settle()
+        assertTail("End returns to the tail")
+        reply += "\nEnd 后追加"
+        source.receive?(.progress(reply))
+        try await settle()
+        assertTail("End re-arms following")
+        print("PASS: short transcript top alignment, streaming tail, phased user scrolling, return-to-tail and Home/End re-arming")
+    }
+
     @MainActor private static func testNativeMenuShortcuts() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("menu-tests-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1203,7 +1360,7 @@ private struct ComposerHeightHost: View {
             main.showWorkspace()
             workspace.newConversation(projectID: workspace.selected?.projectID)
         })
-        let menu = WorkspaceMenu(commands: commands), file = NSMenu(title: "文件"), columns = NSMenu(title: "窗口"), chat = NSMenu(title: "对话")
+        let menu = NSMenu(title: ""), file = NSMenu(title: "文件"), columns = NSMenu(title: "窗口"), chat = NSMenu(title: "对话")
         for submenu in [file, columns, chat] {
             let item = NSMenuItem(); item.submenu = submenu; menu.addItem(item)
         }
@@ -1238,11 +1395,12 @@ private struct ComposerHeightHost: View {
         precondition(items.count == 6)
         let shortcuts: [(String, NSEvent.ModifierFlags)] = [
             ("n", .command), ("b", .command), ("b", [.command, .option]),
-            ("d", [.control, .shift]), ("v", [.control, .shift]), ("\u{1b}", [])
+            ("d", [.control, .shift]), ("v", [.control, .shift]), (".", .command)
         ]
         for (item, shortcut) in zip(items, shortcuts) {
             precondition(item.keyEquivalent == shortcut.0 && item.keyEquivalentModifierMask == shortcut.1)
         }
+        precondition(items.allSatisfy { $0.keyEquivalent != "\u{1b}" }, "Escape belongs to the responder chain, never a menu item")
         let projectID = workspace.addProject(url: root)
         workspace.newConversation(projectID: projectID)
         let original = workspace.selected!
@@ -1270,7 +1428,8 @@ private struct ComposerHeightHost: View {
         chat.update()
         precondition(!chat.items[0].isEnabled && !chat.items[1].isEnabled, "Preparing capture disables finish and Live Voice")
         precondition(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])), "Idle Escape passes through the menu during dictation")
-        precondition(dictation.isActive)
+        _ = menu.performKeyEquivalent(with: event(".", 47, .command))
+        precondition(dictation.isActive && !selected.store.isGenerating, "Disabled Command+. preserves dictation")
         permissionReply?.resume(returning: true); permissionReply = nil
         try await refresh()
         recognizer.emit("追加听写")
@@ -1296,6 +1455,8 @@ private struct ComposerHeightHost: View {
         editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
         chat.update()
         precondition(!chat.items[2].isEnabled)
+        _ = menu.performKeyEquivalent(with: event(".", 47, .command))
+        precondition(selected.store.isGenerating && editor.hasMarkedText(), "Disabled Command+. preserves the task and IME composition")
         precondition(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])), "Menu leaves Escape to marked text")
         NSApp.sendEvent(event("\u{1b}", 53, []))
         precondition(selected.store.isGenerating && voice.isActive, "IME Escape does not Stop or End Voice")
@@ -1315,8 +1476,11 @@ private struct ComposerHeightHost: View {
         precondition(main.canHandleEscape, "Stop menu has a stoppable task without marked text")
         chat.update()
         precondition(chat.items[2].isEnabled, "Native Stop item validates as enabled")
-        precondition(menu.performKeyEquivalent(with: event("\u{1b}", 53, [])))
-        precondition(!selected.store.isGenerating && voice.isActive, "The native Stop menu uses the same action")
+        precondition(menu.performKeyEquivalent(with: event(".", 47, .command)))
+        precondition(!selected.store.isGenerating && voice.isActive, "Command+. uses the native Stop menu and preserves Live Voice")
+        precondition(selected.store.send("stop from composer"))
+        press(".", 47, .command)
+        precondition(!selected.store.isGenerating && voice.isActive, "Command+. reaches Stop with composer focus")
         // End Voice addresses the existing owner even after navigating elsewhere.
         workspace.newConversation()
         try await refresh()
@@ -2398,7 +2562,7 @@ private struct ComposerHeightHost: View {
         defer { companion.shutdown() }
         let presentation = companion.controlsPresentation
         func settle() async throws { try await Task.sleep(for: .milliseconds(150)) }
-        // The pet samples the real cursor at 30 Hz; keep simulating the pointer until SwiftUI shows `ready`.
+        // Pointer events now drive sampling; repeat the injected sample until SwiftUI shows `ready`.
         func hover(_ point: NSPoint, until ready: () -> Bool = { true }) async throws {
             for _ in 0..<60 {
                 companion.petPanel.samplePointer(at: point)
@@ -3460,10 +3624,26 @@ private struct ComposerHeightHost: View {
         main.toggleInspector()
         try await Task.sleep(for: .milliseconds(150))
         precondition(workspace.fileBrowser.state.preview == .text("updated"))
+        window.setContentSize(NSSize(width: 900, height: 650))
+        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
+        try await Task.sleep(for: .milliseconds(120)); content.layoutSubtreeIfNeeded()
+        precondition(main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed,
+                     "At 900pt the chat list collapses before project files, matching AppKit")
         window.setContentSize(NSSize(width: 760, height: 650))
         main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
         try await Task.sleep(for: .milliseconds(120)); content.layoutSubtreeIfNeeded()
-        precondition(main.inspectorItem.isCollapsed, "Narrow windows collapse project files")
+        precondition(main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed,
+                     "At 760pt automatic collapse leaves a comfortable conversation")
+        precondition(abs(window.frame.width - 760) < 1, "Split minimum widths must not clamp programmatic resize")
+        main.toggleSidebar()
+        precondition(!main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed,
+                     "An explicit sidebar request uses the hard minimum at 760pt")
+        main.toggleInspector()
+        precondition(main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed,
+                     "An explicit inspector request makes the sidebar give way")
+        main.toggleSidebar()
+        precondition(!main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed,
+                     "An explicit sidebar request makes the inspector give way")
         assertPlacement()
         precondition(workspace.sendMainMessage(conversationID: conversation.id))
         workspace.stop(conversationID: conversation.id)

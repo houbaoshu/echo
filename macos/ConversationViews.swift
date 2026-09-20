@@ -498,7 +498,6 @@ struct ConversationView: View {
     let send: () -> Void
     let stop: () -> Void
     let retry: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var followTail = true
     @State private var userScrolling = false
     @State private var microphoneHovered = false
@@ -517,62 +516,66 @@ struct ConversationView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 28) {
-                        ForEach(store.messages) { message in
-                            HStack(alignment: .top) {
-                                if message.role == .user { Spacer(minLength: 44) }
-                                ConversationMessageView(message: message,
-                                    retry: store.canRetry && message.id == store.messages.last?.id ? retry : nil)
-                                if message.role == .assistant { Spacer(minLength: 0) }
-                            }.id(message.id)
-                            ForEach(store.tools.filter { $0.afterMessageID == message.id }) { tool in
-                                AgentToolView(tool: tool).id("tool.\(tool.turnID).\(tool.id)")
-                            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 28) {
+                    ForEach(store.messages) { message in
+                        HStack(alignment: .top) {
+                            if message.role == .user { Spacer(minLength: 44) }
+                            ConversationMessageView(message: message,
+                                retry: store.canRetry && message.id == store.messages.last?.id ? retry : nil)
+                            if message.role == .assistant { Spacer(minLength: 0) }
+                        }.id(message.id)
+                        ForEach(store.tools.filter { $0.afterMessageID == message.id }) { tool in
+                            AgentToolView(tool: tool).id("tool.\(tool.turnID).\(tool.id)")
                         }
-                        ForEach(store.tools.filter { $0.afterMessageID == nil }) { tool in AgentToolView(tool: tool) }
-                        Color.clear.frame(height: 1).id("conversation.bottom")
-                    }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
-                        .frame(maxWidth: .infinity)
-                }
-                .onScrollPhaseChange { _, phase in userScrolling = phase != .idle }
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.contentSize.height - geometry.visibleRect.maxY < 60
-                } action: { _, nearBottom in
-                    if userScrolling { followTail = nearBottom }
-                }
-                .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
-                    TranscriptGeometry(visible: geometry.visibleRect, contentHeight: geometry.contentSize.height)
-                } action: { _, value in transcriptGeometry = value }
-                .scrollPosition($scrollPosition)
-                // The chat itself is a Tab stop, which is what makes the window's focus
-                // ring 侧栏列表 → 会话记录 → 输入框 → 检查器 instead of skipping the
-                // conversation. SwiftUI builds a real key view for `.focusable()` and
-                // AppKit places it geometrically, with no traversal code of Echo's own —
-                // measured, with Full Keyboard Access off, in
-                // docs/repros/window-focus-ring.swift [F1].
-                .focusable()
-                // That key view is NOT inside the scroll view, so scrollPageDown: and
-                // friends reach nobody ([F3]). SwiftUI's own path is the one that works.
-                .onKeyPress(keys: [.upArrow, .downArrow, .pageUp, .pageDown, .home, .end]) { transcriptKey($0) }
-                .accessibilityIdentifier("conversation.transcript")
-                .accessibilityLabel("会话记录")
-                .overlay(alignment: .bottom) {
-                    if !followTail {
-                        Button("回到最新消息", systemImage: "arrow.down") {
-                            followTail = true; proxy.scrollTo("conversation.bottom", anchor: .bottom)
-                        }.buttonStyle(.bordered).padding(8)
                     }
-                }
-                .onAppear { proxy.scrollTo("conversation.bottom", anchor: .bottom) }
-                .onChange(of: store.messages.last) { _, _ in
-                    if followTail {
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { proxy.scrollTo("conversation.bottom", anchor: .bottom) }
-                    }
-                }
-                .onChange(of: store.tools.count) { _, _ in
-                    if followTail { proxy.scrollTo("conversation.bottom", anchor: .bottom) }
+                    ForEach(store.tools.filter { $0.afterMessageID == nil }) { tool in AgentToolView(tool: tool) }
+                }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
+                    .frame(maxWidth: .infinity)
+            }
+            // Leave short conversations at the top; .alignment would pin them to the composer.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .onScrollPhaseChange { _, phase in
+                userScrolling = phase != .idle
+                // A user gesture disarms the native anchor. Returning near the bottom
+                // must re-arm it once the gesture ends, without fighting the finger.
+                if phase == .idle && followTail { returnToTail() }
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentSize.height - geometry.visibleRect.maxY < 60
+            } action: { _, nearBottom in
+                if userScrolling { followTail = nearBottom }
+            }
+            .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
+                TranscriptGeometry(visible: geometry.visibleRect, contentHeight: geometry.contentSize.height)
+            } action: { previous, value in
+                transcriptGeometry = value
+                // macOS 27 misses the first growth from fitting content to overflow;
+                // later growth follows normally. Re-arm at that boundary only, so a
+                // one-shot reply reaches the tail without pulling someone out of history.
+                if followTail && !userScrolling,
+                   previous.contentHeight <= previous.visible.height,
+                   value.contentHeight > value.visible.height { returnToTail() }
+            }
+            .scrollPosition($scrollPosition)
+            // The chat itself is a Tab stop, which is what makes the window's focus
+            // ring 侧栏列表 → 会话记录 → 输入框 → 检查器 instead of skipping the
+            // conversation. SwiftUI builds a real key view for `.focusable()` and
+            // AppKit places it geometrically, with no traversal code of Echo's own —
+            // measured, with Full Keyboard Access off, in
+            // docs/repros/window-focus-ring.swift [F1].
+            .focusable()
+            // That key view is NOT inside the scroll view, so scrollPageDown: and
+            // friends reach nobody ([F3]). SwiftUI's own path is the one that works.
+            .onKeyPress(keys: [.upArrow, .downArrow, .pageUp, .pageDown, .home, .end]) { transcriptKey($0) }
+            .accessibilityIdentifier("conversation.transcript")
+            .accessibilityLabel("会话记录")
+            .overlay(alignment: .bottom) {
+                if !followTail {
+                    Button("回到最新消息", systemImage: "arrow.down") {
+                        returnToTail()
+                    }.buttonStyle(.bordered).padding(8)
                 }
             }
             VStack(spacing: 8) {
@@ -637,14 +640,23 @@ struct ConversationView: View {
     private func scrollTranscript(by delta: CGFloat) {
         let maxOffset = max(0, transcriptGeometry.contentHeight - transcriptGeometry.visible.height)
         let target = min(max(0, transcriptGeometry.visible.minY + delta), maxOffset)
-        scrollPosition.scrollTo(y: target)
-        // Scrolling by keyboard is the person driving, the same as dragging: only a move
-        // that ends at the bottom keeps new replies pulling the view down.
-        followTail = target >= maxOffset - 1
+        // A keyboard move to the bottom re-arms the native anchor too.
+        if target >= maxOffset - 1 { returnToTail() }
+        else {
+            followTail = false
+            scrollPosition.scrollTo(y: target)
+        }
     }
     private func scrollTranscript(toBottom: Bool) {
-        scrollPosition.scrollTo(edge: toBottom ? .bottom : .top)
-        followTail = toBottom
+        if toBottom { returnToTail() }
+        else {
+            followTail = false
+            scrollPosition.scrollTo(edge: .top)
+        }
+    }
+    private func returnToTail() {
+        followTail = true
+        scrollPosition.scrollTo(edge: .bottom)
     }
     private var voiceOwner: VoiceSessionSnapshot.Owner? { voice.snapshot.session.owner }
     private var isVoiceOwner: Bool { voiceOwner?.conversationID == conversationID }

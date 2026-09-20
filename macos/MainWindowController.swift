@@ -3,6 +3,13 @@ import SwiftUI
 import Combine
 
 struct MainWindowLayout {
+    static let sidebarMinimum: CGFloat = 220
+    static let inspectorMinimum: CGFloat = 260
+    static let conversationMinimum: CGFloat = 440
+    // Collapse before the conversation reaches its hard minimum, including the
+    // default two-column layout whose hard minimum is below the window's 720pt floor.
+    static let conversationComfortable: CGFloat = 560
+    static let dividerThickness: CGFloat = 1
     var sidebarPreferred = true
     var inspectorPreferred = false
     var sidebarWidth: CGFloat = 250
@@ -10,10 +17,21 @@ struct MainWindowLayout {
     // A manual request overrides automatic thresholds only until the next window resize.
     enum Column { case sidebar, inspector }
     func visibleColumns(width: CGFloat, manual: Column? = nil) -> (sidebar: Bool, inspector: Bool) {
-        var left = sidebarPreferred && (width >= 780 || manual == .sidebar)
-        var right = inspectorPreferred && (width >= 1040 || manual == .inspector)
-        if left && right && width < sidebarWidth + inspectorWidth + 442 {
-            if manual == .inspector { left = false } else { right = false }
+        var left = sidebarPreferred
+        var right = inspectorPreferred
+        let conversation = manual == nil ? Self.conversationComfortable : Self.conversationMinimum
+        func requiredWidth() -> CGFloat {
+            conversation + (left ? Self.sidebarMinimum + Self.dividerThickness : 0)
+                + (right ? Self.inspectorMinimum + Self.dividerThickness : 0)
+        }
+        // Match AppKit's order: keep project files longer than the chat list.
+        // An explicit request for the list instead asks the inspector to give way.
+        if manual == .sidebar {
+            if requiredWidth() > width { right = false }
+            if requiredWidth() > width { left = false }
+        } else {
+            if requiredWidth() > width { left = false }
+            if requiredWidth() > width { right = false }
         }
         return (left, right)
     }
@@ -25,12 +43,6 @@ struct MainWindowLayout {
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
         if abs(frameRect.width - frame.width) > 0.5 { prepareWidth?(frameRect.width) }
         super.setFrame(frameRect, display: flag)
-    }
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 {
-            if let onEscape, onEscape() { return }
-        }
-        super.keyDown(with: event)
     }
     override func cancelOperation(_ sender: Any?) {
         if let onEscape, onEscape() { return }
@@ -173,7 +185,7 @@ struct MainWindowLayout {
         // inspector, its own titlebar region so the content's scroll pocket stops at the divider,
         // and a hairline divider. The content view must stay transparent for that to show.
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHost)
-        sidebarItem.minimumThickness = 220; sidebarItem.maximumThickness = 340
+        sidebarItem.minimumThickness = MainWindowLayout.sidebarMinimum; sidebarItem.maximumThickness = 340
         sidebarItem.canCollapse = true; sidebarItem.canCollapseFromWindowResize = true
         sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         sidebarItem.holdingPriority = .init(260)
@@ -187,11 +199,11 @@ struct MainWindowLayout {
         sidebarItem.addBottomAlignedAccessoryViewController(
             SidebarAccessoryController(rootView: SettingsEntryButton { [weak self] in self?.showSettings() }))
         let content = NSSplitViewItem(viewController: conversationHost)
-        content.minimumThickness = 440; content.holdingPriority = .init(249)
+        content.minimumThickness = MainWindowLayout.conversationMinimum; content.holdingPriority = .init(249)
         content.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         conversationItem = content
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspectorHost)
-        inspectorItem.minimumThickness = 260; inspectorItem.maximumThickness = 380
+        inspectorItem.minimumThickness = MainWindowLayout.inspectorMinimum; inspectorItem.maximumThickness = 380
         inspectorItem.canCollapse = true; inspectorItem.canCollapseFromWindowResize = true
         inspectorItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         inspectorItem.holdingPriority = .init(260)
@@ -360,7 +372,7 @@ struct MainWindowLayout {
     /// whole window, and its only other way out is the pointer. A sheet or an input
     /// method mid-composition owns Escape first. This is deliberately not part of
     /// `canHandleEscape`, which answers for the 停止回复 command: that command stays
-    /// unavailable here, so the menu declines Escape and the window sees it.
+    /// unavailable here. Escape has no menu key equivalent and reaches the window.
     var canEscapeSettings: Bool {
         guard isSettingsVisible, let window else { return false }
         if window.attachedSheet != nil { return false }
@@ -429,6 +441,8 @@ struct MainWindowLayout {
         }
     }
     private func prepareResize(_ width: CGFloat) {
+        // AppKit only auto-collapses during live resize. Pre-collapse for frame
+        // restoration and setContentSize too, or the split's fittingSize clamps them.
         guard !applyingLayout, !isSettingsVisible else { return }
         applyingLayout = true; defer { applyingLayout = false }
         let visible = visibleColumns(width: width)
@@ -460,13 +474,16 @@ struct MainWindowLayout {
         rootController.view.layoutSubtreeIfNeeded()
         splitController.splitView.layoutSubtreeIfNeeded()
         let available = splitController.splitView.bounds.width
+        let divider = MainWindowLayout.dividerThickness
+        let conversationMinimum = MainWindowLayout.conversationMinimum
         if visible.sidebar {
-            let maxWidth = expanded ? available - 261 : available - 441 - (visible.inspector ? layout.inspectorWidth + 1 : 0)
-            splitController.splitView.setPosition(min(layout.sidebarWidth, max(220, maxWidth)), ofDividerAt: 0)
+            let maxWidth = expanded ? available - MainWindowLayout.inspectorMinimum - divider
+                : available - conversationMinimum - divider - (visible.inspector ? layout.inspectorWidth + divider : 0)
+            splitController.splitView.setPosition(min(layout.sidebarWidth, max(MainWindowLayout.sidebarMinimum, maxWidth)), ofDividerAt: 0)
         }
         if visible.inspector && !expanded {
-            let maxWidth = available - 441 - (visible.sidebar ? layout.sidebarWidth + 1 : 0)
-            splitController.splitView.setPosition(available - min(layout.inspectorWidth, max(260, maxWidth)) - 1, ofDividerAt: 1)
+            let maxWidth = available - conversationMinimum - divider - (visible.sidebar ? layout.sidebarWidth + divider : 0)
+            splitController.splitView.setPosition(available - min(layout.inspectorWidth, max(MainWindowLayout.inspectorMinimum, maxWidth)) - divider, ofDividerAt: 1)
         }
         window.toolbar?.validateVisibleItems()
     }

@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installMenus() {
         let commands = WorkspaceCommands(controller: { [weak self] in self?.companion?.mainController },
                                          newConversation: { [weak self] in self?.newConversation() })
-        let menu = WorkspaceMenu(commands: commands)
+        let menu = NSMenu(title: "")
         // Standard macOS menu bar order: application, File, Edit, app-specific, Window.
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu(title: "Echo")

@@ -1,27 +1,5 @@
 import AppKit
 
-/// AppKit can report a disabled menu key equivalent as handled. Explicitly decline
-/// unavailable Escape before menu matching so the input method/responder gets it.
-@MainActor final class WorkspaceMenu: NSMenu {
-    private nonisolated let canStop: @MainActor @Sendable () -> Bool
-
-    init(commands: WorkspaceCommands) {
-        canStop = { [weak commands] in commands?.canStop == true }
-        super.init(title: "")
-    }
-    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.keyCode == 53,
-           event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
-            let canStop = canStop
-            // AppKit dispatches menu key equivalents on the main thread.
-            if !MainActor.assumeIsolated({ canStop() }) { return false }
-        }
-        return super.performKeyEquivalent(with: event)
-    }
-}
-
 /// Native menu commands share the same controller actions and composer availability as the UI.
 @MainActor final class WorkspaceCommands: NSObject, NSMenuItemValidation {
     private let controller: () -> MainWindowController?
@@ -44,10 +22,10 @@ import AppKit
         add(windowMenu, "切换项目文件", #selector(toggleInspector), "b", [.command, .option])
         add(conversationMenu, "切换普通听写", #selector(toggleDictation), "d", [.control, .shift])
         add(conversationMenu, "切换 Live Voice", #selector(toggleVoice), "v", [.control, .shift])
-        add(conversationMenu, "停止回复", #selector(stop), "\u{1b}", [])
+        add(conversationMenu, "停止回复", #selector(stop), ".", .command)
     }
 
-    fileprivate var canStop: Bool {
+    private var canStop: Bool {
         guard let main = controller() else { return false }
         return NSApp.keyWindow === main.window && main.canHandleEscape
     }
