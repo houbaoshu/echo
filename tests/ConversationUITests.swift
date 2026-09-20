@@ -2800,11 +2800,14 @@ private struct ComposerHeightHost: View {
         voice.replyAudio = .playing(UUID())
         precondition(bubble(voice, at: 0) == .reply("今天**天气**好。", heard: "今") && shown(voice),
                      "The first played character opens the bubble")
-        precondition(bubble(voice, at: 0.5) == .reply("今天**天气**好。", heard: "今天天气"), "Text leads playback at 1.5×")
+        precondition(bubble(voice, at: 0.5) == .reply("今天**天气**好。", heard: "今天天"),
+                     "Text follows the subtitle timeline: only words started by 0.5s are shown")
+        precondition(bubble(voice, at: 0.75) == .reply("今天**天气**好。", heard: "今天天气"),
+                     "The word at 0.6s appears when playback reaches it, not 1.5× earlier")
         precondition(bubble(voice, at: 10) == .reply("今天**天气**好。", heard: "今天天气好。"), "All words once played")
         var stopped = spoken; stopped.stoppedAt = 0.3
-        precondition(bubble(voice, spoken: stopped, at: 10) == .reply("今天**天气**好。", heard: "今天天"),
-                     "An interrupted reply keeps what was shown")
+        precondition(bubble(voice, spoken: stopped, at: 10) == .reply("今天**天气**好。", heard: "今天"),
+                     "An interrupted reply keeps what was shown, up to where the audio stopped")
         stopped.stoppedAt = .infinity
         precondition(bubble(voice, spoken: stopped, at: 0) == .reply("今天**天气**好。", heard: nil) && shown(voice, spoken: stopped),
                      "A finished reply stays whole")
