@@ -97,6 +97,10 @@ private struct ComposerHeightHost: View {
         // Native menu routing needs AppKit's event loop and a real key window.
         Task { @MainActor in
             do {
+                if CommandLine.arguments.contains("--settings-only") {
+                    try await testSettingsKeyboardAndFocus()
+                    exit(0)
+                }
                 if CommandLine.arguments.contains("--phase4-only") {
                     try await testTranscriptTailAnchors()
                     try await testPointerMonitorLifecycle()
@@ -530,8 +534,24 @@ private struct ComposerHeightHost: View {
                      "...and it is not a proxy icon either, got \(String(describing: window.representedURL))")
         main.showSettings()
         try await Task.sleep(for: .milliseconds(150))
-        precondition(window.title == "设置" && window.subtitle.isEmpty, "The settings page has the page's title alone")
+        let settingsWindow = main.settingsController!.window!
+        precondition(settingsWindow !== window && settingsWindow.title == "设置", "Settings has its own window")
+        precondition(settingsWindow.toolbarStyle == .preference && settingsWindow.frameAutosaveName.isEmpty)
+        precondition(window.title == "无项目会话" && window.toolbar?.isVisible == true && !main.splitController.view.isHidden,
+                     "Opening settings leaves the workspace title, toolbar and columns intact")
+        let settingsFrame = settingsWindow.frame
+        let mainFrame = window.frame
+        main.hideMainWindow()
+        precondition(settingsWindow.isVisible && !window.isVisible && !workspace.isMainWindowVisible,
+                     "Closing the main window leaves settings open")
+        main.showSettings()
+        precondition(!window.isVisible && !workspace.isMainWindowVisible && main.settingsController?.window === settingsWindow,
+                     "Opening existing settings does not reveal the main window or create a second window")
         main.showWorkspace()
+        precondition(settingsWindow.isVisible && window.frame == mainFrame && settingsWindow.frame == settingsFrame,
+                     "Both windows retain independent visibility and geometry")
+        main.settingsController?.close()
+        precondition(window.isVisible && workspace.isMainWindowVisible, "Closing settings leaves the workspace open")
         try await Task.sleep(for: .milliseconds(150))
         precondition(window.title == "无项目会话" && window.subtitle.isEmpty,
                      "Returning restores the chat's single-line title, got \(window.title)/\(window.subtitle)")
@@ -2161,9 +2181,8 @@ private struct ComposerHeightHost: View {
         precondition(conversationA.store.isGenerating, "A is generating")
         main.showSettings()
         precondition(main.isSettingsVisible, "Settings is visible")
-        precondition(!main.canHandleEscape, "停止回复 stays unavailable while the settings page is up")
-        let escInSettings = main.handleEscape()
-        precondition(escInSettings && !main.isSettingsVisible, "Esc in Settings closes the page")
+        let escInSettings = main.settingsController!.handleEscape()
+        precondition(escInSettings && !main.isSettingsVisible, "Esc in Settings closes its own window")
         precondition(conversationA.store.isGenerating, "A is NOT stopped by Esc in Settings")
         workspace.stop(conversationID: conversationA.id)
 
@@ -2272,7 +2291,9 @@ private struct ComposerHeightHost: View {
     @MainActor private static func testSettingsAndCompanionVoiceIntegration() async throws {
         let source = PreviewSource()
         let store = TaskStore(source: source)
-        let voice = VoiceSessionController(), dictation = DictationController()
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() },
+            synthesizer: { ComposerSynthesizer() }, permission: { true })
+        let dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
         let conversationA = workspace.selected!
@@ -2285,23 +2306,54 @@ private struct ComposerHeightHost: View {
                                         windowOverride: window)
         defer { main.shutdown() }
 
-        // Start voice
-        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversationA.id)
-        voice.updateSnapshot {
-            $0.session = .active(owner)
-            $0.recognition = .listening
+        // Exercise the real session lifecycle with fake audio and transport. A
+        // presentation-only snapshot has no capture task, so mute is unavailable.
+        precondition(voice.start(conversation: conversationA, configuration: VoiceConfiguration(), key: "test-key"))
+        let owner = voice.snapshot.session.owner!
+        for _ in 0..<50 where voice.snapshot.session == .starting(owner) {
+            try await Task.sleep(for: .milliseconds(20))
         }
-        precondition(voice.isActive, "Voice is active")
+        precondition(voice.snapshot.session == .active(owner), "Voice is active")
 
         // Switch to Settings
         main.showSettings()
         precondition(main.isSettingsVisible, "Settings is visible")
 
-        // In Settings, verify revealVoice returns to conversation A and dismisses settings
-        main.revealVoice()
-        precondition(!main.isSettingsVisible, "Settings dismissed by revealVoice")
+        let settingsWindow = main.settingsController!.window!
+        try await Task.sleep(for: .milliseconds(150))
+        settingsWindow.contentView?.layoutSubtreeIfNeeded()
+        let settingsContent = settingsWindow.contentView!
+        precondition(findAccessibility("voice.attributionBar", in: settingsContent) != nil,
+                     "The independent settings window shows the shared Live Voice attribution")
+        // SwiftUI propagates the bar's identifier to its children on macOS 27.
+        // Address its actual buttons by their accessible role and user-facing label.
+        func voiceButton(_ label: String, in value: Any, depth: Int = 0) -> AnyObject? {
+            guard depth < 20 else { return nil }
+            let object = value as AnyObject
+            if object.accessibilityRole?() == .button, object.accessibilityLabel?() == label {
+                return object
+            }
+            for child in object.accessibilityChildren?() ?? [] {
+                if let button = voiceButton(label, in: child, depth: depth + 1) { return button }
+            }
+            return nil
+        }
+        precondition(voiceButton("静音麦克风", in: settingsContent)?.accessibilityPerformPress?() == true)
+        precondition(voice.isMuted, "Settings controls the same Live Voice session")
+        try await Task.sleep(for: .milliseconds(100))
+        precondition(voiceButton("取消静音", in: settingsContent)?.accessibilityPerformPress?() == true)
+        precondition(!voice.isMuted)
+        // The real settings action reveals its owner even from another selected chat.
+        _ = workspace.newConversation()
+        precondition(voiceButton("返回 语音会话", in: settingsContent)?.accessibilityPerformPress?() == true)
+        precondition(main.isSettingsVisible && window.isVisible, "Returning to Live Voice keeps settings open alongside the conversation")
+        precondition(voice.snapshot.session.owner == owner, "Returning preserves the Live Voice owner")
         precondition(workspace.selectedID == conversationA.id, "Conversation A selected")
         precondition(workspace.composerFocusID == conversationA.id, "Composer focus requested for A")
+
+        main.settingsController?.close()
+        precondition(voice.snapshot.session.owner == owner && voice.isActive,
+                     "Closing settings does not end Live Voice")
 
         // Verify the pet's voice bar:
         let presentation = PetControlsPresentation()
@@ -3171,7 +3223,18 @@ private struct ComposerHeightHost: View {
         }
         workspace.select(first.id)
         try await settle(500)
-        func tree() -> NSTableView? { findAccessibility("projectFiles.tree", in: host) as? NSTableView }
+        func tree() -> NSTableView? {
+            // In this standalone host SwiftUI gives the sole list its parent's
+            // workspace.projectFiles identifier. Find the native outline by role;
+            // the scroll geometry assertions below still exercise the real table.
+            func outlines(in view: NSView) -> [NSTableView] {
+                if let table = view as? NSTableView, table.accessibilityRole() == .outline { return [table] }
+                return view.subviews.flatMap { outlines(in: $0) }
+            }
+            let tables = outlines(in: host)
+            precondition(tables.count == 1, "The project inspector contains exactly one native outline")
+            return tables.first
+        }
         guard let table = tree(), let scroll = table.enclosingScrollView else {
             preconditionFailure("Project tree missing")
         }
@@ -3703,6 +3766,8 @@ private struct ComposerHeightHost: View {
     /// typing while it is up, and its controls must traverse, activate and disable the
     /// way system controls do.
     @MainActor private static func testSettingsKeyboardAndFocus() async throws {
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"),
+                      with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         precondition(CGPreflightPostEventAccess(), "Settings keyboard test needs Accessibility permission to post events")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("settings-keys-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -3715,7 +3780,18 @@ private struct ComposerHeightHost: View {
         let pets = PetCatalog(settings: settings, builtinRoot: URL(fileURLWithPath: "assets/pets"))
         let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "settings-keys-\(UUID())")!,
                                         settings: settings, pets: pets)
-        let window = main.window!
+        var window = main.window!
+        let priorMenu = NSApp.mainMenu
+        let menu = NSMenu(), applicationMenu = NSMenu(title: "Echo"), windowMenu = NSMenu(title: "窗口")
+        for submenu in [applicationMenu, windowMenu] {
+            let item = NSMenuItem(); item.submenu = submenu; menu.addItem(item)
+        }
+        windowMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let commands = WorkspaceCommands(controller: { main }, newConversation: { main.showWorkspace() })
+        let fileMenu = NSMenu(), conversationMenu = NSMenu()
+        commands.install(fileMenu: fileMenu, windowMenu: windowMenu, conversationMenu: conversationMenu)
+        NSApp.mainMenu = menu
+        defer { NSApp.mainMenu = priorMenu }
         main.present()
         NSApp.activate(ignoringOtherApps: true)
         defer { main.shutdown(); workspace.shutdown() }
@@ -3764,15 +3840,28 @@ private struct ComposerHeightHost: View {
         let conversation = workspace.selected ?? workspace.newConversation()
         conversation.store.mainDraft = ""
         main.showSettings()
+        window = main.settingsController!.window!
         try await settle()
         precondition(NSApp.isActive && window.isKeyWindow, "Real key events need the settings window to be key")
 
-        // 1. The page owns typing: a queued composer focus request cannot pull
-        // keystrokes back into the hidden conversation behind it. What it hands the
-        // first responder to is the page's own section list, not the hosting
-        // container, so the selection reads as active and the arrow keys drive it
-        // with no Tab and no click first.
-        precondition(!(window.firstResponder is ComposerTextView), "Settings takes focus off the hidden composer")
+        // Settings owns typing even if the still-visible conversation requests focus.
+        workspace.requestComposerFocus(conversationID: conversation.id)
+        try await settle()
+        precondition(window.isKeyWindow && main.window!.isVisible)
+        windowMenu.update()
+        let workspaceItems = windowMenu.items.filter { $0.target === commands }
+        precondition(workspaceItems.count == 2)
+        precondition(workspaceItems.allSatisfy { !$0.isEnabled },
+                     "Workspace commands are disabled in settings: \(workspaceItems.map { ($0.title, $0.isEnabled) })")
+        main.present()
+        try await settle()
+        windowMenu.update()
+        precondition(workspaceItems.allSatisfy { $0.isEnabled }, "Workspace commands work with settings still open")
+        main.showSettings()
+        try await settle()
+        precondition(findAccessibility("settings.back", in: window.contentView!) == nil,
+                     "Independent settings uses the native window close control")
+        precondition(!(window.firstResponder is ComposerTextView), "Settings has its own first responder")
         precondition(isSectionList(responder()),
                      "Opening settings focuses its section list, not the host: \(String(describing: responder()))")
         try await key(125)
@@ -3907,13 +3996,7 @@ private struct ComposerHeightHost: View {
                           "a pet card")
             try await key(49)
             precondition(pets.selectedID != pet, "Space activates the focused pet card")
-            try await tab(until: responder()?.frame.width == 103, "the back button")
-            try await key(36)
-            precondition(main.isSettingsVisible, "Return is not a shortcut for an ordinary focused button")
-            try await key(49)
-            precondition(!main.isSettingsVisible, "Space activates the focused back button")
-            main.showSettings()
-            try await settle()
+
         }
 
         // 10. A voice test started from the page keeps running on its own: the stub
@@ -3928,32 +4011,49 @@ private struct ComposerHeightHost: View {
         precondition(voice.testing, "The connection check runs until something cancels it")
         precondition(!main.canToggleVoice, "A running voice test blocks Live Voice")
 
-        // 11. Leaving the page cancels that test and returns typing to the conversation.
-        // The page is only hidden, never unmounted, so neither can come from a SwiftUI
-        // onDisappear or from the caller asking for composer focus afterwards.
-        precondition(findAccessibility("settings.back", in: window.contentView!)?.accessibilityPerformPress?() == true)
+        // 11. The native close command goes to the key settings window and cancels
+        // its preview, without closing or discarding the conversation beside it.
+        settings.voiceDraft.speaker = "unsaved-speaker"
+        // Match the native menu suite: NSApp dispatches a complete key event through
+        // the menu and responder chain, independently of the current input source.
+        let closeEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "w", charactersIgnoringModifiers: "w",
+            isARepeat: false, keyCode: 13)!
+        NSApp.sendEvent(closeEvent)
         try await settle()
-        precondition(!main.isSettingsVisible)
-        precondition(!voice.testing, "Leaving the settings page cancels the running voice test")
+        precondition(!main.isSettingsVisible && main.window!.isVisible,
+                     "Command+W closes only settings: settings=\(main.isSettingsVisible), main=\(main.window!.isVisible), key=\(String(describing: NSApp.keyWindow?.title))")
+        precondition(!voice.testing, "Closing settings cancels the running voice test")
         precondition(main.canToggleVoice, "Live Voice is available again once the test is cancelled")
-        precondition(window.firstResponder is ComposerTextView,
-                     "Returning to the workspace restores composer focus: \(String(describing: responder()))")
+        precondition(settings.voiceDraft.speaker == "unsaved-speaker", "Closing settings retains unsaved edits")
+        window = main.window!
+        main.present()
+        workspace.requestComposerFocus(conversationID: conversation.id)
+        try await settle()
         try await key(18)
-        precondition(conversation.store.mainDraft.contains("1"),
-                     "Typing after 返回应用 reaches the chat draft without a click: \(conversation.store.mainDraft)")
+        precondition(conversation.store.mainDraft.contains("1"), "The conversation remains editable after closing settings")
         conversation.store.mainDraft = ""
 
         // 12. Escape closes the page too, so it can be left without the pointer.
         main.showSettings()
+        window = main.settingsController!.window!
         try await settle()
         precondition(main.isSettingsVisible && isSectionList(responder()))
         try await key(53)
         precondition(!main.isSettingsVisible, "Escape leaves the settings page")
-        precondition(window.firstResponder is ComposerTextView, "Escape returns focus with the page")
+        precondition(main.window!.isVisible, "Escape leaves the conversation open")
+        main.showSettings()
+        try await settle()
+        precondition(settings.selectedSection == "语音" && settings.voiceDraft.speaker == "unsaved-speaker",
+                     "Reopening preserves the selected section and unsaved edits")
+        let focused = window.firstResponder
+        main.showSettings()
+        try await settle()
+        precondition(window.firstResponder === focused, "Repeated settings requests preserve focus in the existing window")
 
         print("PASS: settings page owns typing and focuses its section list, full-row pointer targets, system section list arrow/Tab traversal,"
               + " pane swap keeps the key view loop, field editing, disabled controls,"
-              + " Return saves and Escape leaves, leaving cancels a running voice test and restores composer focus\(fullKeyboardAccess ? ", Space activation under Full Keyboard Access" : "")")
+              + " Return saves, Command+W and Escape close settings independently, closing cancels a running voice test and preserves drafts\(fullKeyboardAccess ? ", Space activation under Full Keyboard Access" : "")")
     }
 
     /// Posted pointer events go to whichever window the window server has on top at

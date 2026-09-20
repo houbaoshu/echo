@@ -12,7 +12,6 @@ struct SettingsSidebar: View {
     /// Owned by the window controller, so showing the page can hand the first
     /// responder to this list instead of to the hosting container.
     let sectionFocus: SidebarListFocus
-    var onBack: () -> Void
     /// The sidebar is a system source list, so it hands back an optional selection.
     /// Clearing it (⌘-click on the selected row) keeps the current section.
     private var sectionSelection: Binding<String?> {
@@ -23,10 +22,6 @@ struct SettingsSidebar: View {
     /// selection fill, hover, focus ring, arrow-key traversal and selected trait.
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: onBack) { Label("返回应用", systemImage: "arrow.left").fontWeight(.medium) }
-                .buttonStyle(.accessoryBar).controlSize(.large)
-                .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 14)
-                .accessibilityIdentifier("settings.back")
             List(selection: sectionSelection) {
                 ForEach(SettingsView.sections, id: \.self) { name in
                     Label { Text(name) } icon: { icon(name).accessibilityHidden(true) }
@@ -36,8 +31,8 @@ struct SettingsSidebar: View {
                         .accessibilityIdentifier("settings.section.\(name)")
                 }
             }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                .modifier(SidebarListFocusBinding(focus: sectionFocus))
                 .accessibilityLabel("设置分区").accessibilityIdentifier("settings.sections")
-            SidebarListFocusAnchor(focus: sectionFocus).frame(height: 0).accessibilityHidden(true)
         }.padding(.vertical, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
@@ -58,7 +53,6 @@ struct SettingsView: View {
     @ObservedObject var voice: VoiceSessionController
     @ObservedObject var pets: PetCatalog
     var workspace: WorkspaceStore? = nil
-    var onBack: () -> Void
     var onReturnToVoice: (() -> Void)? = nil
     /// The section order the sidebar and its keyboard traversal both follow.
     static let sections = ["模型", "语音", "精灵"]
@@ -74,10 +68,9 @@ struct SettingsView: View {
                 Text(section).font(WorkspaceStyle.pageTitle)
                     .padding(.horizontal, 32).padding(.top, 28).padding(.bottom, 4)
                 Group {
-                    // `revealsKey` and its focus are @State on a page that is only ever
-                    // hidden, never unmounted, so `onDisappear` does not run and this
-                    // `.id` stays the thing that resets them. The form migration changes
-                    // the rows, not that lifetime.
+                    // Closing a retained settings window does not unmount its views.
+                    // Reset revealed credentials and field focus on close/reopen while
+                    // leaving the store's unsaved form values intact.
                     if section == "模型" { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
                     else if section == "语音" { VoiceSettingsView(settings: settings, voice: voice) }
                     else { PetSettingsView(pets: pets, settings: settings) }
@@ -91,7 +84,6 @@ struct SettingsView: View {
                     if let onReturnToVoice {
                         onReturnToVoice()
                     } else {
-                        onBack()
                         ws.revealVoice(owner: owner)
                     }
                 }

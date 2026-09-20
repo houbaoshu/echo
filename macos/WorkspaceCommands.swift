@@ -33,7 +33,7 @@ import AppKit
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(newConversation) { return true }
         guard let main = controller() else { return false }
-        guard !main.isSettingsVisible, main.window?.attachedSheet == nil else { return false }
+        guard NSApp.keyWindow === main.window, main.window?.attachedSheet == nil else { return false }
         switch menuItem.action {
         case #selector(toggleDictation): return main.canToggleDictation
         case #selector(toggleVoice): return main.canToggleVoice

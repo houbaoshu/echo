@@ -46,11 +46,12 @@ import Combine
 /// clear button, the focus ring, the Escape-clears-the-query semantics and the
 /// input-method handling all come from NSSearchField instead of being redrawn here.
 ///
-/// SwiftUI's .searchable is the obvious candidate and does not fit. Measured on macOS 26:
-/// with no navigation container around it, .searchable renders nothing at all, at either
-/// placement; inside a NavigationSplitView the default placement moves the field into a
-/// window toolbar, which a borderless palette does not have. NSSearchField is what
-/// .searchable itself renders, so taking it directly costs nothing but the container.
+/// Reverified on macOS 27 / Xcode 27, 2026-09-20 (P3-3; standalone probe in
+/// docs/repros/stage5-native-search-focus.swift): without a navigation container,
+/// both automatic and sidebar placements render no field. NavigationSplitView +
+/// sidebar placement renders one but introduces another split and squeezes the
+/// results to 144pt inside a 620pt panel; automatic placement still has no field in
+/// a borderless window. Keep NSSearchField and its explicit keyboard ownership.
 struct WorkspaceSearchField: NSViewRepresentable {
     @Binding var text: String
     let focus: WorkspaceSearchFocus

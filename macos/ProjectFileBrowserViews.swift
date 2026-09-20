@@ -42,6 +42,7 @@ private struct ProjectFileBrowserView: View {
                 List(selection: selection) {
                     directoryContents("")
                 }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                    .modifier(SidebarListFocusBinding(focus: listFocus))
                     .accessibilityIdentifier("projectFiles.tree")
                     .onKeyPress(.return) { activateSelection(); return .handled }
                     // The list owns the menu, which is what brings the system's own
@@ -63,7 +64,6 @@ private struct ProjectFileBrowserView: View {
                         guard let path = browser.state.scrollID else { return }
                         DispatchQueue.main.async { proxy.scrollTo(path, anchor: .top) }
                     }
-                SidebarListFocusAnchor(focus: listFocus).frame(height: 0).accessibilityHidden(true)
             }
         }
     }

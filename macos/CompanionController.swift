@@ -270,11 +270,14 @@ import Combine
         mainController?.showWorkspace()
     }
     func showSettings() {
-        workspace.isMainWindowVisible = true
-        presentMainWindow(); mainController?.showSettings()
+        ensureMainController()
+        mainController?.showSettings()
+    }
+    private func ensureMainController() {
+        if mainController == nil { mainController = MainWindowController(workspace: workspace, settings: settings, pets: pets) }
     }
     private func presentMainWindow() {
-        if mainController == nil { mainController = MainWindowController(workspace: workspace, settings: settings, pets: pets) }
+        ensureMainController()
         mainController?.present()
     }
     @objc private func screensChanged() { layout() }

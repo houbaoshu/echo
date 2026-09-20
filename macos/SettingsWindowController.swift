@@ -1,0 +1,76 @@
+import AppKit
+import SwiftUI
+
+/// Settings owns its window and focus loop. The shared stores keep unsaved edits and
+/// Live Voice ownership consistent while the conversation remains usable alongside it.
+@MainActor final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+    private let settings: SettingsStore
+    private let workspace: WorkspaceStore
+    private let sectionFocus = SidebarListFocus()
+
+    init(settings: SettingsStore, workspace: WorkspaceStore, pets: PetCatalog,
+         defaults: UserDefaults, onReturnToVoice: @escaping () -> Void) {
+        self.settings = settings
+        self.workspace = workspace
+        let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 700),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        super.init(window: window)
+        window.title = "设置"
+        window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: 720, height: 520)
+        window.toolbarStyle = .preference
+        window.toolbar = NSToolbar(identifier: "chiyan.settings")
+        window.delegate = self
+        window.onEscape = { [weak self] in self?.handleEscape() ?? false }
+
+        let sidebar = NSHostingController(rootView: SettingsSidebar(settings: settings, sectionFocus: sectionFocus))
+        let detail = NSHostingController(rootView: SettingsView(settings: settings, voice: workspace.voice,
+            pets: pets, workspace: workspace, onReturnToVoice: onReturnToVoice))
+        sidebar.sizingOptions = []; detail.sizingOptions = []
+        let split = NSSplitViewController()
+        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+        sidebarItem.minimumThickness = 200; sidebarItem.maximumThickness = 260
+        sidebarItem.canCollapse = false; sidebarItem.canCollapseFromWindowResize = false
+        let detailItem = NSSplitViewItem(viewController: detail)
+        detailItem.minimumThickness = 480
+        split.splitView.dividerStyle = .thin
+        split.addSplitViewItem(sidebarItem); split.addSplitViewItem(detailItem)
+        window.contentViewController = split
+        window.center()
+        if defaults === UserDefaults.standard {
+            window.setFrameAutosaveName("settings")
+            window.setFrameUsingName("settings")
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func present() {
+        guard let window else { return }
+        let opening = !window.isVisible
+        if opening {
+            workspace.dictation.cancel()
+            settings.presentationRevision += 1
+        }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        if opening { sectionFocus.take() }
+    }
+
+    func handleEscape() -> Bool {
+        guard let window, window.isVisible, window.attachedSheet == nil else { return false }
+        if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
+        window.performClose(nil)
+        return true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // Closing a retained window does not unmount SwiftUI. Explicitly stop previews
+        // and reset the revealed key without discarding any unsaved form values.
+        workspace.voice.cancelTest()
+        settings.cancelTest()
+        settings.presentationRevision += 1
+        window?.makeFirstResponder(nil)
+    }
+}

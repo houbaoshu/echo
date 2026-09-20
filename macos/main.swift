@@ -106,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
-        windowMenu.addItem(withTitle: "收起主窗口", action: #selector(hideConversation), keyEquivalent: "w").target = self
+        windowMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         windowItem.submenu = windowMenu
         menu.addItem(windowItem)
         commands.install(fileMenu: fileMenu, windowMenu: windowMenu, conversationMenu: conversationMenu)
@@ -120,7 +120,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSettings() { companion?.showSettings() }
-    @objc private func hideConversation() { companion?.mainController?.hideMainWindow() }
     @objc private func newConversation() {
         guard let companion else { return }
         companion.mainController?.showWorkspace()

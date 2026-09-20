@@ -124,13 +124,9 @@ struct MainWindowLayout {
     let workspace: WorkspaceStore
     let settings: SettingsStore
     let pets: PetCatalog
-    private(set) var isSettingsVisible = false
+    var isSettingsVisible: Bool { settingsController?.window?.isVisible == true }
+    private(set) var settingsController: SettingsWindowController?
     private let rootController = NSViewController()
-    private var workspaceConstraints: [NSLayoutConstraint] = []
-    /// The settings page is its own split view controller, so its section column is
-    /// a real system sidebar instead of a panel painted to look like one.
-    private var settingsSplit: NSSplitViewController!
-    private var settingsSidebarItem: NSSplitViewItem!
     let splitController = MainSplitController()
     private(set) var sidebarItem: NSSplitViewItem!
     private(set) var inspectorItem: NSSplitViewItem!
@@ -141,14 +137,10 @@ struct MainWindowLayout {
     private var ready = false
     private var observation: AnyCancellable?
     private var previewObservation: AnyCancellable?
-    private var sectionObservation: AnyCancellable?
     /// Chat search is a command palette in a floating window of its own, not a field in
     /// the column. ⌘K and the column header's magnifier both drive it through here.
     let searchPalette = SearchPalettePresentation()
     private var paletteController: SearchPaletteController!
-    /// Addresses the settings page's own section list, the same way the workspace
-    /// sidebar and the project file tree address theirs.
-    let settingsSectionFocus = SidebarListFocus()
     /// The workspace sidebar's chat list, so closing the search field can hand the
     /// keyboard straight back to it instead of dropping focus on the window.
     let sidebarListFocus = SidebarListFocus()
@@ -214,28 +206,7 @@ struct MainWindowLayout {
         rootController.view = NSView()
         rootController.addChild(splitController)
         rootController.view.addSubview(splitController.view)
-        workspaceConstraints = pin(splitController.view, to: rootController.view)
-        let settingsSidebarHost = NSHostingController(rootView: SettingsSidebar(settings: self.settings,
-                                                                                sectionFocus: settingsSectionFocus,
-                                                                                onBack: { [weak self] in self?.showWorkspace() }))
-        let settingsDetailHost = NSHostingController(rootView: SettingsView(settings: self.settings, voice: workspace.voice,
-                                                                            pets: self.pets, workspace: self.workspace,
-                                                                            onBack: { [weak self] in self?.showWorkspace() },
-                                                                            onReturnToVoice: { [weak self] in self?.revealVoice() }))
-        settingsSidebarHost.sizingOptions = []; settingsDetailHost.sizingOptions = []
-        settingsSplit = NSSplitViewController()
-        // The same sidebar item the workspace column uses: AppKit supplies the material,
-        // the inactive-window appearance, the hairline divider and the titlebar region.
-        // The page has no toolbar to resize against, and a settings sidebar is not a
-        // place to hide, so it is fixed at the width the workspace column is showing.
-        settingsSidebarItem = NSSplitViewItem(sidebarWithViewController: settingsSidebarHost)
-        settingsSidebarItem.canCollapse = false; settingsSidebarItem.canCollapseFromWindowResize = false
-        settingsSplit.splitView.dividerStyle = .thin
-        settingsSplit.addSplitViewItem(settingsSidebarItem)
-        settingsSplit.addSplitViewItem(NSSplitViewItem(viewController: settingsDetailHost))
-        rootController.addChild(settingsSplit); rootController.view.addSubview(settingsSplit.view)
-        pin(settingsSplit.view, to: rootController.view)
-        settingsSplit.view.isHidden = true
+        pin(splitController.view, to: rootController.view)
         window.contentViewController = rootController
         window.prepareWidth = { [weak self] width in self?.prepareResize(width) }
         window.onEscape = { [weak self] in self?.handleEscape() ?? false }
@@ -262,11 +233,6 @@ struct MainWindowLayout {
         observation = workspace.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.refreshTitle() }
         }
-        sectionObservation = settings.$selectedSection.removeDuplicates().sink { [weak self] _ in
-            // Switching sections rebuilds the whole right pane. Without a fresh key
-            // view loop AppKit keeps the stale one and Tab cannot leave the section list.
-            DispatchQueue.main.async { [weak self] in self?.window?.recalculateKeyViewLoop() }
-        }
         previewObservation = workspace.fileBrowser.$isPreviewExpanded.removeDuplicates().sink { [weak self] _ in
             // Published delivers before the stored value changes.
             DispatchQueue.main.async { [weak self] in self?.applyLayout() }
@@ -289,54 +255,15 @@ struct MainWindowLayout {
         return constraints
     }
     func showSettings() {
-        guard !isSettingsVisible else { present(); return }
-        workspace.dictation.cancel()
-        workspace.flush(); saveLayout()
-        settings.selectedSection = "模型"; settings.presentationRevision += 1
-        window?.makeFirstResponder(nil)
-        isSettingsVisible = true
-        splitController.view.isHidden = true
-        NSLayoutConstraint.deactivate(workspaceConstraints)
-        // Carry the workspace column's current width across, so switching pages does
-        // not shift the left edge of the window's content.
-        settingsSidebarItem.minimumThickness = layout.sidebarWidth
-        settingsSidebarItem.maximumThickness = layout.sidebarWidth
-        settingsSplit.view.isHidden = false
-        window?.toolbar?.isVisible = false
-        window?.title = "设置"; window?.subtitle = ""
-        present()
-        // Hiding the workspace does not resign its first responder, so the composer
-        // behind the page would keep taking keystrokes and swallow Tab. Hand the key
-        // view loop to the settings page instead.
-        window?.recalculateKeyViewLoop()
-        window?.makeFirstResponder(settingsSplit.view)
-        // The host is a container: it draws no focus ring and answers no key. Hand the
-        // first responder to the page's own section list, so its selection reads as
-        // active and ↑ / ↓ move sections without needing a Tab or a click first.
-        settingsSectionFocus.take(retries: 10)
+        searchPalette.isOpen = false
+        if settingsController == nil {
+            settingsController = SettingsWindowController(settings: settings, workspace: workspace, pets: pets,
+                defaults: defaults, onReturnToVoice: { [weak self] in self?.revealVoice() })
+        }
+        settingsController?.present()
     }
     func showWorkspace() {
-        guard isSettingsVisible else { return }
-        window?.makeFirstResponder(nil)
-        // Leaving only hides the page, so its views never disappear and the voice
-        // section's own onDisappear cancel never runs. Cancel here, the way opening
-        // the page cancels dictation: a running preview would keep playing, and its
-        // testing flag keeps the chat's microphone and Live Voice disabled meanwhile.
-        workspace.voice.cancelTest()
-        isSettingsVisible = false
-        prepareResize(window?.frame.width ?? 1280)
-        applyingLayout = true
-        NSLayoutConstraint.activate(workspaceConstraints)
-        settingsSplit.view.isHidden = true
-        settings.presentationRevision += 1
-        splitController.view.isHidden = false
-        window?.toolbar?.isVisible = true
-        applyingLayout = false
-        refreshTitle(); applyLayout()
-        // The page took the key view loop and the first responder, and hiding it hands
-        // neither back. Rebuild the loop over the workspace and return typing to the
-        // composer, or Tab and every keystroke would land nowhere until it is clicked.
-        window?.recalculateKeyViewLoop()
+        present()
         if let selected = workspace.selected { workspace.requestComposerFocus(conversationID: selected.id) }
     }
     func revealVoice() {
@@ -368,19 +295,7 @@ struct MainWindowLayout {
         if let owner = workspace.voice.snapshot.session.owner { workspace.endVoice(owner: owner) }
         else if let selected = workspace.selected { workspace.startVoice(conversationID: selected.id) }
     }
-    /// Escape closes the settings page, the way ⌘, opened it — the page covers the
-    /// whole window, and its only other way out is the pointer. A sheet or an input
-    /// method mid-composition owns Escape first. This is deliberately not part of
-    /// `canHandleEscape`, which answers for the 停止回复 command: that command stays
-    /// unavailable here. Escape has no menu key equivalent and reaches the window.
-    var canEscapeSettings: Bool {
-        guard isSettingsVisible, let window else { return false }
-        if window.attachedSheet != nil { return false }
-        if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
-        return true
-    }
     var canHandleEscape: Bool {
-        guard !isSettingsVisible else { return false }
         guard let window else { return false }
         if window.attachedSheet != nil { return false }
         if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
@@ -390,7 +305,6 @@ struct MainWindowLayout {
         return presentation.canStop && presentation.stopEnabled
     }
     func handleEscape() -> Bool {
-        if canEscapeSettings { showWorkspace(); return true }
         guard canHandleEscape, let selected = workspace.selected else { return false }
         workspace.stop(conversationID: selected.id)
         return true
@@ -412,12 +326,10 @@ struct MainWindowLayout {
     /// NSWindow forwards toggleSidebar: but NOT toggleInspector: ([D]), so without an
     /// implementation here AppKit would draw the inspector item disabled.
     @objc func toggleSidebar(_ sender: Any? = nil) {
-        guard !isSettingsVisible else { return }
         layout.sidebarPreferred = sidebarItem.isCollapsed
         manualColumn = .sidebar; applyLayout(); saveLayout()
     }
     @objc func toggleInspector(_ sender: Any? = nil) {
-        guard !isSettingsVisible else { return }
         workspace.fileBrowser.collapsePreview()
         layout.inspectorPreferred = inspectorItem.isCollapsed
         manualColumn = .inspector; applyLayout(); saveLayout()
@@ -443,7 +355,7 @@ struct MainWindowLayout {
     private func prepareResize(_ width: CGFloat) {
         // AppKit only auto-collapses during live resize. Pre-collapse for frame
         // restoration and setContentSize too, or the split's fittingSize clamps them.
-        guard !applyingLayout, !isSettingsVisible else { return }
+        guard !applyingLayout else { return }
         applyingLayout = true; defer { applyingLayout = false }
         let visible = visibleColumns(width: width)
         setVisibility(sidebar: visible.sidebar, inspector: visible.inspector)
@@ -457,7 +369,7 @@ struct MainWindowLayout {
         return frameSize
     }
     private func applyLayout() {
-        guard !applyingLayout, !isSettingsVisible, let window else { return }
+        guard !applyingLayout, let window else { return }
         applyingLayout = true; defer { applyingLayout = false }
         let width = window.contentView?.bounds.width ?? window.frame.width
         let expanded = workspace.fileBrowser.isPreviewExpanded
@@ -488,7 +400,7 @@ struct MainWindowLayout {
         window.toolbar?.validateVisibleItems()
     }
     private func dividerChanged() {
-        guard !applyingLayout, !isSettingsVisible, !workspace.fileBrowser.isPreviewExpanded,
+        guard !applyingLayout, !workspace.fileBrowser.isPreviewExpanded,
               !conversationItem.isCollapsed, window?.inLiveResize != true else { return }
         if !sidebarItem.isCollapsed {
             layout.sidebarWidth = min(340, max(220, splitController.columnWidth(sidebarItem)))
@@ -506,7 +418,6 @@ struct MainWindowLayout {
         defaults.set(layout.inspectorWidth, forKey: "main.inspectorWidth")
     }
     private func refreshTitle() {
-        guard !isSettingsVisible else { return }
         window?.title = workspace.selected?.title ?? "新会话"
         // One line, the chat's own. The project used to ride here as a subtitle, which
         // gave every chat in a project a permanently two-line titlebar for something the
@@ -518,13 +429,14 @@ struct MainWindowLayout {
     func windowDidMiniaturize(_ notification: Notification) { workspace.isMainWindowVisible = false; workspace.flush() }
     func windowDidDeminiaturize(_ notification: Notification) { workspace.isMainWindowVisible = true }
     func windowDidResize(_ notification: Notification) {
-        guard !applyingLayout, !isSettingsVisible else { return }
+        guard !applyingLayout else { return }
         manualColumn = nil; applyLayout(); saveLayout()
     }
     func shutdown() {
         searchPalette.isOpen = false
         workspace.flush(); saveLayout()
-        observation = nil; previewObservation = nil; sectionObservation = nil
+        observation = nil; previewObservation = nil
+        settingsController?.close()
         window?.orderOut(nil)
     }
 

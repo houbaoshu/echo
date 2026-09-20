@@ -103,9 +103,9 @@ CONFIG
         /usr/bin/security set-key-partition-list -S apple-tool:,apple: -s \
             -k "$signing_password" "$keychain" >/dev/null
         cp "$temp_dir/cert.pem" "$signing_dir/certificate.pem"
-        # User-domain trust, restricted to code signing (never TLS or system trust).
-        /usr/bin/security add-trusted-cert -r trustRoot -p codeSign \
-            -k "$keychain" "$signing_dir/certificate.pem"
+        # Signing and strict verification work without trusting this certificate.
+        # The designated requirement below pins its fingerprint; do not write
+        # user/admin trust settings (which are not scoped to this keychain).
         openssl x509 -in "$temp_dir/cert.pem" -outform DER | /usr/bin/shasum -a 1 | \
             awk '{print toupper($1)}' > "$signing_dir/identity"
         touch "$signing_dir/ready"

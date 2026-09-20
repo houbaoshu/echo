@@ -239,8 +239,8 @@ struct WorkspaceSidebar: View {
                 .contextMenu(forSelectionType: RowID.self) { rows in
                     conversationMenu(rows)
                 }
+                .modifier(SidebarListFocusBinding(focus: listFocus))
                 .accessibilityIdentifier("workspace.sidebar").accessibilityLabel("聊天")
-            SidebarListFocusAnchor(focus: listFocus).frame(height: 0).accessibilityHidden(true)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             workspace.objectWillChange.send()
@@ -364,51 +364,30 @@ struct WorkspaceSidebar: View {
     }
 }
 
-/// SwiftUI's source list moves its selection on a click but leaves the first
-/// responder where it was, so ↑ / ↓ would not follow the pointer and the rows
-/// would never show a focus ring. Hand the list focus whenever the person drives
-/// it, and never when the app selects a conversation on its own.
-///
-/// Shared with the project file tree, which is the same kind of list.
-@MainActor final class SidebarListFocus {
-    fileprivate weak var anchor: NSView?
-    /// `retries` waits for a list that has not been built yet. A click already has
-    /// one, so the pointer path keeps the single attempt; the settings page asks the
-    /// moment it is shown, which can be the first time SwiftUI builds its section list.
-    func take(retries: Int = 0) {
-        // First responder settles after AppKit finishes dispatching the click.
-        let delay: DispatchTime = retries > 0 ? .now() + 0.02 : .now()
-        DispatchQueue.main.asyncAfter(deadline: delay) { [weak self] in
-            guard let self else { return }
-            guard let anchor = self.anchor, let window = anchor.window,
-                  let list = Self.list(near: anchor), !list.isHiddenOrHasHiddenAncestor else {
-                if retries > 0 { self.take(retries: retries - 1) }
-                return
-            }
-            guard window.firstResponder !== list else { return }
-            window.makeFirstResponder(list)
-        }
-    }
-    /// The nearest list in the anchor's own branch: each column hosts exactly one.
-    private static func list(near view: NSView) -> NSTableView? {
-        var scope = view.superview
-        while let current = scope {
-            if let table = table(in: current) { return table }
-            scope = current.superview
-        }
-        return nil
-    }
-    private static func table(in view: NSView) -> NSTableView? {
-        if let table = view as? NSTableView { return table }
-        for child in view.subviews { if let table = table(in: child) { return table } }
-        return nil
+/// Clicking a SwiftUI List changes selection without taking keyboard focus. Bind
+/// FocusState directly to the List: `.focusable()` would insert a proxy that cannot
+/// drive its rows. Reverified on macOS 27, 2026-09-20; see the standalone
+/// docs/repros/stage5-native-search-focus.swift probe (mode 4).
+@MainActor final class SidebarListFocus: ObservableObject {
+    @Published private(set) var request = 0
+    func take() {
+        // Let AppKit finish dispatching selection before transferring focus.
+        DispatchQueue.main.async { [weak self] in self?.request += 1 }
     }
 }
 
-struct SidebarListFocusAnchor: NSViewRepresentable {
-    let focus: SidebarListFocus
-    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
-    func updateNSView(_ view: NSView, context: Context) { focus.anchor = view }
+struct SidebarListFocusBinding: ViewModifier {
+    @ObservedObject var focus: SidebarListFocus
+    @FocusState private var focused: Bool
+    func body(content: Content) -> some View {
+        content.focused($focused)
+            .onChange(of: focus.request, initial: true) { _, request in
+                if request > 0 { focused = true }
+            }
+            // Include clicks on the already-selected row and on empty list space,
+            // neither of which necessarily writes through the selection binding.
+            .simultaneousGesture(TapGesture().onEnded { focused = true })
+    }
 }
 
 private struct ConversationActivityIndicator: View {
@@ -991,7 +970,7 @@ final class ComposerTextView: NSTextView {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.focusPending, let window = self.window else { return }
             // A queued request must never pull typing back into an editor that has
-            // since been hidden, e.g. the workspace behind the settings page.
+            // since been hidden, e.g. while an expanded file preview covers the chat.
             guard !self.isHiddenOrHasHiddenAncestor else { return }
             if window.makeFirstResponder(self) { self.focusPending = false }
         }
