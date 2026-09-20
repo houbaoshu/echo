@@ -159,6 +159,7 @@ struct ChatSearchPalette: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("palette.result.\(conversation.id)")
                         .onTapGesture { open(conversation.id) }
+                        .accessibilityAction { open(conversation.id) }
                         .id(conversation.id)
                     }
                     .listStyle(.inset).scrollContentBackground(.hidden)

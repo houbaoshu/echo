@@ -97,6 +97,14 @@ private struct ComposerHeightHost: View {
         // Native menu routing needs AppKit's event loop and a real key window.
         Task { @MainActor in
             do {
+                if CommandLine.arguments.contains("--project-picker-scroll-only") {
+                    try await testProjectPickerKeyboardScroll()
+                    exit(0)
+                }
+                if CommandLine.arguments.contains("--palette-accessibility-only") {
+                    try await testSearchResultAccessibilityActivation()
+                    exit(0)
+                }
                 if CommandLine.arguments.contains("--settings-only") {
                     try await testSettingsKeyboardAndFocus()
                     exit(0)
@@ -111,6 +119,8 @@ private struct ComposerHeightHost: View {
                     try await testPointerMonitorLifecycle()
                     try await testNativeMenuShortcuts(); try await testProjectDetachPointer()
                     try await testWorkspaceSidebarPointerAndKeyboard()
+                    try await testProjectPickerKeyboardScroll()
+                    try await testSearchResultAccessibilityActivation()
                     try await testSettingsKeyboardAndFocus()
                 }
                 try await testPetComposerPointerFocus(); exit(0)
@@ -2016,6 +2026,88 @@ private struct ComposerHeightHost: View {
         print("PASS: system chat list — full-row pointer targets, duplicate-row selection, arrow traversal across groups,"
               + " project open/close, hover actions, a complete Tab cycle with no dead end, and the search palette:"
               + " own floating panel, system field, narrowing, Return, two-stage Escape and empty results")
+    }
+
+    @MainActor private static func testProjectPickerKeyboardScroll() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("picker-scroll-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        defer { workspace.shutdown() }
+        for index in 0..<20 {
+            let folder = root.appendingPathComponent("project-\(index)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            workspace.addProject(url: folder)
+        }
+        var selected: UUID?, closed = 0
+        let host = NSHostingView(rootView: ProjectSelectionPanel(workspace: workspace, selectedProjectID: nil,
+            select: { selected = $0 }, addFolder: { preconditionFailure("Navigation must not add a folder") },
+            close: { closed += 1 }))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 340),
+                              styleMask: .titled, backing: .buffered, defer: false)
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(200)); host.layoutSubtreeIfNeeded()
+        guard let table = findView(host, { $0 is NSTableView }) as? NSTableView,
+              let search = findView(host, { ($0 as? NSTextField)?.isEditable == true }) as? NSTextField else {
+            preconditionFailure("The picker must contain a native list and search field")
+        }
+        precondition(table.numberOfRows == 21 && table.bounds.height > table.visibleRect.height)
+        precondition(window.makeFirstResponder(search))
+        func key(_ code: UInt16, _ characters: String) async throws {
+            window.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
+            try await Task.sleep(for: .milliseconds(60)); host.layoutSubtreeIfNeeded()
+        }
+        func assertVisibleHighlight(_ row: Int) {
+            let frame = table.rect(ofRow: row), visible = table.visibleRect
+            precondition(visible.minY <= frame.minY + 1 && visible.maxY >= frame.maxY - 1,
+                         "Keyboard highlight at row \(row) must be visible: row=\(frame), viewport=\(visible)")
+            precondition(table.selectedRow == row, "Arrow keys must keep the expected selection")
+            precondition(search.currentEditor() === window.firstResponder,
+                         "Navigation must leave keyboard focus in the search field")
+            precondition(selected == nil && closed == 0, "Arrow keys must not choose or close")
+        }
+        assertVisibleHighlight(0)
+        for _ in 0..<12 { try await key(125, "\u{F701}") }
+        assertVisibleHighlight(12)
+        for _ in 0..<12 { try await key(126, "\u{F700}") }
+        assertVisibleHighlight(0)
+        for _ in 0..<12 { try await key(125, "\u{F701}") }
+        assertVisibleHighlight(12)
+        try await key(36, "\r")
+        precondition(selected == workspace.projects[12].id && closed == 1,
+                     "Return must choose the highlighted project and close once")
+        print("PASS: project picker scrolls keyboard highlights down and up, preserves search focus, and Return chooses the visible project")
+    }
+
+    @MainActor private static func testSearchResultAccessibilityActivation() async throws {
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"),
+                      with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        defer { workspace.shutdown() }
+        let target = workspace.newConversation()
+        target.store.send("无障碍目标会话")
+        let current = workspace.newConversation()
+        current.store.send("当前会话")
+        precondition(workspace.selectedID == current.id && workspace.conversations(matching: "").first?.id == current.id)
+        var closed = 0
+        let panel = SearchPalettePanel(content: ChatSearchPalette(workspace: workspace, close: { closed += 1 }))
+        panel.makeKeyAndOrderFront(nil)
+        defer { panel.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(200)); panel.contentView?.layoutSubtreeIfNeeded()
+        guard let result = findAccessibility("palette.result.\(target.id)", in: panel.contentView!) else {
+            preconditionFailure("The target search result must be exposed to accessibility")
+        }
+        let focusRequests = workspace.composerFocusRequest
+        precondition(result.accessibilityPerformPress?() == true, "A search result must expose a default activation action")
+        precondition(workspace.selectedID == target.id && closed == 1,
+                     "Accessibility activation must open that result, not the keyboard highlight, and close once")
+        precondition(workspace.composerFocusID == target.id && workspace.composerFocusRequest == focusRequests + 1,
+                     "Accessibility activation must request composer focus just like click and Return")
+        print("PASS: search result accessibility activation opens the addressed conversation, requests composer focus and closes the palette")
     }
 
     @MainActor private static func testProjectDetachPointer() async throws {

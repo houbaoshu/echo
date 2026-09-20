@@ -545,6 +545,28 @@ struct ConversationView: View {
             // measured, with Full Keyboard Access off, in
             // docs/repros/window-focus-ring.swift [F1].
             .focusable()
+            // Being a Tab stop is all that was wanted from `.focusable()`; the focus
+            // effect came along with it and does not belong on a scroll area. AppKit
+            // itself draws nothing there — a read-only NSTextView in an NSScrollView made
+            // first responder repaints zero pixels, while an NSTextField in the same
+            // window repaints 35k for its ring — yet `.focusable()` leaves the backing
+            // scroll view at focusRingType .default and a plain click paints a ring
+            // around the whole conversation column (measured, 32k pixels spanning the
+            // column, in docs/repros/transcript-click-focus.swift [C2]). This is AppKit's
+            // own switch for that — it sets focusRingType to .none ([C3]) — not a focus
+            // style of Echo's own, and it leaves the Tab stop, the keys below and the
+            // accessibility element untouched.
+            .focusEffectDisabled()
+            // A click on the chat is not a request to type into the chat. `.focusable()`
+            // hands the keyboard to the transcript's key view on mouse-down, and from
+            // then on the composer receives nothing at all: measured, a keystroke after
+            // clicking the transcript never reached the draft ([C5]). Handing it straight
+            // back is what the mouse meant. Tab is unaffected and still stops here, and a
+            // drag never fires a TapGesture, so selecting text in a message is untouched
+            // ([C7]).
+            .simultaneousGesture(TapGesture().onEnded {
+                workspace?.requestComposerFocus(conversationID: conversationID)
+            })
             // That key view is NOT inside the scroll view, so scrollPageDown: and
             // friends reach nobody ([F3]). SwiftUI's own path is the one that works.
             .onKeyPress(keys: [.upArrow, .downArrow, .pageUp, .pageDown, .home, .end]) { transcriptKey($0) }

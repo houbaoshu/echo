@@ -120,16 +120,14 @@ struct ProjectSelectionPanel: View {
             TextField("搜索项目名称或路径", text: $query).textFieldStyle(.roundedBorder)
                 .focused($searchFocused).accessibilityIdentifier("projectPicker.search")
                 .onSubmit { choose(highlighted) }
-            // A system source list owns the highlight: the selection fill, hover, the
-            // focus ring and scrolling the highlight back into view all come from AppKit
-            // instead of being drawn here. `move(_:)` stays because the keyboard focus
-            // belongs to the search field above, not to the list — the list never sees
-            // the arrow keys, so something has to write the same selection a click does.
-            List(selection: selection) {
-                ForEach(options, id: \.self) { option in
-                    row(option).tag(option)
-                }
-            }.listStyle(.sidebar).scrollContentBackground(.hidden)
+            // The list draws the selection, but focus stays in the search field.
+            // Changes from `move(_:)` need explicit scrolling to keep the row visible.
+            ScrollViewReader { proxy in
+                List(selection: selection) {
+                    ForEach(options, id: \.self) { option in
+                        row(option).tag(option).id(option)
+                    }
+                }.listStyle(.sidebar).scrollContentBackground(.hidden)
                 // A list cannot size itself to its rows, so the panel's height comes from
                 // here — the same reason SearchPalette computes its own. Measured for
                 // `.listStyle(.sidebar)` at 14pt body: a row is 32pt, the list adds 20pt
@@ -138,6 +136,8 @@ struct ProjectSelectionPanel: View {
                 // off its anchor.
                 .frame(height: min(CGFloat(options.count) * 32 + 20, 280))
                 .accessibilityIdentifier("projectPicker.list")
+                .onChange(of: highlighted) { _, value in proxy.scrollTo(value) }
+            }
         }.padding(12).frame(width: 320).font(WorkspaceStyle.body)
             .onAppear {
                 highlighted = selectedProjectID.map(ProjectPickerOption.project) ?? options.first(where: enabled) ?? .add
