@@ -24,6 +24,9 @@ import Combine
     var error: String? { snapshot.error?.message }
     @Published private(set) var testing = false
     @Published private(set) var testResult: String?
+    /// Whether `testResult` reports a success, so the settings page can mark it the
+    /// same way the model page marks its own connection test.
+    @Published private(set) var testSucceeded = false
     @Published private(set) var isDictating = false
     var canStartCall: Bool { snapshot.session.owner == nil && !isDictating && !testing }
     var canSubmit: Bool {
@@ -685,10 +688,13 @@ import Combine
         if testing { audio.stop() }
         testing = false
     }
-    func invalidateTest() { cancelTest(); testResult = nil }
+    /// Cancelling only tears down a running probe. A result already on screen keeps
+    /// both its text and its outcome, so leaving and returning to the page — which
+    /// cancels on disappear — cannot turn a success into something else.
+    func invalidateTest() { cancelTest(); testResult = nil; testSucceeded = false }
     func test(configuration: VoiceConfiguration, key: String, preview: Bool) {
-        guard !isActive, !isDictating else { testResult = "请先结束语音或转写再测试。"; return }
-        cancelTest(); testResult = nil; testing = true
+        guard !isActive, !isDictating else { testSucceeded = false; testResult = "请先结束语音或转写再测试。"; return }
+        cancelTest(); testResult = nil; testSucceeded = false; testing = true
         let id = probeID
         probeWatchdog = Task { [weak self, probeTimeout] in
             do { try await Task.sleep(for: probeTimeout) } catch { return }
@@ -728,6 +734,7 @@ import Combine
                 guard self.probeID == id, !Task.isCancelled else { return }
                 self.cancelTest()
                 self.testResult = preview ? "试听完成。" : "识别与合成连接成功（使用静音样本，未录音）。"
+                self.testSucceeded = true
             } catch {
                 guard self.probeID == id, !Task.isCancelled else { return }
                 self.cancelTest()

@@ -580,7 +580,10 @@ struct ConversationView: View {
                 }
             }
             VStack(spacing: 8) {
-                if store.usesAgent, let task = store.task {
+                // The running summary is what the transcript cannot show: which step the
+                // task is on, why it stopped, what failed. A completed task has already
+                // said so with its reply, so the row goes away instead of reading 已完成.
+                if store.usesAgent, let task = store.task, task.status != .completed {
                     HStack {
                         if store.isGenerating { ProgressView().controlSize(.small) }
                         Text(task.summary).font(WorkspaceStyle.caption).textSelection(.enabled)

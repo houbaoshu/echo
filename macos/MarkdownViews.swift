@@ -123,9 +123,14 @@ struct ConversationMessageView: View {
         VStack(alignment: .leading, spacing: 10) {
             if message.role == .assistant {
                 if !message.content.isEmpty { AssistantMarkdown(content: message.content).equatable() }
-                HStack(spacing: 6) {
-                    if message.status == .pending || message.status == .streaming { ProgressView().controlSize(.mini) }
-                    Text(message.status.label).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                // A finished reply is its own receipt: the text is right there, so the
+                // normal path shows no status line. Everything the reply alone cannot
+                // tell — still working, stopped, failed, interrupted — keeps one.
+                if message.status != .completed {
+                    HStack(spacing: 6) {
+                        if message.status == .pending || message.status == .streaming { ProgressView().controlSize(.mini) }
+                        Text(message.status.label).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                    }
                 }
                 if let error = message.errorMessage { Text(error).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled) }
                 if let retry { Button("继续处理", systemImage: "arrow.clockwise", action: retry).buttonStyle(.bordered) }

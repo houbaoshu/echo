@@ -133,7 +133,8 @@ struct VoiceSettingsView: View {
             }
             Section {
                 HStack(spacing: 12) {
-                    Button("检查连接") { test(preview: false) }
+                    Button("测试连接") { test(preview: false) }
+                        .help("验证语音识别与合成连接，使用静音样本，不录音")
                         .accessibilityIdentifier("voiceSettings.test")
                     Button("试听音色") { test(preview: true) }
                         .accessibilityIdentifier("voiceSettings.preview")
@@ -141,9 +142,13 @@ struct VoiceSettingsView: View {
                 if voice.testing {
                     SettingsTestProgress(identifier: "voiceSettings.cancelTest") { voice.cancelTest() }
                 }
+                // Same place, same mark and same colours as the model page's connection
+                // test, so a result reads the same on both. Only the wording differs,
+                // because only voice can report what it did without recording.
                 if let result = voice.testResult {
-                    Text(result).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
-                        .accessibilityIdentifier("voiceSettings.testResult")
+                    Label(result, systemImage: voice.testSucceeded ? "checkmark.circle" : "info.circle")
+                        .font(WorkspaceStyle.caption).foregroundStyle(voice.testSucceeded ? WorkspaceStyle.success : WorkspaceStyle.secondary)
+                        .textSelection(.enabled).accessibilityIdentifier("voiceSettings.testResult")
                 }
             }
             Section {

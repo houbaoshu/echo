@@ -264,12 +264,14 @@ import Combine
         second.store.send("skip queued call")
         try await wait("queued steering") { !second.store.isGenerating }
         precondition(second.store.tools.first?.state == "未执行")
-        precondition(second.store.messages.last(where: { $0.role == .user })?.steering == "已接收")
+        // Accepted steering leaves no caption behind: only a still-queued or interrupted
+        // follow-up keeps one.
+        precondition(second.store.messages.last(where: { $0.role == .user })?.steering == nil)
         first.store.send("follow up during execution")
         first.store.hideMainWindow(); first.store.closeActivity(); workspace.select(chat.id)
         try await wait("first finishes") { !first.store.isGenerating }
         precondition(first.store.task?.status == .completed)
-        precondition(first.store.messages.last(where: { $0.role == .user })?.steering == "已接收")
+        precondition(first.store.messages.last(where: { $0.role == .user })?.steering == nil)
         let firstTrace = try String(contentsOf: project.appendingPathComponent("trace"), encoding: .utf8)
         precondition(firstTrace == "started\ndone\n")
         precondition(workspace.selectedID == chat.id && workspace.fileBrowser.location == nil,

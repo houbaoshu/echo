@@ -137,6 +137,10 @@ private struct ComposerHeightHost: View {
     #endif
 
     @MainActor private static func run() async throws {
+        if CommandLine.arguments.contains("--status-text-only") {
+            try await testChatStatusTextIsExceptionOnly()
+            return
+        }
         if CommandLine.arguments.contains("--pet-only") {
             // The full run enables this in testComposerActionMatrix; SwiftUI AX nodes need it.
             NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
@@ -175,6 +179,7 @@ private struct ComposerHeightHost: View {
         try await testRightSidebarLayoutAndToggling()
         try await testProjectTreeScrollRestoration()
         try await testCodeCopyAndSyntaxPreview()
+        try await testChatStatusTextIsExceptionOnly()
         let editor = ComposerTextView()
         editor.isRichText = false
         var sends = 0
@@ -2880,6 +2885,74 @@ private struct ComposerHeightHost: View {
     }
 
     /// Speaking in Live Voice starts a turn; its task card must never appear, not even briefly.
+    /// Normal chat shows content and result only. A finished reply is its own receipt,
+    /// so nothing reads 已完成 beside it; a stopped, failed or interrupted one keeps the
+    /// words the transcript cannot otherwise supply.
+    @MainActor private static func testChatStatusTextIsExceptionOnly() async throws {
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let dictation = DictationController()
+        defer { voice.shutdown(); dictation.shutdown() }
+        func texts(of store: TaskStore) async throws -> [String] {
+            let view = NSHostingView(rootView: ConversationView(store: store, voice: voice, dictation: dictation,
+                startDictation: {}, startVoice: {}, conversationID: UUID(),
+                send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
+            view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
+            let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            window.contentView = view
+            view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+            view.layoutSubtreeIfNeeded()
+            defer { window.orderOut(nil) }
+            return accessibilityText(in: view)
+        }
+
+        let source = PreviewSource(), completed = TaskStore(source: source)
+        defer { completed.shutdown() }
+        completed.send("正常提问")
+        source.receive?(.completed("这是模型的回复。"))
+        let normal = try await texts(of: completed)
+        precondition(normal.contains { $0.contains("这是模型的回复。") }, "The reply itself is on screen: \(normal)")
+        precondition(!normal.contains { $0.contains("已完成") }, "A successful reply carries no status caption: \(normal)")
+
+        let failingSource = PreviewSource(), failed = TaskStore(source: failingSource)
+        defer { failed.shutdown() }
+        failed.send("会失败的提问")
+        failingSource.receive?(.failed("连接已中断，请检查网络后重试。"))
+        let failure = try await texts(of: failed)
+        precondition(failure.contains { $0.contains("请求失败") } && failure.contains { $0.contains("连接已中断") },
+                     "A failed reply keeps its status and its reason: \(failure)")
+
+        let stoppedSource = PreviewSource(), stopped = TaskStore(source: stoppedSource)
+        defer { stopped.shutdown() }
+        stopped.send("会被停止的提问")
+        stoppedSource.receive?(.progress("写到一半"))
+        stopped.stopTask()
+        let interrupted = try await texts(of: stopped)
+        precondition(interrupted.contains { $0.contains("已停止") }, "A stopped reply says so: \(interrupted)")
+
+        // The Agent task row is the running commentary — which step, why it stopped. A
+        // completed task has already answered with its reply, so the row goes away.
+        var archive = TaskStore.Snapshot(
+            task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "", status: .completed),
+            messages: [.init(role: .user, content: "跑个任务"), .init(role: .assistant, content: "任务结果")],
+            mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false)
+        let finishedTask = TaskStore(snapshot: archive, source: ComposerAgent())
+        defer { finishedTask.shutdown() }
+        precondition(finishedTask.usesAgent && finishedTask.task?.summary == "已完成", "The stored task still records its outcome")
+        let agentDone = try await texts(of: finishedTask)
+        precondition(!agentDone.contains { $0.contains("已完成") }, "A completed Agent task shows no status row: \(agentDone)")
+
+        archive.task?.status = .interrupted
+        archive.task?.summary = "已中断 · 可继续跟进"
+        let brokenTask = TaskStore(snapshot: archive, source: ComposerAgent())
+        defer { brokenTask.shutdown() }
+        let agentBroken = try await texts(of: brokenTask)
+        precondition(agentBroken.contains { $0.contains("已中断 · 可继续跟进") },
+                     "An interrupted Agent task keeps its status row: \(agentBroken)")
+        print("PASS: normal chat shows no 已接收 / 已完成 caption, exceptions keep theirs")
+    }
+
     @MainActor private static func testLiveVoiceTurnKeepsTaskCardHidden() async throws {
         for scenario in ["fresh conversation", "card closed with ×"] {
             let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
@@ -4094,11 +4167,19 @@ private struct ComposerHeightHost: View {
         // 10. A voice test started from the page keeps running on its own: the stub
         // recognizer never returns, so only a cancel can end it. While it runs the
         // chat cannot start Live Voice.
+        // Both pages call the same thing by the same name.
+        settings.selectedSection = "模型"
+        try await settle()
+        let modelTestLabel = findAccessibility("settings.test", in: window.contentView!)?.accessibilityLabel?()
+        precondition(modelTestLabel == "测试连接", "The model page names its connection test 测试连接: \(modelTestLabel ?? "nil")")
         settings.selectedSection = "语音"
         try await settle()
         precondition(settings.canTestVoice, "The saved model credential is the voice test's fallback key")
-        precondition(findAccessibility("voiceSettings.test", in: window.contentView!)?.accessibilityPerformPress?() == true,
-                     "The voice connection check must be pressable")
+        let voiceTest = findAccessibility("voiceSettings.test", in: window.contentView!)
+        precondition(voiceTest?.accessibilityLabel?() == modelTestLabel,
+                     "The voice page names it the same: \(voiceTest?.accessibilityLabel?() ?? "nil")")
+        precondition(voiceTest?.accessibilityPerformPress?() == true,
+                     "The voice connection test must be pressable")
         try await settle()
         precondition(voice.testing, "The connection check runs until something cancels it")
         precondition(!main.canToggleVoice, "A running voice test blocks Live Voice")
@@ -4185,6 +4266,23 @@ private struct ComposerHeightHost: View {
         let selector = NSSelectorFromString("accessibilityValue")
         guard let object, object.responds(to: selector) else { return nil }
         return object.perform(selector)?.takeUnretainedValue() as? String
+    }
+    /// Every accessible string the hosted view publishes, labels and values alike, so a
+    /// test can assert what the window does and does not say.
+    @MainActor private static func accessibilityText(in root: Any) -> [String] {
+        var visited: Set<ObjectIdentifier> = []
+        var found: [String] = []
+        func visit(_ value: Any) {
+            let object = value as AnyObject
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return }
+            if let label = object.accessibilityLabel?() { found.append(label) }
+            if let text = axValue(object) { found.append(text) }
+            let children = (value as? NSView)?.accessibilityChildren() ?? object.accessibilityChildren?() ?? []
+            for child in children { visit(child) }
+            if let view = value as? NSView { for child in view.subviews { visit(child) } }
+        }
+        visit(root)
+        return found
     }
     @MainActor private static func findAccessibility(_ id: String, in root: Any) -> AnyObject? {
         var visited: Set<ObjectIdentifier> = []

@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Combine
 import Foundation
+import SwiftUI
 
 actor PendingModelTester: ConnectionTesting {
     var request: ModelConfiguration?
@@ -187,6 +188,7 @@ actor PendingModelTester: ConnectionTesting {
         try await phase4FaultAndCleanupTests()
         await probeTests()
         await speakerPreviewTests()
+        try await settingsPageRevisitKeepsSuccessTests()
         try await captureDiagnosticsTests()
         try await configurationChangeTests()
         try await AppleSpeechTests.run()
@@ -588,7 +590,8 @@ actor PendingModelTester: ConnectionTesting {
         check(synth.cancelled && !voice.testing && audio.input == nil, "cancel preview closes TTS and audio")
         voice.test(configuration: VoiceConfiguration(), key: "test", preview: false)
         try? await Task.sleep(for: .milliseconds(180))
-        check(!voice.testing && recognizer.pending == nil && voice.testResult?.contains("超时") == true, "silent service times out and releases resources")
+        check(!voice.testing && !voice.testSucceeded && recognizer.pending == nil && voice.testResult?.contains("超时") == true,
+              "silent service times out and releases resources")
     }
     @MainActor static func speakerPreviewTests() async {
         let audio = FakeAudio(), recognizer = FakeRecognizer(), synth = FakeSynthesizer()
@@ -599,7 +602,7 @@ actor PendingModelTester: ConnectionTesting {
         synth.failure = SettingsError("音色不存在")
         voice.test(configuration: candidate, key: "test", preview: true)
         await tick()
-        check(voice.testResult == "音色不存在" && !voice.testing, "preview reports rejection of typed voice")
+        check(voice.testResult == "音色不存在" && !voice.testing && !voice.testSucceeded, "preview reports rejection of typed voice")
         synth.failure = nil
         voice.test(configuration: candidate, key: "test", preview: true)
         await tick()
@@ -607,13 +610,68 @@ actor PendingModelTester: ConnectionTesting {
         synth.emitsAudio = true
         voice.test(configuration: candidate, key: "test", preview: true)
         await tick()
-        check(voice.testResult == "试听完成。" && recognizer.packets == 0 && !audio.played.isEmpty && !audio.capturing,
+        check(voice.testResult == "试听完成。" && voice.testSucceeded && recognizer.packets == 0 && !audio.played.isEmpty && !audio.capturing,
               "preview plays returned audio without microphone or recognition")
         voice.test(configuration: candidate, key: "test", preview: false)
         await tick()
-        check(voice.testResult?.contains("识别与合成连接成功") == true && recognizer.packets > 0 && !audio.capturing,
+        check(voice.testResult?.contains("识别与合成连接成功") == true && voice.testSucceeded && recognizer.packets > 0 && !audio.capturing,
               "connection check still validates ASR and TTS without recording")
+        // The settings page marks success and failure the same way the model page does,
+        // so the outcome has to be readable beside the message itself.
+        synth.failure = SettingsError("音色不存在")
+        voice.test(configuration: candidate, key: "test", preview: false)
+        await tick()
+        check(!voice.testSucceeded && voice.testResult == "音色不存在", "a failed connection test reports no success")
+        synth.failure = nil
     }
+    /// Leaving the voice page and coming back must not restyle a finished result.
+    /// The page cancels its probe on disappear, and a cancel that also cleared the
+    /// outcome turned the green success mark grey on the way back.
+    @MainActor static func settingsPageRevisitKeepsSuccessTests() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("echo-voice-settings-\(UUID())")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let settings = SettingsStore(url: dir.appendingPathComponent("settings.json"), secrets: FakeSecrets())
+        let audio = FakeAudio(), recognizer = FakeRecognizer(), synth = FakeSynthesizer()
+        synth.emitsAudio = true
+        let voice = VoiceSessionController(audio: audio, recognizer: { recognizer }, synthesizer: { synth })
+        defer { voice.shutdown() }
+        let pets = PetCatalog(settings: settings, builtinRoot: URL(fileURLWithPath: "assets/pets"))
+        settings.selectedSection = "语音"
+        let view = NSHostingView(rootView: SettingsView(settings: settings, voice: voice, pets: pets)
+            .frame(width: 820, height: 640))
+        view.frame = NSRect(x: 0, y: 0, width: 820, height: 640)
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = view
+        defer { window.orderOut(nil) }
+        func settle() async throws {
+            view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(120))
+            view.layoutSubtreeIfNeeded()
+        }
+        try await settle()
+        voice.test(configuration: settings.voiceDraft, key: "test", preview: false)
+        await tick()
+        let result = voice.testResult
+        check(voice.testSucceeded && result?.contains("识别与合成连接成功") == true, "the page starts from a successful test")
+        settings.selectedSection = "模型"
+        try await settle()
+        settings.selectedSection = "语音"
+        try await settle()
+        check(voice.testSucceeded && voice.testResult == result,
+              "returning to the voice page keeps the same result and its success styling")
+        check(!voice.testing, "leaving the page still cancels a running probe")
+        // A new test still starts from a clean outcome, and editing still clears both.
+        synth.failure = SettingsError("音色不存在")
+        voice.test(configuration: settings.voiceDraft, key: "test", preview: false)
+        await tick()
+        check(!voice.testSucceeded && voice.testResult == "音色不存在", "a later failure replaces the success")
+        synth.failure = nil
+        voice.invalidateTest()
+        check(voice.testResult == nil && !voice.testSucceeded, "editing the voice form clears the result outright")
+        print("PASS: a successful voice connection test survives leaving and returning to the page")
+    }
+
     @MainActor static func audioConversionTests() async throws {
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 2, interleaved: false)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 9600)!

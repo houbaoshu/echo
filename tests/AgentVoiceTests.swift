@@ -183,8 +183,8 @@ extension VoiceTests {
                           "voice steering does not cancel/restart the real Core round")
                     try await waitForAgentVoice("voice final") { !f.store.isGenerating && f.synths.first?.chunks.isEmpty == false }
                     let users = f.store.messages.filter { $0.role == .user }
-                    check(users.count == 3 && users.suffix(2).allSatisfy { $0.steering == "已接收" },
-                          "Core receives both voice follow-ups in order")
+                    check(users.count == 3 && users.suffix(2).allSatisfy { $0.steering == nil },
+                          "Core receives both voice follow-ups in order and clears their queued caption")
                     check(f.store.task?.status == .completed && f.synths.count == 1
                           && f.synths[0].chunks == [f.store.messages.last(where: { $0.role == .assistant })!.content],
                           "real Core speaks exactly the final reply for \(scenario) / \(apiProtocol)")

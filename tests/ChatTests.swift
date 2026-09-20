@@ -73,6 +73,17 @@ import Foundation
         precondition(!encodedText.contains("isComplete") && !encodedText.contains("\"text\""))
         let decoded = try decoder.decode(ConversationMessage.self, from: encoded)
         precondition(decoded == legacy)
+        // Steering captions: accepted follow-ups say nothing now, so a saved one is
+        // dropped on load, while queued and interrupted keep the state the user needs.
+        let acceptedSteering = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000004","role":"user","content":"follow up","steering":"已接收"}"#.utf8))
+        precondition(acceptedSteering.steering == nil, "An archived accepted-steering caption is not shown again")
+        let queuedSteering = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000005","role":"user","content":"follow up","steering":"待处理"}"#.utf8))
+        precondition(queuedSteering.steering == "待处理", "A queued follow-up keeps its caption")
+        var queuedArchive = chat.snapshot
+        queuedArchive.messages = [queuedSteering]
+        let reopened = TaskStore(snapshot: queuedArchive, source: nil)
+        precondition(reopened.messages.first?.steering == "已中断", "A follow-up left queued at quit reopens as interrupted")
+        reopened.shutdown()
         let canned = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000002","role":"assistant","text":"已检查现有素材，保留赤焰的动画帧"}"#.utf8))
         var archive = chat.snapshot
         archive.messages = [canned]

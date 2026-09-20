@@ -51,6 +51,9 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         errorMessage = try values.decodeIfPresent(String.self, forKey: .errorMessage)
         coreID = try values.decodeIfPresent(UInt64.self, forKey: .coreID)
         steering = try values.decodeIfPresent(String.self, forKey: .steering)
+        // Accepted steering is part of the normal flow and no longer carries a
+        // caption; drop the one older sessions saved beside the message.
+        if steering == "已接收" { steering = nil }
         legacyWithoutCompletion = savedStatus == nil && complete == nil
     }
     func encode(to encoder: any Encoder) throws {
@@ -622,7 +625,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                 replyStream.abandon()
             case .steering_queued, .steering_accepted:
                 if let id = kind.message_id, let index = messages.firstIndex(where: { $0.coreID == id }) {
-                    messages[index].steering = kind.type == .steering_queued ? "待处理" : "已接收"
+                    messages[index].steering = kind.type == .steering_queued ? "待处理" : nil
                 }
             case .model_started:
                 needsDirectory = false; waitingForProject = false; pendingOperation = nil
@@ -726,7 +729,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                 }
                 var message = visible ?? ConversationMessage(role: role == .user ? .user : .assistant, content: text)
                 message.coreID = id; message.content = text
-                if role == .user && message.steering == "待处理" { message.steering = "已接收" }
+                if role == .user && message.steering == "待处理" { message.steering = nil }
                 projectedMessages.append(message); anchor = message.id
             } else if entry.type == .tool, let call = entry.call_id, let command = entry.command {
                 var tool = tools.first { $0.entryID == id && $0.callID == call }
