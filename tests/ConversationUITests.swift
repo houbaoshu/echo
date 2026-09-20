@@ -189,8 +189,13 @@ private struct ComposerHeightHost: View {
     #endif
 
     @MainActor private static func run() async throws {
+        if CommandLine.arguments.contains("--voice-transcript-only") {
+            try await testLiveVoiceTranscribesInTranscript()
+            return
+        }
         if CommandLine.arguments.contains("--status-text-only") {
             try await testChatStatusTextIsExceptionOnly()
+            try await testLiveVoiceHidesRunningStatusText()
             return
         }
         if CommandLine.arguments.contains("--pet-only") {
@@ -233,6 +238,8 @@ private struct ComposerHeightHost: View {
         try await testCodeCopyAndSyntaxPreview()
         try await testChatStatusTextIsExceptionOnly()
         try await testStreamingReplyRendersInTranscript()
+        try await testLiveVoiceHidesRunningStatusText()
+        try await testLiveVoiceTranscribesInTranscript()
         let editor = ComposerTextView()
         editor.isRichText = false
         var sends = 0
@@ -3078,6 +3085,315 @@ private struct ComposerHeightHost: View {
         print("PASS: the chat streams the reply as it is written and hands it to the settled message")
     }
 
+    /// Live Voice says what it is doing by being heard, so a turn under it draws none of the
+    /// running commentary the typed flow keeps: the transcript's 正在回复…, the Agent row's
+    /// 正在请求模型…, and the composer's own 正在播报 · 可打断 line. What the session cannot
+    /// say out loud — a voice failure, a chat notice, a task that did not finish — still
+    /// shows, the wording stays available to assistive technology, and the controls and the
+    /// session itself are untouched.
+    @MainActor private static func testLiveVoiceHidesRunningStatusText() async throws {
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let agent = StreamingAgent()
+        var recognizers: [ComposerRecognizer] = []
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
+            let recognizer = ComposerRecognizer(); recognizers.append(recognizer); return recognizer
+        }, synthesizer: { ComposerSynthesizer() }, permission: { true })
+        let dictation = DictationController()
+        let workspace = WorkspaceStore(dictation: dictation, voice: voice, sourceFactory: { agent })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        defer { workspace.shutdown(); voice.shutdown(); dictation.shutdown() }
+        let conversation = workspace.selected!
+        let store = conversation.store
+        precondition(store.usesAgent, "The chat under test is an Agent session")
+
+        let view = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice,
+            dictation: dictation, startDictation: {}, startVoice: {}, conversationID: conversation.id,
+            send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
+        view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = view
+        defer { window.orderOut(nil) }
+        func drawn() async throws -> [String] {
+            view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+            view.layoutSubtreeIfNeeded()
+            return visibleText(in: view)
+        }
+        func node(_ id: String) -> AnyObject? { findAccessibility(id, in: view) }
+        func absent(_ texts: [String], _ phrases: [String], _ what: String) {
+            for phrase in phrases {
+                precondition(!texts.contains { $0.contains(phrase) }, "\(what) still draws 「\(phrase)」: \(texts)")
+            }
+        }
+
+        voice.attach(workspace: workspace, settings: settings)
+        precondition(voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test-key"),
+                     "Live Voice started")
+        for _ in 0..<100 where voice.snapshot.recognition != .listening { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(voice.snapshot.recognition == .listening, "Live Voice connected")
+
+        // A spoken turn, streamed the way the core writes it.
+        recognizers.last?.emit("讲讲今天的天气")
+        precondition(store.isGenerating, "The spoken turn reached the Agent session")
+        precondition(store.task?.summary == "正在请求模型…", "The task still records its own step: \(store.task?.summary ?? "nil")")
+        agent.stream("今天")
+        let streaming = try await drawn()
+        precondition(streaming.contains { $0.contains("今天") },
+                     "The reply still streams into the chat, so the check above reads real text: \(streaming)")
+        absent(streaming, ["正在回复…", "正在等待回复…", "正在请求模型…", "可补充语音", "正在思考…"],
+               "A streaming Live Voice turn")
+
+        // Playback, with barge-in armed: the projection still carries the wording, the row does not.
+        let run = UUID()
+        voice.updateSnapshot { $0.recognition = .off(.currentReply); $0.replyAudio = .playing(run); $0.bargeIn = .armed(run) }
+        let playing = try await drawn()
+        precondition(voice.status == "正在播报 · 可打断", "The session still projects its status: \(voice.status)")
+        absent(playing, ["正在播报", "可打断", "暂停聆听"], "Live Voice playback")
+        precondition(node("voice.status")?.accessibilityLabel?() == "Live Voice"
+                     && axValue(node("voice.status")) == voice.status,
+                     "The status stays available to assistive technology")
+        precondition(node("voice.mute") != nil && node("voice.speaker") != nil && node("voice.end") != nil,
+                     "Live Voice keeps every control it had")
+
+        // Errors and notices are not commentary: they stay on screen.
+        voice.updateSnapshot { $0.error = .init(conversationID: conversation.id, message: "麦克风初始化失败，请检查权限。") }
+        let failing = try await drawn()
+        precondition(failing.contains { $0.contains("麦克风初始化失败，请检查权限。") },
+                     "A voice failure still shows during Live Voice: \(failing)")
+        precondition(node("voice.error.close") != nil, "The voice notice can still be dismissed")
+        voice.clearError(conversationID: conversation.id)
+        store.notice = "语音连接已断开，请稍后重试。"
+        let noticed = try await drawn()
+        precondition(noticed.contains { $0.contains("语音连接已断开，请稍后重试。") },
+                     "A chat notice still shows during Live Voice: \(noticed)")
+        store.notice = nil
+
+        // Ending the session brings the typed flow's commentary back, task untouched.
+        voice.updateSnapshot { $0.replyAudio = .none; $0.bargeIn = .off }
+        voice.end()
+        for _ in 0..<100 where voice.isActive { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(store.isGenerating && store.task?.summary == "正在请求模型…",
+                     "Ending Live Voice leaves the Agent task running")
+        let typed = try await drawn()
+        precondition(typed.contains { $0.contains("正在回复…") } && typed.contains { $0.contains("正在请求模型…") },
+                     "Outside Live Voice the chat keeps its captions: \(typed)")
+        store.stopTask()
+
+        // A task that did not finish is not commentary either, so Live Voice keeps its row —
+        // and an input that never got its turn keeps the caption saying so.
+        var queued = ConversationMessage(role: .user, content: "跑个任务")
+        queued.steering = "已中断"
+        let archive = TaskStore.Snapshot(
+            task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已中断 · 可继续跟进", status: .interrupted),
+            messages: [queued, .init(role: .assistant, content: "只写了一半", status: .interrupted)],
+            mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false)
+        let broken = TaskStore(snapshot: archive, source: ComposerAgent())
+        defer { broken.shutdown() }
+        let brokenID = UUID()
+        let brokenVoice = VoiceSessionController()
+        defer { brokenVoice.shutdown() }
+        brokenVoice.updateSnapshot {
+            $0.session = .active(.init(sessionID: UUID(), conversationID: brokenID))
+            $0.recognition = .listening
+        }
+        let brokenView = NSHostingView(rootView: ConversationView(store: broken, voice: brokenVoice, dictation: dictation,
+            startDictation: {}, startVoice: {}, conversationID: brokenID,
+            send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
+        brokenView.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
+        let brokenWindow = NSWindow(contentRect: brokenView.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        brokenWindow.contentView = brokenView
+        defer { brokenWindow.orderOut(nil) }
+        brokenView.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(200))
+        brokenView.layoutSubtreeIfNeeded()
+        let unfinished = visibleText(in: brokenView)
+        precondition(unfinished.contains { $0.contains("已中断 · 可继续跟进") } && unfinished.contains { $0.contains("已中断") },
+                     "An unfinished task keeps its row and its message caption under Live Voice: \(unfinished)")
+        // Nothing here is commentary, so owning the chat changes nothing about what is drawn:
+        // the same archive reads the same with Live Voice on and off, 已中断 captions included.
+        brokenVoice.updateSnapshot { $0.session = .active(.init(sessionID: UUID(), conversationID: UUID())) }
+        brokenView.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(200))
+        brokenView.layoutSubtreeIfNeeded()
+        precondition(visibleText(in: brokenView) == unfinished,
+                     "Live Voice hides no outcome: \(visibleText(in: brokenView)) vs \(unfinished)")
+        print("PASS: Live Voice draws no running commentary, keeps errors, notices, unfinished tasks and its accessibility wording")
+    }
+
+    /// Live Voice writes where it will keep: the words form in the chat, at the place the
+    /// user message will occupy, and are revised there while the recogniser changes its mind.
+    /// The composer never shows them, so nothing is transcribed in one place and moved to
+    /// another; the final replaces the provisional bubble in the same update, leaving one
+    /// message and no persisted guess.
+    @MainActor private static func testLiveVoiceTranscribesInTranscript() async throws {
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let agent = StreamingAgent()
+        var recognizers: [ComposerRecognizer] = []
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
+            let recognizer = ComposerRecognizer(); recognizers.append(recognizer); return recognizer
+        }, synthesizer: { ComposerSynthesizer() }, permission: { true })
+        let dictation = DictationController()
+        let workspace = WorkspaceStore(dictation: dictation, voice: voice, sourceFactory: { agent })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        defer { workspace.shutdown(); voice.shutdown(); dictation.shutdown() }
+        let conversation = workspace.selected!
+        let store = conversation.store
+
+        let view = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice,
+            dictation: dictation, startDictation: {}, startVoice: {}, conversationID: conversation.id,
+            send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
+        view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = view
+        defer { window.orderOut(nil) }
+        func settle() async throws {
+            view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+            view.layoutSubtreeIfNeeded()
+            view.displayIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        /// The chat's own scroll area: the one the composer's editor is not inside. Resolved
+        /// per call, because the hosted view builds it during the first layout.
+        func transcript() -> NSView {
+            guard let scroll = findView(view, { candidate in
+                candidate is NSScrollView && findView(candidate, { $0 is ComposerTextView }) == nil
+            }) else { preconditionFailure("No transcript scroll view") }
+            return scroll
+        }
+        func says(_ texts: [String], _ text: String) -> Int { texts.filter { $0.contains(text) }.count }
+        func inTranscript(_ text: String) -> Bool { says(visibleText(in: transcript()), text) > 0 }
+        /// Whether anything outside the chat's scroll area — the composer and its captions —
+        /// also draws `text`. Comparing counts rather than looking for the string keeps this
+        /// independent of how many times the walk reaches one element.
+        func besideComposer(_ text: String) -> Bool {
+            says(visibleText(in: view), text) > says(visibleText(in: transcript()), text)
+        }
+        /// How many stand-in bubbles the window draws. A revision must rewrite the one that
+        /// is there; a second one would mean the words were re-inserted instead.
+        func standIns() -> Int {
+            var visited: Set<ObjectIdentifier> = []
+            var count = 0
+            func visit(_ value: Any) {
+                let object = value as AnyObject
+                guard visited.insert(ObjectIdentifier(object)).inserted else { return }
+                if object.accessibilityIdentifier?() == "voice.subtitle" { count += 1; return }
+                let children = (value as? NSView)?.accessibilityChildren() ?? object.accessibilityChildren?() ?? []
+                for child in children { visit(child) }
+                if let subview = value as? NSView { for child in subview.subviews { visit(child) } }
+            }
+            visit(view)
+            return count
+        }
+
+        // Before Live Voice owns the chat there is nothing to stand in for.
+        try await settle()
+        precondition(findAccessibility("voice.subtitle", in: view) == nil, "No provisional bubble without a session")
+
+        voice.attach(workspace: workspace, settings: settings)
+        precondition(voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test-key"),
+                     "Live Voice started")
+        for _ in 0..<100 where voice.snapshot.recognition != .listening { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(voice.snapshot.recognition == .listening, "Live Voice connected")
+
+        // Speaking: the words form in the chat, and nowhere else. They are not a message,
+        // and nothing about them reaches the save path.
+        recognizers.last?.emit("讲讲今天的天", final: false)
+        try await settle()
+        precondition(voice.subtitle == "讲讲今天的天", "The session heard it: \(voice.subtitle)")
+        precondition(standIns() == 1, "Exactly one stand-in: \(standIns())")
+        precondition(findAccessibility("voice.subtitle", in: transcript()) != nil,
+                     "It is drawn inside the chat, where its message will be")
+        precondition(inTranscript("讲讲今天的天"), "The chat draws the words: \(visibleText(in: transcript()))")
+        precondition(!besideComposer("讲讲今天的天"), "The composer no longer draws them too: \(visibleText(in: view))")
+        precondition(store.messages.isEmpty && store.snapshot.messages.isEmpty,
+                     "A guess is neither a message nor saved: \(store.messages)")
+
+        // A revision rewrites the one bubble rather than adding a second.
+        recognizers.last?.emit("讲讲今天的天气", final: false)
+        try await settle()
+        precondition(voice.subtitle == "讲讲今天的天气" && standIns() == 1,
+                     "The correction replaced the words in place: \(voice.subtitle), \(standIns())")
+        precondition(store.messages.isEmpty, "A revision is still not a message")
+
+        // The final: one real user message, and the stand-in gives way to it.
+        recognizers.last?.emit("讲讲今天的天气")
+        try await settle()
+        precondition(store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气"],
+                     "The final becomes exactly one user message: \(store.messages.map(\.content))")
+        precondition(voice.subtitle.isEmpty && standIns() == 0,
+                     "The stand-in gives way to the message it stood for")
+        precondition(inTranscript("讲讲今天的天气") && !besideComposer("讲讲今天的天气"),
+                     "The words stayed in the chat: \(visibleText(in: view))")
+        // The input really is queued on the core; only the caption saying so is left out, so
+        // the bubble that just settled does not sprout a line and lose it again.
+        precondition(store.messages.last { $0.role == .user }?.steering == "待处理",
+                     "The queue state is untouched: \(store.messages.map { $0.steering ?? "nil" })")
+        precondition(!visibleText(in: view).contains { $0.contains("待处理") },
+                     "Live Voice draws no 待处理 line: \(visibleText(in: view))")
+
+        // A reply is being written and the user speaks again. The words wait where their
+        // message will land — above the reply — so committing them moves nothing. Position is
+        // read from the drawn frames, because a message and a stand-in look alike by design.
+        agent.stream("今天")
+        recognizers.last?.emit("再说说明天", final: false, start: 200)
+        try await settle()
+        precondition(voice.subtitle == "再说说明天" && standIns() == 1, "The follow-up is being heard")
+        guard let waiting = axFrame(findAccessibility("voice.subtitle", in: view)),
+              let reply = axFrame(findAccessibility("conversation.stream", in: view)) else {
+            preconditionFailure("Both the stand-in and the streaming reply are on screen")
+        }
+        precondition(waiting.midY > reply.midY,
+                     "Interim speech waits above the streaming reply: \(waiting) vs \(reply)")
+
+        recognizers.last?.emit("再说说明天", start: 200)
+        try await settle()
+        precondition(store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气", "再说说明天"],
+                     "The follow-up became its own message: \(store.messages.map(\.content))")
+        precondition(standIns() == 0, "The stand-in is gone again")
+        guard let follow = store.messages.last(where: { $0.role == .user }),
+              let settledFrame = axFrame(findAccessibility("conversation.message.\(follow.id)", in: view)),
+              let replyAfter = axFrame(findAccessibility("conversation.stream", in: view)) else {
+            preconditionFailure("The committed follow-up and the reply are both on screen")
+        }
+        precondition(settledFrame.midY > replyAfter.midY,
+                     "Committing it did not move it past the reply: \(settledFrame) vs \(replyAfter)")
+        precondition(abs(settledFrame.midY - waiting.midY) < 1,
+                     "It settled exactly where it was being heard: \(settledFrame) vs \(waiting)")
+        // Same rectangle, to the point: the stand-in was drawing exactly the words that
+        // settled — what is drawn follows every correction, whatever an accessibility label
+        // may still cache — and the bubble neither moved nor changed size when it settled.
+        precondition(abs(waiting.width - settledFrame.width) < 1
+                     && abs(waiting.height - settledFrame.height) < 1,
+                     "The stand-in and the message it became occupy one rectangle: \(waiting) vs \(settledFrame)")
+        precondition(follow.steering == "待处理" && !visibleText(in: view).contains { $0.contains("待处理") },
+                     "The follow-up is queued without a caption of its own: \(visibleText(in: view))")
+
+        // Stopping the turn takes half-heard words with it: nothing unsent is left in the chat
+        // looking like a message. (A final the session refuses is pinned on the controller, in
+        // VoiceTests.agentRefusedFinalTests.)
+        let settledCount = store.messages.count
+        recognizers.last?.emit("还没说完", final: false, start: 400)
+        try await settle()
+        precondition(standIns() == 1, "A half-heard sentence stands in")
+        store.stopTask()
+        try await settle()
+        precondition(voice.subtitle.isEmpty && store.messages.count == settledCount,
+                     "Stopping discards it instead of sending it: \(voice.subtitle)")
+        precondition(standIns() == 0, "Nothing unsent stays drawn")
+
+        // Ending the session leaves the messages it produced untouched.
+        voice.end()
+        for _ in 0..<100 where voice.isActive { try await Task.sleep(for: .milliseconds(20)) }
+        try await settle()
+        precondition(standIns() == 0, "No stand-in outlives the session")
+        precondition(store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气", "再说说明天"],
+                     "The messages it produced are untouched: \(store.messages.map(\.content))")
+        precondition(visibleText(in: view).contains { $0.contains("待处理") },
+                     "Outside Live Voice the queue caption is there, so it was only ever hidden: \(visibleText(in: view))")
+        print("PASS: Live Voice transcribes in place in the chat, and the final settles there without duplicating or jumping")
+    }
+
     @MainActor private static func testLiveVoiceTurnKeepsTaskCardHidden() async throws {
         for scenario in ["fresh conversation", "card closed with ×"] {
             let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
@@ -4387,10 +4703,36 @@ private struct ComposerHeightHost: View {
         capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", "build/\(name).png"]
         try capture.run(); capture.waitUntilExit()
     }
+    /// Where an element is drawn, in screen coordinates, so a test can assert what sits above
+    /// what without depending on the wording either one publishes.
+    @MainActor private static func axFrame(_ object: AnyObject?) -> NSRect? {
+        guard let object = object as? NSObject,
+              object.responds(to: NSSelectorFromString("accessibilityFrame")) else { return nil }
+        return (object.value(forKey: "accessibilityFrame") as? NSValue)?.rectValue
+    }
     @MainActor private static func axValue(_ object: AnyObject?) -> String? {
         let selector = NSSelectorFromString("accessibilityValue")
         guard let object, object.responds(to: selector) else { return nil }
         return object.perform(selector)?.takeUnretainedValue() as? String
+    }
+    /// The strings the window actually draws: only static-text nodes contribute, so a test
+    /// can tell visible wording apart from what is published for assistive technology alone.
+    @MainActor private static func visibleText(in root: Any) -> [String] {
+        var visited: Set<ObjectIdentifier> = []
+        var found: [String] = []
+        func visit(_ value: Any) {
+            let object = value as AnyObject
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return }
+            if object.accessibilityRole?() == .staticText {
+                if let label = object.accessibilityLabel?() { found.append(label) }
+                if let text = axValue(object) { found.append(text) }
+            }
+            let children = (value as? NSView)?.accessibilityChildren() ?? object.accessibilityChildren?() ?? []
+            for child in children { visit(child) }
+            if let view = value as? NSView { for child in view.subviews { visit(child) } }
+        }
+        visit(root)
+        return found
     }
     /// Every accessible string the hosted view publishes, labels and values alike, so a
     /// test can assert what the window does and does not say.

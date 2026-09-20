@@ -501,7 +501,8 @@ struct ConversationView: View {
                         HStack(alignment: .top) {
                             if message.role == .user { Spacer(minLength: 44) }
                             ConversationMessageView(message: message,
-                                retry: store.canRetry && message.id == store.messages.last?.id ? retry : nil)
+                                retry: store.canRetry && message.id == store.messages.last?.id ? retry : nil,
+                                showsProgress: !isVoiceOwner)
                             if message.role == .assistant { Spacer(minLength: 0) }
                         }.id(message.id)
                         ForEach(store.tools.filter { $0.afterMessageID == message.id }) { tool in
@@ -509,8 +510,13 @@ struct ConversationView: View {
                         }
                     }
                     ForEach(store.tools.filter { $0.afterMessageID == nil }) { tool in AgentToolView(tool: tool) }
+                    // What is being said, in the place what was said will keep. A spoken
+                    // follow-up becomes a message in `store.messages`, which is drawn above
+                    // the stream, so the words wait here rather than below the reply — being
+                    // committed then moves nothing.
+                    SpokenDraftView(text: isVoiceOwner ? voice.subtitle : "")
                     // The reply as it is written, until the projected message carries the text.
-                    StreamingReplyView(stream: store.replyStream)
+                    StreamingReplyView(stream: store.replyStream, showsProgress: !isVoiceOwner)
                 }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
                     .frame(maxWidth: .infinity)
             }
@@ -585,7 +591,11 @@ struct ConversationView: View {
                 // The running summary is what the transcript cannot show: which step the
                 // task is on, why it stopped, what failed. A completed task has already
                 // said so with its reply, so the row goes away instead of reading 已完成.
-                if store.usesAgent, let task = store.task, task.status != .completed {
+                // Live Voice narrates its own turn, so while it owns the chat the row
+                // keeps only what the voice cannot say: why a task stopped, and how to
+                // continue it.
+                if store.usesAgent, let task = store.task, task.status != .completed,
+                   !(isVoiceOwner && (task.status == .running || task.status == .stopping)) {
                     HStack {
                         if store.isGenerating { ProgressView().controlSize(.small) }
                         Text(task.summary).font(WorkspaceStyle.caption).textSelection(.enabled)
@@ -704,14 +714,8 @@ struct ConversationView: View {
                             .padding(.top, 4).allowsHitTesting(false).accessibilityHidden(true)
                     }
                 }
-            if isVoiceOwner && !voice.subtitle.isEmpty {
-                HStack(alignment: .top) {
-                    Text(voice.subtitle)
-                        .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).lineLimit(3)
-                        .accessibilityIdentifier("voice.subtitle")
-                    Spacer()
-                }
-            }
+            // Live Voice's transcript is not a draft being prepared here: it forms in the
+            // chat, in the place it will keep. The composer stays what it is for typing.
             if let error = voice.snapshot.error, error.conversationID == nil || error.conversationID == conversationID {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.circle").foregroundStyle(WorkspaceStyle.warning)
@@ -769,12 +773,16 @@ struct ConversationView: View {
                             .accessibilityLabel("返回语音会话").accessibilityIdentifier("voice.reveal")
                     }
                     if presentation.mode == .voice, let owner = voiceOwner {
-                        HStack(spacing: 6) {
-                            VoiceWaveform().frame(width: 14, height: 14)
-                                .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : Color.accentColor)
-                            Text(voice.status).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
-                                .lineLimit(1).accessibilityIdentifier("voice.status")
-                        }
+                        // The mark alone says Live Voice is on; its controls and what is
+                        // heard say the rest, so the running commentary is left to
+                        // assistive technology instead of being spelled out in the row.
+                        VoiceWaveform().frame(width: 14, height: 14)
+                            .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : Color.accentColor)
+                            .accessibilityElement()
+                            .accessibilityAddTraits(.isImage)
+                            .accessibilityLabel("Live Voice")
+                            .accessibilityValue(voice.status)
+                            .accessibilityIdentifier("voice.status")
                         Spacer(minLength: 0)
                         Button {
                             if let ws = workspace { ws.toggleVoiceSpeakerMute(owner: owner) } else { voice.toggleSpeakerMute() }

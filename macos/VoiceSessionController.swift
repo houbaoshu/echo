@@ -302,13 +302,16 @@ import Combine
             let text = update.committed.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
             if usesAgent {
+                // The utterance is over either way, so these words stop standing in for a
+                // message: an accepted one has become that message, and a refused one either
+                // left its own behind — `TaskStore.sendAgent` appends before it can fail —
+                // or is accounted for by the notice the chat is already showing. Keeping
+                // them would show the same sentence twice, or show one that was never sent.
+                updateSnapshot { $0.subtitle = pendingSubtitle }
                 guard store?.canSubmit == true else { return }
                 // Keep this ASR stream and its utterance IDs across follow-ups;
                 // late/repeated finals must not become duplicate user messages.
-                if store?.send(text) == true {
-                    updateSnapshot { $0.subtitle = pendingSubtitle }
-                    bargeInEchoGuard = nil
-                }
+                if store?.send(text) == true { bargeInEchoGuard = nil }
                 return
             }
             stopRecognition(reason: .currentReply)

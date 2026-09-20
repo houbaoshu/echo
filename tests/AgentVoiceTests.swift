@@ -6,6 +6,8 @@ import Foundation
     var generation = ""
     var commands: [(String, String?)] = []
     var cancels = 0
+    /// Refuses admissions the way a core that rejects `send_message` does.
+    var rejectSends = false
     private var entries: [AgentDisplayEntry] = []
     private var receipts: [AgentInputReceipt] = []
     private var turnID: UInt64 = 0
@@ -38,6 +40,7 @@ import Foundation
         if command.isControl { return }
         switch command {
         case .sendMessage(let input):
+            if rejectSends { throw SettingsError("核心拒绝了这次输入。") }
             commands.append(("send_message", input.text))
             if newTurn { turnID = nextID; nextID += 1; finalID = nil; newTurn = false }
             let id = nextID; nextID += 1
@@ -313,6 +316,40 @@ extension VoiceTests {
         try await agentVoiceUnseenTests()
         try await agentVoiceStartupAndFailureTests()
         try await agentVoiceRecoveryTests()
+        try await agentRefusedFinalTests()
+    }
+
+    /// A finished utterance stops being a pending partial whatever becomes of it. `sendAgent`
+    /// appends the user message before it can fail, so a refused admission that kept the
+    /// partial would show the same sentence twice — once as the message, once as speech still
+    /// being recognised — and a refusal before any message would show one that was never sent.
+    @MainActor private static func agentRefusedFinalTests() async throws {
+        let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
+        defer { f.shutdown() }
+        await f.start(); f.holdPlayback(); f.speak("第一个问题")
+        check(f.store.isGenerating, "the first utterance opened a turn")
+
+        // Refused while the turn runs: the message is already appended, the partial is not kept.
+        source.rejectSends = true
+        let settled = f.store.messages.count
+        f.speak("追加一句", start: 400)
+        check(f.store.messages.count == settled + 1 && f.store.messages.last?.content == "追加一句",
+              "the refused follow-up still left its own message: \(f.store.messages.map(\.content))")
+        check(f.voice.subtitle.isEmpty, "a refused follow-up is not also a pending partial: \(f.voice.subtitle)")
+        check(f.store.notice != nil, "the chat says why it was refused")
+
+        // Refused before submission is even allowed: nothing is left standing in for a message.
+        // A session whose Agent failed to load keeps listening — `activate` does not check
+        // `canSubmit` — so this is the one refusal ASR keeps running through.
+        source.rejectSends = false
+        f.store.agentLoadError = "Agent 会话无法加载。"
+        check(!f.store.canSubmit, "a chat whose Agent failed to load admits nothing")
+        let stopped = f.store.messages.count
+        f.recognizers.last?.callback?(.init(result: .init(text: "发不出去的一句", utterances: [
+            .init(text: "发不出去的一句", start_time: 800, end_time: 1000, definite: true)
+        ])))
+        check(f.store.messages.count == stopped && f.voice.subtitle.isEmpty,
+              "an unsubmittable final becomes neither a message nor a leftover partial: \(f.voice.subtitle)")
     }
 
     @MainActor private static func agentVoiceRecoveryTests() async throws {

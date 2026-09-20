@@ -119,14 +119,32 @@ private struct MarkdownCodeBlock: View {
 struct ConversationMessageView: View {
     let message: ConversationMessage
     let retry: (() -> Void)?
+    /// Live Voice turns it off: the turn is heard as it happens, so a caption saying the
+    /// reply is still being written, or that what was just said is queued, adds nothing the
+    /// session does not already show. Only captions for work still under way are affected —
+    /// an outcome is never hidden.
+    var showsProgress = true
+    private var showsStatus: Bool {
+        if message.status == .completed { return false }
+        return showsProgress || !(message.status == .pending || message.status == .streaming)
+    }
+    /// 待处理 is the only steering caption a Live Voice turn drops. It appears the instant the
+    /// spoken words settle and goes away as soon as the core takes them, so under Live Voice
+    /// it is one line appearing and vanishing under a bubble that just arrived. 已中断 says
+    /// the input never got its turn, which nothing else on screen says, so it stays.
+    private var steeringCaption: String? {
+        guard let steering = message.steering else { return nil }
+        return showsProgress || steering != "待处理" ? steering : nil
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if message.role == .assistant {
                 if !message.content.isEmpty { AssistantMarkdown(content: message.content).equatable() }
                 // A finished reply is its own receipt: the text is right there, so the
                 // normal path shows no status line. Everything the reply alone cannot
-                // tell — still working, stopped, failed, interrupted — keeps one.
-                if message.status != .completed {
+                // tell — stopped, failed, interrupted — keeps one, and so does an
+                // unfinished one outside Live Voice.
+                if showsStatus {
                     HStack(spacing: 6) {
                         if message.status == .pending || message.status == .streaming { ProgressView().controlSize(.mini) }
                         Text(message.status.label).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
@@ -137,7 +155,7 @@ struct ConversationMessageView: View {
             } else {
                 Text(message.content).font(WorkspaceStyle.body).lineSpacing(6).textSelection(.enabled)
                     .padding(14).background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
-                if let steering = message.steering { Text(steering).font(.caption).foregroundStyle(.secondary) }
+                if let steeringCaption { Text(steeringCaption).font(.caption).foregroundStyle(.secondary) }
             }
         }.contextMenu {
             Button("复制") {
@@ -153,6 +171,7 @@ struct ConversationMessageView: View {
 /// stream's snapshot stands in for that message until the projected one takes its place.
 struct StreamingReplyView: View {
     @ObservedObject var stream: AssistantReplyStream
+    var showsProgress = true
     /// One identity for the whole reply, so arriving text grows the same bubble.
     private static let messageID = UUID()
     private var message: ConversationMessage? {
@@ -164,9 +183,36 @@ struct StreamingReplyView: View {
     var body: some View {
         if let message {
             HStack(alignment: .top) {
-                ConversationMessageView(message: message, retry: nil)
+                ConversationMessageView(message: message, retry: nil, showsProgress: showsProgress)
                 Spacer(minLength: 0)
             }.id(message.id).accessibilityIdentifier("conversation.stream")
+        }
+    }
+}
+
+/// What Live Voice is hearing, standing in for the user message its final will become.
+/// ASR revises one hypothesis in place rather than appending, so a single identity keeps
+/// the same bubble through every correction; when the utterance is final, the session
+/// clears the text and appends the real message in the same update, and the bubble it
+/// leaves behind is the one already on screen.
+struct SpokenDraftView: View {
+    let text: String
+    /// One identity for the whole utterance, so a revision rewrites the bubble in place.
+    private static let messageID = UUID()
+    private var message: ConversationMessage? {
+        guard !text.isEmpty else { return nil }
+        // A user message draws its bubble and nothing else, so what is being recognised
+        // looks exactly like what was said — no caption to appear and disappear.
+        var message = ConversationMessage(role: .user, content: text, status: .streaming)
+        message.id = Self.messageID
+        return message
+    }
+    var body: some View {
+        if let message {
+            HStack(alignment: .top) {
+                Spacer(minLength: 44)
+                ConversationMessageView(message: message, retry: nil)
+            }.id(message.id).accessibilityIdentifier("voice.subtitle")
         }
     }
 }
