@@ -11,7 +11,8 @@ usage() {
     echo "requirement, signature metadata and the bundled prompt. Binary size is reported"
     echo "but never fails."
     echo "--allow-xcode-extras: tolerate Contents/PkgInfo, Xcode's DT*/platform Info.plist"
-    echo "keys, and the sealed-file count those imply. Nothing else."
+    echo "keys, the sealed-file count those imply, and CFNetwork resolving through"
+    echo "Foundation's re-export. Nothing else. Tolerated differences are still listed."
 }
 allow_extras=false
 if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then usage; exit 0; fi
@@ -36,27 +37,31 @@ report() {
 }
 
 compare_lines() {
-    # $1 = item, $2 = filename, $3 = newline-separated tolerated additions
-    local item="$1" name="$2" tolerated="${3:-}"
-    local -a missing=() added=() unexpected=()
-    while IFS= read -r line; do [[ -n "$line" ]] && missing+=("$line"); done \
+    # $1 = item, $2 = filename, $3 = tolerated additions, $4 = tolerated removals
+    local item="$1" name="$2" tolerated_added="${3:-}" tolerated_removed="${4:-}"
+    local -a gone=() extra=() expected=() unexpected=()
+    while IFS= read -r line; do [[ -n "$line" ]] && gone+=("$line"); done \
         < <(LC_ALL=C comm -23 "$baseline/$name" "$candidate/$name")
-    while IFS= read -r line; do [[ -n "$line" ]] && added+=("$line"); done \
+    while IFS= read -r line; do [[ -n "$line" ]] && extra+=("$line"); done \
         < <(LC_ALL=C comm -13 "$baseline/$name" "$candidate/$name")
-    for line in "${added[@]}"; do
-        if [[ "$allow_extras" == true && -n "$tolerated" && $'\n'"$tolerated"$'\n' == *$'\n'"$line"$'\n'* ]]; then
-            continue
-        fi
-        unexpected+=("$line")
-    done
-    if [[ ${#missing[@]} -eq 0 && ${#unexpected[@]} -eq 0 ]]; then
-        if [[ ${#added[@]} -eq 0 ]]; then
-            report "$item" PASS
+    for line in "${gone[@]}"; do
+        if [[ "$allow_extras" == true && -n "$tolerated_removed" && $'\n'"$tolerated_removed"$'\n' == *$'\n'"$line"$'\n'* ]]; then
+            expected+=("~ $line")
         else
-            report "$item" "PASS (expected additions)" "${added[@]/#/+ }"
+            unexpected+=("- $line")
         fi
+    done
+    for line in "${extra[@]}"; do
+        if [[ "$allow_extras" == true && -n "$tolerated_added" && $'\n'"$tolerated_added"$'\n' == *$'\n'"$line"$'\n'* ]]; then
+            expected+=("~ $line")
+        else
+            unexpected+=("+ $line")
+        fi
+    done
+    if [[ ${#unexpected[@]} -eq 0 ]]; then
+        if [[ ${#expected[@]} -eq 0 ]]; then report "$item" PASS; else report "$item" "PASS (registered)" "${expected[@]}"; fi
     else
-        report "$item" FAIL "${missing[@]/#/- }" "${unexpected[@]/#/+ }"
+        report "$item" FAIL "${unexpected[@]}" "${expected[@]}"
     fi
 }
 
@@ -72,8 +77,12 @@ compare_exact() {
     fi
 }
 
-compare_lines payload files.txt "Contents/PkgInfo"
-compare_lines libraries libs.txt ""
+compare_lines payload files.txt "Contents/PkgInfo" ""
+# swiftc records NSURLSession and friends against CFNetwork, which defines them;
+# ld64 records them against Foundation, which re-exports them. Same symbols, same
+# runtime resolution, one load command fewer.
+compare_lines libraries libs.txt "" \
+    "/System/Library/Frameworks/CFNetwork.framework/Versions/A/CFNetwork (compatibility version 1.0.0, current version 3896.100.1)"
 
 # Per key: every baseline key must survive with the same value. Additions are the
 # build system's own metadata and are listed either way.
@@ -91,7 +100,7 @@ for key, value in base.items():
     elif new[key] != value:
         problems.append(f"~ {key}: {value!r} -> {new[key]!r}")
 for key in new.keys() - base.keys():
-    (notes if allow and key in tolerated else problems).append(f"+ {key}")
+    (notes if allow and key in tolerated else problems).append(f"{'~' if allow and key in tolerated else '+'} {key}")
 print("FAIL" if problems else "PASS")
 print("\n".join(problems + notes))
 PY

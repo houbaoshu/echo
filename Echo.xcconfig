@@ -1,0 +1,43 @@
+// Single source of truth for Echo's build settings. project.pbxproj carries
+// structure — targets, phases, file membership — and only the handful of
+// settings that cannot be shared across targets, so changes stay reviewable.
+
+SDKROOT = macosx
+ARCHS = arm64
+MACOSX_DEPLOYMENT_TARGET = 27.0
+SWIFT_VERSION = 6
+PRODUCT_NAME = $(TARGET_NAME)
+
+// EchoRuntime and EchoAgentBridge are declared by the two module.modulemap files.
+SWIFT_INCLUDE_PATHS = $(PROJECT_DIR)/runtime/include $(PROJECT_DIR)/agent-bridge/include
+OTHER_LDFLAGS = $(PROJECT_DIR)/target/aarch64-apple-darwin/release/libecho_runtime.a $(PROJECT_DIR)/target/aarch64-apple-darwin/release/libecho_agent.a
+
+// macos/Info.plist is complete and hand-maintained; Xcode must not synthesize
+// keys on top of it. INFOPLIST_FILE itself is per target.
+GENERATE_INFOPLIST_FILE = NO
+
+// cargo writes to target/, which the script sandbox forbids.
+ENABLE_USER_SCRIPT_SANDBOXING = NO
+
+// The app has never been sandboxed and must not become so: it runs bash in a
+// user-chosen project directory. The macOS App template turns these on.
+ENABLE_APP_SANDBOX = NO
+ENABLE_USER_SELECTED_FILES = NO
+REGISTER_APP_GROUPS = NO
+
+// The existing chain signs through scripts/sign-app.sh with no entitlements and
+// no hardened runtime; enabling either would change what the bundle may do and
+// would invalidate the Keychain grant. Signing moves here in a later step —
+// until then Xcode must not sign at all.
+CODE_SIGNING_ALLOWED = NO
+ENABLE_HARDENED_RUNTIME = NO
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO
+
+// Every test script already compiles these sources with -warnings-as-errors.
+SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
+
+// Deliberately NOT set, because swiftc does not apply them today and each one
+// changes what the existing sources mean:
+//   SWIFT_DEFAULT_ACTOR_ISOLATION (template default MainActor)
+//   SWIFT_APPROACHABLE_CONCURRENCY
+//   SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY
