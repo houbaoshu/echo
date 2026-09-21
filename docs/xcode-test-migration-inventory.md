@@ -148,3 +148,19 @@ P7 每个 bundle 只新增一个薄 wrapper 文件，声明 `XCTestCase` 并在 
 - `AppleSpeechDeviceProbe` 必须**不由 Xcode 签名**：脚本要在构建后往 `Contents/Resources` 里塞生成的音频，签名必须发生在那之后。它的 `Info.plist` 从脚本内联搬到了 `tests/apple-speech-probe/Info.plist`。该 target 不带资源，所以 `Contents/Resources` 需要脚本自己 `mkdir`。
 - `tests/KeychainAuthorizationProbe.swift` 用的是顶层代码，Xcode 只在文件名为 `main.swift` 时允许，因此改名为 `tests/keychain-probe/main.swift`，**内容一字未改**。
 - 探针目标必须带 `Check signing mode` 阶段：它负责解锁专用钥匙串。缺了它，codesign 会弹窗索要一个 `openssl rand -hex 32` 生成、只存在于 `.local-signing/password` 的口令。
+
+**钥匙串卡死及其处置（迁移期间遇到的机器状态问题）**
+
+本次迁移中途，`security unlock-keychain` 开始对 `.local-signing/echo.keychain-db` 报「passphrase 不正确」，签名相关的一切都被挡住。逐项排除的结论：
+
+| 观察 | 结论 |
+| --- | --- |
+| 口令文件与钥匙串文件 mtime 均未变，口令是完整的 64 位十六进制 | 不是文件被改 |
+| 同一份字节复制到 `/tmp/probe-copy.keychain-db`、`/tmp/echo.keychain-db`（同名）均能解锁 | 不是内容、不是口令、不是文件名 |
+| 换 inode 后原路径仍失败 | 不是 inode |
+| 清掉搜索列表里指向已删除 worktree 的同名条目后仍失败 | 不是搜索列表冲突 |
+| 复制到 `.local-signing/signing.keychain-db` 能解锁 | **securityd 对那个确切路径的状态坏了** |
+
+`signing-identity.sh` 因此改用 `signing.keychain-db`，并在旧文件存在时 `mv` 迁移——证书随文件走，所以身份 SHA-1、designated requirement 和应用已有的钥匙串授权都不变。迁移后 `test-signing.sh` 与 `--keychain` 全过，应用产物与基线逐项一致。
+
+**同时更正一处误判**：`security find-identity -v -p codesigning` 返回「0 valid identities」**一直如此**，不是回归。脚本有意不给这张自签证书写信任设置，而 `-v` 只列有信任链的身份；`sign-app.sh` 的发现逻辑本来就只找 Apple 证书，找不到才自举。

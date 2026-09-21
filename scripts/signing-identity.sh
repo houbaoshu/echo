@@ -89,9 +89,16 @@ else
     # The dedicated keychain contains only the local development signing key.
     umask 077
     signing_dir="$project_dir/.local-signing"
-    keychain="$signing_dir/echo.keychain-db"
+    keychain="$signing_dir/signing.keychain-db"
     mkdir -p "$signing_dir"
     chmod 700 "$signing_dir"
+    # securityd can wedge on a specific keychain path and then reject the correct
+    # password there while accepting it for the same bytes at any other path.
+    # Moving the file keeps the certificate, and therefore the designated
+    # requirement and the app's existing Keychain grants, intact.
+    if [[ ! -f "$keychain" && -f "$signing_dir/echo.keychain-db" ]]; then
+        mv "$signing_dir/echo.keychain-db" "$keychain"
+    fi
     if [[ ! -f "$signing_dir/ready" ]]; then
         if [[ -e "$keychain" || -e "$signing_dir/password" ]]; then
             echo "Incomplete signing setup in $signing_dir; restore it or remove it before retrying (removal resets the signing identity)." >&2
