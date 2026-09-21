@@ -164,3 +164,9 @@ P7 每个 bundle 只新增一个薄 wrapper 文件，声明 `XCTestCase` 并在 
 `signing-identity.sh` 因此改用 `signing.keychain-db`，并在旧文件存在时 `mv` 迁移——证书随文件走，所以身份 SHA-1、designated requirement 和应用已有的钥匙串授权都不变。迁移后 `test-signing.sh` 与 `--keychain` 全过，应用产物与基线逐项一致。
 
 **同时更正一处误判**：`security find-identity -v -p codesigning` 返回「0 valid identities」**一直如此**，不是回归。脚本有意不给这张自签证书写信任设置，而 `-v` 只列有信任链的身份；`sign-app.sh` 的发现逻辑本来就只找 Apple 证书，找不到才自举。
+
+**P8（收口）**
+
+- `scripts/sign-app.sh` 删除。它最后一个调用者是自己的回归；`test-signing-offline.sh` 已改成对 Xcode 入口断言：ad-hoc 构建不碰钥匙串、不带 entitlements、签名为 adhoc；五条守卫拒绝每一种不安全模式；解析器仍拒绝 `-` 身份；scheme 的 Run action 绑定证书配置；资源封印仍然生效。顺带去掉了最后一处 `swiftc`（一个一行的合成夹具）。
+- 全量回归全绿：`cargo test`（9 个套件）、`cargo clippy -D warnings`、`xcodebuild test -scheme EchoTests`（6 个 test case）、`test-agent-bridge.sh`、`test-agent-session.sh`、`test-native-shortcuts.sh`、`test-signing.sh`、`test-signing.sh --keychain`、`test-packaged-app.sh`。
+- `grep -rn swiftc scripts/` 只剩两条注释。App 与全部测试、探针的编译现在都经由 `Echo.xcodeproj`。

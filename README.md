@@ -21,7 +21,7 @@ Mini Agent 主线迁移已完成[第 5 阶段自动验收](docs/mini-agent-mainl
 
 ## 构建与运行
 
-需要 Apple Silicon Mac、macOS 27 或更新版本、Rust/Cargo，以及支持 Swift 6 的 Xcode Command Line Tools 和 macOS 27 SDK。脚本默认选择当前开发者目录的默认 SDK（macOS 27），也可通过 `SDKROOT` 指定兼容 SDK；首次构建需要下载 Rust 依赖。
+需要 Apple Silicon Mac、macOS 27 或更新版本、Rust/Cargo，以及带 Swift 6 与 macOS 27 SDK 的 Xcode。应用的 SDK 由工程设置决定；`scripts/swift-env.sh` 只为 Cargo 与 clang 解析 SDK，可通过 `SDKROOT` 覆盖。首次构建需要下载 Rust 依赖。
 
 当前构建还依赖相邻目录中的 `mini-agent-rs`：
 
@@ -111,7 +111,8 @@ open build/Echo.app
 | `../mini-agent-rs/` | Rust Agent Core：模型协议、会话状态和恢复、异步运行器、保存门控、工具执行和取消清理 |
 | `agent-bridge/`、`macos/AgentBridge.swift`、`macos/AgentWire.swift` | Rust 负责 v2 编解码、FFI 所有权、后台初始化、共享 Tokio runtime 与清理计数；Swift 使用类型化请求、批次与错误 |
 | `runtime/` | Rust 桌宠运行时：素材清单解析、WebP 解码与切帧、动画状态和交互优先级 |
-| `assets/pets/`、`scripts/`、`tests/` | 内置桌宠素材、构建与诊断脚本、回归测试 |
+| `Echo.xcodeproj`、`Echo.xcconfig` | 应用、测试与探针的构建配置；`RustCore` target 触发 Cargo |
+| `assets/pets/`、`scripts/`、`tests/` | 内置桌宠素材、构建辅助与诊断脚本、回归测试 |
 
 本地数据位于 `~/Library/Application Support/local.chiyan.desktop-pet/`：
 
@@ -157,6 +158,8 @@ xcodebuild test -scheme EchoTests
 | `/bin/zsh scripts/test-signing.sh --keychain` | 检查开发签名与真实钥匙串授权 |
 | `/bin/zsh scripts/test-agent-live.sh` | 用已保存模型配置验证真实回复和临时项目读改验 |
 | `/bin/zsh scripts/test-voice-live.sh --play` | 验证真实 ASR → Rust Agent → TTS 链路并播放；不录麦克风，去掉 `--play` 跳过播放 |
+| `/bin/zsh scripts/test-voice-soak.sh [秒数] [--cut 秒数]` | 长连接空闲浸泡，检查 socket 有序关闭；日志写入 `build/test-logs/voice-soak-*.log` |
+| `/bin/zsh scripts/test-agent-ffi.sh` | 仅 Rust/C 的 ASAN 探针，检查 C ABI 的所有权与生命周期 |
 | `/bin/zsh scripts/diagnose-voice.sh` | 构建开发签名应用，检查采集、连接和播放，日志位于 `build/test-logs/voice-diagnostic.log` |
 | `/bin/zsh scripts/trace-dictation.sh` | 跟踪普通听写回调；先构建开发签名应用并退出已运行实例，日志写入 `build/test-logs/dictation-*.jsonl` |
 
