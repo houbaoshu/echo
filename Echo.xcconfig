@@ -25,11 +25,34 @@ ENABLE_APP_SANDBOX = NO
 ENABLE_USER_SELECTED_FILES = NO
 REGISTER_APP_GROUPS = NO
 
-// The existing chain signs through scripts/sign-app.sh with no entitlements and
-// no hardened runtime; enabling either would change what the bundle may do and
-// would invalidate the Keychain grant. Signing moves here in a later step —
-// until then Xcode must not sign at all.
-CODE_SIGNING_ALLOWED = NO
+// Signing. Two modes, chosen with ECHO_SIGNING:
+//   adhoc        Keychain-free validation build. Never resolves an identity.
+//   development  Certificate-backed. scripts/signing-identity.sh resolves the
+//                identity and writes the included file below.
+// A locally bootstrapped certificate additionally signs through its dedicated
+// Keychain with the designated requirement pinned to its fingerprint; an Apple
+// certificate uses codesign's defaults. That split is the existing behaviour.
+#include? "build/signing/Signing.xcconfig"
+
+ECHO_SIGNING = adhoc
+ECHO_IDENTITY_adhoc = -
+ECHO_IDENTITY_development = $(ECHO_RESOLVED_IDENTITY)
+ECHO_SIGN_FLAGS_adhoc_ =
+ECHO_SIGN_FLAGS_adhoc_NO =
+ECHO_SIGN_FLAGS_adhoc_YES =
+ECHO_SIGN_FLAGS_development_ =
+ECHO_SIGN_FLAGS_development_NO =
+ECHO_SIGN_FLAGS_development_YES = --keychain $(ECHO_RESOLVED_KEYCHAIN) -r $(ECHO_RESOLVED_REQUIREMENT)
+
+CODE_SIGNING_ALLOWED = YES
+CODE_SIGNING_REQUIRED = YES
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = $(ECHO_IDENTITY_$(ECHO_SIGNING))
+OTHER_CODE_SIGN_FLAGS = --timestamp=none $(ECHO_SIGN_FLAGS_$(ECHO_SIGNING)_$(ECHO_RESOLVED_PINNED))
+
+// The bundle has never carried entitlements and has never used the hardened
+// runtime; enabling either changes what the app may do and invalidates the
+// Keychain grant that the pinned requirement exists to preserve.
 ENABLE_HARDENED_RUNTIME = NO
 CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO
 

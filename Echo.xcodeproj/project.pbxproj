@@ -95,6 +95,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E000000000000000000000B1 /* Build configuration list for PBXNativeTarget "Echo" */;
 			buildPhases = (
+				E000000000000000000000A3 /* Check signing mode */,
 				E0000000000000000000002C /* Sources */,
 				E0000000000000000000002D /* Frameworks */,
 				E0000000000000000000002E /* Resources */,
@@ -194,6 +195,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/zsh;
 			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
+		};
+		E000000000000000000000A3 /* Check signing mode */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check signing mode";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-signing-check.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

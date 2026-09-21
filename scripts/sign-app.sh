@@ -37,10 +37,10 @@ esac
 /bin/zsh "$project_dir/scripts/signing-identity.sh"
 config="$(/bin/zsh "$project_dir/scripts/signing-identity.sh" --config-path)"
 read_setting() { sed -nE "s/^$1 = (.*)\$/\\1/p" "$config"; }
-identity="$(read_setting ECHO_SIGNING_IDENTITY)"
-pinned="$(read_setting ECHO_SIGNING_PINNED)"
-keychain="$(read_setting ECHO_SIGNING_KEYCHAIN)"
-compiled_requirement="$(read_setting ECHO_SIGNING_REQUIREMENT)"
+identity="$(read_setting ECHO_RESOLVED_IDENTITY)"
+pinned="$(read_setting ECHO_RESOLVED_PINNED)"
+keychain="$(read_setting ECHO_RESOLVED_KEYCHAIN)"
+compiled_requirement="$(read_setting ECHO_RESOLVED_REQUIREMENT)"
 if [[ -z "$identity" ]]; then
     echo "No development signing identity was resolved; refusing to leave $app_dir unsigned." >&2
     exit 1
