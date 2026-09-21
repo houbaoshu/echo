@@ -36,6 +36,7 @@ DerivedData/
 /docs/*
 !/docs/mini-agent-mainline-bridge-v2-plan.md
 !/docs/mini-agent-mainline-bridge-v2-contract.md
+!/docs/xcode-test-migration-inventory.md
 # framework 缺陷的独立复现，不属于任何测试套件
 !/docs/repros/
 
