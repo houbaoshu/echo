@@ -12,6 +12,13 @@ emulate -R zsh
 # sets, so both entry points produce the same artifacts and cargo does not
 # rebuild the workspace whenever they alternate.
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
+# Resolve the caller's toolchain before isolating Xcode's environment. GUI
+# builds may omit Cargo from PATH, so also check relocated and default homes.
+if ! cargo_executable="$(PATH="$PATH:${CARGO_HOME:-$HOME/.cargo}/bin:$HOME/.cargo/bin" whence -p cargo)"; then
+    echo "error: cargo not found in PATH or the Cargo bin directories." >&2
+    exit 1
+fi
+cargo_executable="${cargo_executable:a}"
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 # Xcode's SDKROOT is version-qualified (MacOSX27.0.sdk) where xcrun reports the
@@ -20,7 +27,7 @@ unset SDKROOT
 source scripts/swift-env.sh
 typeset -a environment=(
     "HOME=$HOME"
-    "PATH=$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    "PATH=${cargo_executable:h}:/usr/bin:/bin:/usr/sbin:/sbin"
     "SDKROOT=$SDKROOT"
     "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
 )
@@ -32,4 +39,4 @@ done
 # Always release: the Swift side has only ever linked the optimized libraries, and
 # an Xcode configuration does not change which Rust profile the app expects.
 exec /usr/bin/env -i "${environment[@]}" \
-    cargo build --locked --release --target aarch64-apple-darwin
+    "$cargo_executable" build --locked --release --target aarch64-apple-darwin

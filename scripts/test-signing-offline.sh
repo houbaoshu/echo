@@ -4,6 +4,7 @@ emulate -R zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
+mkdir -p "$project_dir/build"
 temp_dir="$(mktemp -d "$project_dir/build/signing-offline.XXXXXX")"
 trap 'rm -rf "$temp_dir"' EXIT
 

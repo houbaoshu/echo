@@ -635,6 +635,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E122000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentBridgeProbe" */;
 			buildPhases = (
+				E122000000000000000000A4 /* Check signing mode */,
 				E122000000000000000000A3 /* Copy Agent conversation prompt */,
 				E122000000000000000000A1 /* Sources */,
 				E122000000000000000000A2 /* Frameworks */,
@@ -653,6 +654,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E123000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentLiveProbe" */;
 			buildPhases = (
+				E123000000000000000000A4 /* Check signing mode */,
 				E123000000000000000000A3 /* Copy Agent conversation prompt */,
 				E123000000000000000000A1 /* Sources */,
 				E123000000000000000000A2 /* Frameworks */,
@@ -674,6 +676,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E124000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceLiveProbe" */;
 			buildPhases = (
+				E124000000000000000000A4 /* Check signing mode */,
 				E124000000000000000000A3 /* Copy Agent conversation prompt */,
 				E124000000000000000000A1 /* Sources */,
 				E124000000000000000000A2 /* Frameworks */,
@@ -695,6 +698,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E125000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceSoakProbe" */;
 			buildPhases = (
+				E125000000000000000000A4 /* Check signing mode */,
 				E125000000000000000000A3 /* Copy Agent conversation prompt */,
 				E125000000000000000000A1 /* Sources */,
 				E125000000000000000000A2 /* Frameworks */,
@@ -886,6 +890,82 @@
 			shellScript = "\"$PROJECT_DIR/scripts/xcode-signing-check.sh\"\n";
 		};
 		E121000000000000000000A4 /* Check signing mode */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check signing mode";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-signing-check.sh\"\n";
+		};
+		E122000000000000000000A4 /* Check signing mode */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check signing mode";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-signing-check.sh\"\n";
+		};
+		E123000000000000000000A4 /* Check signing mode */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check signing mode";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-signing-check.sh\"\n";
+		};
+		E124000000000000000000A4 /* Check signing mode */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check signing mode";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-signing-check.sh\"\n";
+		};
+		E125000000000000000000A4 /* Check signing mode */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
