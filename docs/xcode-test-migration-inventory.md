@@ -131,3 +131,20 @@ P7 每个 bundle 只新增一个薄 wrapper 文件，声明 `XCTestCase` 并在 
 - `EchoWorkspaceTests`、`EchoConversationUITests` 迁为 XCTest bundle，计数与旧脚本一致：工作区 7 条 PASS（含 92 项工作区检查、57 项语音命令检查），会话 UI 31 条 PASS。
 - **§3.1 实测有结论**：`NATIVE_SHORTCUT_TESTS` 那一路**不能**做成 XCTest bundle。它的 `main()` 以 `NSApplication.run()` 进入真实事件循环并以 `exit(0)` 收尾，XCTest 宿主会把 `exit` 判为崩溃；场景函数又都是 `private`，无法从 wrapper 逐个驱动。已迁为 command line tool target `EchoShortcutUITests`，由 `scripts/test-native-shortcuts.sh` 构建并运行，9 条 PASS 与基线一致。
 - **覆盖未丢、便利性有变**：`test-chat-ui.sh` 透传给测试可执行文件的选择 flag（`--pet-only`、`--phase4-only`、`--settings-only`、`--project-picker-scroll-only`、`--palette-accessibility-only`、`--voice-transcript-only`、`--status-text-only`）不再可用，这些场景仍随默认套件全量运行。原因同 P7b：`ConversationUITests.run()` 在内部消费这些 flag，把它们提成独立 test 方法会在整套运行时重复执行。
+
+**P7d（探针目标）**
+
+七个探针全部迁成 Xcode target，脚本只剩「构建 → 准备夹具 → 运行」：
+
+| target | 形态 | 取代 | 验证状态 |
+| --- | --- | --- | --- |
+| `AgentBridgeProbe` | app（ad-hoc） | `test-agent-bridge.sh` | **已跑通**，输出与基线一致 |
+| `AppleSpeechDeviceProbe` | app（脚本在加完音频夹具后 ad-hoc 签名） | `test-apple-speech-device.sh` | 构建、夹具生成、ad-hoc 签名与 `--verify --strict` 已验证；**未启动**（会弹语音识别授权） |
+| `AgentLiveProbe` / `VoiceLiveProbe` / `VoiceSoakProbe` | app（Development 配置，证书签名） | 三个同名脚本 | **仅验证可构建**；运行需真实模型 / 语音服务与已保存凭据 |
+| `KeychainProbe` / `KeychainProbeRebuilt` | app ×2（后者带 `SECOND_BUILD`） | `test-signing.sh --keychain` 的编译段 | **待验证**：本机钥匙串当前处于异常状态，见下 |
+
+要点：
+
+- `AppleSpeechDeviceProbe` 必须**不由 Xcode 签名**：脚本要在构建后往 `Contents/Resources` 里塞生成的音频，签名必须发生在那之后。它的 `Info.plist` 从脚本内联搬到了 `tests/apple-speech-probe/Info.plist`。该 target 不带资源，所以 `Contents/Resources` 需要脚本自己 `mkdir`。
+- `tests/KeychainAuthorizationProbe.swift` 用的是顶层代码，Xcode 只在文件名为 `main.swift` 时允许，因此改名为 `tests/keychain-probe/main.swift`，**内容一字未改**。
+- 探针目标必须带 `Check signing mode` 阶段：它负责解锁专用钥匙串。缺了它，codesign 会弹窗索要一个 `openssl rand -hex 32` 生成、只存在于 `.local-signing/password` 的口令。

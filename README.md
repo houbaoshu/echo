@@ -137,7 +137,7 @@ xcodebuild test -scheme EchoTests
 
 `EchoTests` scheme 覆盖聊天 / 模型 / 设置、Agent 任务源、语音、工作区与会话 UI。单独运行某一项用 `-only-testing`，例如 `xcodebuild test -scheme EchoTests -only-testing:EchoChatTests` 或 `-only-testing:EchoVoiceTests/AgentVoiceIntegrationSuite`（对应原来的 `--agent-integration`）。
 
-两个套件必须以可执行文件而非 XCTest bundle 运行，各自留一个三行的脚本负责构建加运行：`test-agent-session.sh` 验证的生产 `AgentTaskSource(settings:)` 从 `Bundle.main.resourceURL` 取 prompt；`test-native-shortcuts.sh` 的原生菜单与真实指针场景需要 `NSApplication.run()` 事件循环，而该循环以 `exit(0)` 结束，XCTest 宿主会判为崩溃。
+其余几个套件必须以可执行文件而非 XCTest bundle 运行，每个都有对应的 Xcode target，脚本只负责构建、准备夹具和运行：`test-agent-bridge.sh` 与 `test-agent-session.sh` 依赖 `Bundle.main` 定位打包好的 prompt，而 XCTest bundle 里 `Bundle.main` 是 Xcode 的 `xctest`；`test-native-shortcuts.sh` 的原生菜单与真实指针场景需要 `NSApplication.run()` 事件循环，该循环以 `exit(0)` 结束，XCTest 宿主会判为崩溃。
 
 这些入口使用模拟依赖或本机测试服务，不依赖真实模型 / 语音服务。Agent 集成测试需要 Python 3 和本机回环端口权限，部分测试会在临时项目执行 bash；UI 测试需在桌面环境运行。默认签名回归不访问真实钥匙串。
 
@@ -160,7 +160,7 @@ xcodebuild test -scheme EchoTests
 | `/bin/zsh scripts/diagnose-voice.sh` | 构建开发签名应用，检查采集、连接和播放，日志位于 `build/test-logs/voice-diagnostic.log` |
 | `/bin/zsh scripts/trace-dictation.sh` | 跟踪普通听写回调；先构建开发签名应用并退出已运行实例，日志写入 `build/test-logs/dictation-*.jsonl` |
 
-真实服务检查使用已保存凭据，可能触发钥匙串授权并产生服务用量。语音设备与诊断脚本需要 Python 3；听写跟踪会记录转写全文和草稿，仅用于本地诊断，正常启动不启用。
+这些入口的应用包同样由 Xcode target 构建（`AgentLiveProbe`、`VoiceLiveProbe`、`VoiceSoakProbe`、`AppleSpeechDeviceProbe`、`KeychainProbe`），脚本只负责签名模式、夹具与运行参数。真实服务检查使用已保存凭据，可能触发钥匙串授权并产生服务用量。语音设备与诊断脚本需要 Python 3；听写跟踪会记录转写全文和草稿，仅用于本地诊断，正常启动不启用。
 
 ## 当前限制
 

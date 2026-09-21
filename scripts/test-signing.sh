@@ -29,16 +29,14 @@ cleanup() {
     rm -rf "$temp_dir"
 }
 trap cleanup EXIT
-source scripts/swift-env.sh
+# Two targets over the same probe source, one of them compiled with
+# SECOND_BUILD, so the bundles share an identity but differ in code hash.
+/bin/zsh scripts/signing-identity.sh
+typeset -a probe_targets=(KeychainProbe KeychainProbeRebuilt)
 for version in 0 1; do
+    xcodebuild -project Echo.xcodeproj -target "${probe_targets[version + 1]}" \
+        -configuration Development CONFIGURATION_BUILD_DIR="$temp_dir/$version" build
     app="$temp_dir/$version/Echo.app"
-    mkdir -p "$app/Contents/MacOS"
-    cp macos/Info.plist "$app/Contents/Info.plist"
-    typeset -a flags=()
-    if [[ "$version" == 1 ]]; then flags+=(-D SECOND_BUILD); fi
-    swiftc -suppress-warnings "${flags[@]}" tests/KeychainAuthorizationProbe.swift \
-        -framework Security -o "$app/Contents/MacOS/Echo"
-    /bin/zsh scripts/sign-app.sh --signing development "$app"
     /usr/bin/codesign -d -r- "$app" 2>&1 | sed -n 's/^designated => //p' > "$temp_dir/$version.requirement"
     /usr/bin/codesign -d --verbose=4 "$app" 2>&1 | sed -n 's/^CDHash=//p' > "$temp_dir/$version.hash"
 done

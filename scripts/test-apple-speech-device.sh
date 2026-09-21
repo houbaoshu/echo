@@ -3,9 +3,14 @@ emulate -R zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
-source scripts/swift-env.sh
-app_dir="$project_dir/build/apple-speech-device/Apple Speech Check.app"
-mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
+# Built unsigned so the generated fixtures can be added to Resources before the
+# bundle is sealed; the suite needs a signed bundle with the speech usage
+# description to be granted recognition access.
+xcodebuild -project Echo.xcodeproj -target AppleSpeechDeviceProbe -configuration Release \
+    CONFIGURATION_BUILD_DIR="$project_dir/build/apple-speech-device" build
+app_dir="$project_dir/build/apple-speech-device/AppleSpeechCheck.app"
+# The target carries no resources of its own, so Xcode does not create this.
+mkdir -p "$app_dir/Contents/Resources"
 # Generate fixed local fixtures without playing them or collecting microphone audio.
 /usr/bin/say -v Tingting --file-format=WAVE --data-format=LEI16@16000 -o "$app_dir/Contents/Resources/zh-CN.wav" '今天的天气很好，我想用中文记录一条消息。'
 /usr/bin/say -v Samantha --file-format=WAVE --data-format=LEI16@16000 -o "$app_dir/Contents/Resources/en-US.wav" 'The weather is nice today. Please write this message in English.'
@@ -33,26 +38,5 @@ with wave.open(str(root / 'mixed.wav'), 'wb') as mixed:
         with wave.open(str(root / f'{language}.wav')) as source:
             mixed.writeframes(source.readframes(source.getnframes()))
 PY
-cargo build --locked --release --target aarch64-apple-darwin
-typeset -a sources=()
-for source_file in macos/*.swift; do
-    if [[ "$source_file" != macos/main.swift ]]; then sources+=("$source_file"); fi
-done
-swiftc -swift-version 6 -warnings-as-errors -O -target arm64-apple-macosx27.0 \
-    -I runtime/include -I agent-bridge/include "${sources[@]}" tests/AppleSpeechDeviceTests.swift \
-    target/aarch64-apple-darwin/release/libecho_runtime.a target/aarch64-apple-darwin/release/libecho_agent.a \
-    -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -framework Speech -lz \
-    -o "$app_dir/Contents/MacOS/AppleSpeechCheck"
-cat > "$app_dir/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>AppleSpeechCheck</string>
-<key>CFBundleIdentifier</key><string>local.chiyan.apple-speech-check</string>
-<key>CFBundleName</key><string>Apple Speech Check</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>NSSpeechRecognitionUsageDescription</key><string>使用本机生成的固定中英文音频验证 Apple 本地识别，不录制麦克风，不使用云端识别。</string>
-</dict></plist>
-PLIST
 /usr/bin/codesign --force --sign - --timestamp=none "$app_dir"
 "$app_dir/Contents/MacOS/AppleSpeechCheck" "$@"

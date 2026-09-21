@@ -61,6 +61,15 @@
 		E11500000000000000000B01 /* EchoTestEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F05 /* EchoTestEnvironment.swift */; };
 		E11500000000000000000B02 /* EchoConversationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11500000000000000000F02 /* EchoConversationUITests.swift */; };
 		E11600000000000000000B00 /* ConversationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11500000000000000000F00 /* ConversationUITests.swift */; };
+		E12000000000000000000B00 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12000000000000000000F00 /* main.swift */; };
+		E12100000000000000000B00 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12000000000000000000F00 /* main.swift */; };
+		E12200000000000000000B00 /* AgentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F00 /* AgentWire.swift */; };
+		E12200000000000000000B01 /* AgentBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F01 /* AgentBridge.swift */; };
+		E12200000000000000000B02 /* AgentBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12200000000000000000F02 /* AgentBridgeTests.swift */; };
+		E12300000000000000000B00 /* AgentLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12300000000000000000F00 /* AgentLiveTests.swift */; };
+		E12400000000000000000B00 /* VoiceLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12400000000000000000F00 /* VoiceLiveTests.swift */; };
+		E12500000000000000000B00 /* VoiceSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12500000000000000000F00 /* VoiceSoakTests.swift */; };
+		E12600000000000000000B00 /* AppleSpeechDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12600000000000000000F00 /* AppleSpeechDeviceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -120,6 +129,41 @@
 			remoteGlobalIDString = E000000000000000000000A0;
 			remoteInfo = RustCore;
 		};
+		E122000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E123000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E124000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E125000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E126000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -163,6 +207,19 @@
 		E11500000000000000000F02 /* EchoConversationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoConversationUITests.swift; path = tests/cases/EchoConversationUITests.swift; sourceTree = "<group>"; };
 		E115000000000000000000FF /* EchoConversationUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoConversationUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E116000000000000000000FF /* EchoShortcutUITests */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = EchoShortcutUITests; sourceTree = BUILT_PRODUCTS_DIR; };
+		E12000000000000000000F00 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = main.swift; path = "tests/keychain-probe/main.swift"; sourceTree = "<group>"; };
+		E120000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E121000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E12200000000000000000F02 /* AgentBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentBridgeTests.swift; path = tests/AgentBridgeTests.swift; sourceTree = "<group>"; };
+		E122000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E12300000000000000000F00 /* AgentLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentLiveTests.swift; path = tests/AgentLiveTests.swift; sourceTree = "<group>"; };
+		E123000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E12400000000000000000F00 /* VoiceLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceLiveTests.swift; path = tests/VoiceLiveTests.swift; sourceTree = "<group>"; };
+		E124000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E12500000000000000000F00 /* VoiceSoakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceSoakTests.swift; path = tests/VoiceSoakTests.swift; sourceTree = "<group>"; };
+		E125000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E12600000000000000000F00 /* AppleSpeechDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppleSpeechDeviceTests.swift; path = tests/AppleSpeechDeviceTests.swift; sourceTree = "<group>"; };
+		E126000000000000000000FF /* AppleSpeechCheck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AppleSpeechCheck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -213,12 +270,48 @@
 			);
 			target = E116000000000000000000AA /* EchoShortcutUITests */;
 		};
+		E123000000000000000000EC /* Exceptions for "macos" folder in "AgentLiveProbe" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				main.swift,
+			);
+			target = E123000000000000000000AA /* AgentLiveProbe */;
+		};
+		E124000000000000000000EC /* Exceptions for "macos" folder in "VoiceLiveProbe" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				main.swift,
+			);
+			target = E124000000000000000000AA /* VoiceLiveProbe */;
+		};
+		E125000000000000000000EC /* Exceptions for "macos" folder in "VoiceSoakProbe" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				main.swift,
+			);
+			target = E125000000000000000000AA /* VoiceSoakProbe */;
+		};
+		E126000000000000000000EC /* Exceptions for "macos" folder in "AppleSpeechDeviceProbe" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				main.swift,
+			);
+			target = E126000000000000000000AA /* AppleSpeechDeviceProbe */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		E0000000000000000000002A /* macos */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				E126000000000000000000EC /* Exceptions for "macos" folder in "AppleSpeechDeviceProbe" target */,
+				E125000000000000000000EC /* Exceptions for "macos" folder in "VoiceSoakProbe" target */,
+				E124000000000000000000EC /* Exceptions for "macos" folder in "VoiceLiveProbe" target */,
+				E123000000000000000000EC /* Exceptions for "macos" folder in "AgentLiveProbe" target */,
 				E116000000000000000000EC /* Exceptions for "macos" folder in "EchoShortcutUITests" target */,
 				E115000000000000000000EC /* Exceptions for "macos" folder in "EchoConversationUITests" target */,
 				E114000000000000000000EC /* Exceptions for "macos" folder in "EchoWorkspaceTests" target */,
@@ -272,6 +365,41 @@
 			files = (
 			);
 		};
+		E120000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E121000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E122000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E123000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E124000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E125000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E126000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -290,6 +418,13 @@
 			isa = PBXGroup;
 			children = (
 				E0000000000000000000001A /* Echo.app */,
+				E126000000000000000000FF /* AppleSpeechCheck.app */,
+				E125000000000000000000FF /* Echo.app */,
+				E124000000000000000000FF /* Echo.app */,
+				E123000000000000000000FF /* Echo.app */,
+				E122000000000000000000FF /* Echo.app */,
+				E121000000000000000000FF /* Echo.app */,
+				E120000000000000000000FF /* Echo.app */,
 				E116000000000000000000FF /* EchoShortcutUITests */,
 				E115000000000000000000FF /* EchoConversationUITests.xctest */,
 				E114000000000000000000FF /* EchoWorkspaceTests.xctest */,
@@ -462,6 +597,141 @@
 			productReference = E116000000000000000000FF /* EchoShortcutUITests */;
 			productType = "com.apple.product-type.tool";
 		};
+		E120000000000000000000AA /* KeychainProbe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E120000000000000000000EE /* Build configuration list for PBXNativeTarget "KeychainProbe" */;
+			buildPhases = (
+				E120000000000000000000A4 /* Check signing mode */,
+				E120000000000000000000A1 /* Sources */,
+				E120000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KeychainProbe;
+			productName = KeychainProbe;
+			productReference = E120000000000000000000FF /* Echo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E121000000000000000000AA /* KeychainProbeRebuilt */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E121000000000000000000EE /* Build configuration list for PBXNativeTarget "KeychainProbeRebuilt" */;
+			buildPhases = (
+				E121000000000000000000A4 /* Check signing mode */,
+				E121000000000000000000A1 /* Sources */,
+				E121000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KeychainProbeRebuilt;
+			productName = KeychainProbeRebuilt;
+			productReference = E121000000000000000000FF /* Echo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E122000000000000000000AA /* AgentBridgeProbe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E122000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentBridgeProbe" */;
+			buildPhases = (
+				E122000000000000000000A3 /* Copy Agent conversation prompt */,
+				E122000000000000000000A1 /* Sources */,
+				E122000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E122000000000000000000C2 /* PBXTargetDependency */,
+			);
+			name = AgentBridgeProbe;
+			productName = AgentBridgeProbe;
+			productReference = E122000000000000000000FF /* Echo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E123000000000000000000AA /* AgentLiveProbe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E123000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentLiveProbe" */;
+			buildPhases = (
+				E123000000000000000000A3 /* Copy Agent conversation prompt */,
+				E123000000000000000000A1 /* Sources */,
+				E123000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E123000000000000000000C2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A /* macos */,
+			);
+			name = AgentLiveProbe;
+			productName = AgentLiveProbe;
+			productReference = E123000000000000000000FF /* Echo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E124000000000000000000AA /* VoiceLiveProbe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E124000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceLiveProbe" */;
+			buildPhases = (
+				E124000000000000000000A3 /* Copy Agent conversation prompt */,
+				E124000000000000000000A1 /* Sources */,
+				E124000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E124000000000000000000C2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A /* macos */,
+			);
+			name = VoiceLiveProbe;
+			productName = VoiceLiveProbe;
+			productReference = E124000000000000000000FF /* Echo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E125000000000000000000AA /* VoiceSoakProbe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E125000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceSoakProbe" */;
+			buildPhases = (
+				E125000000000000000000A3 /* Copy Agent conversation prompt */,
+				E125000000000000000000A1 /* Sources */,
+				E125000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E125000000000000000000C2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A /* macos */,
+			);
+			name = VoiceSoakProbe;
+			productName = VoiceSoakProbe;
+			productReference = E125000000000000000000FF /* Echo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E126000000000000000000AA /* AppleSpeechDeviceProbe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E126000000000000000000EE /* Build configuration list for PBXNativeTarget "AppleSpeechDeviceProbe" */;
+			buildPhases = (
+				E126000000000000000000A1 /* Sources */,
+				E126000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E126000000000000000000C2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A /* macos */,
+			);
+			name = AppleSpeechDeviceProbe;
+			productName = AppleSpeechDeviceProbe;
+			productReference = E126000000000000000000FF /* AppleSpeechCheck.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -492,6 +762,13 @@
 			targets = (
 				E000000000000000000000A0 /* RustCore */,
 				E0000000000000000000002F /* Echo */,
+				E126000000000000000000AA /* AppleSpeechDeviceProbe */,
+				E125000000000000000000AA /* VoiceSoakProbe */,
+				E124000000000000000000AA /* VoiceLiveProbe */,
+				E123000000000000000000AA /* AgentLiveProbe */,
+				E122000000000000000000AA /* AgentBridgeProbe */,
+				E121000000000000000000AA /* KeychainProbeRebuilt */,
+				E120000000000000000000AA /* KeychainProbe */,
 				E116000000000000000000AA /* EchoShortcutUITests */,
 				E115000000000000000000AA /* EchoConversationUITests */,
 				E114000000000000000000AA /* EchoWorkspaceTests */,
@@ -589,6 +866,120 @@
 			shellPath = /bin/zsh;
 			shellScript = "\"$PROJECT_DIR/scripts/xcode-stage-agent-prompt.sh\"\n";
 		};
+		E120000000000000000000A4 /* Check signing mode */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check signing mode";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-signing-check.sh\"\n";
+		};
+		E121000000000000000000A4 /* Check signing mode */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check signing mode";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-signing-check.sh\"\n";
+		};
+		E122000000000000000000A3 /* Copy Agent conversation prompt */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Agent conversation prompt";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
+		};
+		E123000000000000000000A3 /* Copy Agent conversation prompt */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Agent conversation prompt";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
+		};
+		E124000000000000000000A3 /* Copy Agent conversation prompt */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Agent conversation prompt";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
+		};
+		E125000000000000000000A3 /* Copy Agent conversation prompt */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Agent conversation prompt";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -671,6 +1062,50 @@
 				E11600000000000000000B00 /* ConversationUITests.swift in Sources */,
 			);
 		};
+		E120000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E12000000000000000000B00 /* main.swift in Sources */,
+			);
+		};
+		E121000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E12100000000000000000B00 /* main.swift in Sources */,
+			);
+		};
+		E122000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E12200000000000000000B00 /* AgentWire.swift in Sources */,
+				E12200000000000000000B01 /* AgentBridge.swift in Sources */,
+				E12200000000000000000B02 /* AgentBridgeTests.swift in Sources */,
+			);
+		};
+		E123000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E12300000000000000000B00 /* AgentLiveTests.swift in Sources */,
+			);
+		};
+		E124000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E12400000000000000000B00 /* VoiceLiveTests.swift in Sources */,
+			);
+		};
+		E125000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E12500000000000000000B00 /* VoiceSoakTests.swift in Sources */,
+			);
+		};
+		E126000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E12600000000000000000B00 /* AppleSpeechDeviceTests.swift in Sources */,
+			);
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -713,6 +1148,31 @@
 			isa = PBXTargetDependency;
 			target = E000000000000000000000A0 /* RustCore */;
 			targetProxy = E116000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E122000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E122000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E123000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E123000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E124000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E124000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E125000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E125000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E126000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E126000000000000000000C1 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1017,6 +1477,219 @@
 			};
 			name = Development;
 		};
+		E120000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+			};
+			name = Debug;
+		};
+		E120000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+			};
+			name = Release;
+		};
+		E120000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+			};
+			name = Development;
+		};
+		E121000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbeRebuilt" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+			};
+			name = Debug;
+		};
+		E121000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbeRebuilt" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+			};
+			name = Release;
+		};
+		E121000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbeRebuilt" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+			};
+			name = Development;
+		};
+		E122000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentBridgeProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Debug;
+		};
+		E122000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentBridgeProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Release;
+		};
+		E122000000000000000000D2 /* Development configuration for PBXNativeTarget "AgentBridgeProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Development;
+		};
+		E123000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentLiveProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Debug;
+		};
+		E123000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentLiveProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Release;
+		};
+		E123000000000000000000D2 /* Development configuration for PBXNativeTarget "AgentLiveProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Development;
+		};
+		E124000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceLiveProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Debug;
+		};
+		E124000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceLiveProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Release;
+		};
+		E124000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceLiveProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Development;
+		};
+		E125000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceSoakProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Debug;
+		};
+		E125000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceSoakProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Release;
+		};
+		E125000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceSoakProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+				PRODUCT_NAME = Echo;
+			};
+			name = Development;
+		};
+		E126000000000000000000D0 /* Debug configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
+				PRODUCT_NAME = AppleSpeechCheck;
+			};
+			name = Debug;
+		};
+		E126000000000000000000D1 /* Release configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
+				PRODUCT_NAME = AppleSpeechCheck;
+			};
+			name = Release;
+		};
+		E126000000000000000000D2 /* Development configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
+				PRODUCT_NAME = AppleSpeechCheck;
+			};
+			name = Development;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1116,6 +1789,76 @@
 				E116000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoShortcutUITests" */,
 				E116000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoShortcutUITests" */,
 				E116000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoShortcutUITests" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E120000000000000000000EE /* Build configuration list for PBXNativeTarget "KeychainProbe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E120000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbe" */,
+				E120000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbe" */,
+				E120000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbe" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E121000000000000000000EE /* Build configuration list for PBXNativeTarget "KeychainProbeRebuilt" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E121000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
+				E121000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
+				E121000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E122000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentBridgeProbe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E122000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentBridgeProbe" */,
+				E122000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentBridgeProbe" */,
+				E122000000000000000000D2 /* Development configuration for PBXNativeTarget "AgentBridgeProbe" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E123000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentLiveProbe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E123000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentLiveProbe" */,
+				E123000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentLiveProbe" */,
+				E123000000000000000000D2 /* Development configuration for PBXNativeTarget "AgentLiveProbe" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E124000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceLiveProbe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E124000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceLiveProbe" */,
+				E124000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceLiveProbe" */,
+				E124000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceLiveProbe" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E125000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceSoakProbe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E125000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceSoakProbe" */,
+				E125000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceSoakProbe" */,
+				E125000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceSoakProbe" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E126000000000000000000EE /* Build configuration list for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E126000000000000000000D0 /* Debug configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
+				E126000000000000000000D1 /* Release configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
+				E126000000000000000000D2 /* Development configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

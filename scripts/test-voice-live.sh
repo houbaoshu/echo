@@ -7,25 +7,11 @@ if [[ "${1:-}" != "" && "${1:-}" != --play ]]; then
     echo "Usage: $0 [--play]" >&2
     exit 1
 fi
-export CLANG_MODULE_CACHE_PATH="$project_dir/build/module-cache"
-export SWIFT_MODULECACHE_PATH="$CLANG_MODULE_CACHE_PATH"
-source scripts/swift-env.sh
-cargo build --locked --release --target aarch64-apple-darwin
-probe_app="$project_dir/build/voice-live-probe/Echo.app"
-mkdir -p "$probe_app/Contents/MacOS" "$probe_app/Contents/Resources/agent"
-cp macos/Info.plist "$probe_app/Contents/Info.plist"
-cp "$(/bin/zsh "$project_dir/scripts/agent-prompt-path.sh")" "$probe_app/Contents/Resources/agent/conversation.md"
-typeset -a sources=()
-for source_file in macos/*.swift; do
-    if [[ "$source_file" != macos/main.swift ]]; then sources+=("$source_file"); fi
-done
-swiftc -swift-version 6 -warnings-as-errors -target arm64-apple-macosx27.0 \
-    -I runtime/include -I agent-bridge/include "${sources[@]}" tests/VoiceLiveTests.swift \
-    target/aarch64-apple-darwin/release/libecho_runtime.a \
-    target/aarch64-apple-darwin/release/libecho_agent.a \
-    -framework AppKit -framework SwiftUI -framework Security -framework AVFoundation -framework Speech -lz \
-    -o "$probe_app/Contents/MacOS/Echo"
-/bin/zsh scripts/sign-app.sh --signing development "$probe_app"
+# Signed under the production bundle identity so the saved voice credentials in
+# the Keychain are readable.
+/bin/zsh scripts/signing-identity.sh
+xcodebuild -project Echo.xcodeproj -target VoiceLiveProbe -configuration Development \
+    CONFIGURATION_BUILD_DIR="$project_dir/build/voice-live-probe" build
 # A hard overall deadline also covers a service that accepts sockets but never finishes.
 python3 - "$@" <<'PY'
 import subprocess, sys
