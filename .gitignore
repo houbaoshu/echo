@@ -29,6 +29,8 @@
 # Xcode
 xcuserdata/
 *.xcuserstate
+**/xcshareddata/IDEWorkspaceChecks.plist
+DerivedData/
 
 # 文档与规划记录
 /docs/*
