@@ -77,3 +77,24 @@ rm -rf "$installed"
 ditto "$temp_dir/1/Echo.app" "$installed"
 "$installed/Contents/MacOS/Echo" expect-denied "$test_service"
 echo "PASS: same-build relaunch works; an unrelated signer is rejected."
+
+# A bootstrapped certificate is only as good as the requirement pinned to it, so
+# the Xcode build must refuse to sign without it rather than fall back to
+# codesign's default. Needs the resolved identity: Xcode validates a named
+# certificate against the Keychain while it builds the dependency graph.
+/bin/zsh scripts/signing-identity.sh
+if [[ "$(sed -nE 's/^ECHO_RESOLVED_PINNED = (.*)$/\1/p' build/signing/Signing.xcconfig)" == YES ]]; then
+    if xcodebuild -project Echo.xcodeproj -scheme Echo -configuration Development \
+        CONFIGURATION_BUILD_DIR="$temp_dir/xcodebuild" \
+        OTHER_CODE_SIGN_FLAGS=--timestamp=none build > "$temp_dir/pinning.log" 2>&1; then
+        echo "FAIL: Xcode signed a bootstrapped certificate without its pinned requirement" >&2
+        exit 1
+    fi
+    if ! /usr/bin/grep -q "must sign with its pinned designated requirement" "$temp_dir/pinning.log"; then
+        echo "FAIL: the build was rejected for the wrong reason; see $temp_dir/pinning.log" >&2
+        exit 1
+    fi
+    echo "PASS: Xcode refuses to drop the pinned designated requirement."
+else
+    echo "SKIPPED: this machine signs with an Apple certificate, which uses codesign's default requirement."
+fi

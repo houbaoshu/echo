@@ -1,0 +1,8 @@
+// Certificate-backed signing, with the same optimization settings as Release.
+// A separate configuration, not a command line override, so that running the
+// app from Xcode cannot produce an ad-hoc bundle: an ad-hoc signature is tied
+// to the code hash, so every rebuild would drop the Keychain authorization the
+// app needs for its saved API keys.
+#include "Echo.xcconfig"
+
+ECHO_SIGNING = development

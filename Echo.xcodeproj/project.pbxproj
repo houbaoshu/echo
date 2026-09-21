@@ -21,7 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
-		E00000000000000000000030 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001C /* pets */; };
+		E00000000000000000000030 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -37,7 +37,8 @@
 /* Begin PBXFileReference section */
 		E0000000000000000000001A /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E0000000000000000000001B /* Echo.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Echo.xcconfig; sourceTree = "<group>"; };
-		E0000000000000000000001C /* pets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = pets; path = assets/pets; sourceTree = "<group>"; };
+		E0000000000000000000001C /* Echo-Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Echo-Development.xcconfig"; sourceTree = "<group>"; };
+		E0000000000000000000001D /* pets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = pets; path = assets/pets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -74,7 +75,8 @@
 			isa = PBXGroup;
 			children = (
 				E0000000000000000000001B /* Echo.xcconfig */,
-				E0000000000000000000001C /* pets */,
+				E0000000000000000000001C /* Echo-Development.xcconfig */,
+				E0000000000000000000001D /* pets */,
 				E0000000000000000000002A /* macos */,
 				E00000000000000000000011 /* Products */,
 			);
@@ -302,6 +304,37 @@
 			};
 			name = Release;
 		};
+		E000000000000000000000D6 /* Development configuration for PBXProject "Echo" */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = E0000000000000000000001C /* Echo-Development.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Development;
+		};
+		E000000000000000000000D7 /* Development configuration for PBXNativeTarget "Echo" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.desktop-pet;
+			};
+			name = Development;
+		};
+		E000000000000000000000D8 /* Development configuration for PBXAggregateTarget "RustCore" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			};
+			name = Development;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -310,6 +343,7 @@
 			buildConfigurations = (
 				E000000000000000000000D0 /* Debug configuration for PBXProject "Echo" */,
 				E000000000000000000000D1 /* Release configuration for PBXProject "Echo" */,
+				E000000000000000000000D6 /* Development configuration for PBXProject "Echo" */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -319,6 +353,7 @@
 			buildConfigurations = (
 				E000000000000000000000D2 /* Debug configuration for PBXNativeTarget "Echo" */,
 				E000000000000000000000D3 /* Release configuration for PBXNativeTarget "Echo" */,
+				E000000000000000000000D7 /* Development configuration for PBXNativeTarget "Echo" */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -328,6 +363,7 @@
 			buildConfigurations = (
 				E000000000000000000000D4 /* Debug configuration for PBXAggregateTarget "RustCore" */,
 				E000000000000000000000D5 /* Release configuration for PBXAggregateTarget "RustCore" */,
+				E000000000000000000000D8 /* Development configuration for PBXAggregateTarget "RustCore" */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
