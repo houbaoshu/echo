@@ -44,6 +44,14 @@
 		E11100000000000000000B07 /* VoiceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F07 /* VoiceDiagnostics.swift */; };
 		E11100000000000000000B08 /* AgentTaskSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11100000000000000000F08 /* AgentTaskSourceTests.swift */; };
 		E11100000000000000000B09 /* EchoAgentTaskSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11100000000000000000F09 /* EchoAgentTaskSourceTests.swift */; };
+		E11200000000000000000B00 /* AgentSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11200000000000000000F00 /* AgentSessionTests.swift */; };
+		E11300000000000000000B00 /* VoiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F00 /* VoiceTests.swift */; };
+		E11300000000000000000B01 /* VoiceBargeInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F01 /* VoiceBargeInTests.swift */; };
+		E11300000000000000000B02 /* AgentVoiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F02 /* AgentVoiceTests.swift */; };
+		E11300000000000000000B03 /* AppleSpeechTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F03 /* AppleSpeechTests.swift */; };
+		E11300000000000000000B04 /* DictationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F04 /* DictationTests.swift */; };
+		E11300000000000000000B05 /* EchoTestEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F05 /* EchoTestEnvironment.swift */; };
+		E11300000000000000000B06 /* EchoVoiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F06 /* EchoVoiceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -62,6 +70,20 @@
 			remoteInfo = RustCore;
 		};
 		E111000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E112000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E113000000000000000000C1 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E0000000000000000000000F /* Project object */;
 			proxyType = 1;
@@ -92,6 +114,16 @@
 		E11100000000000000000F08 /* AgentTaskSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentTaskSourceTests.swift; path = tests/AgentTaskSourceTests.swift; sourceTree = "<group>"; };
 		E11100000000000000000F09 /* EchoAgentTaskSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoAgentTaskSourceTests.swift; path = tests/cases/EchoAgentTaskSourceTests.swift; sourceTree = "<group>"; };
 		E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoAgentTaskSourceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E11200000000000000000F00 /* AgentSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentSessionTests.swift; path = tests/AgentSessionTests.swift; sourceTree = "<group>"; };
+		E112000000000000000000FF /* EchoAgentSessionTests */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = EchoAgentSessionTests; sourceTree = BUILT_PRODUCTS_DIR; };
+		E11300000000000000000F00 /* VoiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceTests.swift; path = tests/VoiceTests.swift; sourceTree = "<group>"; };
+		E11300000000000000000F01 /* VoiceBargeInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceBargeInTests.swift; path = tests/VoiceBargeInTests.swift; sourceTree = "<group>"; };
+		E11300000000000000000F02 /* AgentVoiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentVoiceTests.swift; path = tests/AgentVoiceTests.swift; sourceTree = "<group>"; };
+		E11300000000000000000F03 /* AppleSpeechTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppleSpeechTests.swift; path = tests/AppleSpeechTests.swift; sourceTree = "<group>"; };
+		E11300000000000000000F04 /* DictationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DictationTests.swift; path = tests/DictationTests.swift; sourceTree = "<group>"; };
+		E11300000000000000000F05 /* EchoTestEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoTestEnvironment.swift; path = tests/cases/EchoTestEnvironment.swift; sourceTree = "<group>"; };
+		E11300000000000000000F06 /* EchoVoiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoVoiceTests.swift; path = tests/cases/EchoVoiceTests.swift; sourceTree = "<group>"; };
+		E113000000000000000000FF /* EchoVoiceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoVoiceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -102,12 +134,30 @@
 			);
 			target = E0000000000000000000002F /* Echo */;
 		};
+		E112000000000000000000EC /* Exceptions for "macos" folder in "EchoAgentSessionTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				main.swift,
+			);
+			target = E112000000000000000000AA /* EchoAgentSessionTests */;
+		};
+		E113000000000000000000EC /* Exceptions for "macos" folder in "EchoVoiceTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				main.swift,
+			);
+			target = E113000000000000000000AA /* EchoVoiceTests */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		E0000000000000000000002A /* macos */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				E113000000000000000000EC /* Exceptions for "macos" folder in "EchoVoiceTests" target */,
+				E112000000000000000000EC /* Exceptions for "macos" folder in "EchoAgentSessionTests" target */,
 				E0000000000000000000002B /* Exceptions for "macos" folder in "Echo" target */,
 			);
 			path = macos;
@@ -131,6 +181,16 @@
 			files = (
 			);
 		};
+		E112000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E113000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -149,6 +209,8 @@
 			isa = PBXGroup;
 			children = (
 				E0000000000000000000001A /* Echo.app */,
+				E113000000000000000000FF /* EchoVoiceTests.xctest */,
+				E112000000000000000000FF /* EchoAgentSessionTests */,
 				E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */,
 				E110000000000000000000FF /* EchoChatTests.xctest */,
 			);
@@ -215,6 +277,47 @@
 			productReference = E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		E112000000000000000000AA /* EchoAgentSessionTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E112000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoAgentSessionTests" */;
+			buildPhases = (
+				E112000000000000000000A1 /* Sources */,
+				E112000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E112000000000000000000C2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A /* macos */,
+			);
+			name = EchoAgentSessionTests;
+			productName = EchoAgentSessionTests;
+			productReference = E112000000000000000000FF /* EchoAgentSessionTests */;
+			productType = "com.apple.product-type.tool";
+		};
+		E113000000000000000000AA /* EchoVoiceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E113000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoVoiceTests" */;
+			buildPhases = (
+				E113000000000000000000A3 /* Stage Agent conversation prompt */,
+				E113000000000000000000A1 /* Sources */,
+				E113000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E113000000000000000000C2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A /* macos */,
+			);
+			name = EchoVoiceTests;
+			productName = EchoVoiceTests;
+			productReference = E113000000000000000000FF /* EchoVoiceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -245,6 +348,8 @@
 			targets = (
 				E000000000000000000000A0 /* RustCore */,
 				E0000000000000000000002F /* Echo */,
+				E113000000000000000000AA /* EchoVoiceTests */,
+				E112000000000000000000AA /* EchoAgentSessionTests */,
 				E111000000000000000000AA /* EchoAgentTaskSourceTests */,
 				E110000000000000000000AA /* EchoChatTests */,
 			);
@@ -318,6 +423,25 @@
 			shellPath = /bin/zsh;
 			shellScript = "\"$PROJECT_DIR/scripts/xcode-signing-check.sh\"\n";
 		};
+		E113000000000000000000A3 /* Stage Agent conversation prompt */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stage Agent conversation prompt";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-stage-agent-prompt.sh\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -358,6 +482,24 @@
 				E11100000000000000000B09 /* EchoAgentTaskSourceTests.swift in Sources */,
 			);
 		};
+		E112000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E11200000000000000000B00 /* AgentSessionTests.swift in Sources */,
+			);
+		};
+		E113000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E11300000000000000000B00 /* VoiceTests.swift in Sources */,
+				E11300000000000000000B01 /* VoiceBargeInTests.swift in Sources */,
+				E11300000000000000000B02 /* AgentVoiceTests.swift in Sources */,
+				E11300000000000000000B03 /* AppleSpeechTests.swift in Sources */,
+				E11300000000000000000B04 /* DictationTests.swift in Sources */,
+				E11300000000000000000B05 /* EchoTestEnvironment.swift in Sources */,
+				E11300000000000000000B06 /* EchoVoiceTests.swift in Sources */,
+			);
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -375,6 +517,16 @@
 			isa = PBXTargetDependency;
 			target = E000000000000000000000A0 /* RustCore */;
 			targetProxy = E111000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E112000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E112000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E113000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E113000000000000000000C1 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -538,6 +690,60 @@
 			};
 			name = Development;
 		};
+		E112000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoAgentSessionTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = Debug;
+		};
+		E112000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoAgentSessionTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = Release;
+		};
+		E112000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoAgentSessionTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = Development;
+		};
+		E113000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoVoiceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
+			};
+			name = Debug;
+		};
+		E113000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoVoiceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
+			};
+			name = Release;
+		};
+		E113000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoVoiceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
+			};
+			name = Development;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -587,6 +793,26 @@
 				E111000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */,
 				E111000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */,
 				E111000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E112000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoAgentSessionTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E112000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoAgentSessionTests" */,
+				E112000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoAgentSessionTests" */,
+				E112000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoAgentSessionTests" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E113000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoVoiceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E113000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoVoiceTests" */,
+				E113000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoVoiceTests" */,
+				E113000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoVoiceTests" */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

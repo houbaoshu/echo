@@ -117,3 +117,11 @@ P7 每个 bundle 只新增一个薄 wrapper 文件，声明 `XCTestCase` 并在 
 - logic-test bundle 方案成立：不设 `TEST_HOST` / `BUNDLE_LOADER`，把所需 `macos/` 源直接编进 bundle，`xcodebuild test` 正常运行，4 + 1 条 PASS 与旧脚本逐条一致、顺序相同。
 - `@main` 留在 bundle target 里**不报错**，所以测试文件一行未改。
 - §3.2 的替身类型经实测保住：`EchoAgentTaskSourceTests` 的源集不含 `macos/AgentBridge.swift`，`AgentTaskSource` 绑定到测试自带的那个，断言全过。
+
+**P7b（`EchoAgentSessionTests` / `EchoVoiceTests`）**
+
+- **§2.1 的分类在 `test-agent-session.sh` 上是错的，已更正**：该套件的 `testReopenAfterInvalidSettings` 用生产的 `AgentTaskSource(settings:)`，而后者写死 `Bundle.main.resourceURL`。旧的 bare CLI 位于 `build/`，脚本把 prompt 放在 `build/agent/conversation.md` 正是为此；XCTest bundle 里 `Bundle.main` 是 Xcode 的 `xctest`，拿不到。因此它迁成 **command line tool target**，`scripts/test-agent-session.sh` 保留为「备 prompt → xcodebuild → 运行产物」三行。测试文件一行未改，4 条 PASS 一致。
+- `EchoVoiceTests` 可以留在 XCTest bundle：`AgentVoiceTests` 用的是 `AgentTaskSource(model:resources:)`，只依赖工作目录。
+- Xcode 的 Test action **不接受自定义工作目录**（`customWorkingDirectory` 无效，cwd 落在 `/private/tmp`）。改由 `tests/cases/EchoTestEnvironment.swift` 用编译期 `#filePath` 推出项目根并 `changeCurrentDirectoryPath`，不依赖 scheme 配置。
+- 计数核对：`testVoice` 631 条、`testAgentVoiceIntegration` 64 条，与旧脚本逐条一致。首次实测得到 695，原因是 `VoiceTests.checks` 是共享静态计数器而两个入口现在同进程先后运行（631 + 64）；断言未受影响，已在两个 suite 开头重置。
+- **覆盖未丢、便利性有变**：`--dictation-only` 与 `--agent-only` 是 `VoiceTests.main()` **内部**的子选择，这些场景仍随 `testVoice` 全量运行，但不再有独立入口；把它们做成单独 test 方法会导致整套运行时重复执行。
