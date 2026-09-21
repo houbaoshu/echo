@@ -1,5 +1,7 @@
 # 测试迁移清点（P6）
 
+> 当前签名实现已进一步迁移：Development 使用 Xcode 的 Apple Development 证书与 Team 配置，Release 保持 ad-hoc。旧 identity resolver、signing guard 与基线比较脚本已删除；AppleSpeechDeviceProbe 在 Build Phase 生成音频后由 Xcode 签名。真实 Keychain 授权测试仍保留。以下 P7/P8 内容是迁移历史，其中专用 keychain、自签 requirement 和构建后手工签名不再描述当前实现。
+
 本文件记录迁移前每个测试入口**实际验证什么**、**依赖什么**、**迁到 Xcode 后是什么形态**，以及**哪些无法等价迁移**。P7 的每一批都以本表为验收对照。
 
 ## 1. 现有测试是怎么连起来的

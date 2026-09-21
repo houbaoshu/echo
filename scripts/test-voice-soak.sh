@@ -11,7 +11,6 @@ if [[ ! "$seconds" =~ '^[0-9]+$' ]]; then
 fi
 # Signed under the production bundle identity: the saved voice key lives in the
 # Keychain and an unsigned CLI cannot read it. No microphone entitlement is exercised.
-/bin/zsh scripts/signing-identity.sh
 xcodebuild -project Echo.xcodeproj -target VoiceSoakProbe -configuration Development \
     CONFIGURATION_BUILD_DIR="$project_dir/build/voice-soak-probe" build
 mkdir -p build/test-logs

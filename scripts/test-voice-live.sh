@@ -9,7 +9,6 @@ if [[ "${1:-}" != "" && "${1:-}" != --play ]]; then
 fi
 # Signed under the production bundle identity so the saved voice credentials in
 # the Keychain are readable.
-/bin/zsh scripts/signing-identity.sh
 xcodebuild -project Echo.xcodeproj -target VoiceLiveProbe -configuration Development \
     CONFIGURATION_BUILD_DIR="$project_dir/build/voice-live-probe" build
 # A hard overall deadline also covers a service that accepts sockets but never finishes.

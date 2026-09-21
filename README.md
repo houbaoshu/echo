@@ -43,17 +43,16 @@ xcodebuild -scheme Echo -configuration Release \
     CONFIGURATION_BUILD_DIR="$PWD/build/validation" build
 # 产物：build/validation/Echo.app
 
-# 开发签名并运行
-/bin/zsh scripts/signing-identity.sh
+# 开发签名并运行（先在 Xcode Accounts 中配置 Apple Development 证书）
 xcodebuild -scheme Echo -configuration Development \
     CONFIGURATION_BUILD_DIR="$PWD/build" build
 open build/Echo.app
 # 产物：build/Echo.app
 ```
 
-两个 configuration 的区别只有签名：`Release` 用 ad-hoc，`Development` 用证书。在 Xcode 里 ⌘R 走 `Development`，不会跑出 ad-hoc 包——ad-hoc 签名绑定代码哈希，每次重新构建都会丢掉钥匙串授权。`signing-identity.sh` 解析（必要时自举）签名身份，只需在身份变化或 `build/` 被清空后重跑。重新构建启动前先退出已运行的 Echo。
+两个 configuration 的区别只有签名：`Release` 用 ad-hoc，`Development` 由 Xcode 使用 `Apple Development` 证书签名。在 Xcode 里 ⌘R 走 `Development`。开发 Team 在 `Echo-Development.xcconfig` 中设置；首次使用先在 Xcode → Settings → Accounts → Manage Certificates 配置该 Team 的开发证书。其他开发者可改为自己的 Team；单次命令行构建也可传 `DEVELOPMENT_TEAM=<Team ID>`。缺少 Team 或有效证书时 Development 构建失败，不回退到 ad-hoc 或自签证书。重新构建启动前先退出已运行的 Echo。
 
-开发签名优先使用可用的 Apple 签名证书，可通过 `ECHO_SIGNING_IDENTITY` 指定证书 SHA-1。没有 Apple 证书时，脚本会在 `.local-signing/` 创建或复用本机自签证书与专用钥匙串，并添加当前用户的代码签名信任，可能触发系统授权。该目录包含本机签名材料，不应提交或分享；自签版本重新构建后仍可能再次请求 API Key 访问授权。
+构建不再生成签名配置、创建或解锁专用钥匙串，也不使用自定义 designated requirement。旧 `.local-signing/` 和 `build/signing/` 不再参与构建；迁移不会删除本机已有签名材料。由旧自签身份切换到 Apple Development 后，已有 API Key 可能需要重新授权。`scripts/test-signing.sh --keychain` 使用独立的合成凭据验证同版本重启、代码变化后读取以及无关签名被拒绝。
 
 应用不显示 Dock 图标。点击桌宠打开主窗口，关闭或最小化窗口会保留桌宠；右键桌宠选择“关闭精灵”或使用 `⌘Q` 退出。
 
@@ -163,7 +162,7 @@ xcodebuild test -scheme EchoTests
 | `/bin/zsh scripts/diagnose-voice.sh` | 构建开发签名应用，检查采集、连接和播放，日志位于 `build/test-logs/voice-diagnostic.log` |
 | `/bin/zsh scripts/trace-dictation.sh` | 跟踪普通听写回调；先构建开发签名应用并退出已运行实例，日志写入 `build/test-logs/dictation-*.jsonl` |
 
-这些入口的应用包同样由 Xcode target 构建（`AgentLiveProbe`、`VoiceLiveProbe`、`VoiceSoakProbe`、`AppleSpeechDeviceProbe`、`KeychainProbe`），脚本只负责签名模式、夹具与运行参数。真实服务检查使用已保存凭据，可能触发钥匙串授权并产生服务用量。语音设备与诊断脚本需要 Python 3；听写跟踪会记录转写全文和草稿，仅用于本地诊断，正常启动不启用。
+这些入口的应用包同样由 Xcode target 构建（`AgentLiveProbe`、`VoiceLiveProbe`、`VoiceSoakProbe`、`AppleSpeechDeviceProbe`、`KeychainProbe`），签名由 Xcode configuration 决定；AppleSpeechDeviceProbe 的音频夹具在签名前的 Build Phase 生成，脚本负责启动及运行参数。真实服务检查使用已保存凭据，可能触发钥匙串授权并产生服务用量。语音设备与诊断脚本需要 Python 3；听写跟踪会记录转写全文和草稿，仅用于本地诊断，正常启动不启用。
 
 ## 当前限制
 

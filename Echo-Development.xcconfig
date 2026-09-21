@@ -1,8 +1,8 @@
-// Certificate-backed signing, with the same optimization settings as Release.
-// A separate configuration, not a command line override, so that running the
-// app from Xcode cannot produce an ad-hoc bundle: an ad-hoc signature is tied
-// to the code hash, so every rebuild would drop the Keychain authorization the
-// app needs for its saved API keys.
+// Native Xcode certificate signing, with the same optimization as Release.
+// Select an installed Apple Development identity; missing certificates fail
+// the build instead of falling back to an ad-hoc or self-signed identity.
+// The development team selects the identity used by the app and its probes.
 #include "Echo.xcconfig"
 
-ECHO_SIGNING = development
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = 5953LL8ZRM

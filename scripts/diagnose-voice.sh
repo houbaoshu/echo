@@ -3,9 +3,7 @@ emulate -R zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
-# Resolving the identity first keeps a first build on a new machine from
-# stopping in the signing check with nothing provisioned yet.
-/bin/zsh scripts/signing-identity.sh
+# Xcode signs the diagnostic app with the project's Apple Development identity.
 xcodebuild -project Echo.xcodeproj -scheme Echo -configuration Development \
     CONFIGURATION_BUILD_DIR="$project_dir/build" build
 mkdir -p build/test-logs

@@ -31,12 +31,12 @@ cleanup() {
 trap cleanup EXIT
 # Two targets over the same probe source, one of them compiled with
 # SECOND_BUILD, so the bundles share an identity but differ in code hash.
-/bin/zsh scripts/signing-identity.sh
 typeset -a probe_targets=(KeychainProbe KeychainProbeRebuilt)
 for version in 0 1; do
     xcodebuild -project Echo.xcodeproj -target "${probe_targets[version + 1]}" \
         -configuration Development CONFIGURATION_BUILD_DIR="$temp_dir/$version" build
     app="$temp_dir/$version/Echo.app"
+    /usr/bin/codesign --verify --strict -R '=anchor apple generic' "$app"
     /usr/bin/codesign -d -r- "$app" 2>&1 | sed -n 's/^designated => //p' > "$temp_dir/$version.requirement"
     /usr/bin/codesign -d --verbose=4 "$app" 2>&1 | sed -n 's/^CDHash=//p' > "$temp_dir/$version.hash"
 done
@@ -58,41 +58,18 @@ ditto "$temp_dir/0/Echo.app" "$installed"
 "$installed/Contents/MacOS/Echo" read "$test_service"
 rm -rf "$installed"
 ditto "$temp_dir/1/Echo.app" "$installed"
-if /usr/bin/codesign --verify -R '=anchor apple generic' "$installed" >/dev/null 2>&1; then
-    "$installed/Contents/MacOS/Echo" read "$test_service"
-    echo "PASS: Apple-signed code changes preserve Keychain access."
-else
-    "$installed/Contents/MacOS/Echo" expect-denied "$test_service"
-    echo "LIMITATION: self-signed code preserves its requirement, but a changed cdhash needs a new Keychain grant."
-fi
-# An unrelated ad-hoc build with the same bundle ID must not inherit access.
-/usr/bin/codesign --force --sign - "$temp_dir/1/Echo.app" >/dev/null 2>&1
-if /usr/bin/codesign --verify -R "=$requirement" "$temp_dir/1/Echo.app" >/dev/null 2>&1; then
+"$installed/Contents/MacOS/Echo" read "$test_service"
+echo "PASS: Apple-signed code changes preserve Keychain access."
+# Xcode's Release configuration creates the ad-hoc negative fixture: the same
+# bundle ID under an unrelated signer must fail authorization.
+xcodebuild -project Echo.xcodeproj -target KeychainProbeRebuilt \
+    -configuration Release CONFIGURATION_BUILD_DIR="$temp_dir/unrelated" build
+/usr/bin/codesign --verify --strict "$temp_dir/unrelated/Echo.app"
+if /usr/bin/codesign --verify -R "=$requirement" "$temp_dir/unrelated/Echo.app" >/dev/null 2>&1; then
     echo "FAIL: an unrelated signer matched the development identity" >&2
     exit 1
 fi
 rm -rf "$installed"
-ditto "$temp_dir/1/Echo.app" "$installed"
+ditto "$temp_dir/unrelated/Echo.app" "$installed"
 "$installed/Contents/MacOS/Echo" expect-denied "$test_service"
 echo "PASS: same-build relaunch works; an unrelated signer is rejected."
-
-# A bootstrapped certificate is only as good as the requirement pinned to it, so
-# the Xcode build must refuse to sign without it rather than fall back to
-# codesign's default. Needs the resolved identity: Xcode validates a named
-# certificate against the Keychain while it builds the dependency graph.
-/bin/zsh scripts/signing-identity.sh
-if [[ "$(sed -nE 's/^ECHO_RESOLVED_PINNED = (.*)$/\1/p' build/signing/Signing.xcconfig)" == YES ]]; then
-    if xcodebuild -project Echo.xcodeproj -scheme Echo -configuration Development \
-        CONFIGURATION_BUILD_DIR="$temp_dir/xcodebuild" \
-        OTHER_CODE_SIGN_FLAGS=--timestamp=none build > "$temp_dir/pinning.log" 2>&1; then
-        echo "FAIL: Xcode signed a bootstrapped certificate without its pinned requirement" >&2
-        exit 1
-    fi
-    if ! /usr/bin/grep -q "must sign with its pinned designated requirement" "$temp_dir/pinning.log"; then
-        echo "FAIL: the build was rejected for the wrong reason; see $temp_dir/pinning.log" >&2
-        exit 1
-    fi
-    echo "PASS: Xcode refuses to drop the pinned designated requirement."
-else
-    echo "SKIPPED: this machine signs with an Apple certificate, which uses codesign's default requirement."
-fi

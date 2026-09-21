@@ -6,7 +6,6 @@ cd "$project_dir"
 if [[ $# -ne 0 ]]; then echo "Usage: $0" >&2; exit 2; fi
 # Runs under the production bundle identity with a certificate: the saved model
 # credentials live in the Keychain and an unsigned build cannot read them.
-/bin/zsh scripts/signing-identity.sh
 xcodebuild -project Echo.xcodeproj -target AgentLiveProbe -configuration Development \
     CONFIGURATION_BUILD_DIR="$project_dir/build/agent-live-probe" build
 python3 - <<'PY'
