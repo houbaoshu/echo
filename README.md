@@ -128,16 +128,17 @@ open build/Echo.app
 ```sh
 cargo test --locked --workspace
 cargo clippy --locked --workspace -- -D warnings
+xcodebuild test -scheme EchoTests
 /bin/zsh scripts/test-agent-bridge.sh
-/bin/zsh scripts/test-agent-task-source.sh
 /bin/zsh scripts/test-agent-session.sh
-/bin/zsh scripts/test-chat.sh
 /bin/zsh scripts/test-chat-ui.sh
 /bin/zsh scripts/test-workspace.sh
 /bin/zsh scripts/test-voice.sh
 /bin/zsh scripts/test-voice.sh --agent-integration
 /bin/zsh scripts/test-signing.sh
 ```
+
+`EchoTests` scheme 目前覆盖聊天 / 模型 / 设置与 Agent 任务源；其余套件仍在各自脚本中，会逐批并入。单独运行某一个用 `xcodebuild test -scheme EchoTests -only-testing:EchoChatTests`。
 
 这些入口使用模拟依赖或本机测试服务，不依赖真实模型 / 语音服务。Agent 集成测试需要 Python 3 和本机回环端口权限，部分测试会在临时项目执行 bash；UI 测试需在桌面环境运行。默认签名回归不访问真实钥匙串。
 

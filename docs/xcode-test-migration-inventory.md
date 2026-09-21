@@ -107,3 +107,13 @@ P7 每个 bundle 只新增一个薄 wrapper 文件，声明 `XCTestCase` 并在 
 | P7d | `KeychainProbe` / `KeychainProbeRebuilt` | App target ×2 | `KeychainAuthorizationProbe.swift`，后者带 `-D SECOND_BUILD` | `test-signing.sh --keychain` 的编译段 |
 
 每批的做法一致：**先加 target、与旧脚本并存**，两边跑同一组场景并对照通过后，再在同一提交里删掉旧脚本的 `swiftc` 段落。
+
+## 6. 迁移实测结论
+
+逐批记录实测结果，替换 §3 中的待验证项。
+
+**P7a（`EchoChatTests` / `EchoAgentTaskSourceTests`）**
+
+- logic-test bundle 方案成立：不设 `TEST_HOST` / `BUNDLE_LOADER`，把所需 `macos/` 源直接编进 bundle，`xcodebuild test` 正常运行，4 + 1 条 PASS 与旧脚本逐条一致、顺序相同。
+- `@main` 留在 bundle target 里**不报错**，所以测试文件一行未改。
+- §3.2 的替身类型经实测保住：`EchoAgentTaskSourceTests` 的源集不含 `macos/AgentBridge.swift`，`AgentTaskSource` 绑定到测试自带的那个，断言全过。

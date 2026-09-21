@@ -22,10 +22,46 @@
 
 /* Begin PBXBuildFile section */
 		E00000000000000000000030 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
+		E11000000000000000000B00 /* AgentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F00 /* AgentWire.swift */; };
+		E11000000000000000000B01 /* AgentBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F01 /* AgentBridge.swift */; };
+		E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F02 /* AgentConnectionTester.swift */; };
+		E11000000000000000000B03 /* TaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F03 /* TaskStore.swift */; };
+		E11000000000000000000B04 /* ModelTaskSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F04 /* ModelTaskSource.swift */; };
+		E11000000000000000000B05 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F05 /* SettingsStore.swift */; };
+		E11000000000000000000B06 /* VoiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F06 /* VoiceProtocol.swift */; };
+		E11000000000000000000B07 /* VoiceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F07 /* VoiceDiagnostics.swift */; };
+		E11000000000000000000B08 /* ChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F08 /* ChatTests.swift */; };
+		E11000000000000000000B09 /* ModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F09 /* ModelTests.swift */; };
+		E11000000000000000000B0A /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F0A /* SettingsTests.swift */; };
+		E11000000000000000000B0B /* EchoChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F0B /* EchoChatTests.swift */; };
+		E11100000000000000000B00 /* AgentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F00 /* AgentWire.swift */; };
+		E11100000000000000000B01 /* AgentTaskSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11100000000000000000F01 /* AgentTaskSource.swift */; };
+		E11100000000000000000B02 /* AgentConnectionTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F02 /* AgentConnectionTester.swift */; };
+		E11100000000000000000B03 /* TaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F03 /* TaskStore.swift */; };
+		E11100000000000000000B04 /* ModelTaskSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F04 /* ModelTaskSource.swift */; };
+		E11100000000000000000B05 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F05 /* SettingsStore.swift */; };
+		E11100000000000000000B06 /* VoiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F06 /* VoiceProtocol.swift */; };
+		E11100000000000000000B07 /* VoiceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F07 /* VoiceDiagnostics.swift */; };
+		E11100000000000000000B08 /* AgentTaskSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11100000000000000000F08 /* AgentTaskSourceTests.swift */; };
+		E11100000000000000000B09 /* EchoAgentTaskSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11100000000000000000F09 /* EchoAgentTaskSourceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		E000000000000000000000C0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E110000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E111000000000000000000C1 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E0000000000000000000000F /* Project object */;
 			proxyType = 1;
@@ -39,6 +75,23 @@
 		E0000000000000000000001B /* Echo.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Echo.xcconfig; sourceTree = "<group>"; };
 		E0000000000000000000001C /* Echo-Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Echo-Development.xcconfig"; sourceTree = "<group>"; };
 		E0000000000000000000001D /* pets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = pets; path = assets/pets; sourceTree = "<group>"; };
+		E11000000000000000000F00 /* AgentWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentWire.swift; path = macos/AgentWire.swift; sourceTree = "<group>"; };
+		E11000000000000000000F01 /* AgentBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentBridge.swift; path = macos/AgentBridge.swift; sourceTree = "<group>"; };
+		E11000000000000000000F02 /* AgentConnectionTester.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentConnectionTester.swift; path = macos/AgentConnectionTester.swift; sourceTree = "<group>"; };
+		E11000000000000000000F03 /* TaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TaskStore.swift; path = macos/TaskStore.swift; sourceTree = "<group>"; };
+		E11000000000000000000F04 /* ModelTaskSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTaskSource.swift; path = macos/ModelTaskSource.swift; sourceTree = "<group>"; };
+		E11000000000000000000F05 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsStore.swift; path = macos/SettingsStore.swift; sourceTree = "<group>"; };
+		E11000000000000000000F06 /* VoiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceProtocol.swift; path = macos/VoiceProtocol.swift; sourceTree = "<group>"; };
+		E11000000000000000000F07 /* VoiceDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceDiagnostics.swift; path = macos/VoiceDiagnostics.swift; sourceTree = "<group>"; };
+		E11000000000000000000F08 /* ChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatTests.swift; path = tests/ChatTests.swift; sourceTree = "<group>"; };
+		E11000000000000000000F09 /* ModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTests.swift; path = tests/ModelTests.swift; sourceTree = "<group>"; };
+		E11000000000000000000F0A /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsTests.swift; path = tests/SettingsTests.swift; sourceTree = "<group>"; };
+		E11000000000000000000F0B /* EchoChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoChatTests.swift; path = tests/cases/EchoChatTests.swift; sourceTree = "<group>"; };
+		E110000000000000000000FF /* EchoChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E11100000000000000000F01 /* AgentTaskSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentTaskSource.swift; path = macos/AgentTaskSource.swift; sourceTree = "<group>"; };
+		E11100000000000000000F08 /* AgentTaskSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentTaskSourceTests.swift; path = tests/AgentTaskSourceTests.swift; sourceTree = "<group>"; };
+		E11100000000000000000F09 /* EchoAgentTaskSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoAgentTaskSourceTests.swift; path = tests/cases/EchoAgentTaskSourceTests.swift; sourceTree = "<group>"; };
+		E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoAgentTaskSourceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -68,6 +121,16 @@
 			files = (
 			);
 		};
+		E110000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E111000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -86,6 +149,8 @@
 			isa = PBXGroup;
 			children = (
 				E0000000000000000000001A /* Echo.app */,
+				E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */,
+				E110000000000000000000FF /* EchoChatTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -115,6 +180,40 @@
 			productName = Echo;
 			productReference = E0000000000000000000001A /* Echo.app */;
 			productType = "com.apple.product-type.application";
+		};
+		E110000000000000000000AA /* EchoChatTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E110000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoChatTests" */;
+			buildPhases = (
+				E110000000000000000000A1 /* Sources */,
+				E110000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E110000000000000000000C2 /* PBXTargetDependency */,
+			);
+			name = EchoChatTests;
+			productName = EchoChatTests;
+			productReference = E110000000000000000000FF /* EchoChatTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		E111000000000000000000AA /* EchoAgentTaskSourceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E111000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoAgentTaskSourceTests" */;
+			buildPhases = (
+				E111000000000000000000A1 /* Sources */,
+				E111000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E111000000000000000000C2 /* PBXTargetDependency */,
+			);
+			name = EchoAgentTaskSourceTests;
+			productName = EchoAgentTaskSourceTests;
+			productReference = E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -146,6 +245,8 @@
 			targets = (
 				E000000000000000000000A0 /* RustCore */,
 				E0000000000000000000002F /* Echo */,
+				E111000000000000000000AA /* EchoAgentTaskSourceTests */,
+				E110000000000000000000AA /* EchoChatTests */,
 			);
 		};
 /* End PBXProject section */
@@ -225,6 +326,38 @@
 			files = (
 			);
 		};
+		E110000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E11000000000000000000B00 /* AgentWire.swift in Sources */,
+				E11000000000000000000B01 /* AgentBridge.swift in Sources */,
+				E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */,
+				E11000000000000000000B03 /* TaskStore.swift in Sources */,
+				E11000000000000000000B04 /* ModelTaskSource.swift in Sources */,
+				E11000000000000000000B05 /* SettingsStore.swift in Sources */,
+				E11000000000000000000B06 /* VoiceProtocol.swift in Sources */,
+				E11000000000000000000B07 /* VoiceDiagnostics.swift in Sources */,
+				E11000000000000000000B08 /* ChatTests.swift in Sources */,
+				E11000000000000000000B09 /* ModelTests.swift in Sources */,
+				E11000000000000000000B0A /* SettingsTests.swift in Sources */,
+				E11000000000000000000B0B /* EchoChatTests.swift in Sources */,
+			);
+		};
+		E111000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E11100000000000000000B00 /* AgentWire.swift in Sources */,
+				E11100000000000000000B01 /* AgentTaskSource.swift in Sources */,
+				E11100000000000000000B02 /* AgentConnectionTester.swift in Sources */,
+				E11100000000000000000B03 /* TaskStore.swift in Sources */,
+				E11100000000000000000B04 /* ModelTaskSource.swift in Sources */,
+				E11100000000000000000B05 /* SettingsStore.swift in Sources */,
+				E11100000000000000000B06 /* VoiceProtocol.swift in Sources */,
+				E11100000000000000000B07 /* VoiceDiagnostics.swift in Sources */,
+				E11100000000000000000B08 /* AgentTaskSourceTests.swift in Sources */,
+				E11100000000000000000B09 /* EchoAgentTaskSourceTests.swift in Sources */,
+			);
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -232,6 +365,16 @@
 			isa = PBXTargetDependency;
 			target = E000000000000000000000A0 /* RustCore */;
 			targetProxy = E000000000000000000000C0 /* PBXContainerItemProxy */;
+		};
+		E110000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E110000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E111000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E111000000000000000000C1 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -335,6 +478,66 @@
 			};
 			name = Development;
 		};
+		E110000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoChatTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
+			};
+			name = Debug;
+		};
+		E110000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoChatTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
+			};
+			name = Release;
+		};
+		E110000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoChatTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
+			};
+			name = Development;
+		};
+		E111000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
+			};
+			name = Debug;
+		};
+		E111000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
+			};
+			name = Release;
+		};
+		E111000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
+			};
+			name = Development;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -364,6 +567,26 @@
 				E000000000000000000000D4 /* Debug configuration for PBXAggregateTarget "RustCore" */,
 				E000000000000000000000D5 /* Release configuration for PBXAggregateTarget "RustCore" */,
 				E000000000000000000000D8 /* Development configuration for PBXAggregateTarget "RustCore" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E110000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoChatTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E110000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoChatTests" */,
+				E110000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoChatTests" */,
+				E110000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoChatTests" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E111000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoAgentTaskSourceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E111000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */,
+				E111000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */,
+				E111000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
