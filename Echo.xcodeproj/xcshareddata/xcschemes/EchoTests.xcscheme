@@ -44,6 +44,26 @@
                ReferencedContainer = "container:Echo.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E114000000000000000000AA"
+               BuildableName = "EchoWorkspaceTests.xctest"
+               BlueprintName = "EchoWorkspaceTests"
+               ReferencedContainer = "container:Echo.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "E115000000000000000000AA"
+               BuildableName = "EchoConversationUITests.xctest"
+               BlueprintName = "EchoConversationUITests"
+               ReferencedContainer = "container:Echo.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <AnalyzeAction

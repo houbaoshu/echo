@@ -52,6 +52,15 @@
 		E11300000000000000000B04 /* DictationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F04 /* DictationTests.swift */; };
 		E11300000000000000000B05 /* EchoTestEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F05 /* EchoTestEnvironment.swift */; };
 		E11300000000000000000B06 /* EchoVoiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F06 /* EchoVoiceTests.swift */; };
+		E11400000000000000000B00 /* WorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11400000000000000000F00 /* WorkspaceTests.swift */; };
+		E11400000000000000000B01 /* WorkspaceVoiceCommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11400000000000000000F01 /* WorkspaceVoiceCommandTests.swift */; };
+		E11400000000000000000B02 /* ProjectFileBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11400000000000000000F02 /* ProjectFileBrowserTests.swift */; };
+		E11400000000000000000B03 /* EchoTestEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F05 /* EchoTestEnvironment.swift */; };
+		E11400000000000000000B04 /* EchoWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11400000000000000000F04 /* EchoWorkspaceTests.swift */; };
+		E11500000000000000000B00 /* ConversationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11500000000000000000F00 /* ConversationUITests.swift */; };
+		E11500000000000000000B01 /* EchoTestEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F05 /* EchoTestEnvironment.swift */; };
+		E11500000000000000000B02 /* EchoConversationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11500000000000000000F02 /* EchoConversationUITests.swift */; };
+		E11600000000000000000B00 /* ConversationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11500000000000000000F00 /* ConversationUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -84,6 +93,27 @@
 			remoteInfo = RustCore;
 		};
 		E113000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E114000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E115000000000000000000C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
+		E116000000000000000000C1 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E0000000000000000000000F /* Project object */;
 			proxyType = 1;
@@ -124,6 +154,15 @@
 		E11300000000000000000F05 /* EchoTestEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoTestEnvironment.swift; path = tests/cases/EchoTestEnvironment.swift; sourceTree = "<group>"; };
 		E11300000000000000000F06 /* EchoVoiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoVoiceTests.swift; path = tests/cases/EchoVoiceTests.swift; sourceTree = "<group>"; };
 		E113000000000000000000FF /* EchoVoiceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoVoiceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E11400000000000000000F00 /* WorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkspaceTests.swift; path = tests/WorkspaceTests.swift; sourceTree = "<group>"; };
+		E11400000000000000000F01 /* WorkspaceVoiceCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkspaceVoiceCommandTests.swift; path = tests/WorkspaceVoiceCommandTests.swift; sourceTree = "<group>"; };
+		E11400000000000000000F02 /* ProjectFileBrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProjectFileBrowserTests.swift; path = tests/ProjectFileBrowserTests.swift; sourceTree = "<group>"; };
+		E11400000000000000000F04 /* EchoWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoWorkspaceTests.swift; path = tests/cases/EchoWorkspaceTests.swift; sourceTree = "<group>"; };
+		E114000000000000000000FF /* EchoWorkspaceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoWorkspaceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E11500000000000000000F00 /* ConversationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ConversationUITests.swift; path = tests/ConversationUITests.swift; sourceTree = "<group>"; };
+		E11500000000000000000F02 /* EchoConversationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoConversationUITests.swift; path = tests/cases/EchoConversationUITests.swift; sourceTree = "<group>"; };
+		E115000000000000000000FF /* EchoConversationUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoConversationUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E116000000000000000000FF /* EchoShortcutUITests */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = EchoShortcutUITests; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -150,12 +189,39 @@
 			);
 			target = E113000000000000000000AA /* EchoVoiceTests */;
 		};
+		E114000000000000000000EC /* Exceptions for "macos" folder in "EchoWorkspaceTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				main.swift,
+			);
+			target = E114000000000000000000AA /* EchoWorkspaceTests */;
+		};
+		E115000000000000000000EC /* Exceptions for "macos" folder in "EchoConversationUITests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				main.swift,
+			);
+			target = E115000000000000000000AA /* EchoConversationUITests */;
+		};
+		E116000000000000000000EC /* Exceptions for "macos" folder in "EchoShortcutUITests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				main.swift,
+			);
+			target = E116000000000000000000AA /* EchoShortcutUITests */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		E0000000000000000000002A /* macos */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
+				E116000000000000000000EC /* Exceptions for "macos" folder in "EchoShortcutUITests" target */,
+				E115000000000000000000EC /* Exceptions for "macos" folder in "EchoConversationUITests" target */,
+				E114000000000000000000EC /* Exceptions for "macos" folder in "EchoWorkspaceTests" target */,
 				E113000000000000000000EC /* Exceptions for "macos" folder in "EchoVoiceTests" target */,
 				E112000000000000000000EC /* Exceptions for "macos" folder in "EchoAgentSessionTests" target */,
 				E0000000000000000000002B /* Exceptions for "macos" folder in "Echo" target */,
@@ -191,6 +257,21 @@
 			files = (
 			);
 		};
+		E114000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E115000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		E116000000000000000000A2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -209,6 +290,9 @@
 			isa = PBXGroup;
 			children = (
 				E0000000000000000000001A /* Echo.app */,
+				E116000000000000000000FF /* EchoShortcutUITests */,
+				E115000000000000000000FF /* EchoConversationUITests.xctest */,
+				E114000000000000000000FF /* EchoWorkspaceTests.xctest */,
 				E113000000000000000000FF /* EchoVoiceTests.xctest */,
 				E112000000000000000000FF /* EchoAgentSessionTests */,
 				E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */,
@@ -318,6 +402,66 @@
 			productReference = E113000000000000000000FF /* EchoVoiceTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		E114000000000000000000AA /* EchoWorkspaceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E114000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoWorkspaceTests" */;
+			buildPhases = (
+				E114000000000000000000A1 /* Sources */,
+				E114000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E114000000000000000000C2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A /* macos */,
+			);
+			name = EchoWorkspaceTests;
+			productName = EchoWorkspaceTests;
+			productReference = E114000000000000000000FF /* EchoWorkspaceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		E115000000000000000000AA /* EchoConversationUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E115000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoConversationUITests" */;
+			buildPhases = (
+				E115000000000000000000A1 /* Sources */,
+				E115000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E115000000000000000000C2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A /* macos */,
+			);
+			name = EchoConversationUITests;
+			productName = EchoConversationUITests;
+			productReference = E115000000000000000000FF /* EchoConversationUITests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		E116000000000000000000AA /* EchoShortcutUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E116000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoShortcutUITests" */;
+			buildPhases = (
+				E116000000000000000000A1 /* Sources */,
+				E116000000000000000000A2 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E116000000000000000000C2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A /* macos */,
+			);
+			name = EchoShortcutUITests;
+			productName = EchoShortcutUITests;
+			productReference = E116000000000000000000FF /* EchoShortcutUITests */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -348,6 +492,9 @@
 			targets = (
 				E000000000000000000000A0 /* RustCore */,
 				E0000000000000000000002F /* Echo */,
+				E116000000000000000000AA /* EchoShortcutUITests */,
+				E115000000000000000000AA /* EchoConversationUITests */,
+				E114000000000000000000AA /* EchoWorkspaceTests */,
 				E113000000000000000000AA /* EchoVoiceTests */,
 				E112000000000000000000AA /* EchoAgentSessionTests */,
 				E111000000000000000000AA /* EchoAgentTaskSourceTests */,
@@ -500,6 +647,30 @@
 				E11300000000000000000B06 /* EchoVoiceTests.swift in Sources */,
 			);
 		};
+		E114000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E11400000000000000000B00 /* WorkspaceTests.swift in Sources */,
+				E11400000000000000000B01 /* WorkspaceVoiceCommandTests.swift in Sources */,
+				E11400000000000000000B02 /* ProjectFileBrowserTests.swift in Sources */,
+				E11400000000000000000B03 /* EchoTestEnvironment.swift in Sources */,
+				E11400000000000000000B04 /* EchoWorkspaceTests.swift in Sources */,
+			);
+		};
+		E115000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E11500000000000000000B00 /* ConversationUITests.swift in Sources */,
+				E11500000000000000000B01 /* EchoTestEnvironment.swift in Sources */,
+				E11500000000000000000B02 /* EchoConversationUITests.swift in Sources */,
+			);
+		};
+		E116000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E11600000000000000000B00 /* ConversationUITests.swift in Sources */,
+			);
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -527,6 +698,21 @@
 			isa = PBXTargetDependency;
 			target = E000000000000000000000A0 /* RustCore */;
 			targetProxy = E113000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E114000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E114000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E115000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E115000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		E116000000000000000000C2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0 /* RustCore */;
+			targetProxy = E116000000000000000000C1 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -744,6 +930,93 @@
 			};
 			name = Development;
 		};
+		E114000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoWorkspaceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
+			};
+			name = Debug;
+		};
+		E114000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoWorkspaceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
+			};
+			name = Release;
+		};
+		E114000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoWorkspaceTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
+			};
+			name = Development;
+		};
+		E115000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoConversationUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
+			};
+			name = Debug;
+		};
+		E115000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoConversationUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
+			};
+			name = Release;
+		};
+		E115000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoConversationUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
+			};
+			name = Development;
+		};
+		E116000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoShortcutUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "NATIVE_SHORTCUT_TESTS $(inherited)";
+			};
+			name = Debug;
+		};
+		E116000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoShortcutUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "NATIVE_SHORTCUT_TESTS $(inherited)";
+			};
+			name = Release;
+		};
+		E116000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoShortcutUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "NATIVE_SHORTCUT_TESTS $(inherited)";
+			};
+			name = Development;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -813,6 +1086,36 @@
 				E113000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoVoiceTests" */,
 				E113000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoVoiceTests" */,
 				E113000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoVoiceTests" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E114000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoWorkspaceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E114000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoWorkspaceTests" */,
+				E114000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoWorkspaceTests" */,
+				E114000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoWorkspaceTests" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E115000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoConversationUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E115000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoConversationUITests" */,
+				E115000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoConversationUITests" */,
+				E115000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoConversationUITests" */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E116000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoShortcutUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E116000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoShortcutUITests" */,
+				E116000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoShortcutUITests" */,
+				E116000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoShortcutUITests" */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

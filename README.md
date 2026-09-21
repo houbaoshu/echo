@@ -131,14 +131,13 @@ cargo clippy --locked --workspace -- -D warnings
 xcodebuild test -scheme EchoTests
 /bin/zsh scripts/test-agent-bridge.sh
 /bin/zsh scripts/test-agent-session.sh
-/bin/zsh scripts/test-chat-ui.sh
-/bin/zsh scripts/test-workspace.sh
+/bin/zsh scripts/test-native-shortcuts.sh
 /bin/zsh scripts/test-signing.sh
 ```
 
-`EchoTests` scheme 目前覆盖聊天 / 模型 / 设置、Agent 任务源和语音套件；其余仍在各自脚本中，会逐批并入。单独运行某一项用 `-only-testing`，例如 `xcodebuild test -scheme EchoTests -only-testing:EchoChatTests` 或 `-only-testing:EchoVoiceTests/AgentVoiceIntegrationSuite`（对应原来的 `--agent-integration`）。
+`EchoTests` scheme 覆盖聊天 / 模型 / 设置、Agent 任务源、语音、工作区与会话 UI。单独运行某一项用 `-only-testing`，例如 `xcodebuild test -scheme EchoTests -only-testing:EchoChatTests` 或 `-only-testing:EchoVoiceTests/AgentVoiceIntegrationSuite`（对应原来的 `--agent-integration`）。
 
-`scripts/test-agent-session.sh` 现在只做三件事：备好 prompt、用 xcodebuild 构建 `EchoAgentSessionTests`、运行产物。它验证的是生产的 `AgentTaskSource(settings:)`，后者从 `Bundle.main.resourceURL` 取 prompt，所以必须是可执行文件而不是 XCTest bundle。
+两个套件必须以可执行文件而非 XCTest bundle 运行，各自留一个三行的脚本负责构建加运行：`test-agent-session.sh` 验证的生产 `AgentTaskSource(settings:)` 从 `Bundle.main.resourceURL` 取 prompt；`test-native-shortcuts.sh` 的原生菜单与真实指针场景需要 `NSApplication.run()` 事件循环，而该循环以 `exit(0)` 结束，XCTest 宿主会判为崩溃。
 
 这些入口使用模拟依赖或本机测试服务，不依赖真实模型 / 语音服务。Agent 集成测试需要 Python 3 和本机回环端口权限，部分测试会在临时项目执行 bash；UI 测试需在桌面环境运行。默认签名回归不访问真实钥匙串。
 

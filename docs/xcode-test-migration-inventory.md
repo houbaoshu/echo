@@ -125,3 +125,9 @@ P7 每个 bundle 只新增一个薄 wrapper 文件，声明 `XCTestCase` 并在 
 - Xcode 的 Test action **不接受自定义工作目录**（`customWorkingDirectory` 无效，cwd 落在 `/private/tmp`）。改由 `tests/cases/EchoTestEnvironment.swift` 用编译期 `#filePath` 推出项目根并 `changeCurrentDirectoryPath`，不依赖 scheme 配置。
 - 计数核对：`testVoice` 631 条、`testAgentVoiceIntegration` 64 条，与旧脚本逐条一致。首次实测得到 695，原因是 `VoiceTests.checks` 是共享静态计数器而两个入口现在同进程先后运行（631 + 64）；断言未受影响，已在两个 suite 开头重置。
 - **覆盖未丢、便利性有变**：`--dictation-only` 与 `--agent-only` 是 `VoiceTests.main()` **内部**的子选择，这些场景仍随 `testVoice` 全量运行，但不再有独立入口；把它们做成单独 test 方法会导致整套运行时重复执行。
+
+**P7c（`EchoWorkspaceTests` / `EchoConversationUITests` / `EchoShortcutUITests`）**
+
+- `EchoWorkspaceTests`、`EchoConversationUITests` 迁为 XCTest bundle，计数与旧脚本一致：工作区 7 条 PASS（含 92 项工作区检查、57 项语音命令检查），会话 UI 31 条 PASS。
+- **§3.1 实测有结论**：`NATIVE_SHORTCUT_TESTS` 那一路**不能**做成 XCTest bundle。它的 `main()` 以 `NSApplication.run()` 进入真实事件循环并以 `exit(0)` 收尾，XCTest 宿主会把 `exit` 判为崩溃；场景函数又都是 `private`，无法从 wrapper 逐个驱动。已迁为 command line tool target `EchoShortcutUITests`，由 `scripts/test-native-shortcuts.sh` 构建并运行，9 条 PASS 与基线一致。
+- **覆盖未丢、便利性有变**：`test-chat-ui.sh` 透传给测试可执行文件的选择 flag（`--pet-only`、`--phase4-only`、`--settings-only`、`--project-picker-scroll-only`、`--palette-accessibility-only`、`--voice-transcript-only`、`--status-text-only`）不再可用，这些场景仍随默认套件全量运行。原因同 P7b：`ConversationUITests.run()` 在内部消费这些 flag，把它们提成独立 test 方法会在整套运行时重复执行。
