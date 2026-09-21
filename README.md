@@ -31,21 +31,27 @@ workspace/
 └── mini-agent-rs/          # Rust Agent Core，Cargo 路径依赖
 ```
 
-相邻主线工作区须包含 `conversation::runner` 实现，本轮验收基线为主线提交 `3127fa2`。构建脚本通过 Cargo metadata 解析 `echo-agent` 的实际依赖目录，并打包其中的 `config/prompts/conversation.md`。构建后的应用运行时无需源码目录。
+相邻主线工作区须包含 `conversation::runner` 实现，本轮验收基线为主线提交 `3127fa2`。构建时由 Cargo metadata 解析 `echo-agent` 的实际依赖目录，并打包其中的 `config/prompts/conversation.md`。构建后的应用运行时无需源码目录。
+
+macOS 应用由 `Echo.xcodeproj` 构建，Rust 静态库仍由 Cargo 负责，经工程里的 `RustCore` target 触发。
 
 在本仓库根目录执行：
 
 ```sh
 # 构建验证包：ad-hoc 签名，不访问签名钥匙串
-/bin/zsh scripts/build.sh
+xcodebuild -scheme Echo -configuration Release \
+    CONFIGURATION_BUILD_DIR="$PWD/build/validation" build
 # 产物：build/validation/Echo.app
 
 # 开发签名并运行
-/bin/zsh scripts/build.sh --signing development --run
+/bin/zsh scripts/signing-identity.sh
+xcodebuild -scheme Echo -configuration Development \
+    CONFIGURATION_BUILD_DIR="$PWD/build" build
+open build/Echo.app
 # 产物：build/Echo.app
 ```
 
-去掉 `--run` 即仅构建；`--run` 必须搭配 `--signing development`。重新构建启动前先退出已运行的 Echo。
+两个 configuration 的区别只有签名：`Release` 用 ad-hoc，`Development` 用证书。在 Xcode 里 ⌘R 走 `Development`，不会跑出 ad-hoc 包——ad-hoc 签名绑定代码哈希，每次重新构建都会丢掉钥匙串授权。`signing-identity.sh` 解析（必要时自举）签名身份，只需在身份变化或 `build/` 被清空后重跑。重新构建启动前先退出已运行的 Echo。
 
 开发签名优先使用可用的 Apple 签名证书，可通过 `ECHO_SIGNING_IDENTITY` 指定证书 SHA-1。没有 Apple 证书时，脚本会在 `.local-signing/` 创建或复用本机自签证书与专用钥匙串，并添加当前用户的代码签名信任，可能触发系统授权。该目录包含本机签名材料，不应提交或分享；自签版本重新构建后仍可能再次请求 API Key 访问授权。
 
@@ -135,11 +141,10 @@ cargo clippy --locked --workspace -- -D warnings
 
 这些入口使用模拟依赖或本机测试服务，不依赖真实模型 / 语音服务。Agent 集成测试需要 Python 3 和本机回环端口权限，部分测试会在临时项目执行 bash；UI 测试需在桌面环境运行。默认签名回归不访问真实钥匙串。
 
-打包验收先构建验证包，再运行：
+打包验收（不带参数时自行构建验证包）：
 
 ```sh
-/bin/zsh scripts/build.sh
-/bin/zsh scripts/test-packaged-app.sh build/validation/Echo.app
+/bin/zsh scripts/test-packaged-app.sh
 ```
 
 打包测试将应用复制到 `/private/tmp`，从空工作目录启动，使用本机模型服务和临时项目检查协议、历史恢复与退出清理，并保存窗口截图。验收还核对 sidecar 的 checkpoint、输入映射、显示顺序、最终回复去重及 Responses 元数据，检查主线程心跳和退出后的 shell/子进程清理；需要 Python 3、桌面环境及屏幕录制权限。

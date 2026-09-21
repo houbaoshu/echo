@@ -3,7 +3,11 @@ emulate -R zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
-/bin/zsh scripts/build.sh --signing development
+# Resolving the identity first keeps a first build on a new machine from
+# stopping in the signing check with nothing provisioned yet.
+/bin/zsh scripts/signing-identity.sh
+xcodebuild -project Echo.xcodeproj -scheme Echo -configuration Development \
+    CONFIGURATION_BUILD_DIR="$project_dir/build" build
 mkdir -p build/test-logs
 # Run within the production bundle identity. An external CLI does not inherit
 # Echo's microphone permission. This captures locally and uploads only silence.

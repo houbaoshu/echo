@@ -39,10 +39,6 @@ expect_failure() {
 expect_failure /bin/zsh scripts/sign-app.sh --signing invalid "$app"
 expect_failure /bin/zsh scripts/sign-app.sh --signing
 expect_failure /bin/zsh scripts/sign-app.sh "$app" extra
-expect_failure /bin/zsh scripts/build.sh --signing invalid
-expect_failure /bin/zsh scripts/build.sh --signing
-expect_failure /bin/zsh scripts/build.sh --run
-expect_failure /bin/zsh scripts/build.sh --signing ad-hoc --run
 # Reject an ad-hoc identity in certificate mode before touching any Keychain.
 expect_failure env ECHO_SIGNING_IDENTITY=- /bin/zsh scripts/sign-app.sh --signing development "$app"
 

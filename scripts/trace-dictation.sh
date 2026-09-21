@@ -4,7 +4,7 @@ setopt ERR_EXIT NO_UNSET PIPE_FAIL
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 app_dir="$project_dir/build/Echo.app"
 if [[ ! -x "$app_dir/Contents/MacOS/Echo" ]]; then
-    echo "Build first: /bin/zsh scripts/build.sh --signing development" >&2
+    echo "Build first: xcodebuild -scheme Echo -configuration Development CONFIGURATION_BUILD_DIR=\"$project_dir/build\" build" >&2
     exit 1
 fi
 if /usr/bin/pgrep -x Echo >/dev/null; then
