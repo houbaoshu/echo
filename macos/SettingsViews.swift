@@ -284,9 +284,6 @@ struct PlanetSettingsView: View {
                 }
             } header: {
                 Text("我的星球")
-            } footer: {
-                Text("开启 Live Voice 时，星球出现在聊天输入框上方，桌宠控制条上同时显示同一颗。")
-                    .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
             }
         }
         // The settings window is retained rather than unmounted, so this runs once and the
