@@ -263,19 +263,13 @@ struct MainWindowLayout {
         searchPalette.isOpen = false
         if settingsController == nil {
             settingsController = SettingsWindowController(settings: settings, workspace: workspace, pets: pets, planets: planets,
-                defaults: defaults, onReturnToVoice: { [weak self] in self?.revealVoice() })
+                defaults: defaults)
         }
         settingsController?.present()
     }
     func showWorkspace() {
         present()
         if let selected = workspace.selected { workspace.requestComposerFocus(conversationID: selected.id) }
-    }
-    func revealVoice() {
-        guard let owner = workspace.voice.snapshot.session.owner else { return }
-        showWorkspace()
-        workspace.select(owner.conversationID)
-        workspace.requestComposerFocus(conversationID: owner.conversationID)
     }
     private var composerPresentation: ComposerPresentation? {
         guard let selected = workspace.selected else { return nil }

@@ -2484,10 +2484,14 @@ private struct ComposerHeightHost: View {
         try await Task.sleep(for: .milliseconds(150))
         settingsWindow.contentView?.layoutSubtreeIfNeeded()
         let settingsContent = settingsWindow.contentView!
-        precondition(findAccessibility("voice.attributionBar", in: settingsContent) != nil,
-                     "The independent settings window shows the shared Live Voice attribution")
-        // SwiftUI propagates the bar's identifier to its children on macOS 27.
-        // Address its actual buttons by their accessible role and user-facing label.
+        // Live Voice keeps its controls in the chat window and on the pet strip. Settings
+        // is settings: a running session adds nothing to it, not even a status line.
+        for identifier in ["voice.attributionBar", "voice.reveal", "voice.status", "voice.mute", "voice.end"] {
+            precondition(findAccessibility(identifier, in: settingsContent) == nil,
+                         "Settings shows no Live Voice element: \(identifier)")
+        }
+        // SwiftUI propagates a container's identifier to its children on macOS 27, so the
+        // controls are also addressed by their accessible role and user-facing label.
         func voiceButton(_ label: String, in value: Any, depth: Int = 0) -> AnyObject? {
             guard depth < 20 else { return nil }
             let object = value as AnyObject
@@ -2499,18 +2503,12 @@ private struct ComposerHeightHost: View {
             }
             return nil
         }
-        precondition(voiceButton("静音麦克风", in: settingsContent)?.accessibilityPerformPress?() == true)
-        precondition(voice.isMuted, "Settings controls the same Live Voice session")
-        try await Task.sleep(for: .milliseconds(100))
-        precondition(voiceButton("取消静音", in: settingsContent)?.accessibilityPerformPress?() == true)
-        precondition(!voice.isMuted)
-        // The real settings action reveals its owner even from another selected chat.
-        _ = workspace.newConversation()
-        precondition(voiceButton("返回 语音会话", in: settingsContent)?.accessibilityPerformPress?() == true)
-        precondition(main.isSettingsVisible && window.isVisible, "Returning to Live Voice keeps settings open alongside the conversation")
-        precondition(voice.snapshot.session.owner == owner, "Returning preserves the Live Voice owner")
-        precondition(workspace.selectedID == conversationA.id, "Conversation A selected")
-        precondition(workspace.composerFocusID == conversationA.id, "Composer focus requested for A")
+        for label in ["静音麦克风", "取消静音", "结束语音", "返回 语音会话"] {
+            precondition(voiceButton(label, in: settingsContent) == nil,
+                         "Settings shows no Live Voice control: \(label)")
+        }
+        precondition(voice.snapshot.session.owner == owner && voice.isActive && !voice.isMuted,
+                     "Opening settings leaves the Live Voice session untouched")
 
         main.settingsController?.close()
         precondition(voice.snapshot.session.owner == owner && voice.isActive,

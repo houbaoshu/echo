@@ -44,67 +44,6 @@ struct RecordingWaveform: View {
     }
 }
 
-struct VoiceAttributionBar: View {
-    @ObservedObject var workspace: WorkspaceStore
-    @ObservedObject var voice: VoiceSessionController
-    let owner: VoiceSessionSnapshot.Owner
-    var onReturn: () -> Void
-    private var conversationTitle: String {
-        // Includes drafts: Live Voice started from the pet owns one until its first message.
-        workspace.conversation(id: owner.conversationID)?.title ?? "会话"
-    }
-    var body: some View {
-        HStack(spacing: 10) {
-            VoiceWaveform().frame(width: 14, height: 14)
-                .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : Color.accentColor)
-            Button(action: onReturn) {
-                HStack(spacing: 4) {
-                    Text("\(conversationTitle) 的 Live Voice")
-                        .font(WorkspaceStyle.caption).fontWeight(.medium)
-                        .foregroundStyle(WorkspaceStyle.primary)
-                    Image(systemName: "arrow.right").font(.system(size: 9))
-                        .foregroundStyle(WorkspaceStyle.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-            .help("返回 \(conversationTitle)")
-            .accessibilityLabel("返回 \(conversationTitle)")
-            .accessibilityIdentifier("voice.reveal")
-            if !voice.status.isEmpty {
-                Text("· \(voice.status)")
-                    .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
-                    .accessibilityIdentifier("voice.status")
-            }
-            Spacer()
-            Button {
-                workspace.toggleVoiceMute(owner: owner)
-            } label: {
-                Image(systemName: voice.isMuted ? "mic.slash.fill" : "mic.fill")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
-            .help(voice.isMuted ? "取消静音" : "静音麦克风")
-            .accessibilityLabel(voice.isMuted ? "取消静音" : "静音麦克风")
-            .accessibilityIdentifier("voice.mute")
-            Button {
-                workspace.endVoice(owner: owner)
-            } label: {
-                Image(systemName: "waveform.slash")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(WorkspaceStyle.secondary)
-            .help("结束语音")
-            .accessibilityLabel("结束语音")
-            .accessibilityIdentifier("voice.end")
-        }
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-        .accessibilityIdentifier("voice.attributionBar")
-    }
-}
-
 struct VoiceSettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var voice: VoiceSessionController

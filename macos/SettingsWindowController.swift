@@ -9,7 +9,7 @@ import SwiftUI
     private let sectionFocus = SidebarListFocus()
 
     init(settings: SettingsStore, workspace: WorkspaceStore, pets: PetCatalog, planets: PlanetStore,
-         defaults: UserDefaults, onReturnToVoice: @escaping () -> Void) {
+         defaults: UserDefaults) {
         self.settings = settings
         self.workspace = workspace
         let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 700),
@@ -26,7 +26,7 @@ import SwiftUI
 
         let sidebar = NSHostingController(rootView: SettingsSidebar(settings: settings, sectionFocus: sectionFocus))
         let detail = NSHostingController(rootView: SettingsView(settings: settings, voice: workspace.voice,
-            pets: pets, planets: planets, workspace: workspace, onReturnToVoice: onReturnToVoice))
+            pets: pets, planets: planets))
         sidebar.sizingOptions = []; detail.sizingOptions = []
         let split = NSSplitViewController()
         let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)

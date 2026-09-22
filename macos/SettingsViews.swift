@@ -47,15 +47,14 @@ struct SettingsSidebar: View {
     }
 }
 
-/// The settings page's detail pane: the selected section, and the voice attribution
-/// bar under it. The sidebar is its own column, so this is only the right-hand side.
+/// The settings page's detail pane: the selected section, and nothing else. Live Voice
+/// keeps its controls in the chat window and on the pet strip, so settings never
+/// carries them. The sidebar is its own column, so this is only the right-hand side.
 struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var voice: VoiceSessionController
     @ObservedObject var pets: PetCatalog
     @ObservedObject var planets: PlanetStore
-    var workspace: WorkspaceStore? = nil
-    var onReturnToVoice: (() -> Void)? = nil
     /// The section order the sidebar and its keyboard traversal both follow.
     static let sections = ["模型", "语音", "星球", "精灵"]
     private var section: String { settings.selectedSection }
@@ -81,18 +80,6 @@ struct SettingsView: View {
             }.frame(maxWidth: 820, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .background(Color(nsColor: .textBackgroundColor))
-            if let owner = voice.snapshot.session.owner, let ws = workspace {
-                Divider()
-                VoiceAttributionBar(workspace: ws, voice: voice, owner: owner) {
-                    if let onReturnToVoice {
-                        onReturnToVoice()
-                    } else {
-                        ws.revealVoice(owner: owner)
-                    }
-                }
-                .padding(.horizontal, 20).padding(.vertical, 10)
-                .background(Color(nsColor: .windowBackgroundColor))
-            }
         }
         .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
