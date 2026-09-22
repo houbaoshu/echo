@@ -172,3 +172,29 @@ P7 每个 bundle 只新增一个薄 wrapper 文件，声明 `XCTestCase` 并在 
 - `scripts/sign-app.sh` 删除。它最后一个调用者是自己的回归；`test-signing-offline.sh` 已改成对 Xcode 入口断言：ad-hoc 构建不碰钥匙串、不带 entitlements、签名为 adhoc；五条守卫拒绝每一种不安全模式；解析器仍拒绝 `-` 身份；scheme 的 Run action 绑定证书配置；资源封印仍然生效。顺带去掉了最后一处 `swiftc`（一个一行的合成夹具）。
 - 全量回归全绿：`cargo test`（9 个套件）、`cargo clippy -D warnings`、`xcodebuild test -scheme EchoTests`（6 个 test case）、`test-agent-bridge.sh`、`test-agent-session.sh`、`test-native-shortcuts.sh`、`test-signing.sh`、`test-signing.sh --keychain`、`test-packaged-app.sh`。
 - `grep -rn swiftc scripts/` 只剩两条注释。App 与全部测试、探针的编译现在都经由 `Echo.xcodeproj`。
+
+**应用产物基线（`docs/xcode-baseline/`）**
+
+§6 上文与 P8 多处提到「应用产物与基线逐项一致」，其实测数据存放在 `docs/xcode-baseline/`。它不由任何脚本生成，是迁移期间手工采集的；而 shell 构建路径随 P8 一并删除后**已无法再生**，因此纳入版本库而非留在 `build/` 里。
+
+三组记录，每组含 `files.txt`（bundle 内文件清单）、`info.txt` / `info.json`（Info.plist）、`libs.txt`（`otool -L`）、`signature.txt`（`codesign -dv`）、`requirement.txt`（designated requirement）、`entitlements.txt`、`size.txt`（主可执行文件字节数）、`prompt.txt`（`Contents/Resources/agent/conversation.md` 的 SHA-256）：
+
+| 目录 | 内容 |
+| --- | --- |
+| `prior-session/` | 更早一次采样，格式尚未统一（`libs.txt` 未排序且带 `otool` 的路径头，`requirement.txt` 无 `designated =>` 前缀），无 `signature.txt` / `entitlements.txt` / `info.json`。另含 `regression.log`——迁移前最后一次全量回归的完整输出，14 段，其中 `build.sh ad-hoc`、`test-chat-ui` 等入口今已不存在 |
+| `shell/{development,adhoc}` | 迁移前 `swiftc` + `sign-app.sh` 构建路径的产物 |
+| `xcode/{development,adhoc}` | 迁移后 `Echo.xcodeproj` 产物 |
+
+shell → xcode 逐项对照：
+
+| 对照项 | development | adhoc |
+| --- | --- | --- |
+| designated requirement | 相同 | 相同 |
+| `codesign -dv`（Identifier / Format / Hash type / Sealed Resources `rules=13 files=5`） | 相同 | 相同 |
+| entitlements | 均为空 | 均为空 |
+| agent prompt SHA-256 | 相同（五组记录全部相同） | 相同 |
+| bundle 文件清单 | 仅多出 `Contents/PkgInfo` | 仅多出 `Contents/PkgInfo` |
+| 链接库 | 41 → 40，少 `CFNetwork` | 41 → 40，少 `CFNetwork` |
+| 主可执行文件字节数 | 23204304 → 23528528（+324224） | 23186224 → 23510272（+324048） |
+
+两处差异都来自构建方式而非源码改动：`Contents/PkgInfo` 由 Xcode 的打包阶段生成，shell 路径不写这个文件；`CFNetwork` 则是 shell 链接行多带的一项——`macos/`、`runtime/src`、`agent-bridge/src` 中没有任何一处引用它，迁移后的产物也确实不再链接它。签名形态、封印规则与 prompt 资源逐字节不变，是「产物一致」这一结论的实际依据。
