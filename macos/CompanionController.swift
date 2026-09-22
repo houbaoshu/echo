@@ -27,6 +27,7 @@ import Combine
     let workspace: WorkspaceStore
     let settings: SettingsStore
     let pets: PetCatalog
+    let planets: PlanetStore
     var taskStore: TaskStore { workspace.activityStore }
     let petPanel: PetPanel
     let activityPanel: CompanionSurface
@@ -51,10 +52,13 @@ import Combine
     private var hotKeyObservation: AnyCancellable?
     var isHotKeyRegistered: Bool { hotKey?.isRegistered == true }
 
-    init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore? = nil, pets: PetCatalog? = nil) {
+    init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore? = nil, pets: PetCatalog? = nil,
+         planets: PlanetStore? = nil) {
         self.workspace = workspace
         let settings = settings ?? SettingsStore()
         self.settings = settings; self.pets = pets ?? PetCatalog(settings: settings)
+        let planets = planets ?? PlanetStore(settings: settings, voice: workspace.voice)
+        self.planets = planets
         workspace.voice.attach(workspace: workspace, settings: settings)
         workspace.dictation.attach(workspace: workspace, settings: settings)
         let placement = ActivityPlacement()
@@ -66,7 +70,8 @@ import Combine
         self.controlsPresentation = controlsPresentation
         // Keyboard is only claimed while the quick composer is open.
         controlsPanel = CompanionSurface(title: "活动控件", acceptsKeyboard: true,
-                                         content: WorkspacePetControls(workspace: workspace, presentation: controlsPresentation,
+                                         content: WorkspacePetControls(workspace: workspace, planets: planets,
+                                                                       presentation: controlsPresentation,
                                                                        placement: placement))
         bubblePanel = CompanionSurface(title: "语音气泡",
                                        content: WorkspaceCompanionBubble(voice: workspace.voice,
@@ -274,7 +279,9 @@ import Combine
         mainController?.showSettings()
     }
     private func ensureMainController() {
-        if mainController == nil { mainController = MainWindowController(workspace: workspace, settings: settings, pets: pets) }
+        if mainController == nil {
+            mainController = MainWindowController(workspace: workspace, settings: settings, pets: pets, planets: planets)
+        }
     }
     private func presentMainWindow() {
         ensureMainController()

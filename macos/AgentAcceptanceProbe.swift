@@ -56,7 +56,10 @@ import AppKit
         let suite = "local.chiyan.acceptance.\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let controller = MainWindowController(workspace: workspace, defaults: defaults, settings: settings, pets: pets)
+        let planets = PlanetStore(settings: settings, root: resources.appendingPathComponent("planets"),
+                                  voice: workspace.voice)
+        let controller = MainWindowController(workspace: workspace, defaults: defaults, settings: settings,
+                                              pets: pets, planets: planets)
         controller.showWorkspace()
         guard let window = controller.window else { throw SettingsError("缺少主窗口。") }
         window.makeKeyAndOrderFront(nil)

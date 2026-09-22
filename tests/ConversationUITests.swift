@@ -1216,7 +1216,7 @@ private struct ComposerHeightHost: View {
         let store = TaskStore(source: source), voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
-        let view = NSHostingView(rootView: WorkspaceConversationView(workspace: workspace).frame(width: 820, height: 700))
+        let view = NSHostingView(rootView: WorkspaceConversationView(workspace: workspace, planets: PlanetStore()).frame(width: 820, height: 700))
         view.frame = NSRect(x: 0, y: 0, width: 820, height: 700)
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = view
@@ -3731,7 +3731,7 @@ private struct ComposerHeightHost: View {
         defer { workspace.shutdown(); voice.shutdown() }
         let conversation = workspace.selected!
 
-        let hosted = NSHostingView(rootView: WorkspaceConversationView(workspace: workspace).frame(width: 800, height: 700))
+        let hosted = NSHostingView(rootView: WorkspaceConversationView(workspace: workspace, planets: PlanetStore()).frame(width: 800, height: 700))
         hosted.frame = NSRect(x: 0, y: 0, width: 800, height: 700)
         let window = NSWindow(contentRect: hosted.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = hosted
@@ -3762,6 +3762,8 @@ private struct ComposerHeightHost: View {
         editorBefore.selectedRange = NSRange(location: 7, length: 11)
         precondition(editorBefore.string == "Typing my thoughts here")
         precondition(editorBefore.selectedRange == NSRange(location: 7, length: 11))
+        precondition(findAccessibility("voice.planet", in: hosted) == nil,
+                     "Without Live Voice the transcript carries no planet")
 
         // Start voice
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversation.id)
@@ -3776,6 +3778,8 @@ private struct ComposerHeightHost: View {
         precondition(editorBefore === editorAfterVoice, "NativeComposer instance is preserved across voice updates")
         precondition(editorAfterVoice.string == "Typing my thoughts here", "Draft text is preserved")
         precondition(editorAfterVoice.selectedRange == NSRange(location: 7, length: 11), "Selection range is preserved")
+        precondition(findAccessibility("voice.planet", in: hosted) != nil,
+                     "Live Voice floats its planet over the transcript")
 
         // Streaming reply and subtitle changes
         voice.updateSnapshot {
@@ -3792,8 +3796,9 @@ private struct ComposerHeightHost: View {
         workspace.endVoice(owner: owner)
         try await refresh()
         precondition(editorBefore === getEditor(), "ComposerTextView is not recreated when voice ends")
+        precondition(findAccessibility("voice.planet", in: hosted) == nil, "Ending Live Voice takes the planet away")
 
-        print("PASS: NativeComposer instance, draft, and selection preserved across voice updates")
+        print("PASS: NativeComposer instance and planet overlay follow Live Voice without recreating the editor")
     }
 
     /// A project the tree is brought back to must return to the position it was left at.
@@ -4535,7 +4540,10 @@ private struct ComposerHeightHost: View {
         try await key(125)
         precondition(settings.selectedSection == "语音" && list.selectedRow == 1, "Down arrow selects the next section")
         try await key(125)
-        precondition(settings.selectedSection == "精灵" && list.selectedRow == 2)
+        precondition(settings.selectedSection == "星球" && list.selectedRow == 2)
+        try await key(125)
+        precondition(settings.selectedSection == "精灵" && list.selectedRow == 3)
+        try await key(126)
         try await key(126)
         precondition(settings.selectedSection == "语音" && list.selectedRow == 1, "Up arrow selects the previous section")
 

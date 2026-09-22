@@ -181,47 +181,37 @@ struct VoiceSettingsView: View {
 /// Live Voice is connecting: a small solid dot, without motion.
 struct VoiceConnectingIndicator: View {
     var body: some View {
-        Circle().fill(.primary).frame(width: 7, height: 7)
+        Circle().fill(.primary).frame(width: 9, height: 9)
             .accessibilityHidden(true)
     }
 }
 
-/// The pet's voice indicator. State-driven motion only; it does not read audio levels.
-struct VoiceOrb: View {
+/// Live Voice's mark: the selected planet's current frame, drawn at whatever size the surface
+/// asks for. The pet strip and the chat overlay share one `PetStore`, so both always show the
+/// same frame of the same planet.
+struct VoicePlanet: View {
+    /// `PlanetStore.active`, which is nil while Live Voice is idle or the sprite failed to load.
+    let store: PetStore?
     let indicator: PetSurfacePresentation.VoiceIndicator
     var muted = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let colors = [Color(red: 0.56, green: 0.64, blue: 1), Color(red: 0.32, green: 0.42, blue: 0.96),
-                                 Color(red: 0.8, green: 0.84, blue: 1), Color(red: 0.56, green: 0.64, blue: 1)]
+    let size: CGFloat
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion || indicator == .inactive || indicator == .ending)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            Circle()
-                .fill(AngularGradient(colors: Self.colors, center: .center, angle: .degrees(angle(time))))
-                .overlay {
-                    Circle().fill(RadialGradient(colors: [.white.opacity(0.8), .clear], center: UnitPoint(x: 0.35, y: 0.3),
-                                                 startRadius: 0, endRadius: 10))
-                }
-                .scaleEffect(reduceMotion ? 0.92 : scale(time))
-                .opacity(indicator == .connecting || indicator == .ending ? 0.55 : 1)
-                .saturation(muted ? 0.15 : 1)
+        Group {
+            if let store {
+                PlanetFrame(store: store)
+            } else {
+                // Without a planet the surface still has to say Live Voice is on, and the
+                // composer's own mark is what that looks like everywhere else in the app.
+                VoiceWaveform().frame(width: size * 0.5, height: size * 0.5)
+                    .foregroundStyle(muted ? WorkspaceStyle.warning : Color.accentColor)
+            }
         }
-        .accessibilityLabel(accessibilityText)
-        .accessibilityIdentifier("voice.orb")
+        .frame(width: size, height: size)
+        .saturation(muted ? 0.3 : 1)
+        .accessibilityLabel(Self.label(indicator, muted: muted))
+        .accessibilityIdentifier("voice.planet")
     }
-    private func scale(_ time: Double) -> CGFloat {
-        switch indicator {
-        case .inactive, .ending: 0.9
-        case .connecting: 0.82 + 0.08 * sin(time * 3)
-        case .listening: 0.94 + 0.04 * sin(time * 2)
-        case .thinking: 0.9
-        case .speaking: 0.88 + 0.12 * abs(sin(time * 7))
-        }
-    }
-    private func angle(_ time: Double) -> Double {
-        indicator == .thinking ? time.truncatingRemainder(dividingBy: 3) * 120 : 0
-    }
-    private var accessibilityText: String {
+    static func label(_ indicator: PetSurfacePresentation.VoiceIndicator, muted: Bool) -> String {
         switch indicator {
         case .inactive: "语音未开始"
         case .connecting: "正在连接"
@@ -230,5 +220,17 @@ struct VoiceOrb: View {
         case .speaking: "正在播报"
         case .ending: "正在结束"
         }
+    }
+}
+
+/// The observing leaf. Frames change on the `PetStore`, not on the shared `PlanetStore`, so the
+/// view that redraws every frame has to be the one holding the sprite.
+private struct PlanetFrame: View {
+    @ObservedObject var store: PetStore
+    var body: some View {
+        Image(decorative: store.image, scale: 1, orientation: .up)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
     }
 }

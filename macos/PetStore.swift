@@ -98,7 +98,21 @@ final class PetStore: ObservableObject {
         refresh()
     }
 
-    private func play(_ animation: String) {
+    /// Hold the frame that is already showing instead of advancing. Reduce Motion pauses the
+    /// Live Voice planet here, which leaves the state readable rather than blanking the mark.
+    var isPaused = false {
+        didSet {
+            guard isPaused != oldValue else { return }
+            if isPaused {
+                timer?.invalidate()
+                timer = nil
+            } else {
+                refresh()
+            }
+        }
+    }
+
+    func play(_ animation: String) {
         guard let handle else { return }
         guard echo_set_animation(handle.pointer, animation) else {
             fail(PetError(message: "无法播放动画：\(animation)。"))
@@ -126,7 +140,7 @@ final class PetStore: ObservableObject {
             spriteIndex = tick.sprite_index
             image = images[Int(tick.sprite_index)]
         }
-        if tick.next_frame_seconds > 0 {
+        if tick.next_frame_seconds > 0 && !isPaused {
             let timer = Timer(timeInterval: max(0.001, tick.next_frame_seconds), repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refresh() }
             }

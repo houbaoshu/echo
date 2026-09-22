@@ -44,7 +44,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let store = try pets.loadInitial()
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: WorkspacePersistence.defaultURL),
                                            sourceFactory: { AgentTaskSource(settings: settings) })
-            companion = CompanionController(petStore: store, workspace: workspace, settings: settings, pets: pets)
+            // Live Voice's planet. It loads its sprite only while a call is running, so the app
+            // starts with nothing decoded beyond the pet itself.
+            let planets = PlanetStore(settings: settings,
+                                      root: Bundle.main.resourceURL?.appendingPathComponent("planets"),
+                                      voice: workspace.voice)
+            companion = CompanionController(petStore: store, workspace: workspace, settings: settings, pets: pets,
+                                            planets: planets)
             store.start()
         } catch { showFailure(error) }
     }

@@ -438,6 +438,9 @@ struct ProjectFolderIcon: View {
 
 struct WorkspaceConversationView: View {
     @ObservedObject var workspace: WorkspaceStore
+    /// Observed here, not in `ConversationView`: a planet swap republishes `active`, and this is
+    /// the view that has to notice and pass the new sprite down.
+    @ObservedObject var planets: PlanetStore
     var body: some View {
         VStack(spacing: 0) {
             if let notice = workspace.persistenceNotice {
@@ -452,6 +455,7 @@ struct WorkspaceConversationView: View {
             }
             if let conversation = workspace.selected {
                 ConversationView(store: conversation.store, workspace: workspace, voice: workspace.voice, dictation: workspace.dictation,
+                    planet: planets.active,
                     startDictation: { workspace.dictation.start(conversation: conversation) },
                     focusRequest: workspace.composerFocusID == conversation.id ? workspace.composerFocusRequest : 0,
                     startVoice: { workspace.startVoice(conversationID: conversation.id) },
@@ -470,6 +474,8 @@ struct ConversationView: View {
     var workspace: WorkspaceStore? = nil
     @ObservedObject var voice: VoiceSessionController
     @ObservedObject var dictation: DictationController
+    /// The Live Voice planet, resolved by `PlanetStore`; nil outside a voice session.
+    var planet: PetStore?
     var startDictation: () -> Void
     var focusRequest = 0
     var startVoice: () -> Void
@@ -480,6 +486,7 @@ struct ConversationView: View {
     @State private var followTail = true
     @State private var userScrolling = false
     @State private var microphoneHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The transcript is one of the window's focus stops, so it carries the state a
     /// focused scroll area needs: where it is, and how to move.
     @State private var scrollPosition = ScrollPosition()
@@ -487,6 +494,10 @@ struct ConversationView: View {
     /// The composer card's shape, named once so its fill, its border and the container
     /// shape its contents round against are all literally the same shape.
     private static let card = RoundedRectangle(cornerRadius: 22)
+    /// The planet's sprite frame. The reference draws its orb 91pt across above the composer;
+    /// `scaledToFit` on a 192x208 frame whose planet spans 175x173 shows ~0.83 of the frame, so
+    /// the frame is sized up to land the visible disc there.
+    private static let planetSize: CGFloat = 110
     /// What the transcript's key handling needs to know about the scroll area. Read from a
     /// second geometry observer so the tail-following one above stays exactly as it was.
     private struct TranscriptGeometry: Equatable {
@@ -517,6 +528,10 @@ struct ConversationView: View {
                     SpokenDraftView(text: isVoiceOwner ? voice.subtitle : "")
                     // The reply as it is written, until the projected message carries the text.
                     StreamingReplyView(stream: store.replyStream, showsProgress: !isVoiceOwner)
+                    // The planet floats over the bottom of the transcript, and the spoken draft
+                    // forms at the very tail. Reserving its height here is what keeps the words
+                    // being said from sitting underneath it.
+                    if isVoiceOwner { Color.clear.frame(height: Self.planetSize + 16) }
                 }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
                     .frame(maxWidth: .infinity)
             }
@@ -581,12 +596,26 @@ struct ConversationView: View {
             .accessibilityIdentifier("conversation.transcript")
             .accessibilityLabel("会话记录")
             .overlay(alignment: .bottom) {
+                if isVoiceOwner {
+                    VoicePlanet(store: planet, indicator: PetSurfacePresentation.indicator(for: voice.snapshot),
+                                muted: voice.isMuted, size: Self.planetSize)
+                        // The block below already opens with 8pt, and the sprite carries ~10pt of
+                        // its own transparent skirt, which together make the reference's 16pt.
+                        .padding(.bottom, 0)
+                        .transition(.scale(scale: 0.92).combined(with: .opacity))
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .bottom) {
                 if !followTail {
                     Button("回到最新消息", systemImage: "arrow.down") {
                         returnToTail()
                     }.buttonStyle(.bordered).padding(8)
+                        // Clear the planet rather than landing on top of it.
+                        .padding(.bottom, isVoiceOwner ? Self.planetSize + 12 : 0)
                 }
             }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isVoiceOwner)
             VStack(spacing: 8) {
                 // The running summary is what the transcript cannot show: which step the
                 // task is on, why it stopped, what failed. A completed task has already

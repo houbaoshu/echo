@@ -14,17 +14,22 @@ struct PetSurfacePresentation: Equatable {
     enum Badge: Equatable { case none, running(Int), completed(Int) }
     enum VoiceIndicator: Equatable { case inactive, connecting, listening, thinking, speaking, ending }
 
-    static let segment: CGFloat = 30
-    static let circle: CGFloat = 32
+    // Measured off the reference strip at 2x: the ✎ circle is 82px, the three-slot pill is
+    // 250x82 on a 84px slot pitch, and the circle clears the pill by 13px. A slot is therefore
+    // the same size as the circle, and the pill is very nearly three bare slots. Every width
+    // below is derived from these, so this is the only place the proportions are expressed.
+    static let segment: CGFloat = 40
+    static let circle: CGFloat = 40
     /// Without hover the strip collapses to a thin bar, green while completed tasks are unseen.
-    static let collapsedSize = CGSize(width: 36, height: 8)
-    static let gap: CGFloat = 8
-    static let pillPadding: CGFloat = 6
-    static let composerWidth: CGFloat = 280
+    static let collapsedSize = CGSize(width: 44, height: 9)
+    static let gap: CGFloat = 7
+    static let pillPadding: CGFloat = 2
+    static let composerWidth: CGFloat = 320
     /// Room for shadows and the focus glow between the controls and their canvas edge.
     static let canvasInset: CGFloat = 12
     static let canvasWidth: CGFloat = composerWidth + 2 * (gap + circle) + 2 * canvasInset
-    static let canvasHeight: CGFloat = 44
+    /// The row plus the 8pt it clears the pet by on the reference, top and bottom.
+    static let canvasHeight: CGFloat = 56
 
     let mode: Mode
     /// ✎ and the voice entry appear only while the pointer is over the pet or its controls.
@@ -64,22 +69,7 @@ struct PetSurfacePresentation: Equatable {
         } else { tray = .none }
         // The completed count is what the bell reports; running is shown only when nothing waits.
         badge = unseenCompleted > 0 ? .completed(unseenCompleted) : runningTasks > 0 ? .running(runningTasks) : .none
-        switch snapshot.session {
-        case .inactive: voice = .inactive
-        case .starting: voice = .connecting
-        case .ending: voice = .ending
-        case .active:
-            switch snapshot.replyAudio {
-            case .playing, .draining: voice = .speaking
-            case .preparing: voice = .thinking
-            case .none:
-                // The voice controller mirrors its conversation's running task here.
-                if snapshot.agentActivity != nil { voice = .thinking }
-                else if case .off(.idle) = snapshot.recognition { voice = .connecting }
-                else if snapshot.recognition == .connecting { voice = .connecting }
-                else { voice = .listening }
-            }
-        }
+        voice = Self.indicator(for: snapshot)
         micMuted = snapshot.microphone == .muted
         speakerMuted = snapshot.speakerMuted
         if case .active = snapshot.session { muteEnabled = true } else { muteEnabled = false }
@@ -90,6 +80,27 @@ struct PetSurfacePresentation: Equatable {
         else { mode = .compact }
         showsActions = hovered || composerOpen
         showsStatus = composerOpen ? composerSent : !showsActions && (runningTasks > 0 || voiceConnecting)
+    }
+
+    /// What the voice mark shows, from the session alone. The pet strip and the chat's planet
+    /// read it from here, so one snapshot never reads as two different states in two windows.
+    static func indicator(for snapshot: VoiceSessionSnapshot) -> VoiceIndicator {
+        switch snapshot.session {
+        case .inactive: return .inactive
+        case .starting: return .connecting
+        case .ending: return .ending
+        case .active:
+            switch snapshot.replyAudio {
+            case .playing, .draining: return .speaking
+            case .preparing: return .thinking
+            case .none:
+                // The voice controller mirrors its conversation's running task here.
+                if snapshot.agentActivity != nil { return .thinking }
+                if case .off(.idle) = snapshot.recognition { return .connecting }
+                if snapshot.recognition == .connecting { return .connecting }
+                return .listening
+            }
+        }
     }
 
     /// Center of controls `width` wide in the canvas, as close to the pet's center as the insets allow.

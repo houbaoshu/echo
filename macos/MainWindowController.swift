@@ -124,6 +124,7 @@ struct MainWindowLayout {
     let workspace: WorkspaceStore
     let settings: SettingsStore
     let pets: PetCatalog
+    let planets: PlanetStore
     var isSettingsVisible: Bool { settingsController?.window?.isVisible == true }
     private(set) var settingsController: SettingsWindowController?
     private let rootController = NSViewController()
@@ -147,10 +148,13 @@ struct MainWindowLayout {
     private var manualColumn: MainWindowLayout.Column?
 
     init(workspace: WorkspaceStore, defaults: UserDefaults = .standard, windowOverride: WorkspaceWindow? = nil,
-         settings: SettingsStore? = nil, pets: PetCatalog? = nil) {
+         settings: SettingsStore? = nil, pets: PetCatalog? = nil, planets: PlanetStore? = nil) {
         self.workspace = workspace; self.defaults = defaults
         let settings = settings ?? SettingsStore()
         self.settings = settings; self.pets = pets ?? PetCatalog(settings: settings)
+        // Without a planets root the store resolves to nothing and the voice mark falls back to
+        // the composer's waveform, which is what the test hosts want.
+        self.planets = planets ?? PlanetStore(settings: settings, voice: workspace.voice)
         let window = windowOverride ?? WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
@@ -168,7 +172,8 @@ struct MainWindowLayout {
         window.collectionBehavior = [.fullScreenPrimary]; window.delegate = self
         let sidebarHost = NSHostingController(rootView: WorkspaceSidebar(workspace: workspace,
                                                                          listFocus: sidebarListFocus))
-        let conversationHost = NSHostingController(rootView: WorkspaceConversationView(workspace: workspace))
+        let conversationHost = NSHostingController(rootView: WorkspaceConversationView(workspace: workspace,
+                                                                                          planets: self.planets))
         let inspectorHost = NSHostingController(rootView: WorkspaceInspector(workspace: workspace))
         // AppKit owns column constraints; SwiftUI content must not impose its ideal
         // text width on the window or prevent it from shrinking before collapse.
@@ -257,7 +262,7 @@ struct MainWindowLayout {
     func showSettings() {
         searchPalette.isOpen = false
         if settingsController == nil {
-            settingsController = SettingsWindowController(settings: settings, workspace: workspace, pets: pets,
+            settingsController = SettingsWindowController(settings: settings, workspace: workspace, pets: pets, planets: planets,
                 defaults: defaults, onReturnToVoice: { [weak self] in self?.revealVoice() })
         }
         settingsController?.present()

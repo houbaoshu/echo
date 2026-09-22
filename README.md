@@ -11,7 +11,7 @@ Mini Agent 主线迁移已完成[第 5 阶段自动验收](docs/mini-agent-mainl
 - **Agent 会话与工具执行**：普通问答和工具任务共用会话，由 Rust Core 决定直接回答或调用 bash。运行中可追加指令，命令和结果显示在可折叠工具记录中；“继续处理”保留真实工具历史。
 - **Stop / 取消**：停止当前会话的模型请求或工具任务，并等待清理完成。隐藏窗口不会取消后台任务；Stop 不回滚已完成的文件修改。
 - **普通麦克风听写**：将识别结果追加到启动听写时的会话草稿，不自动发送。优先使用已保存的语音专用凭据连接豆包 ASR；没有可用专用凭据时，在录音前尝试 Apple on-device ASR fallback。取消或识别失败不提交临时文字。
-- **Live Voice**：说话时识别文字实时出现在会话中该条用户消息的位置，识别过程中原地修正，定稿后成为正式消息并进入 Agent 会话，可在执行任务期间继续追加要求；仅播报最终回复，确认插话后停止播报。结束语音会保留 Agent 任务继续运行，停止任务使用 Stop。全应用同时只运行一个语音会话，普通听写、Live Voice 和语音设置测试互斥。
+- **Live Voice**：开启后由一颗动态星球作为可视化主体，浮在主窗口输入框上方，桌宠控制条上同时显示同一颗；星球按聆听、思考、播报等状态切换动画，可在设置中更换并记住选择。说话时识别文字实时出现在会话中该条用户消息的位置，识别过程中原地修正，定稿后成为正式消息并进入 Agent 会话，可在执行任务期间继续追加要求；仅播报最终回复，确认插话后停止播报。结束语音会保留 Agent 任务继续运行，停止任务使用 Stop。全应用同时只运行一个语音会话，普通听写、Live Voice 和语音设置测试互斥。
 - **多 Provider 配置**：按 Provider 保存 API Key、Base URL、Model ID 和协议，支持 OpenAI 兼容的 Chat Completions / Responses；保存后切换当前使用的配置。
 - **文件目录浏览**：项目目录树使用系统源列表，支持 ↑ / ↓ 遍历、← / → 展开折叠、Return 打开和右键菜单；目录按需展开，监听文件变化并刷新，同一项目保留本次运行中的浏览位置。隐藏文件不显示，符号链接不跟随；可在 Finder 中定位文件或拷贝路径。浏览内容不会自动加入模型上下文。
 - **文件预览与消息渲染**：文本文件只读预览，常见代码文件支持语法高亮，Markdown 文件显示渲染内容。支持 PNG、JPEG、WebP、GIF 等可解码图片的预览，GIF 仅显示首帧。聊天回复支持 Markdown 标题、强调、链接、列表、引用和代码块，消息与代码块均可复制。
@@ -109,14 +109,14 @@ open build/Echo.app
 | `macos/` | Swift 前端：桌宠和窗口、聊天与文件预览、项目调度、设置与钥匙串、会话落盘、麦克风采集、ASR/TTS 和音频播放 |
 | `../mini-agent-rs/` | Rust Agent Core：模型协议、会话状态和恢复、异步运行器、保存门控、工具执行和取消清理 |
 | `agent-bridge/`、`macos/AgentBridge.swift`、`macos/AgentWire.swift` | Rust 负责 v2 编解码、FFI 所有权、后台初始化、共享 Tokio runtime 与清理计数；Swift 使用类型化请求、批次与错误 |
-| `runtime/` | Rust 桌宠运行时：素材清单解析、WebP 解码与切帧、动画状态和交互优先级 |
+| `runtime/` | Rust 精灵运行时：素材清单解析、WebP 解码与切帧、动画状态和交互优先级；桌宠与 Live Voice 星球共用 |
 | `Echo.xcodeproj`、`Echo.xcconfig` | 应用、测试与探针的构建配置；`RustCore` target 触发 Cargo |
-| `assets/pets/`、`scripts/`、`tests/` | 内置桌宠素材、构建辅助与诊断脚本、回归测试 |
+| `assets/pets/`、`assets/planets/`、`scripts/`、`tests/` | 内置桌宠与 Live Voice 星球素材、构建辅助与诊断脚本、回归测试 |
 
 本地数据位于 `~/Library/Application Support/local.chiyan.desktop-pet/`：
 
 - `workspace.json` 保存项目和会话索引，`agent-sessions/<会话 ID>.json` 单独原子保存消息、草稿、模型历史及工具记录。
-- `settings.json` 保存模型配置、音色和桌宠选择，`pets/` 保存导入素材。
+- `settings.json` 保存模型配置、音色、桌宠和星球选择，`pets/` 保存导入素材。
 - API Key 保存在 macOS 钥匙串，不写入上述 JSON；窗口布局偏好保存在 UserDefaults。
 
 工具意图保存后才放行，结果保存失败会停止后续执行。会话历史缺失或损坏时禁止继续执行；重启恢复时，缺失的工具结果标记为“执行结果未知”。

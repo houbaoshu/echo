@@ -41,6 +41,7 @@ struct SettingsSidebar: View {
         switch name {
         case "模型": Image(systemName: "slider.horizontal.3")
         case "语音": Image(systemName: "waveform")
+        case "星球": Image(systemName: "circle.dotted")
         default: SpiritCapsuleIcon().frame(width: 20, height: 20)
         }
     }
@@ -52,10 +53,11 @@ struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var voice: VoiceSessionController
     @ObservedObject var pets: PetCatalog
+    @ObservedObject var planets: PlanetStore
     var workspace: WorkspaceStore? = nil
     var onReturnToVoice: (() -> Void)? = nil
     /// The section order the sidebar and its keyboard traversal both follow.
-    static let sections = ["模型", "语音", "精灵"]
+    static let sections = ["模型", "语音", "星球", "精灵"]
     private var section: String { settings.selectedSection }
     var body: some View {
         VStack(spacing: 0) {
@@ -73,6 +75,7 @@ struct SettingsView: View {
                     // leaving the store's unsaved form values intact.
                     if section == "模型" { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
                     else if section == "语音" { VoiceSettingsView(settings: settings, voice: voice) }
+                    else if section == "星球" { PlanetSettingsView(planets: planets) }
                     else { PetSettingsView(pets: pets, settings: settings) }
                 }.formStyle(.grouped)
             }.frame(maxWidth: 820, alignment: .leading)
@@ -312,9 +315,54 @@ struct PetSettingsView: View {
     }
 }
 
+/// Live Voice's planet picker. Same card grid as the pets, from a different folder: a planet is
+/// the voice mark, not a second pet, so it gets its own section rather than a row in 精灵.
+struct PlanetSettingsView: View {
+    @ObservedObject var planets: PlanetStore
+    var body: some View {
+        Form {
+            Section {
+                if let notice = planets.notice {
+                    Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                        .textSelection(.enabled).accessibilityIdentifier("settings.planet.notice")
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 16) {
+                    ForEach(planets.entries) { planet in
+                        let selected = planets.selectedID == planet.id
+                        Button { planets.select(planet.id) } label: {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Image(decorative: planet.preview, scale: 1).resizable().interpolation(.high).scaledToFit()
+                                    .frame(height: 130).frame(maxWidth: .infinity).padding(.top, 8)
+                                HStack {
+                                    Text(planet.name).font(WorkspaceStyle.medium).lineLimit(1)
+                                    Spacer()
+                                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
+                                }
+                            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(PetCardButtonStyle(selected: selected)).id(planet.id)
+                            // Keep the system focus ring on the card's own shape.
+                            .contentShape(.focusEffect, RoundedRectangle(cornerRadius: 16))
+                            .accessibilityAddTraits(selected ? [.isSelected] : [])
+                            .accessibilityLabel("\(planet.name)，\(selected ? "当前星球" : "点击切换")")
+                            .accessibilityIdentifier("settings.planet.\(planet.id)")
+                    }
+                }
+            } header: {
+                Text("我的星球")
+            } footer: {
+                Text("开启 Live Voice 时，星球出现在聊天输入框上方，桌宠控制条上同时显示同一颗。")
+                    .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+            }
+        }
+        // The settings window is retained rather than unmounted, so this runs once and the
+        // sprite sheets are never decoded for a page nobody opened.
+        .task { planets.loadEntries() }
+    }
+}
+
 /// The pet card is a selectable tile, so it carries the states a system row does:
-/// hover, pressed, selected and disabled.
-private struct PetCardButtonStyle: ButtonStyle {
+/// hover, pressed, selected and disabled. Shared with the planet grid above.
+struct PetCardButtonStyle: ButtonStyle {
     let selected: Bool
     func makeBody(configuration: Configuration) -> some View {
         Card(selected: selected, pressed: configuration.isPressed) { configuration.label }

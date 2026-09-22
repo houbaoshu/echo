@@ -266,7 +266,7 @@ private struct PetSegmentStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
+            .font(.system(size: 15, weight: .medium)).foregroundStyle(.primary)
             .frame(width: PetSurfacePresentation.segment, height: PetSurfacePresentation.circle)
             .background {
                 if enabled, hovered || configuration.isPressed {
@@ -304,7 +304,7 @@ private struct PetCircle<Label: View>: View {
     @ViewBuilder let content: () -> Label
     var body: some View {
         Button(action: action) {
-            content().font(.system(size: 13, weight: .medium))
+            content().font(.system(size: 15, weight: .medium))
                 .frame(width: PetSurfacePresentation.circle - systemButtonInset,
                        height: PetSurfacePresentation.circle - systemButtonInset)
         }
@@ -323,6 +323,9 @@ struct PetControls: View {
     var runningTasks = 0
     /// Supplies the composer's + project menu; without it the composer has no + button.
     var workspace: WorkspaceStore?
+    /// The Live Voice planet, resolved by `PlanetStore`. Without it the voice mark falls back
+    /// to the composer's waveform, so the button is never blank.
+    var planet: PetStore?
     var actions = PetControlActions()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var surface: PetSurfacePresentation {
@@ -355,12 +358,12 @@ struct PetControls: View {
                     Divider().frame(height: 14)
                     if surface.voiceConnecting, let owner = voice.snapshot.session.owner {
                         PetSegment(label: Self.connectingLabel, identifier: "voice.connecting", action: { actions.endVoice(owner) }) {
-                            VoiceConnectingIndicator().frame(width: 16, height: 16)
+                            VoiceConnectingIndicator().frame(width: 20, height: 20)
                         }
                     } else {
                         PetSegment(label: "开始 Live Voice", identifier: "voice.start", enabled: surface.canStartVoice,
                                    action: actions.startVoice) {
-                            VoiceWaveform().frame(width: 12, height: 12)
+                            VoiceWaveform().frame(width: 15, height: 15)
                         }
                     }
                     if surface.tray != .none {
@@ -395,7 +398,7 @@ struct PetControls: View {
                                 .foregroundStyle(surface.micMuted ? WorkspaceStyle.warning : .primary)
                         }
                         PetSegment(label: "结束语音", identifier: "voice.end", action: { actions.endVoice(owner) }) {
-                            VoiceOrb(indicator: surface.voice, muted: surface.micMuted).frame(width: 22, height: 22)
+                            VoicePlanet(store: planet, indicator: surface.voice, muted: surface.micMuted, size: 34)
                         }
                         PetSegment(label: surface.speakerMuted ? "开启扬声器" : "静音扬声器", identifier: "voice.speaker",
                                    enabled: surface.muteEnabled, action: { actions.toggleSpeaker(owner) }) {
@@ -416,17 +419,17 @@ struct PetControls: View {
         HStack(spacing: PetSurfacePresentation.gap) {
             if surface.voiceConnecting, let owner = voice.snapshot.session.owner {
                 PetCircle(label: Self.connectingLabel, identifier: "voice.connecting", action: { actions.endVoice(owner) }) {
-                    VoiceConnectingIndicator().frame(width: 16, height: 16)
+                    VoiceConnectingIndicator().frame(width: 20, height: 20)
                 }
             } else if voice.snapshot.session.owner != nil {
                 PetCircle(label: "显示语音控制", identifier: "pet.voice.show", action: presentation.closeComposer) {
-                    VoiceOrb(indicator: surface.voice, muted: surface.micMuted).frame(width: 18, height: 18)
+                    VoicePlanet(store: planet, indicator: surface.voice, muted: surface.micMuted, size: 32)
                         .accessibilityHidden(true)
                 }
             } else {
                 PetCircle(label: "开始 Live Voice", identifier: "voice.start", enabled: surface.canStartVoice,
                           action: actions.startVoice) {
-                    VoiceWaveform().frame(width: 12, height: 12)
+                    VoiceWaveform().frame(width: 15, height: 15)
                 }
             }
             trayCircle(surface)
@@ -605,6 +608,9 @@ struct WorkspaceActivityCapsule: View {
 
 struct WorkspacePetControls: View {
     @ObservedObject var workspace: WorkspaceStore
+    /// Observed here rather than inside `PetControls`: a planet swap republishes `active`, and
+    /// this is the view that has to notice and hand the strip the new sprite.
+    @ObservedObject var planets: PlanetStore
     let presentation: PetControlsPresentation
     let placement: ActivityPlacement
     var body: some View {
@@ -612,7 +618,8 @@ struct WorkspacePetControls: View {
         // No identity reset on activity changes: a quick send must keep the composer's focus.
         PetControls(store: workspace.activityStore, voice: workspace.voice, presentation: presentation,
                     placement: placement, unseenCompleted: workspace.unseenCompletedCount,
-                    runningTasks: workspace.runningTaskCount, workspace: workspace, actions: PetControlActions(
+                    runningTasks: workspace.runningTaskCount, workspace: workspace,
+                    planet: planets.active, actions: PetControlActions(
             startVoice: { if let targetID { workspace.startVoice(conversationID: targetID) } },
             endVoice: { workspace.endVoice(owner: $0) },
             toggleMute: { workspace.toggleVoiceMute(owner: $0) },

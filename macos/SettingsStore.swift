@@ -129,6 +129,11 @@ struct SettingsSnapshot: Codable {
     var activeProvider: ModelProvider = .openAI
     var providers: [String: ProviderSettings] = [ModelProvider.openAI.rawValue: ProviderSettings(model: ModelConfiguration())]
     var selectedPetID = "builtin:chiyan"
+    /// Which planet visualizes Live Voice, in both the chat window and the pet's control strip.
+    var selectedPlanetID = SettingsSnapshot.defaultPlanetID
+    /// Declared here rather than on `PlanetStore`: the targets that build this file do not all
+    /// build that one.
+    static let defaultPlanetID = "builtin:ember-planet"
     var voice: VoiceConfiguration?
     var voiceSecretAccount: String?
     /// ⌥ Space opens the pet's quick composer from anywhere.
@@ -140,7 +145,8 @@ struct SettingsSnapshot: Codable {
         providers[provider.rawValue] ?? ProviderSettings(model: provider.defaults)
     }
     private enum CodingKeys: String, CodingKey {
-        case version, activeProvider, providers, selectedPetID, voice, voiceSecretAccount, quickComposerHotKey
+        case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, voiceSecretAccount,
+             quickComposerHotKey
     }
     private enum LegacyKeys: String, CodingKey { case model, secretAccount }
     init() {}
@@ -149,6 +155,7 @@ struct SettingsSnapshot: Codable {
         let version = try values.decode(Int.self, forKey: .version)
         guard version == 1 || version == 2 else { throw SettingsError("设置文件版本不受支持。") }
         selectedPetID = try values.decode(String.self, forKey: .selectedPetID)
+        selectedPlanetID = try values.decodeIfPresent(String.self, forKey: .selectedPlanetID) ?? SettingsSnapshot.defaultPlanetID
         voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
         voiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .voiceSecretAccount)
         quickComposerHotKey = try values.decodeIfPresent(Bool.self, forKey: .quickComposerHotKey) ?? true
@@ -385,6 +392,10 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     }
     func selectPet(_ id: String) throws {
         var next = snapshot; next.selectedPetID = id
+        try persist(next); snapshot = next
+    }
+    func selectPlanet(_ id: String) throws {
+        var next = snapshot; next.selectedPlanetID = id
         try persist(next); snapshot = next
     }
     func restore() {

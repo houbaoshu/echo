@@ -174,6 +174,7 @@ actor PendingModelTester: ConnectionTesting {
             return
         }
         snapshotTests()
+        try await planetTests()
         try await captureWatchdogPauseTests()
         try await mutedPlaybackTailProtectionTests()
         try await snapshotLifecycleTests()
@@ -196,6 +197,80 @@ actor PendingModelTester: ConnectionTesting {
         try await agentVoiceTests()
         print("Passed \(checks) voice checks (no network, keychain, microphone or playback used).")
     }
+    /// Live Voice's planet: which clip a state asks for, and what a mid-call swap has to do.
+    @MainActor static func planetTests() async throws {
+        let states: [(PetSurfacePresentation.VoiceIndicator, String)] = [
+            (.inactive, "idle"), (.connecting, "connecting"), (.listening, "listening"),
+            (.thinking, "thinking"), (.speaking, "speaking"), (.ending, "ending"),
+        ]
+        let declared = Set(states.map(\.1))
+        for (indicator, clip) in states {
+            check(PlanetStore.animationName(for: indicator, available: declared) == clip,
+                  "\(indicator) plays its own clip when the manifest declares it")
+            // An undeclared name would be rejected by echo_set_animation and stop the planet,
+            // so a partial manifest has to resolve to the one clip the runtime guarantees.
+            check(PlanetStore.animationName(for: indicator, available: ["idle"]) == "idle",
+                  "\(indicator) falls back to idle rather than naming a clip the manifest lacks")
+            check(PlanetStore.animationName(for: indicator, available: []) == "idle",
+                  "\(indicator) resolves to idle even with no declared clips at all")
+        }
+
+        // Two planets built from the bundled sprite sheet, so a swap is a real sprite swap.
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("echo-planets-\(UUID())")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let sheet = URL(fileURLWithPath: "assets/planets/ember-planet/spritesheet.webp")
+        for name in ["alpha", "beta"] {
+            let directory = root.appendingPathComponent(name)
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            try fm.copyItem(at: sheet, to: directory.appendingPathComponent("spritesheet.webp"))
+            let manifest = """
+            {"id":"\(name)","displayName":"\(name)","spriteVersionNumber":2,
+             "animations":{"speaking":{"frames":[8,9,10,11],"fps":10,"loop":true,"fallback":"idle"}}}
+            """
+            try Data(manifest.utf8).write(to: directory.appendingPathComponent("pet.json"))
+        }
+        // A planet directory the runtime cannot load at all.
+        let broken = root.appendingPathComponent("broken")
+        try fm.createDirectory(at: broken, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: broken.appendingPathComponent("pet.json"))
+
+        let voice = VoiceSessionController()
+        defer { voice.shutdown() }
+        let settings = SettingsStore()
+        let planets = PlanetStore(settings: settings, root: root, voice: voice)
+        check(planets.active == nil, "an idle session decodes nothing")
+
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
+        voice.updateSnapshot { $0.session = .active(owner); $0.replyAudio = .playing(UUID()) }
+        await tick()
+        check(planets.selectedID == "builtin:alpha",
+              "a saved planet that is not installed falls back to a bundled one")
+        check(planets.active != nil && planets.playing == "speaking",
+              "starting mid-state loads the planet already playing the state the call is in")
+
+        let before = planets.active
+        planets.select("builtin:beta")
+        check(planets.active !== before && planets.selectedID == "builtin:beta",
+              "switching planets during a call swaps the sprite at once")
+        // The indicator stream is de-duplicated, so nothing will re-fire to fix this later.
+        check(planets.playing == "speaking",
+              "the new planet resumes the current state instead of waiting for the next one")
+        check(settings.snapshot.selectedPlanetID == "builtin:beta", "the swap is the saved choice")
+
+        let kept = planets.active
+        planets.select("builtin:broken")
+        check(planets.active === kept && planets.selectedID == "builtin:beta" && planets.notice != nil,
+              "a planet that cannot load keeps the current one and says why")
+        planets.select("builtin:missing")
+        check(planets.selectedID == "builtin:beta", "an id with no directory is refused")
+
+        voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
+        await tick()
+        check(planets.active == nil && planets.playing == nil, "ending the call releases the sprite")
+    }
+
     /// Starting capture flips a Bluetooth headset from A2DP to HFP, so Core Audio reconfigures
     /// the route the call just started on and AVAudioEngine stops itself about a second after
     /// start(). Recovering from that must not weaken the protection against a real device switch.
@@ -638,7 +713,7 @@ actor PendingModelTester: ConnectionTesting {
         defer { voice.shutdown() }
         let pets = PetCatalog(settings: settings, builtinRoot: URL(fileURLWithPath: "assets/pets"))
         settings.selectedSection = "语音"
-        let view = NSHostingView(rootView: SettingsView(settings: settings, voice: voice, pets: pets)
+        let view = NSHostingView(rootView: SettingsView(settings: settings, voice: voice, pets: pets, planets: PlanetStore())
             .frame(width: 820, height: 640))
         view.frame = NSRect(x: 0, y: 0, width: 820, height: 640)
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)

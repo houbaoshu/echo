@@ -30,6 +30,8 @@ enum SettingsTests {
         precondition(settings.snapshot.secretAccount == "legacy" && settings.draft.model == "existing-deepseek")
         precondition(settings.draft.apiProtocol == .chatCompletions && !settings.isDirty)
         precondition(settings.snapshot.quickComposerHotKey, "Settings saved before the quick composer shortcut enable it")
+        precondition(settings.snapshot.selectedPlanetID == SettingsSnapshot.defaultPlanetID,
+                     "Settings saved before Live Voice had a planet fall back to the built-in one")
         precondition(secrets.values.count == 2, "Migration adopts the original reference without touching Keychain")
         settings.selectProvider(.openAI)
         precondition(settings.apiKey.isEmpty && settings.draft == ModelProvider.openAI.defaults && settings.isDirty)
@@ -122,8 +124,10 @@ enum SettingsTests {
             precondition(migrated.selectedProvider == provider && migrated.draft.baseURL == baseURL && migrated.draft.model == "legacy-model")
             precondition(migrated.apiKey == (provider == .ollama ? "" : "agent-plan-secret"))
             try migrated.selectPet("new-pet")
+            try migrated.selectPlanet("builtin:test-planet")
             let reload = SettingsStore(url: fixtureURL, secrets: secrets)
             precondition(reload.selectedProvider == provider && reload.snapshot.selectedPetID == "new-pet")
+            precondition(reload.snapshot.selectedPlanetID == "builtin:test-planet", "The planet choice survives a reload")
         }
         // Unknown versions cannot be overwritten by a model save.
         let unsupported = directory.appendingPathComponent("unsupported.json")
