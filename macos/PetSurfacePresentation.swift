@@ -20,8 +20,9 @@ struct PetSurfacePresentation: Equatable {
     // below is derived from these, so this is the only place the proportions are expressed.
     static let segment: CGFloat = 40
     static let circle: CGFloat = 40
-    /// Without hover the strip collapses to a thin bar, green while completed tasks are unseen.
-    static let collapsedSize = CGSize(width: 44, height: 9)
+    /// Without hover the strip collapses to a hairline bar, green while completed tasks are unseen.
+    /// It is deliberately the smallest thing on screen: collapsed means the pet, not its controls.
+    static let collapsedSize = CGSize(width: 28, height: 5)
     static let gap: CGFloat = 7
     static let pillPadding: CGFloat = 2
     static let composerWidth: CGFloat = 320
@@ -107,6 +108,9 @@ struct PetSurfacePresentation: Equatable {
     static func contentCenter(petCenter: CGFloat, width: CGFloat) -> CGFloat {
         min(max(petCenter, canvasInset + width / 2), canvasWidth - canvasInset - width / 2)
     }
+
+    /// Nothing but the idle hairline bar is shown: no pill, no status circles.
+    var isCollapsedBar: Bool { mode == .compact && !showsActions && !showsStatus }
 
     /// Width of the visible controls, used for hover tracking and centering under the pet.
     var width: CGFloat {

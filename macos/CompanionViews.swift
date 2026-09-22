@@ -252,10 +252,17 @@ struct PetControlActions {
     var toggleTray: (() -> Void)?
 }
 
+/// The pill behind the strip's controls. Unlike the activity card and the bubble, the strip floats
+/// directly over the desktop beside the pet, so it stays as quiet as a system surface can be: clear
+/// glass rather than the frosted regular pane, a hairline edge, and no drawn fill of its own. Swap
+/// `glass` back to `.regular` if the controls ever need to carry their own contrast.
 private struct PetControlBackground: View {
+    private static let glass: Glass = .clear
     var hovered: Bool
     var body: some View {
-        CompanionBackground(shape: Capsule(), hovered: hovered)
+        Color.clear
+            .glassEffect(Self.glass, in: Capsule())
+            .overlay { Capsule().strokeBorder(.primary.opacity(hovered ? 0.12 : 0.06), lineWidth: 0.5) }
     }
 }
 
@@ -341,7 +348,10 @@ struct PetControls: View {
         content(surface)
             .onChange(of: voice.snapshot, initial: true) { _, snapshot in presentation.noteVoice(snapshot) }
             .frame(width: surface.width, height: PetSurfacePresentation.circle)
-            .shadow(color: .black.opacity(0.17), radius: 6, y: 3)
+            // A contact shadow, not a lift: the strip should sit in the desktop, not hover over it,
+            // and the idle bar carries none at all.
+            .shadow(color: .black.opacity(surface.isCollapsedBar ? 0.05 : 0.10),
+                    radius: surface.isCollapsedBar ? 2 : 4, y: 1)
             .position(x: PetSurfacePresentation.contentCenter(petCenter: presentation.petCenterX, width: surface.width),
                       y: PetSurfacePresentation.canvasHeight / 2)
             .frame(width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight)
@@ -436,22 +446,19 @@ struct PetControls: View {
         }
     }
 
+    /// Collapsed is the pet's own state: the controls shrink to a hairline that reads as a handle,
+    /// flat and unlit, so nothing but the completion green ever competes with the pet itself.
     private func collapsedBar(_ surface: PetSurfacePresentation) -> some View {
         let size = PetSurfacePresentation.collapsedSize
-        return Group {
-            if surface.unseenCompleted > 0 {
-                Capsule().fill(LinearGradient(colors: [Color(red: 0.55, green: 0.86, blue: 0.58), Color(red: 0.3, green: 0.74, blue: 0.4)],
-                                              startPoint: .top, endPoint: .bottom))
-                    .overlay { Capsule().strokeBorder(.black.opacity(0.08), lineWidth: 0.5) }
-            } else {
-                PetControlBackground(hovered: false)
-            }
-        }
-        .frame(width: size.width, height: size.height)
-        .frame(maxHeight: .infinity, alignment: .top).padding(.top, 4)
-        .accessibilityElement()
-        .accessibilityLabel(surface.unseenCompleted > 0 ? "\(surface.unseenCompleted) 个已完成任务未查看" : "桌宠快捷控件")
-        .accessibilityIdentifier("pet.collapsed")
+        let fill: AnyShapeStyle = surface.unseenCompleted > 0
+            ? AnyShapeStyle(Color(nsColor: .systemGreen).opacity(0.8))
+            : AnyShapeStyle(.primary.opacity(0.16))
+        return Capsule().fill(fill)
+            .frame(width: size.width, height: size.height)
+            .frame(maxHeight: .infinity, alignment: .top).padding(.top, 4)
+            .accessibilityElement()
+            .accessibilityLabel(surface.unseenCompleted > 0 ? "\(surface.unseenCompleted) 个已完成任务未查看" : "桌宠快捷控件")
+            .accessibilityIdentifier("pet.collapsed")
     }
 
     private static let connectingLabel = "正在连接 Live Voice，点按取消"
