@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Combine
 import Foundation
+import ImageIO
 import SwiftUI
 
 actor PendingModelTester: ConnectionTesting {
@@ -213,6 +214,40 @@ actor PendingModelTester: ConnectionTesting {
                   "\(indicator) falls back to idle rather than naming a clip the manifest lacks")
             check(PlanetStore.animationName(for: indicator, available: []) == "idle",
                   "\(indicator) resolves to idle even with no declared clips at all")
+        }
+
+        // The bundled planet has to declare all six, or a state silently degrades to idle.
+        struct BundledManifest: Decodable {
+            struct Clip: Decodable { let frames: [Int] }
+            let animations: [String: Clip]
+        }
+        let bundled = URL(fileURLWithPath: "assets/planets/ember-planet")
+        let manifest = try JSONDecoder().decode(BundledManifest.self,
+                                                from: Data(contentsOf: bundled.appendingPathComponent("pet.json")))
+        for (_, clip) in states {
+            check(manifest.animations[clip] != nil, "the bundled planet declares \(clip)")
+        }
+        // Loading proves every frame number is inside the sheet: Pet::load validates the indices
+        // and refuses the whole manifest otherwise.
+        let bundledStore = try PetStore(directory: bundled)
+        bundledStore.stop()
+        // A blank cell of the sheet is still a valid index, so the runtime would accept it and
+        // the planet would simply disappear in that state. Check the declared cells have ink.
+        let source = CGImageSourceCreateWithURL(bundled.appendingPathComponent("spritesheet.webp") as CFURL, nil)
+        guard let source, let decoded = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            fatalError("FAIL: the bundled planet's sprite sheet does not decode")
+        }
+        let (width, height, columns) = (192, 208, 8)
+        for index in Set(manifest.animations.values.flatMap(\.frames)).sorted() {
+            let cell = decoded.cropping(to: CGRect(x: (index % columns) * width, y: (index / columns) * height,
+                                                 width: width, height: height))!
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+                                    bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(cell, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let opaque = stride(from: 3, to: pixels.count, by: 4).count { pixels[$0] > 32 }
+            check(opaque > width * height / 20, "declared frame \(index) is a drawn cell, not a blank one")
         }
 
         // Two planets built from the bundled sprite sheet, so a swap is a real sprite swap.
