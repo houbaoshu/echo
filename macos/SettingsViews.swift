@@ -41,8 +41,8 @@ struct SettingsSidebar: View {
         switch name {
         case "模型": Image(systemName: "slider.horizontal.3")
         case "语音": Image(systemName: "waveform")
-        case "星球": Image(systemName: "circle.dotted")
-        default: SpiritCapsuleIcon().frame(width: 20, height: 20)
+        case "星球": Image("custom.spaceship")
+        default: Image("custom.capsule").frame(width: 20, height: 20)
         }
     }
 }
@@ -96,58 +96,6 @@ struct SettingsView: View {
         }
         .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-/// A compact capsule outline that inherits the settings sidebar's foreground style.
-struct SpiritCapsuleIcon: View {
-    var body: some View {
-        CapsuleOutline()
-            .stroke(style: StrokeStyle(lineWidth: 0.95, lineCap: .round, lineJoin: .round))
-            .accessibilityHidden(true)
-    }
-
-    private struct CapsuleOutline: Shape {
-        func path(in rect: CGRect) -> Path {
-            // A regular cylinder: equal elliptical end caps, parallel sides,
-            // and matching cap seams. Project it to the reference's proportions.
-            let k: CGFloat = 0.5522847498
-            var shell = Path { path in
-                path.move(to: CGPoint(x: 0, y: 0))
-                path.addCurve(to: CGPoint(x: 12, y: -10),
-                              control1: CGPoint(x: 0, y: -10 * k),
-                              control2: CGPoint(x: 12 - 12 * k, y: -10))
-                path.addCurve(to: CGPoint(x: 24, y: 0),
-                              control1: CGPoint(x: 12 + 12 * k, y: -10),
-                              control2: CGPoint(x: 24, y: -10 * k))
-                path.addLine(to: CGPoint(x: 24, y: 28))
-                path.addCurve(to: CGPoint(x: 12, y: 38),
-                              control1: CGPoint(x: 24, y: 28 + 10 * k),
-                              control2: CGPoint(x: 12 + 12 * k, y: 38))
-                path.addCurve(to: CGPoint(x: 0, y: 28),
-                              control1: CGPoint(x: 12 - 12 * k, y: 38),
-                              control2: CGPoint(x: 0, y: 28 + 10 * k))
-                path.closeSubpath()
-                for y: CGFloat in [0, 28] {
-                    path.move(to: CGPoint(x: 0, y: y))
-                    path.addLine(to: CGPoint(x: 24, y: y))
-                }
-            }
-            shell = shell.applying(CGAffineTransform(a: 20.0 / 24, b: 13.0 / 24,
-                                                     c: -18.0 / 28, d: 21.0 / 28,
-                                                     tx: 28, ty: 10))
-            // Trace the split independently: both ends meet the side walls
-            // inside the casing, leaving the reference's narrow rim at each end.
-            shell.move(to: CGPoint(x: 25.43, y: 13))
-            shell.addLine(to: CGPoint(x: 31.5, y: 17))
-            shell.addLine(to: CGPoint(x: 26, y: 36.5))
-            shell.addLine(to: CGPoint(x: 32.57, y: 41))
-            let scale = min(rect.width, rect.height) / 50
-            let placement = CGAffineTransform(translationX: rect.midX, y: rect.midY)
-                .scaledBy(x: scale, y: scale)
-                .translatedBy(x: -29, y: -27)
-            return shell.applying(placement)
-        }
     }
 }
 
