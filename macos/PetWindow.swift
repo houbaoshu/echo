@@ -100,6 +100,12 @@ final class PetPanel: NSPanel {
         onPointerSample?(point)
     }
 
+    /// Suspends the sprite's own tick loop, mirroring how Reduce Motion pauses the Live Voice
+    /// planet: the frame already showing is held rather than blanked.
+    func setPaused(_ paused: Bool) {
+        (contentView as? PetInteractionView)?.setPaused(paused)
+    }
+
     override func close() {
         if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor) }
         if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor) }
@@ -207,6 +213,8 @@ final class PetInteractionView: NSView {
         lastLookOffset = offset
         store.look(at: offset)
     }
+
+    func setPaused(_ paused: Bool) { store.isPaused = paused }
 
     override func mouseDown(with event: NSEvent) {
         guard let window else { return }

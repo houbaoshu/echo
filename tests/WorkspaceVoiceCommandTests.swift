@@ -228,5 +228,65 @@ import Foundation
         check(voice.snapshot.error == nil, "deleting B clears its attributed error")
         check(!voice.isActive && !audio.capturing, "voice resources remain released after deleting B")
         print("PASS: \(checks) Workspace Voice command checks (fake audio/ASR/TTS only)")
+        await runPetEntry()
+    }
+
+    /// The pet's own Live Voice entry. The main window's button binds the conversation being
+    /// read; this one must never do that — it brings its own conversation and leaves the
+    /// selection, the sidebar and the desktop activity exactly as they were.
+    static func runPetEntry() async {
+        var checks = 0
+        func check(_ condition: @autoclosure () -> Bool, _ message: String) {
+            precondition(condition(), message); checks += 1
+        }
+        let audio = CommandAudio()
+        var permission: CheckedContinuation<Bool, Never>?
+        let voice = VoiceSessionController(audio: audio, recognizer: { CommandRecognizer() },
+                                           synthesizer: { CommandSynthesizer() },
+                                           permission: { await withCheckedContinuation { permission = $0 } })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { CommandSource() })
+        let settings = SettingsStore(secrets: CommandSecrets())
+        settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
+        voice.attach(workspace: workspace, settings: settings)
+        defer { permission?.resume(returning: false); workspace.shutdown() }
+
+        let reading = workspace.selected!
+        check(workspace.send("正在读的聊天", conversationID: reading.id), "The chat being read is a real conversation")
+        let activityBefore = workspace.activityID
+
+        check(workspace.startVoiceInNewConversation(), "The pet entry starts Live Voice")
+        let first = voice.snapshot.session.owner!
+        check(workspace.selectedID == reading.id && first.conversationID != reading.id,
+              "The pet entry brings its own conversation and leaves the read one selected")
+        check(workspace.conversation(id: first.conversationID) != nil
+              && !workspace.conversations.contains { $0.id == first.conversationID },
+              "That conversation is a draft, so the sidebar is unchanged until it speaks")
+        check(workspace.activityID == activityBefore, "Starting alone never claims the desktop activity")
+        check(!workspace.startVoiceInNewConversation(), "A second pet start is rejected while one runs")
+
+        // Ending without a word leaves an empty draft nobody saw; the next start reuses it.
+        workspace.endVoice(owner: first)
+        check(voice.snapshot.session.owner == nil, "Ending releases the session")
+        check(workspace.startVoiceInNewConversation()
+              && voice.snapshot.session.owner?.conversationID == first.conversationID,
+              "A start nobody spoke into is reused rather than piling up drafts")
+        workspace.endVoice(owner: voice.snapshot.session.owner!)
+
+        // An empty draft the main window is showing is still off limits.
+        let blank = workspace.newConversation()
+        check(workspace.selectedID == blank.id, "A fresh empty draft is what the main window now shows")
+        check(workspace.startVoiceInNewConversation(), "The pet entry starts while an empty draft is selected")
+        let third = voice.snapshot.session.owner!
+        check(third.conversationID != blank.id && workspace.selectedID == blank.id,
+              "The selected empty draft is never reused, so reading it is not interrupted")
+
+        // The first spoken line is what turns that draft into a conversation of its own.
+        check(workspace.send("第一句话", conversationID: third.conversationID), "Live Voice submits into its own conversation")
+        check(workspace.conversations.contains { $0.id == third.conversationID }
+              && workspace.conversation(id: third.conversationID)?.title == "第一句话",
+              "Speaking promotes the draft into the sidebar under its first line")
+        check(workspace.selectedID == blank.id, "Promotion still leaves the viewed conversation selected")
+        workspace.endVoice(owner: third)
+        print("PASS: \(checks) pet Live Voice entry checks (its own conversation, never the one being read)")
     }
 }

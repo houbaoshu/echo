@@ -39,9 +39,14 @@ import Combine
     var mainWindow: NSWindow? { mainController?.window }
     private var observation: AnyCancellable?
     private var voiceObservation: AnyCancellable?
+    private var petVoicePlanetObservation: AnyCancellable?
     private var layingOut = false
     private var visibilityRevision = 0
     private var activityShown = false
+    /// The pet is hidden only while the main window is showing this same conversation's Live
+    /// Voice planet, so the two animations never render at once. Restored as soon as either
+    /// condition stops holding.
+    private var petHiddenForVoicePlanet = false
     private var noticeTimer: Timer?
     private var bubbleObservation: AnyCancellable?
     let controlsPresentation: PetControlsPresentation
@@ -128,17 +133,55 @@ import Combine
         }
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        // The main window's transcript shows its own planet only for the conversation Live Voice
+        // owns; the pet steps aside exactly then, so the two planet-driven animations never
+        // render at the same time.
+        petVoicePlanetObservation = Publishers.CombineLatest(
+            workspace.$isMainWindowVisible,
+            Publishers.CombineLatest(workspace.$selectedID, voice.$snapshot.map { $0.session.owner?.conversationID }.removeDuplicates())
+        )
+        .map { mainWindowVisible, selection in
+            let (selectedID, voiceConversationID) = selection
+            return mainWindowVisible && selectedID != nil && selectedID == voiceConversationID
+        }
+        .removeDuplicates()
+        .sink { [weak self] hidden in
+            DispatchQueue.main.async { [weak self] in self?.setPetHidden(forVoicePlanet: hidden) }
+        }
         petPanel.orderFrontRegardless()
         synchronize(animated: false)
     }
 
+    /// Hides and pauses the whole companion cluster — the pet, its control strip, the activity
+    /// capsule and the voice bubble — while the main window shows this conversation's Live Voice
+    /// planet, and restores each the moment either condition stops holding. The strip carries its
+    /// own small planet (`PetControls`' `VoicePlanet`), so hiding it removes a second on-screen
+    /// copy of the same animation, not just the pet's sprite; the capsule and bubble are only
+    /// meaningful next to a visible pet, so they step aside with it rather than floating alone.
+    private func setPetHidden(forVoicePlanet hidden: Bool) {
+        guard hidden != petHiddenForVoicePlanet else { return }
+        petHiddenForVoicePlanet = hidden
+        petPanel.setPaused(hidden)
+        if hidden {
+            petPanel.orderOut(nil)
+            controlsPanel.orderOut(nil)
+        } else {
+            petPanel.orderFrontRegardless()
+            controlsPanel.orderFrontRegardless()
+        }
+        // Recompute rather than force, so what comes back is whatever would have been showing
+        // anyway — never a capsule or bubble the hidden state itself would have suppressed.
+        setActivityVisible(!hidden && workspace.activity != nil && taskStore.isActivityVisible, animated: true)
+        layout()
+    }
+
     func synchronize(animated: Bool = true) {
         layout()
-        controlsPanel.orderFrontRegardless()
+        if !petHiddenForVoicePlanet { controlsPanel.orderFrontRegardless() }
         if workspace.isMainWindowVisible {
             if mainWindow?.isVisible != true { presentMainWindow() }
         } else { mainWindow?.orderOut(nil) }
-        setActivityVisible(workspace.activity != nil && taskStore.isActivityVisible, animated: animated)
+        setActivityVisible(!petHiddenForVoicePlanet && workspace.activity != nil && taskStore.isActivityVisible, animated: animated)
         if let notice = taskStore.notice {
             taskStore.notice = nil
             showNotice(notice)
@@ -218,6 +261,9 @@ import Combine
     }
     /// ⌥ Space: opens and focuses the quick composer, or closes it when it already has focus.
     func openQuickComposer() {
+        // The whole cluster steps aside for the main window's Live Voice planet; the hotkey
+        // must not pull it back while that is showing.
+        guard !petHiddenForVoicePlanet else { return }
         if controlsPresentation.isComposerOpen && controlsPresentation.isComposerFocused && controlsPanel.isKeyWindow {
             controlsPresentation.closeComposer(); return
         }
@@ -256,7 +302,7 @@ import Combine
         controlsPanel.setFrame(frames.controls, display: true)
         let petCenterX = frames.pet.midX - frames.controls.minX
         if controlsPresentation.petCenterX != petCenterX { controlsPresentation.petCenterX = petCenterX }
-        if frames.bubble.isEmpty {
+        if frames.bubble.isEmpty || petHiddenForVoicePlanet {
             bubblePanel.orderOut(nil)
         } else {
             if bubblePanel.frame != frames.bubble { bubblePanel.setFrame(frames.bubble, display: true) }
@@ -307,7 +353,7 @@ import Combine
         layout()
     }
     func shutdown() {
-        workspace.voice.shutdown(); voiceObservation = nil; bubbleObservation = nil
+        workspace.voice.shutdown(); voiceObservation = nil; bubbleObservation = nil; petVoicePlanetObservation = nil
         settings.cancelTest(); pets.stop(); pets.onActivate = nil
         observation = nil; composerObservation = nil; projectPickerObservation = nil
         hotKeyObservation = nil; hotKey?.invalidate(); hotKey = nil

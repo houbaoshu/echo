@@ -794,7 +794,8 @@ struct ConversationView: View {
                         Button { ws.revealVoice(owner: owner) } label: {
                             HStack(spacing: 4) {
                                 VoiceWaveform().frame(width: 14, height: 14)
-                                Text("\(ws.conversations.first { $0.id == owner.conversationID }?.title ?? "会话") 的 Live Voice")
+                                // Includes drafts: a pet-started session owns one until it speaks.
+                                Text("\(ws.conversation(id: owner.conversationID)?.title ?? "会话") 的 Live Voice")
                                     .font(WorkspaceStyle.caption).lineLimit(1).truncationMode(.middle)
                                 Image(systemName: "arrow.right").font(.system(size: 9))
                             }

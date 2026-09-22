@@ -328,6 +328,30 @@ struct WorkspaceSnapshot: Codable {
         }
         return false
     }
+    /// The pet's Live Voice entry starts its own conversation the way its quick composer does:
+    /// whatever the main window is showing stays where it is, so a call started from the desktop
+    /// never turns the chat being read into a voice session. An empty draft nobody is looking at
+    /// is reused rather than adding another one, the way `newConversation` reuses one.
+    @discardableResult func startVoiceInNewConversation(projectID: UUID? = nil) -> Bool {
+        guard !shuttingDown, voice.snapshot.session.owner == nil else { return false }
+        let validProject = projects.contains { $0.id == projectID } ? projectID : nil
+        let target: WorkspaceConversation
+        // Never the selected one: reusing what the main window shows is the takeover this avoids.
+        if let spare = drafts.filter({ $0.id != selectedID && $0.projectID == validProject
+                                       && canAssociateProject(conversationID: $0.id) })
+            .sorted(by: { $0.lastUsed == $1.lastUsed ? $0.id.uuidString < $1.id.uuidString : $0.lastUsed > $1.lastUsed }).first {
+            target = spare
+        } else {
+            target = WorkspaceConversation(projectID: validProject, title: "新对话", store: TaskStore(source: sourceFactory()))
+            drafts.append(target); bind(target)
+        }
+        target.lastUsed = Date()
+        // A failed start reports against this conversation, so the draft stays for the error to
+        // hang on — and, being empty, it is what the next attempt reuses.
+        guard voice.activate(conversation: target) else { return false }
+        scheduleSave()
+        return true
+    }
     @discardableResult func sendMainMessage(conversationID: UUID) -> Bool {
         guard let target = conversation(id: conversationID), send(target.store.mainDraft, conversationID: conversationID) else { return false }
         target.store.mainDraft = ""

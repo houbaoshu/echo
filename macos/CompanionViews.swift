@@ -621,13 +621,12 @@ struct WorkspacePetControls: View {
     let presentation: PetControlsPresentation
     let placement: ActivityPlacement
     var body: some View {
-        let targetID = (workspace.activity ?? workspace.selected)?.id
         // No identity reset on activity changes: a quick send must keep the composer's focus.
         PetControls(store: workspace.activityStore, voice: workspace.voice, presentation: presentation,
                     placement: placement, unseenCompleted: workspace.unseenCompletedCount,
                     runningTasks: workspace.runningTaskCount, workspace: workspace,
                     planet: planets.active, actions: PetControlActions(
-            startVoice: { if let targetID { workspace.startVoice(conversationID: targetID) } },
+            startVoice: { [presentation] in workspace.startVoiceInNewConversation(projectID: presentation.projectID) },
             endVoice: { workspace.endVoice(owner: $0) },
             toggleMute: { workspace.toggleVoiceMute(owner: $0) },
             toggleSpeaker: { workspace.toggleVoiceSpeakerMute(owner: $0) },

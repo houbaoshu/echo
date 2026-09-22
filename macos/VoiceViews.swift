@@ -50,7 +50,8 @@ struct VoiceAttributionBar: View {
     let owner: VoiceSessionSnapshot.Owner
     var onReturn: () -> Void
     private var conversationTitle: String {
-        workspace.conversations.first { $0.id == owner.conversationID }?.title ?? "会话"
+        // Includes drafts: Live Voice started from the pet owns one until its first message.
+        workspace.conversation(id: owner.conversationID)?.title ?? "会话"
     }
     var body: some View {
         HStack(spacing: 10) {

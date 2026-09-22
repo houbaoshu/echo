@@ -211,6 +211,8 @@ private struct ComposerHeightHost: View {
             try await testLiveVoiceTurnKeepsTaskCardHidden()
             try await testPetProjectMenuAndCardReveal()
             try await testCompanionBubblePanelAndHotKey()
+            try await testPetVoiceEntryStartsItsOwnConversation()
+            try await testPetHidesOnlyForTheVoiceConversationOnScreen()
             return
         }
         testAutomaticColumnThresholds()
@@ -232,6 +234,8 @@ private struct ComposerHeightHost: View {
         try await testLiveVoiceTurnKeepsTaskCardHidden()
         try await testPetProjectMenuAndCardReveal()
         try await testCompanionBubblePanelAndHotKey()
+        try await testPetVoiceEntryStartsItsOwnConversation()
+        try await testPetHidesOnlyForTheVoiceConversationOnScreen()
         try await testComposerPreservesEditorStateAcrossVoiceUpdates()
         try await testRightSidebarLayoutAndToggling()
         try await testProjectTreeScrollRestoration()
@@ -3721,6 +3725,98 @@ private struct ComposerHeightHost: View {
         precondition(!companion.bubblePanel.isVisible && companion.activityPanel.frame == unreserved,
                      "Ending the session keeps the card in place")
         print("PASS: global shortcut registration, settings toggle, composer shortcut; entering Live Voice opens no bubble")
+    }
+
+    /// The pet steps aside for the main window's Live Voice planet, and for nothing else: the
+    /// rule is about what is on screen, not about whether a session is running somewhere.
+    @MainActor private static func testPetHidesOnlyForTheVoiceConversationOnScreen() async throws {
+        let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings)
+        defer { companion.shutdown() }
+        func settle() async throws { try await Task.sleep(for: .milliseconds(200)) }
+        func clusterShown() -> Bool { companion.petPanel.isVisible && companion.controlsPanel.isVisible }
+
+        // A real conversation to read, so the new one below is a draft of its own rather than
+        // this same empty one reused.
+        let read = workspace.selected!
+        precondition(workspace.send("正在读的聊天", conversationID: read.id), "The chat being read accepts a message")
+        let elsewhere = workspace.newConversation()
+        workspace.select(read.id)
+        workspace.isMainWindowVisible = true
+        try await settle()
+        precondition(clusterShown(), "The companion cluster is up while no Live Voice runs")
+
+        // Live Voice in a conversation the main window is not showing: nothing steps aside.
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: elsewhere.id)
+        voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
+        try await settle()
+        precondition(clusterShown(), "Live Voice running elsewhere never hides the pet")
+
+        // Switching to it is what hides the cluster, hotkey included.
+        workspace.select(elsewhere.id)
+        try await settle()
+        precondition(!companion.petPanel.isVisible && !companion.controlsPanel.isVisible && !companion.bubblePanel.isVisible,
+                     "Viewing the Live Voice conversation hides the whole cluster")
+        companion.openQuickComposer()
+        try await settle()
+        precondition(!companion.controlsPresentation.isComposerOpen && !companion.controlsPanel.isVisible,
+                     "⌥ Space cannot pull the hidden cluster back")
+
+        // Leaving that conversation restores it, and so does closing the window on it.
+        workspace.select(read.id)
+        try await settle()
+        precondition(clusterShown(), "Leaving the Live Voice conversation restores the cluster")
+        workspace.select(elsewhere.id)
+        try await settle()
+        precondition(!clusterShown(), "Returning to it steps aside again")
+        workspace.isMainWindowVisible = false
+        try await settle()
+        precondition(clusterShown(), "A hidden main window draws no planet, so the pet comes back")
+
+        voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
+        try await settle()
+        precondition(clusterShown(), "Ending Live Voice leaves the cluster up")
+        print("PASS: the pet hides only while the main window shows the running Live Voice conversation")
+    }
+
+    /// The pet's Live Voice button, wired as the app wires it. The main window's button binds the
+    /// conversation on screen; this one must bring its own and leave the reader where they are.
+    @MainActor private static func testPetVoiceEntryStartsItsOwnConversation() async throws {
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() },
+                                           synthesizer: { ComposerSynthesizer() }, permission: { true })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
+        voice.attach(workspace: workspace, settings: settings)
+        defer { workspace.shutdown(); voice.shutdown() }
+        let read = workspace.selected!
+        precondition(workspace.send("正在读的聊天", conversationID: read.id), "The chat being read accepts a message")
+
+        let presentation = PetControlsPresentation()
+        // Live Voice only appears on the strip while the pointer is over the pet.
+        presentation.isHovered = true
+        let host = NSHostingView(rootView: WorkspacePetControls(workspace: workspace,
+                                                                planets: PlanetStore(settings: settings, voice: voice),
+                                                                presentation: presentation, placement: ActivityPlacement()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: PetSurfacePresentation.canvasWidth,
+                                                  height: PetSurfacePresentation.canvasHeight),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+        precondition(findAccessibility("voice.start", in: host)?.accessibilityPerformPress?() == true,
+                     "The hovered pet strip offers Live Voice")
+        guard let owner = voice.snapshot.session.owner else { preconditionFailure("The pet entry starts no session") }
+        precondition(owner.conversationID != read.id, "The pet entry never binds the conversation being read")
+        precondition(workspace.selectedID == read.id, "The pet entry leaves the selection where the reader left it")
+        precondition(workspace.conversation(id: owner.conversationID) != nil
+                     && !workspace.conversations.contains { $0.id == owner.conversationID },
+                     "It runs in a draft of its own, so the sidebar is unchanged until it speaks")
+        voice.end()
+        print("PASS: the pet's Live Voice button starts its own conversation and leaves the viewed chat alone")
     }
 
     @MainActor private static func testComposerPreservesEditorStateAcrossVoiceUpdates() async throws {
