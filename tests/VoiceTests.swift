@@ -38,8 +38,9 @@ actor PendingModelTester: ConnectionTesting {
     /// Tests set these to replay VoiceAudio recovering from a startup reconfiguration.
     var isRestartingCapture = false
     var captureRestartedAt: ContinuousClock.Instant?
-    func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+    func start(capture: Bool, recoversDeviceSwitch: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         capturing = capture
+        self.recoversDeviceSwitch = recoversDeviceSwitch
         let (stream, continuation) = AsyncThrowingStream<VoiceCapturePacket, Error>.makeStream()
         input = continuation
         return stream
@@ -50,7 +51,7 @@ actor PendingModelTester: ConnectionTesting {
     private var heldStarts: [CheckedContinuation<Void, Never>] = []
     private var stopCalls = 0
     var pendingStarts: Int { heldStarts.count }
-    /// What the last background start asked for.
+    /// What the last start, background or not, asked for.
     var recoversDeviceSwitch: Bool?
     func startInBackground(capture: Bool, recoversDeviceSwitch: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         stop()
@@ -58,7 +59,7 @@ actor PendingModelTester: ConnectionTesting {
         let stops = stopCalls
         if holdsStarts { await withCheckedContinuation { heldStarts.append($0) } }
         guard stopCalls == stops else { throw CancellationError() }
-        return try start(capture: capture)
+        return try start(capture: capture, recoversDeviceSwitch: recoversDeviceSwitch)
     }
     func releaseStarts() {
         let held = heldStarts; heldStarts = []
@@ -816,7 +817,7 @@ actor PendingModelTester: ConnectionTesting {
             var restarts: Int { gate.options.count }
             func done(_ index: Int) { scheduled[index].done() }
         }
-        func makeRig(recovers: Bool = true, restartDelay: Duration = .milliseconds(1),
+        func makeRig(recovers: Bool = true, synchronous: Bool = false, restartDelay: Duration = .milliseconds(1),
                      stall: Duration = .seconds(10), resume: Duration = .seconds(60)) async throws -> Rig {
             let rig = Rig(route: routeA), graph = rig.graph, gate = rig.gate
             graph.engine.attach(graph.player)
@@ -832,7 +833,9 @@ actor PendingModelTester: ConnectionTesting {
             schedule: { _, buffer, done in rig.scheduled.append((buffer, done)) },
             playbackStallTimeout: stall, captureResumeTimeout: resume)
             rig.audio.onFailure = { _, failure in rig.failures.append(failure) }
-            _ = try await rig.audio.startInBackground(capture: true, recoversDeviceSwitch: recovers)
+            // The plain start(capture:) is what the preview and probes call.
+            if synchronous { _ = try recovers ? rig.audio.start(capture: true, recoversDeviceSwitch: true) : rig.audio.start(capture: true) }
+            else { _ = try await rig.audio.startInBackground(capture: true, recoversDeviceSwitch: recovers) }
             return rig
         }
         func pcm(_ frames: Int) -> Data { Data(repeating: 0, count: frames * 2) }
@@ -877,6 +880,29 @@ actor PendingModelTester: ConnectionTesting {
             await post(rig)
             check(rig.failures == [.deviceChange] && rig.restarts == 0,
                   "without recovery a device switch still ends the session")
+        }
+        // 0b. Dictation's synchronous start follows a switch as the call does; the preview and
+        // probes' plain start(capture:) still end on one.
+        do {
+            let rig = try await makeRig(synchronous: true)
+            defer { rig.audio.stop() }
+            rig.route = routeB
+            await post(rig)
+            await waitUntil { rig.restarts == 1 }
+            check(rig.failures.isEmpty && rig.gate.options == [reset] && rig.audio.isRestartingCapture,
+                  "a synchronous start that asks for recovery restarts on a device switch instead of ending")
+            rig.gate.release.signal()
+            await waitUntil { !rig.audio.isRestartingCapture }
+            check(rig.audio.routeBaseline == routeB && rig.audio.captureRestartedAt != nil && rig.failures.isEmpty,
+                  "the synchronous start's recovered switch makes the new route the baseline")
+        }
+        do {
+            let rig = try await makeRig(recovers: false, synchronous: true)
+            defer { rig.audio.stop() }
+            rig.route = routeB
+            await post(rig)
+            check(rig.failures == [.deviceChange] && rig.restarts == 0,
+                  "start(capture:) without the flag still ends on a device switch")
         }
         // 1. Listening: the switch resets the player and moves the baseline; the next reply plays.
         do {

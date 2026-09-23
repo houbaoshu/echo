@@ -54,11 +54,19 @@ import Combine
         makeLocalRecognizer = localRecognizer
         self.finalizationTimeout = finalizationTimeout; self.captureTimeout = captureTimeout
         super.init()
-        audio.onFailure = { [weak self] error, _ in
+        audio.onFailure = { [weak self] _, failure in
             guard let self, self.isActive else { return }
-            self.complete(error: error)
+            self.complete(error: Self.message(for: failure))
         }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
+    }
+    /// VoiceAudio words its failures for a call; a dictation reports its own recording.
+    static func message(for failure: VoiceAudioFailure) -> String {
+        switch failure {
+        case .deviceChange: "音频设备已变化，录音已结束，已保留确认的文字。"
+        case .recoveryFailed: "音频设备恢复失败，录音已结束，已保留确认的文字。"
+        case .player: "音频设备异常，录音已结束，已保留确认的文字。"
+        }
     }
     func attach(workspace: WorkspaceStore, settings: SettingsStore) { self.workspace = workspace; self.settings = settings }
     @objc private func willSleep() { cancel() }
@@ -148,7 +156,8 @@ import Combine
             guard self.generation == current, !Task.isCancelled else { return }
             guard allowed else { self.complete(error: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。"); return }
             do {
-                let captured = try self.audio.start(capture: true)
+                // Follows a switch of the default devices at the same sample rate, as a call does.
+                let captured = try self.audio.start(capture: true, recoversDeviceSwitch: true)
                 self.captureReady = true
                 trace?.record("capture.ready", self.diagnosticState)
                 let (stream, input) = AsyncThrowingStream<Data, Error>.makeStream(bufferingPolicy: .bufferingOldest(10))
@@ -189,10 +198,16 @@ import Combine
                             (remoteKey == nil ? "Apple 本地语音识别失败，请重新开始转写。" : "语音识别失败，请检查网络后重试。"))
                     }
                 }
+                // Like the call's, the first-packet timeout pauses while VoiceAudio restarts the
+                // engine and gives the recovered microphone a full timeout of its own.
+                let armedAt = ContinuousClock.now
                 self.watchdog = Task { [weak self, captureTimeout] in
-                    do { try await Task.sleep(for: captureTimeout) } catch { return }
-                    guard let self, self.generation == current else { return }
-                    self.complete(error: "麦克风没有返回音频，请检查输入设备。")
+                    while let decision = self?.captureWatchdogDecision(recording: current, armedAt: armedAt, timeout: captureTimeout) {
+                        guard case .wait(let deadline) = decision else {
+                            self?.complete(error: "麦克风没有返回音频，请检查输入设备。"); return
+                        }
+                        do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+                    }
                 }
                 self.captureTask = Task { [weak self] in
                     do {
@@ -214,6 +229,13 @@ import Combine
                 }
             } catch { self.complete(error: "无法启动麦克风，请检查输入设备。") }
         }
+    }
+    /// nil once the watchdog no longer belongs to the current recording.
+    private func captureWatchdogDecision(recording: UUID, armedAt: ContinuousClock.Instant,
+                                         timeout: Duration) -> VoiceCaptureWatchdog.Decision? {
+        guard generation == recording, state == .recording, !Task.isCancelled else { return nil }
+        return VoiceCaptureWatchdog.decide(now: .now, armedAt: armedAt, restartedAt: audio.captureRestartedAt,
+                                           restarting: audio.isRestartingCapture, timeout: timeout)
     }
     /// Ends this recording. With `send`, the final transcript is sent once recognized instead of left for editing.
     func finishRecording(thenSend send: (() -> Void)? = nil) {

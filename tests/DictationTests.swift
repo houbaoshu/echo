@@ -46,6 +46,7 @@ enum DictationTests {
         dictation.start(conversation: conversation)
         await VoiceTests.tick()
         precondition(dictation.state == .recording && audio.capturing && dictation.captureReady)
+        precondition(audio.recoversDeviceSwitch == true, "Dictation asks its audio to follow device switches")
         audio.input?.yield(.init(data: Data(repeating: 0, count: 6400), epoch: 1))
         await VoiceTests.tick()
         precondition(dictation.levels.count == 10 && dictation.levels.allSatisfy { $0 == 0 })
@@ -124,8 +125,16 @@ enum DictationTests {
         delayed.shutdown()
         dictation.start(conversation: conversation, key: "test"); await VoiceTests.tick()
         recognizer.emit("设备断开前", final: true)
-        audio.onFailure?("输入设备已断开", .deviceChange)
+        audio.onFailure?("音频设备已变化，通话已结束，请重新开始。", .deviceChange)
         precondition(dictation.state == .failed && !audio.capturing && store.mainDraft.hasSuffix("\n设备断开前"))
+        precondition(dictation.error == DictationController.message(for: .deviceChange)
+                     && dictation.error?.contains("通话") == false, "Dictation words device failures as a recording")
+        dictation.start(conversation: conversation, key: "test"); await VoiceTests.tick()
+        recognizer.emit("恢复失败前", final: true)
+        audio.onFailure?("音频设备恢复失败，通话已结束，请重新开始。", .recoveryFailed)
+        precondition(dictation.state == .failed && !audio.capturing && store.mainDraft.hasSuffix("\n恢复失败前")
+                     && dictation.error == DictationController.message(for: .recoveryFailed)
+                     && dictation.error?.contains("通话") == false, "A failed recovery keeps confirmed text")
         _ = store.send("commit conversation"); store.stopTask()
         dictation.start(conversation: conversation, key: "test"); await VoiceTests.tick()
         let draft = store.mainDraft
@@ -139,8 +148,72 @@ enum DictationTests {
         precondition(silent.state == .failed && !silent.captureReady && silent.levels.isEmpty)
         precondition(silent.error?.contains("没有返回音频") == true)
         silent.shutdown()
+        try await deviceRecoveryTests()
         try await localTests()
         print("PASS: STT finalization, draft ownership, failures and audio exclusion")
+    }
+
+    /// While VoiceAudio recovers from a device change nothing can arrive; the first-packet
+    /// timeout waits it out and gives the recovered microphone a full timeout, as the call's does.
+    @MainActor private static func deviceRecoveryTests() async throws {
+        let store = TaskStore(source: FakeSource()), conversation = WorkspaceConversation(store: store)
+        defer { store.shutdown() }
+        let timeout = Duration.milliseconds(100)
+        func makeDictation() -> (FakeAudio, DictationRecognizer, DictationController) {
+            let audio = FakeAudio(), recognizer = DictationRecognizer()
+            let dictation = DictationController(audio: audio, recognizer: { recognizer }, finalizationTimeout: .seconds(5),
+                                                captureTimeout: timeout, permission: { true })
+            dictation.start(conversation: conversation, key: "test")
+            return (audio, recognizer, dictation)
+        }
+        do {
+            let (audio, _, dictation) = makeDictation()
+            defer { dictation.shutdown() }
+            await VoiceTests.waitUntil { dictation.captureReady }
+            audio.isRestartingCapture = true
+            try await Task.sleep(for: .milliseconds(300))
+            precondition(dictation.state == .recording && dictation.error == nil,
+                         "An engine restart longer than the timeout is not a missing microphone")
+            audio.isRestartingCapture = false; audio.captureRestartedAt = .now
+            try await Task.sleep(for: .milliseconds(50))
+            audio.input?.yield(.init(data: Data(repeating: 0, count: 6400), epoch: 1))
+            try await Task.sleep(for: .milliseconds(200))
+            precondition(dictation.state == .recording && dictation.error == nil,
+                         "A first packet shortly after the restart keeps recording")
+        }
+        do {
+            let (audio, _, dictation) = makeDictation()
+            defer { dictation.shutdown() }
+            await VoiceTests.waitUntil { dictation.captureReady }
+            audio.isRestartingCapture = true
+            try await Task.sleep(for: .milliseconds(300))
+            let restartedAt = ContinuousClock.now
+            audio.isRestartingCapture = false; audio.captureRestartedAt = restartedAt
+            try await Task.sleep(for: .milliseconds(30))
+            precondition(dictation.state == .recording, "The recovered microphone gets a full timeout of its own")
+            for _ in 0..<5 where dictation.state == .recording { await VoiceTests.waitUntil { dictation.state != .recording } }
+            precondition(dictation.state == .failed && restartedAt.duration(to: .now) >= timeout
+                         && dictation.error?.contains("没有返回音频") == true,
+                         "With no packet after the restart the recording fails after restartedAt + timeout")
+        }
+        do {
+            // Stopping mid-restart still finalizes: capture ends, the recognizer gets its final packet.
+            let (audio, recognizer, dictation) = makeDictation()
+            defer { dictation.shutdown() }
+            store.mainDraft = ""
+            await VoiceTests.waitUntil { dictation.captureReady }
+            audio.input?.yield(.init(data: Data(repeating: 0, count: 6400), epoch: 1))
+            await VoiceTests.tick()
+            recognizer.emit("切换前", final: true)
+            audio.isRestartingCapture = true
+            dictation.finishRecording()
+            precondition(dictation.state == .finalizing && !audio.capturing, "Finish is available while the engine restarts")
+            recognizer.emit("切换后", final: true, start: 200); recognizer.finish()
+            await VoiceTests.tick()
+            precondition(dictation.state == .idle && dictation.error == nil && store.mainDraft == "切换前 切换后",
+                         "A recording stopped during recovery keeps both sides of the switch")
+        }
+        print("PASS: Dictation device recovery pauses the first-packet timeout and still finalizes")
     }
 
     @MainActor private static func recordedPauseRegression() async throws {

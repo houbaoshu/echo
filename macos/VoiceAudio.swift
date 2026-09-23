@@ -114,8 +114,8 @@ struct VoiceAudioRoute: Equatable, Sendable {
 /// roughly a second after start(). That is Echo's own recording doing it, not the user
 /// choosing another device, and restarting the engine on the unchanged route recovers the
 /// call. Every other configuration change still ends it, so a real device switch is not
-/// masked: the check is device identity, not the notification. A Live Voice call opts in to
-/// following a switch to another device at the same sample rate instead.
+/// masked: the check is device identity, not the notification. A Live Voice call and a
+/// dictation opt in to following a switch to another device at the same sample rate instead.
 struct VoiceConfigurationChangePolicy: Sendable {
     enum Decision: Equatable, Sendable {
         case restartEngine
@@ -133,7 +133,7 @@ struct VoiceConfigurationChangePolicy: Sendable {
         /// Sample rate the duplex graph was built with; nil for a playback-only graph.
         var graphSampleRate: Double?
         var inputSampleRate: Double
-        /// Set only for a Live Voice call; everything else still ends on a switch.
+        /// Set only for a Live Voice call or a dictation; everything else still ends on a switch.
         var recoversDeviceSwitch: Bool = false
     }
     var initializationWindow: TimeInterval = 10
@@ -170,11 +170,11 @@ struct VoiceConfigurationChangePolicy: Sendable {
 @MainActor protocol VoiceAudioHandling: AnyObject {
     var onFailure: ((String, VoiceAudioFailure) -> Void)? { get set }
     var inputOutputLatency: TimeInterval { get }
-    func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error>
+    /// `recoversDeviceSwitch` lets this session follow a switch of the default devices instead
+    /// of ending; a Live Voice call and a dictation ask for it, the preview and probes never do.
+    func start(capture: Bool, recoversDeviceSwitch: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error>
     /// Same result as `start`, without holding the main actor while the engine is built.
     /// Throws CancellationError when `stop()` or another start supersedes it first.
-    /// `recoversDeviceSwitch` lets this session follow a switch of the default devices instead
-    /// of ending; only a Live Voice call asks for it, and `start` never does.
     func startInBackground(capture: Bool, recoversDeviceSwitch: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error>
     func resetCapture(epoch: Int, paused: Bool)
     func monitorCapture(epoch: Int)
@@ -200,8 +200,11 @@ extension VoiceAudioHandling {
     var captureRestartedAt: ContinuousClock.Instant? { nil }
     func finishCapture() { stop() }
     func resetCapture(epoch: Int, paused: Bool) {}
+    func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+        try start(capture: capture, recoversDeviceSwitch: false)
+    }
     func startInBackground(capture: Bool, recoversDeviceSwitch: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
-        try start(capture: capture)
+        try start(capture: capture, recoversDeviceSwitch: recoversDeviceSwitch)
     }
 }
 
@@ -328,7 +331,7 @@ extension AVAudioNode {
     private var deferredOutputMuted: Bool?
     private var deferredInterrupt = false
     private var changedDuringRestart = false
-    /// This session follows a device switch; set by a Live Voice start, cleared by stop().
+    /// This session follows a device switch; set by a Live Voice or dictation start, cleared by stop().
     private var recoversDeviceSwitch = false
     /// The route a pending restart switches to; nil for a same-device restart.
     private var switchRoute: VoiceAudioRoute?
@@ -409,7 +412,7 @@ extension AVAudioNode {
 
     /// Blocks the caller until the graph is running. Dictation, the diagnostic probe and the
     /// speaker preview keep this; it still queues behind any background build in progress.
-    func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+    func start(capture: Bool, recoversDeviceSwitch: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         stop()
         let (stream, continuation) = Self.makeCaptureStream()
         let request = VoiceAudioBuildRequest(capture: capture, continuation: continuation)
@@ -417,6 +420,8 @@ extension AVAudioNode {
         let graph: VoiceAudioGraph
         do { graph = try Self.setupQueue.sync { try build(request) } }
         catch { continuation.finish(); throw error }
+        // Before the handover, which may judge a change that arrived during the build.
+        self.recoversDeviceSwitch = recoversDeviceSwitch
         adopt(graph, continuation: continuation)
         return stream
     }

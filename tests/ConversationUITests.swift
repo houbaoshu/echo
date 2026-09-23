@@ -87,7 +87,7 @@ import SwiftUI
     var onFailure: ((String, VoiceAudioFailure) -> Void)?
     var inputOutputLatency: TimeInterval { 0 }
     var input: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation?
-    func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+    func start(capture: Bool, recoversDeviceSwitch: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         let (stream, input) = AsyncThrowingStream<VoiceCapturePacket, Error>.makeStream()
         self.input = input
         return stream

@@ -20,7 +20,7 @@ import Foundation
     var interruptions = 0
     var onStop: (() -> Void)?
     var onDrain: (() async -> Void)?
-    func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+    func start(capture: Bool, recoversDeviceSwitch: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         capturing = capture
         let (stream, continuation) = AsyncThrowingStream<VoiceCapturePacket, Error>.makeStream()
         input = continuation
