@@ -721,7 +721,7 @@ struct CompanionBubble: View {
                     .background {
                         CompanionBackground(shape: CompanionBubbleShape(tailX: petCenterX - (center - width / 2), tailOnTop: tailOnTop))
                     }
-                    .shadow(color: .black.opacity(0.14), radius: 5, y: 2)
+                    .shadow(color: .black.opacity(0.08), radius: 4, y: 1)
                     .offset(x: center - canvasWidth / 2)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(reply.map { String($0.characters) } ?? accessibilityNotice)
