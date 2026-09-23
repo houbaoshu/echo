@@ -417,7 +417,7 @@ struct PetControls: View {
                         }
                         PetSegment(label: "结束语音", identifier: "voice.end", action: { actions.endVoice(owner) }) {
                             VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
-                                        indicator: surface.voice, muted: surface.micMuted, size: 34, surface: .strip)
+                                        indicator: surface.voice, muted: surface.micMuted, size: 34)
                         }
                         PetSegment(label: surface.speakerMuted ? "开启扬声器" : "静音扬声器", identifier: "voice.speaker",
                                    enabled: surface.muteEnabled, action: { actions.toggleSpeaker(owner) }) {
@@ -443,7 +443,7 @@ struct PetControls: View {
             } else if voice.snapshot.session.owner != nil {
                 PetCircle(label: "显示语音控制", identifier: "pet.voice.show", action: presentation.closeComposer) {
                     VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
-                                indicator: surface.voice, muted: surface.micMuted, size: 32, surface: .strip)
+                                indicator: surface.voice, muted: surface.micMuted, size: 32)
                         .accessibilityHidden(true)
                 }
             } else {

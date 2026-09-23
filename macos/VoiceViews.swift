@@ -135,12 +135,10 @@ struct VoicePlanet: View {
     let indicator: PetSurfacePresentation.VoiceIndicator
     var muted = false
     let size: CGFloat
-    /// Diagnostics only: which surface's frame updates this planet counts toward.
-    var surface: VoicePlanetSurface = .chat
     var body: some View {
         Group {
             if let store {
-                PlanetFrame(store: store, surface: surface)
+                PlanetFrame(store: store)
             } else {
                 // Without a planet the surface still has to say Live Voice is on, and the
                 // composer's own mark is what that looks like everywhere else in the app.
@@ -169,11 +167,7 @@ struct VoicePlanet: View {
 /// view that redraws every frame has to be the one holding the sprite.
 private struct PlanetFrame: View {
     @ObservedObject var store: PetStore
-    let surface: VoicePlanetSurface
     var body: some View {
-        // Counts body evaluations, not pixels drawn: enough to show whether the ordered-out strip
-        // still takes an update on every planet frame.
-        let _ = VoiceDiagnostics.shared.countPlanetFrame(surface)
         Image(decorative: store.image, scale: 1, orientation: .up)
             .resizable()
             .interpolation(.high)

@@ -40,38 +40,32 @@ final class PetStore: ObservableObject {
         let metadata = try? JSONDecoder().decode(Metadata.self, from: Data(contentsOf: directory.appendingPathComponent("pet.json")))
         let name = metadata?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.displayName = name.flatMap { $0.isEmpty ? nil : $0 } ?? "桌面精灵"
-        // Timed apart from the Swift copy below: this is the Rust WebP decode and 88-frame slice.
-        let handle = try VoiceDiagnostics.shared.measure("echo_create", directory.lastPathComponent) {
-            try RuntimeHandle(directory: directory)
-        }
+        let handle = try RuntimeHandle(directory: directory)
         var info = EchoInfo()
         guard echo_info(handle.pointer, &info), info.frame_count > 0 else {
             throw PetError(message: "无法读取精灵帧信息。")
         }
         let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-        let images = try VoiceDiagnostics.shared.measure("Swift 帧复制 + CGImage", "×\(info.frame_count)") {
-            var images: [CGImage] = []
-            for index in 0..<info.frame_count {
-                var frame = EchoFrame()
-                guard echo_frame(handle.pointer, index, &frame), let bytes = frame.data else {
-                    throw PetError(message: "无法读取第 \(index) 帧。")
-                }
-                // Data(bytes:count:) copies Rust memory. CGDataProvider retains it.
-                let data = Data(bytes: bytes, count: frame.length)
-                guard let provider = CGDataProvider(data: data as CFData),
-                      let image = CGImage(
-                        width: Int(info.width), height: Int(info.height),
-                        bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: Int(info.width) * 4,
-                        space: colorSpace,
-                        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
-                            .union(.byteOrder32Big),
-                        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
-                      ) else {
-                    throw PetError(message: "无法创建第 \(index) 帧图像。")
-                }
-                images.append(image)
+        var images: [CGImage] = []
+        for index in 0..<info.frame_count {
+            var frame = EchoFrame()
+            guard echo_frame(handle.pointer, index, &frame), let bytes = frame.data else {
+                throw PetError(message: "无法读取第 \(index) 帧。")
             }
-            return images
+            // Data(bytes:count:) copies Rust memory. CGDataProvider retains it.
+            let data = Data(bytes: bytes, count: frame.length)
+            guard let provider = CGDataProvider(data: data as CFData),
+                  let image = CGImage(
+                    width: Int(info.width), height: Int(info.height),
+                    bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: Int(info.width) * 4,
+                    space: colorSpace,
+                    bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
+                        .union(.byteOrder32Big),
+                    provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
+                  ) else {
+                throw PetError(message: "无法创建第 \(index) 帧图像。")
+            }
+            images.append(image)
         }
         self.handle = handle
         self.images = images

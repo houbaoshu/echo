@@ -25,9 +25,6 @@ enum VoiceEndReason: String, Sendable {
     case unspecified = "未标注来源"
 }
 
-/// Where a `VoicePlanet` is drawn; only used to bucket the frame-update counts above.
-enum VoicePlanetSurface: String, Sendable { case chat = "聊天窗口", strip = "桌宠控制条" }
-
 // Only locally constructed metadata belongs here. Never log keys, request headers,
 // transcripts, remote error bodies or raw audio.
 @MainActor final class VoiceDiagnostics: ObservableObject {
@@ -46,21 +43,15 @@ enum VoicePlanetSurface: String, Sendable { case chat = "聊天窗口", strip = 
     // MARK: - Live Voice timeline
 
     // One call's millisecond marks, measured from the click that started it, plus why it ended.
-    // Lines are written only while a call is open, so the spans on shared paths (PetStore,
+    // Lines are written only while a call is open, so the spans on shared paths (PlanetStore,
     // workspace saves) stay silent the rest of the time. Signposts are always emitted, so the
     // same stages line up with Time Profiler in Instruments ("voice-timeline" category).
     private let signposter = OSSignposter(subsystem: "local.chiyan.desktop-pet", category: "voice-timeline")
     private var timelineStart: ContinuousClock.Instant?
-    /// PlanetFrame body evaluations, keyed by surface and whether the pet cluster was hidden.
-    private var planetFrameBodies: [String: Int] = [:]
-    /// Mirrors CompanionController's petHiddenForVoicePlanet, so a count taken inside the ordered-out
-    /// control strip can be told apart from one taken while it is on screen.
-    var planetStripHidden = false
     var isTimelineOpen: Bool { timelineStart != nil }
 
     func beginTimeline(_ entry: String) {
         timelineStart = .now
-        planetFrameBodies = [:]
         signposter.emitEvent("voice.begin", "\(entry, privacy: .public)")
         record("计时", "MARK", "+0.0ms 开始（\(entry)）")
     }
@@ -102,21 +93,12 @@ enum VoicePlanetSurface: String, Sendable { case chat = "聊天窗口", strip = 
         record("计时", "SPAN", "\(offset) \(name) 耗时 \(Self.milliseconds(duration))")
     }
 
-    func countPlanetFrame(_ surface: VoicePlanetSurface) {
-        guard timelineStart != nil else { return }
-        planetFrameBodies["\(surface.rawValue)·\(planetStripHidden ? "隐藏期间" : "显示期间")", default: 0] += 1
-    }
-
     /// The call's single termination line. `detail` carries what the caller knows about the
-    /// session at that moment; the frame counts answer whether the hidden strip keeps updating.
+    /// session at that moment.
     func endTimeline(_ reason: VoiceEndReason, detail: String) {
         let offset = offset(at: .now) ?? "+?"
         signposter.emitEvent("voice.end", "\(reason.rawValue, privacy: .public)")
         record("通话结束", "REASON", "\(offset) \(reason.rawValue) \(detail)")
-        if !planetFrameBodies.isEmpty {
-            let counts = planetFrameBodies.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
-            record("通话结束", "INFO", "PlanetFrame body 次数 \(counts)")
-        }
         timelineStart = nil
     }
 
