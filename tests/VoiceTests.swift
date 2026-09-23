@@ -21,7 +21,7 @@ actor PendingModelTester: ConnectionTesting {
 }
 
 @MainActor final class FakeAudio: VoiceAudioHandling {
-    var onFailure: ((String) -> Void)?
+    var onFailure: ((String, VoiceAudioFailure) -> Void)?
     var inputOutputLatency: TimeInterval = 0
     var input: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation?
     var played: [Data] = []
@@ -50,8 +50,11 @@ actor PendingModelTester: ConnectionTesting {
     private var heldStarts: [CheckedContinuation<Void, Never>] = []
     private var stopCalls = 0
     var pendingStarts: Int { heldStarts.count }
-    func startInBackground(capture: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+    /// What the last background start asked for.
+    var recoversDeviceSwitch: Bool?
+    func startInBackground(capture: Bool, recoversDeviceSwitch: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         stop()
+        self.recoversDeviceSwitch = recoversDeviceSwitch
         let stops = stopCalls
         if holdsStarts { await withCheckedContinuation { heldStarts.append($0) } }
         guard stopCalls == stops else { throw CancellationError() }
@@ -217,6 +220,7 @@ actor PendingModelTester: ConnectionTesting {
         try await backgroundAudioStartTests()
         try await voiceAudioHandoverTests()
         try await voiceAudioRestartTests()
+        try await voiceAudioSwitchTests()
         try await AppleSpeechTests.run()
         try await DictationTests.run()
         try await agentVoiceTests()
@@ -369,9 +373,38 @@ actor PendingModelTester: ConnectionTesting {
         check(endsCall(policy.decide(change(inputRate: 48000))),
               "a sample rate change needs a rebuilt graph, so it still ends the call")
 
+        // A Live Voice call follows a switch at the same rate, however late and whatever is queued.
+        func recovering(_ change: VoiceConfigurationChangePolicy.Change) -> VoiceConfigurationChangePolicy.Change {
+            var change = change; change.recoversDeviceSwitch = true; return change
+        }
+        for current in [VoiceAudioRoute(input: 111, output: 93), VoiceAudioRoute(input: 100, output: 105)] {
+            for elapsed in [0.1, 30, 600] as [TimeInterval] {
+                for queued in [0, 4800] {
+                    check(policy.decide(recovering(change(current: current, elapsed: elapsed, queued: queued))) == .recoverSwitch,
+                          "a same-rate switch recovers (route \(current), elapsed \(elapsed), queued \(queued))")
+                }
+            }
+        }
+        check(policy.decide(recovering(change(current: VoiceAudioRoute(input: 111, output: 93), restarts: 3))) == .recoverSwitch,
+              "a switch does not draw on the same-device restart budget")
+        check(policy.decide(recovering(change(current: VoiceAudioRoute(input: 111, output: 93), graphRate: nil))) == .recoverSwitch,
+              "a playback-only graph follows a switch too")
+        if case .endCall(let reason) = policy.decide(recovering(change(current: VoiceAudioRoute(input: 100, output: 93), inputRate: 48000))) {
+            check(reason.contains("需要重建音频图"), "a switch that changes the sample rate says why it ends")
+        } else { check(false, "a switch that changes the sample rate still ends the call") }
+        for same in [change(), change(graphRate: nil), change(elapsed: 9.9), change(elapsed: 10), change(restarts: 2),
+                     change(restarts: 3), change(queued: 4800), change(inputRate: 48000)] {
+            check(policy.decide(recovering(same)) == policy.decide(same),
+                  "the same-device branch is unchanged by recovering switches")
+        }
+
+        check(VoiceEndReason(.deviceChange) == .audioDevice && VoiceEndReason(.recoveryFailed) == .audioRecoveryFailed
+              && VoiceEndReason(.player) == .audioPlayerFailed,
+              "each audio failure ends the call with its own reason")
+
         // The controller side: only a decision of endCall reaches onFailure, exactly as VoiceAudio wires it.
         func report(_ audio: FakeAudio, _ decision: VoiceConfigurationChangePolicy.Decision) {
-            if case .endCall = decision { audio.onFailure?("音频设备已变化，通话已结束，请重新开始。") }
+            if case .endCall = decision { audio.onFailure?("音频设备已变化，通话已结束，请重新开始。", .deviceChange) }
         }
         do {
             let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
@@ -384,6 +417,8 @@ actor PendingModelTester: ConnectionTesting {
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
             await tick()
             check(voice.isActive && audio.capturing, "call started")
+
+            check(audio.recoversDeviceSwitch == true, "the Live Voice call asks its audio to follow device switches")
 
             report(audio, policy.decide(change(elapsed: 0.8)))
             await tick()
@@ -401,6 +436,21 @@ actor PendingModelTester: ConnectionTesting {
             check(!voice.isActive && voice.error == "音频设备已变化，通话已结束，请重新开始。",
                   "a real device switch after initialization still ends the call")
             check(!audio.capturing, "the ended call released the microphone")
+        }
+        do {
+            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
+                                               synthesizer: { FakeSynthesizer() }, permission: { true })
+            let conversation = WorkspaceConversation(store: store)
+            defer { voice.shutdown(); store.shutdown() }
+            voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
+            await tick()
+            audio.onFailure?("音频设备恢复失败，通话已结束，请重新开始。", .recoveryFailed)
+            await tick()
+            let reason = VoiceDiagnostics.shared.lines.last { $0.contains("[通话结束] REASON") }
+            check(!voice.isActive && voice.error == "音频设备恢复失败，通话已结束，请重新开始。"
+                  && reason?.contains(VoiceEndReason.audioRecoveryFailed.rawValue) == true,
+                  "a failed recovery ends the call with its own message and reason")
         }
     }
 
@@ -516,7 +566,7 @@ actor PendingModelTester: ConnectionTesting {
         voice.toggleMute(); await tick()
         check(voice.status == "正在聆听" && voice.snapshot.microphone == .enabled && voice.snapshot.recognition == .listening, "existing unmute resumes recognition")
         check(voice.snapshot.speakerMuted && audio.outputMuted, "microphone toggles and reply drain preserve speaker mute")
-        audio.onFailure?("设备变化")
+        audio.onFailure?("设备变化", .deviceChange)
         check(!voice.snapshot.speakerMuted, "speaker mute belongs only to the ended Voice session")
         check(voice.snapshot.session == .inactive && voice.snapshot.recognition == .off(.idle)
               && voice.snapshot.replyAudio == .none && voice.snapshot.subtitle.isEmpty
@@ -613,7 +663,7 @@ actor PendingModelTester: ConnectionTesting {
                 gate.release.wait()
                 return graph
             })
-            let start = Task { @MainActor in try await audio.startInBackground(capture: true) }
+            let start = Task { @MainActor in try await audio.startInBackground(capture: true, recoversDeviceSwitch: true) }
             await waitUntil { gate.entered }
             check(gate.entered, "the build runs off the main actor while the main actor keeps going")
             audio.stop()
@@ -632,7 +682,7 @@ actor PendingModelTester: ConnectionTesting {
             if changed { graph.markChanged() }
             var handled: [ObjectIdentifier] = []
             let audio = VoiceAudio(build: { _ in graph }, onConfigurationChange: { handled.append(ObjectIdentifier($0)) })
-            _ = try await audio.startInBackground(capture: true)
+            _ = try await audio.startInBackground(capture: true, recoversDeviceSwitch: true)
             check(handled == (changed ? [ObjectIdentifier(graph.engine)] : []),
                   changed ? "a configuration change during the build is handled once the graph is handed over"
                           : "a quiet build triggers no configuration handling at handover")
@@ -660,7 +710,7 @@ actor PendingModelTester: ConnectionTesting {
                 gate.release.wait()
                 if fails { throw SettingsError("restart failed") }
             }, onConfigurationChange: onConfigurationChange)
-            let stream = try await audio.startInBackground(capture: true)
+            let stream = try await audio.startInBackground(capture: true, recoversDeviceSwitch: false)
             return (audio, graph, stream)
         }
         do {
@@ -703,7 +753,7 @@ actor PendingModelTester: ConnectionTesting {
             let gate = Gate()
             var failures: [String] = []
             let (audio, graph, stream) = try await adoptedAudio(gate)
-            audio.onFailure = { failures.append($0) }
+            audio.onFailure = { message, _ in failures.append(message) }
             audio.restartCapture(graph.engine)
             await waitUntil { gate.graph != nil }
             audio.stop()
@@ -721,18 +771,346 @@ actor PendingModelTester: ConnectionTesting {
         do {
             let gate = Gate()
             var failures: [String] = []
+            var kinds: [VoiceAudioFailure] = []
             let (audio, graph, _) = try await adoptedAudio(gate, fails: true)
             defer { audio.stop() }
-            audio.onFailure = { failures.append($0) }
+            audio.onFailure = { message, kind in failures.append(message); kinds.append(kind) }
             audio.restartCapture(graph.engine)
             await waitUntil { gate.graph != nil }
             gate.release.signal()
             await waitUntil { !failures.isEmpty }
-            check(failures == ["音频设备已变化，通话已结束，请重新开始。"] && !audio.isRestartingCapture
+            check(failures == ["音频设备恢复失败，通话已结束，请重新开始。"] && kinds == [.recoveryFailed] && !audio.isRestartingCapture
                   && audio.captureRestartedAt == nil,
                   "a failed restart clears the flag, records no recovery and ends the call")
         }
     }
+    /// Following a device switch mid-call, with no audio hardware: the route and the engine's
+    /// running state are the test's, the player is a record of what was scheduled with each
+    /// buffer's callback, and every restart waits on the setup queue until released.
+    @MainActor static func voiceAudioSwitchTests() async throws {
+        let routeA = VoiceAudioRoute(input: 111, output: 105)
+        let routeB = VoiceAudioRoute(input: 111, output: 93)
+        let routeC = VoiceAudioRoute(input: 100, output: 93)
+        final class Gate: @unchecked Sendable {
+            let release = DispatchSemaphore(value: 0)
+            private let lock = NSLock()
+            private var entries: [VoiceAudioRestartOptions] = []
+            private var lent: VoiceAudioGraph?
+            var options: [VoiceAudioRestartOptions] { lock.withLock { entries } }
+            /// The graph the last restart borrowed the engine in.
+            var graph: VoiceAudioGraph? { lock.withLock { lent } }
+            func enter(_ graph: VoiceAudioGraph, _ options: VoiceAudioRestartOptions) {
+                lock.withLock { lent = graph; entries.append(options) }
+            }
+        }
+        @MainActor final class Rig {
+            var route: VoiceAudioRoute
+            var running = true
+            var scheduled: [(buffer: AVAudioPCMBuffer, done: @Sendable () -> Void)] = []
+            var failures: [VoiceAudioFailure] = []
+            let gate = Gate()
+            let graph = VoiceAudioGraph()
+            var audio: VoiceAudio!
+            init(route: VoiceAudioRoute) { self.route = route }
+            var engine: AVAudioEngine { graph.engine }
+            var restarts: Int { gate.options.count }
+            func done(_ index: Int) { scheduled[index].done() }
+        }
+        func makeRig(recovers: Bool = true, restartDelay: Duration = .milliseconds(1),
+                     stall: Duration = .seconds(10), resume: Duration = .seconds(60)) async throws -> Rig {
+            let rig = Rig(route: routeA), graph = rig.graph, gate = rig.gate
+            graph.engine.attach(graph.player)
+            graph.route = routeA
+            rig.audio = VoiceAudio(restartDelay: restartDelay, build: { request in
+                graph.converter = try VoicePCMConverter(source: AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!,
+                                                        continuation: request.continuation)
+                return graph
+            }, restart: { lent, options in
+                gate.enter(lent, options)
+                gate.release.wait()
+            }, currentRoute: { rig.route }, isRunning: { _ in rig.running },
+            schedule: { _, buffer, done in rig.scheduled.append((buffer, done)) },
+            playbackStallTimeout: stall, captureResumeTimeout: resume)
+            rig.audio.onFailure = { _, failure in rig.failures.append(failure) }
+            _ = try await rig.audio.startInBackground(capture: true, recoversDeviceSwitch: recovers)
+            return rig
+        }
+        func pcm(_ frames: Int) -> Data { Data(repeating: 0, count: frames * 2) }
+        func micBuffer() -> AVAudioPCMBuffer {
+            let buffer = AVAudioPCMBuffer(pcmFormat: AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!, frameCapacity: 160)!
+            buffer.frameLength = 160
+            return buffer
+        }
+        /// Switches to `route` and lets the restart complete with the engine running again.
+        func finishSwitch(_ rig: Rig, to route: VoiceAudioRoute) async {
+            let before = rig.restarts
+            rig.route = route
+            rig.audio.restartCapture(rig.engine, switchingTo: route)
+            await waitUntil { rig.restarts > before }
+            rig.running = true
+            rig.gate.release.signal()
+            await waitUntil { !rig.audio.isRestartingCapture }
+        }
+        func post(_ rig: Rig) async {
+            NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: rig.engine)
+            await tick()
+        }
+        let reset = VoiceAudioRestartOptions(resumePlayback: true, resetPlayer: true)
+
+        // 0. Without recovery (the preview and the probe): everything is as before.
+        do {
+            let rig = try await makeRig(recovers: false)
+            defer { rig.audio.stop() }
+            try await rig.audio.play(pcm(240)); try await rig.audio.play(pcm(480))
+            check(rig.scheduled.count == 2 && rig.audio.queuedFrames == 720, "replies are scheduled on the player")
+            rig.running = false
+            rig.done(1); await tick()
+            check(rig.audio.queuedFrames == 240 && rig.audio.playbackFrames == 480,
+                  "without recovery a callback from a stopped engine still counts as played back")
+            var cancelled = false
+            do { try await rig.audio.play(pcm(240)) } catch is CancellationError { cancelled = true }
+            check(cancelled, "without recovery a reply for a stopped engine is cancelled at once")
+            cancelled = false
+            do { try await rig.audio.drain() } catch is CancellationError { cancelled = true }
+            check(cancelled, "without recovery draining a stopped engine is cancelled")
+            rig.route = routeB
+            await post(rig)
+            check(rig.failures == [.deviceChange] && rig.restarts == 0,
+                  "without recovery a device switch still ends the session")
+        }
+        // 1. Listening: the switch resets the player and moves the baseline; the next reply plays.
+        do {
+            let rig = try await makeRig()
+            defer { rig.audio.stop() }
+            check(rig.audio.routeBaseline == routeA, "the baseline is the route the graph was built on")
+            await finishSwitch(rig, to: routeB)
+            check(rig.gate.options == [reset], "a switch restart resets the player and resumes it")
+            check(rig.audio.routeBaseline == routeB && rig.audio.captureRestartedAt != nil && rig.failures.isEmpty,
+                  "a recovered switch makes the new route the baseline")
+            try await rig.audio.play(pcm(240))
+            check(rig.scheduled.count == 1, "the next reply is scheduled on the recovered player")
+            let drain = Task { @MainActor in try await rig.audio.drain() }
+            rig.done(0)
+            try await drain.value
+            check(rig.audio.queuedFrames == 0 && rig.audio.playbackFrames == 240, "the next reply plays out in full")
+            rig.audio.restartCapture(rig.engine)
+            await waitUntil { rig.restarts == 2 }
+            rig.gate.release.signal()
+            await waitUntil { !rig.audio.isRestartingCapture }
+            check(rig.gate.options.last == VoiceAudioRestartOptions(resumePlayback: true, resetPlayer: false)
+                  && rig.audio.routeBaseline == routeB,
+                  "a same-device restart keeps the player and the baseline")
+        }
+        // 2. Speaking: the flush keeps what was not heard, and the reset player gets it again.
+        do {
+            let rig = try await makeRig()
+            defer { rig.audio.stop() }
+            for frames in [240, 480, 720] { try await rig.audio.play(pcm(frames)) }
+            rig.done(0); await tick()
+            check(rig.audio.queuedFrames == 1200 && rig.audio.playbackFrames == 240, "the first buffer played back")
+            let drain = Task { @MainActor in try await rig.audio.drain() }
+            rig.running = false
+            rig.done(2); rig.done(1); await tick()
+            check(rig.audio.queuedFrames == 1200 && rig.audio.playbackFrames == 240,
+                  "flush callbacks from a stopped engine, in any order, are not counted as heard")
+            rig.route = routeB
+            rig.audio.restartCapture(rig.engine, switchingTo: routeB)
+            await waitUntil { rig.restarts == 1 }
+            rig.done(1); await tick()
+            check(rig.audio.queuedFrames == 1200, "a flush callback during the restart is ignored")
+            rig.running = true
+            rig.gate.release.signal()
+            await waitUntil { !rig.audio.isRestartingCapture }
+            check(rig.scheduled.count == 5 && rig.scheduled[3].buffer === rig.scheduled[1].buffer
+                  && rig.scheduled[4].buffer === rig.scheduled[2].buffer,
+                  "the flushed buffers are queued again, in order, as the same instances")
+            rig.done(1); rig.done(2); await tick()
+            check(rig.audio.queuedFrames == 1200, "callbacks of the player before the reset stay ignored")
+            rig.done(3); rig.done(4)
+            try await drain.value
+            check(rig.audio.queuedFrames == 0 && rig.audio.playbackFrames == 1440,
+                  "the re-queued audio plays out and the drain started before the switch completes")
+        }
+        // 3. A reply arriving between the stop and the change waits, then follows the re-queued audio.
+        do {
+            let rig = try await makeRig()
+            defer { rig.audio.stop() }
+            try await rig.audio.play(pcm(240))
+            rig.running = false
+            var finished = false
+            let reply = Task { @MainActor in
+                defer { finished = true }
+                try await rig.audio.play(pcm(480))
+            }
+            try await Task.sleep(for: .milliseconds(100))
+            check(!finished && rig.scheduled.count == 1, "a reply for a stopped engine waits instead of being dropped")
+            await finishSwitch(rig, to: routeB)
+            try await reply.value
+            check(rig.scheduled.count == 3 && rig.scheduled[1].buffer === rig.scheduled[0].buffer
+                  && rig.scheduled[2].buffer.frameLength == 480,
+                  "the waiting reply is scheduled after the re-queued audio")
+        }
+        // 4. A drain in progress waits out the stop instead of cancelling.
+        do {
+            let rig = try await makeRig()
+            defer { rig.audio.stop() }
+            try await rig.audio.play(pcm(240))
+            rig.running = false
+            var drained = false
+            let drain = Task { @MainActor in
+                defer { drained = true }
+                try await rig.audio.drain()
+            }
+            try await Task.sleep(for: .milliseconds(100))
+            check(!drained, "draining waits out a stopped engine")
+            await finishSwitch(rig, to: routeB)
+            rig.done(1)
+            try await drain.value
+            check(rig.audio.queuedFrames == 0, "the drain completes once the re-queued audio played back")
+        }
+        // 5. An engine that never comes back fails playback instead of hanging.
+        do {
+            let rig = try await makeRig(stall: .milliseconds(100))
+            defer { rig.audio.stop() }
+            try await rig.audio.play(pcm(240))
+            rig.running = false
+            var playStalled = false, drainStalled = false
+            do { try await rig.audio.play(pcm(240)) } catch is SettingsError { playStalled = true }
+            do { try await rig.audio.drain() } catch is SettingsError { drainStalled = true }
+            check(playStalled && drainStalled, "a stop no restart follows ends in a playback error, not a cancellation")
+        }
+        // 6. An interruption during the switch leaves nothing to queue again.
+        do {
+            let rig = try await makeRig()
+            defer { rig.audio.stop() }
+            try await rig.audio.play(pcm(240)); try await rig.audio.play(pcm(480))
+            rig.running = false
+            let reply = Task { @MainActor in try await rig.audio.play(pcm(240)) }
+            await tick()
+            rig.route = routeB
+            rig.audio.restartCapture(rig.engine, switchingTo: routeB)
+            await waitUntil { rig.restarts == 1 }
+            rig.audio.interruptPlayback()
+            rig.running = true
+            rig.gate.release.signal()
+            await waitUntil { !rig.audio.isRestartingCapture }
+            check(rig.scheduled.count == 2 && rig.audio.queuedFrames == 0,
+                  "audio interrupted during the switch is not queued again")
+            var cancelled = false
+            do { try await reply.value } catch is CancellationError { cancelled = true }
+            check(cancelled, "a reply from before the interruption is cancelled")
+        }
+        // 7. stop() during the switch: nothing is queued again, and the queue tears the engine down.
+        do {
+            let rig = try await makeRig()
+            try await rig.audio.play(pcm(240))
+            rig.running = false
+            rig.route = routeB
+            rig.audio.restartCapture(rig.engine, switchingTo: routeB)
+            await waitUntil { rig.restarts == 1 }
+            rig.audio.stop()
+            rig.done(0)
+            rig.running = true
+            rig.gate.release.signal()
+            await waitUntil { rig.gate.graph?.isTornDown == true }
+            await tick()
+            check(rig.gate.graph?.isTornDown == true && rig.scheduled.count == 1 && rig.audio.queuedFrames == 0 && rig.failures.isEmpty,
+                  "a switch overtaken by stop() queues nothing, reports nothing and leaves the teardown to the queue")
+        }
+        // 8. Paused during the switch: the player stays stopped, the audio is queued for the resume.
+        do {
+            let rig = try await makeRig()
+            defer { rig.audio.stop() }
+            try await rig.audio.play(pcm(240))
+            rig.audio.setPlaybackPaused(true)
+            rig.running = false
+            await finishSwitch(rig, to: routeB)
+            check(rig.gate.options == [VoiceAudioRestartOptions(resumePlayback: false, resetPlayer: true)]
+                  && rig.scheduled.count == 2 && rig.scheduled[1].buffer === rig.scheduled[0].buffer,
+                  "a paused reply is queued again without resuming the player")
+        }
+        // 9. Changes held during the switch restart.
+        do {
+            let rig = try await makeRig()
+            defer { rig.audio.stop() }
+            rig.route = routeB
+            rig.audio.restartCapture(rig.engine, switchingTo: routeB)
+            await waitUntil { rig.restarts == 1 }
+            await post(rig)
+            rig.running = true
+            rig.gate.release.signal()
+            await waitUntil { !rig.audio.isRestartingCapture }
+            await tick()
+            check(rig.restarts == 1 && !rig.audio.isRestartingCapture && rig.audio.routeBaseline == routeB && rig.failures.isEmpty,
+                  "the switch's own change, held during its restart, is not judged again")
+        }
+        do {
+            let rig = try await makeRig()
+            defer { rig.audio.stop() }
+            rig.route = routeB
+            rig.audio.restartCapture(rig.engine, switchingTo: routeB)
+            await waitUntil { rig.restarts == 1 }
+            rig.route = routeC
+            await post(rig)
+            rig.running = true
+            rig.gate.release.signal()
+            await waitUntil { rig.restarts == 2 }
+            rig.gate.release.signal()
+            await waitUntil { !rig.audio.isRestartingCapture }
+            await tick()
+            check(rig.gate.options == [reset, reset] && rig.audio.routeBaseline == routeC && rig.failures.isEmpty,
+                  "a second switch during the restart is judged once, after it, and followed too")
+        }
+        do {
+            let rig = try await makeRig(restartDelay: .milliseconds(100))
+            defer { rig.audio.stop() }
+            rig.running = false
+            rig.route = routeB
+            await post(rig)
+            check(rig.audio.isRestartingCapture && rig.restarts == 0, "a switch notification schedules a switch restart")
+            rig.route = routeA
+            await post(rig)
+            await waitUntil { rig.restarts == 1 }
+            rig.running = true
+            rig.gate.release.signal()
+            await waitUntil { !rig.audio.isRestartingCapture }
+            check(rig.gate.options == [reset] && rig.audio.routeBaseline == routeA && rig.failures.isEmpty,
+                  "a route that comes back while the switch settles still resets the player, once")
+        }
+        // 10. After a switch the microphone has to deliver again.
+        do {
+            let rig = try await makeRig(resume: .milliseconds(100))
+            defer { rig.audio.stop() }
+            await finishSwitch(rig, to: routeB)
+            try await Task.sleep(for: .milliseconds(250))
+            check(rig.failures == [.recoveryFailed], "a silent microphone after the switch ends the call as a failed recovery")
+        }
+        do {
+            let rig = try await makeRig(resume: .milliseconds(100))
+            defer { rig.audio.stop() }
+            await finishSwitch(rig, to: routeB)
+            rig.graph.converter?.accept(micBuffer())
+            try await Task.sleep(for: .milliseconds(250))
+            check(rig.failures.isEmpty, "a microphone delivering after the switch passes the check")
+        }
+        do {
+            let rig = try await makeRig(resume: .milliseconds(100))
+            defer { rig.audio.stop() }
+            rig.audio.resetCapture(epoch: 2, paused: true)
+            await finishSwitch(rig, to: routeB)
+            rig.graph.converter?.accept(micBuffer())
+            try await Task.sleep(for: .milliseconds(250))
+            check(rig.failures.isEmpty, "a muted microphone still counts as delivering")
+        }
+        do {
+            let rig = try await makeRig(resume: .milliseconds(100))
+            await finishSwitch(rig, to: routeB)
+            rig.audio.stop()
+            try await Task.sleep(for: .milliseconds(250))
+            check(rig.failures.isEmpty, "stop() before the check cancels it")
+        }
+    }
+
     @MainActor static func captureWatchdogPauseTests() async throws {
         // Both starting during a reply and pausing before the first PCM packet
         // must keep an intentional capture pause out of the startup timeout.
@@ -1366,7 +1744,7 @@ actor PendingModelTester: ConnectionTesting {
         check(!voice.isActive && !audio.capturing, "deleting conversation releases capture")
         let fresh = workspace.selected!
         voice.start(conversation: fresh, configuration: VoiceConfiguration(), key: "test"); await tick()
-        audio.onFailure?("设备变化")
+        audio.onFailure?("设备变化", .deviceChange)
         check(!voice.isActive && !audio.capturing && voice.error == "设备变化", "device failure closes whole call")
         let deniedAudio = FakeAudio()
         let denied = VoiceSessionController(audio: deniedAudio, permission: { false })
@@ -1821,7 +2199,7 @@ actor PendingModelTester: ConnectionTesting {
             await tick()
 
             // Induce a failure
-            audio.onFailure?("模拟设备故障")
+            audio.onFailure?("模拟设备故障", .deviceChange)
             check(!voice.isActive && voice.error == "模拟设备故障", "call failed")
             check(voice.snapshot.error?.conversationID == conversation.id, "error owned by conversation")
 
@@ -1890,7 +2268,7 @@ actor PendingModelTester: ConnectionTesting {
             check(voice.isActive && voice.conversationID == a.id, "voice is active on conversation A")
 
             // Simulate an error on conversation A
-            audio.onFailure?("A 会话错误")
+            audio.onFailure?("A 会话错误", .deviceChange)
             check(!voice.isActive && voice.error == "A 会话错误", "error set on voice")
             check(voice.snapshot.error?.conversationID == a.id, "error attributed to A")
 
@@ -1918,7 +2296,7 @@ actor PendingModelTester: ConnectionTesting {
             let conv = workspace.selected!
             voice.start(conversation: conv, configuration: VoiceConfiguration(), key: "test")
             await tick()
-            audio.onFailure?("主窗口可见时的错误")
+            audio.onFailure?("主窗口可见时的错误", .deviceChange)
             await tick()
             check(companion.bubbleState.notice == nil, "error is not duplicated to the companion bubble when main window is visible")
             voice.clearError()
@@ -1927,7 +2305,7 @@ actor PendingModelTester: ConnectionTesting {
             workspace.isMainWindowVisible = false
             voice.start(conversation: conv, configuration: VoiceConfiguration(), key: "test")
             await tick()
-            audio.onFailure?("主窗口隐藏时的错误")
+            audio.onFailure?("主窗口隐藏时的错误", .deviceChange)
             await tick()
             check(companion.bubbleState.notice == "主窗口隐藏时的错误" && companion.bubblePanel.isVisible, "error is presented in the companion bubble when main window is hidden")
         }

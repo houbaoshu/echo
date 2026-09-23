@@ -84,7 +84,7 @@ import SwiftUI
 }
 
 @MainActor private final class ComposerAudio: VoiceAudioHandling {
-    var onFailure: ((String) -> Void)?
+    var onFailure: ((String, VoiceAudioFailure) -> Void)?
     var inputOutputLatency: TimeInterval { 0 }
     var input: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation?
     func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {

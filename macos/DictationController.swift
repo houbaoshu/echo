@@ -54,7 +54,7 @@ import Combine
         makeLocalRecognizer = localRecognizer
         self.finalizationTimeout = finalizationTimeout; self.captureTimeout = captureTimeout
         super.init()
-        audio.onFailure = { [weak self] error in
+        audio.onFailure = { [weak self] error, _ in
             guard let self, self.isActive else { return }
             self.complete(error: error)
         }

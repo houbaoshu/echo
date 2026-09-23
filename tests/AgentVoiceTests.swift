@@ -643,7 +643,7 @@ extension VoiceTests {
             check(f.voice.snapshot.recognition == .listening && f.store.task?.runID == run,
                   "activation begins listening during the existing Agent round")
             if failure {
-                f.audio.onFailure?("测试录音故障")
+                f.audio.onFailure?("测试录音故障", .deviceChange)
                 check(!f.voice.isActive && source.cancels == 0 && f.store.isGenerating
                       && f.voice.snapshot.error?.conversationID == f.conversation.id,
                       "audio failure ends voice and reports its owner without cancelling tools")

@@ -120,9 +120,9 @@ enum VoiceCaptureWatchdog {
         self.probeTimeout = probeTimeout; self.captureTimeout = captureTimeout; self.tailProtectionDuration = tailProtectionDuration
         self.bargeInTimeout = bargeInTimeout
         super.init()
-        audio.onFailure = { [weak self] message in
+        audio.onFailure = { [weak self] message, failure in
             guard let self else { return }
-            if self.isActive { self.end(error: message, reason: .audioDevice) }
+            if self.isActive { self.end(error: message, reason: VoiceEndReason(failure)) }
             else if self.testing { self.cancelTest(); self.testResult = message }
         }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
@@ -220,7 +220,8 @@ enum VoiceCaptureWatchdog {
                 // makes this throw CancellationError or, at the latest, fail the check below.
                 VoiceDiagnostics.shared.mark("audio.start 开始（后台构建）")
                 let audioStart = ContinuousClock.now
-                let stream = try await self.audio.startInBackground(capture: true)
+                // Only the call itself follows a device switch; the preview and probes never ask to.
+                let stream = try await self.audio.startInBackground(capture: true, recoversDeviceSwitch: true)
                 VoiceDiagnostics.shared.recordSpan("audio.start", start: audioStart, duration: audioStart.duration(to: .now))
                 VoiceDiagnostics.shared.mark("audio.start 完成")
                 guard self.sessionID == call, !Task.isCancelled else { return }

@@ -265,7 +265,7 @@ extension VoiceTests {
                 check(f.store.send("用文字替换"), "text replacement is accepted during confirmation")
                 f.voice.finishSubmission()
             case "end": f.voice.end()
-            case "failure": f.audio.onFailure?("设备变化")
+            case "failure": f.audio.onFailure?("设备变化", .deviceChange)
             default:
                 f.voice.end()
                 f.voice.start(conversation: f.conversation, configuration: VoiceConfiguration(), key: "fake")

@@ -13,7 +13,7 @@ import Foundation
     func emit(_ event: TaskEvent) { callbacks.last?(event) }
 }
 @MainActor private final class CommandAudio: VoiceAudioHandling {
-    var onFailure: ((String) -> Void)?
+    var onFailure: ((String, VoiceAudioFailure) -> Void)?
     var inputOutputLatency: TimeInterval = 0
     var input: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation?
     var capturing = false
@@ -221,7 +221,7 @@ import Foundation
         check(workspace.selectedID == b.id && workspace.isMainWindowVisible, "revealVoice selects target conversation")
         check(workspace.composerFocusID == b.id && workspace.composerFocusRequest > prevFocus, "revealVoice requests composer focus")
         check(revealedID == b.id, "revealVoice invokes onRevealVoice callback")
-        audio.onFailure?("B fatal failure")
+        audio.onFailure?("B fatal failure", .deviceChange)
         check(!voice.isActive && voice.error == "B fatal failure", "B failure ends session and sets error")
         check(voice.snapshot.error?.conversationID == b.id, "error is attributed to B")
         workspace.deleteConversation(b.id)

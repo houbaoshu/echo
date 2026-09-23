@@ -124,7 +124,7 @@ enum DictationTests {
         delayed.shutdown()
         dictation.start(conversation: conversation, key: "test"); await VoiceTests.tick()
         recognizer.emit("设备断开前", final: true)
-        audio.onFailure?("输入设备已断开")
+        audio.onFailure?("输入设备已断开", .deviceChange)
         precondition(dictation.state == .failed && !audio.capturing && store.mainDraft.hasSuffix("\n设备断开前"))
         _ = store.send("commit conversation"); store.stopTask()
         dictation.start(conversation: conversation, key: "test"); await VoiceTests.tick()

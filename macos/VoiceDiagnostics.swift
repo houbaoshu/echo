@@ -13,6 +13,8 @@ enum VoiceEndReason: String, Sendable {
     case permissionDenied = "麦克风权限被拒"
     case audioStartFailed = "音频设备启动失败"
     case audioDevice = "音频设备变化/播放器故障"
+    case audioRecoveryFailed = "音频设备恢复失败"
+    case audioPlayerFailed = "音频播放器故障"
     case recognitionClosed = "ASR 连接被关闭"
     case recognitionFailed = "ASR socket/服务错误"
     case replyFailed = "模型回复失败"
@@ -23,6 +25,25 @@ enum VoiceEndReason: String, Sendable {
     case conversationDeleted = "会话被删除"
     case shutdown = "应用退出"
     case unspecified = "未标注来源"
+}
+
+/// What ended VoiceAudio's session, so a call's end reason tells the three apart.
+enum VoiceAudioFailure: Equatable, Sendable {
+    /// The policy decided against recovering from a configuration change.
+    case deviceChange
+    /// A recovery was attempted and did not bring the call back.
+    case recoveryFailed
+    case player
+}
+
+extension VoiceEndReason {
+    init(_ failure: VoiceAudioFailure) {
+        switch failure {
+        case .deviceChange: self = .audioDevice
+        case .recoveryFailed: self = .audioRecoveryFailed
+        case .player: self = .audioPlayerFailed
+        }
+    }
 }
 
 // Only locally constructed metadata belongs here. Never log keys, request headers,
