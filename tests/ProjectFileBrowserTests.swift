@@ -178,6 +178,7 @@ import AppKit
         precondition(slow.location == nil && slow.state.directories.isEmpty)
         print("PASS: file browser encodings, limits, links, permissions, lazy tree, memory navigation, filesystem watching and late-result isolation")
         try await testRefreshCommitsDirectoriesSeparately()
+        try await testRefreshCoalescesWhileScanning()
     }
 
     /// Records what each run loop turn changed, so a refresh that alters several
@@ -200,6 +201,66 @@ import AppKit
         private var value = false
         var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
         func set() { lock.lock(); value = true; lock.unlock() }
+    }
+
+    private final class RefreshReadGate: @unchecked Sendable {
+        private let condition = NSCondition()
+        private var version = 1
+        private var released = false
+        private var calls = 0
+        private var active = 0
+        private var peak = 0
+        var counts: (calls: Int, peak: Int) {
+            condition.lock(); defer { condition.unlock() }
+            return (calls, peak)
+        }
+        func setVersion(_ next: Int) {
+            condition.lock(); version = next; condition.unlock()
+        }
+        func releaseFirst() {
+            condition.lock(); released = true; condition.broadcast(); condition.unlock()
+        }
+        func read(_ path: String) -> ProjectDirectoryState {
+            condition.lock()
+            calls += 1; active += 1; peak = max(peak, active)
+            let call = calls, observed = version
+            while call == 1 && !released { condition.wait() }
+            active -= 1
+            condition.unlock()
+            let name = "version-\(observed)"
+            return .loaded([.init(path: path.isEmpty ? name : path + "/" + name, name: name, kind: .file)])
+        }
+    }
+
+    static func testRefreshCoalescesWhileScanning() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-refresh-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = WorkspaceProject(name: "coalescing", path: root.path)
+        let gate = RefreshReadGate()
+        defer { gate.releaseFirst() }
+        let browser = ProjectFileBrowserStore(readDirectory: { _, path in gate.read(path) })
+        browser.select(project: project)
+        try await wait("first refresh started") { gate.counts.calls == 1 }
+
+        gate.setVersion(2)
+        for _ in 0..<100 { browser.refresh() }
+        precondition(gate.counts.calls == 1, "Repeated refreshes must not start overlapping scans")
+        browser.select(project: nil)
+        browser.select(project: project)
+        precondition(gate.counts.calls == 1, "Returning to the same location must wait for its old scan")
+
+        gate.releaseFirst()
+        try await wait("coalesced refresh applied latest result") {
+            gate.counts.calls == 2 && browser.state.directories[""] == .loaded([
+                .init(path: "version-2", name: "version-2", kind: .file)
+            ])
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        precondition(gate.counts.calls == 2 && gate.counts.peak == 1,
+                     "The burst must produce one follow-up scan, with no concurrent scans")
+        browser.select(project: nil)
+        print("PASS: high-frequency refreshes coalesce per location and apply the latest listing")
     }
 
     /// Several directories changing in one refresh must reach the list in separate run loop

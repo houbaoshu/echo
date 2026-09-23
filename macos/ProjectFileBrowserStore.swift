@@ -49,6 +49,8 @@ enum ProjectFilePreview: Equatable, Sendable {
     private var cache: [Location: BrowsingState] = [:]
     private var generation = UUID()
     private var directoryRequests: [String: UUID] = [:]
+    private var refreshing: Set<Location> = []
+    private var pendingRefresh: Set<Location> = []
     private var previewRequest = UUID()
     private let readDirectory: @Sendable (String, String) -> ProjectDirectoryState
     private let readPreview: @Sendable (String, String) -> ProjectFilePreview
@@ -154,6 +156,11 @@ enum ProjectFilePreview: Equatable, Sendable {
     func refresh() {
         guard let location else { return }
         generation = UUID(); directoryRequests = [:]
+        guard refreshing.insert(location).inserted else {
+            pendingRefresh.insert(location)
+            return
+        }
+        if state.showingFile, let path = state.selectedPath { openFile(path, preservingContent: true) }
         let paths = Set(state.directories.keys).union(state.expanded).union([""])
         let request = UUID(), generation = generation, readDirectory = readDirectory
         for path in paths { directoryRequests[path] = request }
@@ -169,15 +176,19 @@ enum ProjectFilePreview: Equatable, Sendable {
             for (path, result) in results {
                 // A newer selection or refresh abandons everything still unapplied; a newer
                 // load of one directory only abandons that directory.
-                guard let self, self.location == location, self.generation == generation else { return }
+                guard let self, self.location == location, self.generation == generation else { break }
                 guard self.directoryRequests[path] == request else { continue }
                 self.directoryRequests[path] = nil
                 guard self.state.directories[path] != result else { continue }
                 self.state.directories[path] = result
                 await Self.commitSeparately()
             }
+            self?.finishRefresh(at: location)
         }
-        if state.showingFile, let path = state.selectedPath { openFile(path, preservingContent: true) }
+    }
+    private func finishRefresh(at location: Location) {
+        refreshing.remove(location)
+        if pendingRefresh.remove(location) != nil, self.location == location { refresh() }
     }
     /// Hands back one run loop turn, so the list applies the directory just written before
     /// the next one changes.
