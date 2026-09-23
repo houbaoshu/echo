@@ -3,17 +3,5 @@
   "displayName": "烬星",
   "description": "一颗安静漂浮、缓慢自转的深紫色熔岩星球。",
   "spriteVersionNumber": 2,
-  "spritesheetPath": "spritesheet.webp",
-  "animations": {
-    "idle": { "frames": [0, 1, 2, 3, 4, 5], "fps": 4, "loop": true },
-    "connecting": { "frames": [48, 49, 50, 51, 52, 53], "fps": 10, "loop": true },
-    "listening": {
-      "frames": [72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87],
-      "fps": 4,
-      "loop": true
-    },
-    "thinking": { "frames": [40, 41, 42, 43, 44, 45, 46, 47], "fps": 10, "loop": true },
-    "speaking": { "frames": [56, 57, 58, 59, 60, 61], "fps": 12, "loop": true },
-    "ending": { "frames": [64, 65, 66, 67, 68, 69], "fps": 8, "loop": false, "fallback": "idle" }
-  }
+  "spritesheetPath": "spritesheet.webp"
 }
