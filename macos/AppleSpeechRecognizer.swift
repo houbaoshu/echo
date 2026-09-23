@@ -142,6 +142,7 @@ import Speech
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
+        request.addsPunctuation = true
         self.request = request
         let (stream, continuation) = AsyncThrowingStream<ASRResult, Error>.makeStream(bufferingPolicy: .bufferingOldest(32))
         results = continuation
@@ -201,18 +202,22 @@ import Speech
 /// Apple on-device dictation ends phrases with speechRecognitionMetadata even
 /// when the request's isFinal is false. Only the current phrase is revisable.
 private struct AppleDictationTranscript {
-    private var phrases: [(start: TimeInterval, text: String)] = []
+    // Apple ends a phrase after roughly two seconds of silence, or cuts it mid-word
+    // at about 60 seconds of speech with a ~0.1 s gap. A 1 s gap separates the two.
+    static let sentencePause: TimeInterval = 1.0
+    private var phrases: [(start: TimeInterval, end: TimeInterval, text: String)] = []
     private var partial = ""
 
     mutating func accept(_ result: ASRResult) -> String {
         let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !text.isEmpty {
             if let segment = result.localSegment, segment.start.isFinite, segment.duration > 0 {
+                let end = segment.start + segment.duration
                 if let index = phrases.firstIndex(where: { $0.start == segment.start }) {
-                    phrases[index].text = text
+                    phrases[index].text = text; phrases[index].end = end
                     // A repeated older phrase must not erase the current hypothesis.
                 } else if phrases.last.map({ segment.start > $0.start }) ?? true {
-                    phrases.append((segment.start, text))
+                    phrases.append((segment.start, end, text))
                     partial = ""
                 }
             } else if !(result.streamFinal && partial.isEmpty && phrases.last?.text == text) {
@@ -222,6 +227,27 @@ private struct AppleDictationTranscript {
                 partial = text
             }
         }
-        return (phrases.map(\.text) + (partial.isEmpty ? [] : [partial])).joined(separator: " ")
+        // Punctuation is decided only here; stored phrases stay as recognized, so
+        // repeated callbacks and deduplication compare Apple's own text.
+        var output = phrases.first?.text ?? ""
+        for (previous, next) in zip(phrases, phrases.dropFirst()) {
+            output = Self.join(output, next.text, gap: next.start - previous.end)
+        }
+        // A partial has no timing yet; its boundary is decided once it finishes.
+        if partial.isEmpty { return output }
+        return output.isEmpty ? partial : output + " " + partial
+    }
+
+    static func join(_ previous: String, _ next: String, gap: TimeInterval) -> String {
+        guard let last = previous.last, let first = next.first else { return previous + next }
+        if gap >= sentencePause {
+            if "。！？!?…".contains(last) { return previous + next }
+            if "，；：,;:".contains(last) { return String(previous.dropLast()) + "。" + next }
+            return previous + "。" + next
+        }
+        func isHan(_ character: Character) -> Bool {
+            character.unicodeScalars.first?.properties.isIdeographic == true
+        }
+        return isHan(last) && isHan(first) ? previous + next : previous + " " + next
     }
 }

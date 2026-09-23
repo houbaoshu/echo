@@ -247,9 +247,10 @@ enum DictationTests {
                 }
                 // The old controller trace did not capture metadata. These boundaries
                 // are video annotations, not invented "raw" timestamps; the separate
-                // device fixture verifies genuine Apple metadata end to end.
+                // device fixture verifies genuine Apple metadata end to end. Spacing
+                // stands in for the recorded multi-second pauses between phrases.
                 let segment = fixture.phraseEnds.firstIndex(of: index + 1).map {
-                    ASRResult.LocalSegment(start: Double($0), duration: 0.5)
+                    ASRResult.LocalSegment(start: Double($0) * 5, duration: 0.5)
                 }
                 engine.receive?(ASRResult(result: .init(text: callback.text, utterances: nil),
                                           streamFinal: callback.streamFinal, localSegment: segment), nil)

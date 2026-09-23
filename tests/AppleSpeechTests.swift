@@ -22,6 +22,7 @@ import Speech
 enum AppleSpeechTests {
     @MainActor static func run() async throws {
         try await recordedDevicePauseRegression()
+        try await phraseBoundaryPunctuationTests()
         try await localeTests()
         try await backgroundAuthorizationTests()
         let engine = TestAppleSpeechEngine()
@@ -68,7 +69,8 @@ enum AppleSpeechTests {
         var received: [ASRResult] = []
         let recognition = Task { try await recognizer.run(key: "", audio: audio) { received.append($0) } }
         await VoiceTests.tick()
-        precondition(engine.request?.requiresOnDeviceRecognition == true && engine.request?.shouldReportPartialResults == true)
+        precondition(engine.request?.requiresOnDeviceRecognition == true && engine.request?.shouldReportPartialResults == true
+                     && engine.request?.addsPunctuation == true)
         input.yield(Data([0, 0])); input.finish()
         engine.emit("临时", final: false); await VoiceTests.tick()
         precondition(received.count == 1 && !received[0].streamFinal)
@@ -141,8 +143,8 @@ enum AppleSpeechTests {
             }
         }
         try await run.value
-        precondition(results.last?.streamFinal == true && results.last?.result?.text == "这是我的第一句话 这是我的第二句话",
-                     "Real empty request-final must preserve both finalized phrases")
+        precondition(results.last?.streamFinal == true && results.last?.result?.text == "这是我的第一句话。这是我的第二句话",
+                     "Real empty request-final must preserve both finalized phrases, split by the real 3.87 s pause")
         // Identity is acoustic, not textual: duplicate metadata is idempotent,
         // while actually repeating the same words in another phrase is retained.
         let repeated = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
@@ -156,8 +158,57 @@ enum AppleSpeechTests {
         }
         repeatInput.finish(); engine.emit("再说一次", final: true)
         try await repeatRun.value
-        precondition(results.last?.result?.text == "再说一次 再说一次", "Only distinct speech segments append")
+        precondition(results.last?.result?.text == "再说一次。再说一次", "Only distinct speech segments append")
         print("PASS: Raw device callback replay preserves phrase boundaries and empty terminal result")
+    }
+
+    /// Replays phrase callbacks, then an empty request-final; returns every delivered text.
+    @MainActor private static func replay(_ callbacks: [(text: String, start: Double?, duration: Double)]) async throws -> [String] {
+        let engine = TestAppleSpeechEngine()
+        let recognizer = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+        let (audio, input) = AsyncThrowingStream<Data, Error>.makeStream()
+        var texts: [String] = []
+        let run = Task { try await recognizer.run(key: "", audio: audio) { texts.append($0.result?.text ?? "") } }
+        await VoiceTests.tick()
+        for callback in callbacks {
+            engine.receive?(ASRResult(result: .init(text: callback.text, utterances: nil),
+                localSegment: callback.start.map { .init(start: $0, duration: callback.duration) }), nil)
+            await VoiceTests.tick()
+        }
+        input.finish(); engine.emit("", final: true)
+        try await run.value
+        return texts
+    }
+
+    // Gaps mirror the device probe: natural phrase ends at 2-4 s of silence,
+    // Apple's forced ~60 s cut at 0.12 s mid-word.
+    @MainActor private static func phraseBoundaryPunctuationTests() async throws {
+        let cases: [(callbacks: [(text: String, start: Double?, duration: Double)], expected: String, reason: String)] = [
+            ([("第一句话", 0, 1.6), ("第二句话", 3.6, 1.6)], "第一句话。第二句话", "A long pause ends the sentence"),
+            ([("你吃饭了吗？", 0, 1.5), ("吃过了", 4.5, 1)], "你吃饭了吗？吃过了", "Existing terminal punctuation is not repeated"),
+            ([("我想说，", 0, 1), ("第二句", 3, 1)], "我想说。第二句", "A trailing comma becomes a full stop"),
+            ([("我们继续往下说不要停", 0, 59.94), ("顿这是", 60.06, 1)], "我们继续往下说不要停顿这是",
+             "A forced mid-word cut joins Han characters without a space"),
+            ([("we keep going", 0, 59.9), ("on and on", 60.02, 1)], "we keep going on and on",
+             "A forced cut between English words keeps the space"),
+            ([("不要停", 0, 59.9), ("OK", 60.02, 1)], "不要停 OK", "A forced cut between Han and Latin keeps the space")
+        ]
+        for (callbacks, expected, reason) in cases {
+            let texts = try await replay(callbacks)
+            precondition(texts.last == expected, "\(reason): \(texts.last ?? "<none>")")
+        }
+
+        let revised = try await replay([("你吃饭了吗", 0, 1.5), ("好的", 4, 1), ("你吃饭了吗？", 0, 1.6),
+                                        ("不要停", 10, 1), ("顿", 13, 1), ("不要停", 10, 2.9)])
+        precondition(revised[1] == "你吃饭了吗。好的" && revised[2] == "你吃饭了吗？好的",
+                     "A repeated phrase that gains a question mark rebuilds without a duplicate: \(revised)")
+        precondition(revised[4] == "你吃饭了吗？好的。不要停。顿" && revised.last == "你吃饭了吗？好的。不要停顿",
+                     "A repeated phrase updates its end, and with it the gap: \(revised)")
+
+        let partial = try await replay([("第一句话", 0, 1.6), ("第二", nil, 0), ("第二句话", 3.6, 1.6)])
+        precondition(partial[1] == "第一句话 第二" && partial.last == "第一句话。第二句话",
+                     "The untimed partial boundary keeps its space until the phrase finishes: \(partial)")
+        print("PASS: Apple phrase boundaries punctuate long pauses only, never duplicating or splitting words")
     }
 
     @MainActor private static func backgroundAuthorizationTests() async throws {
