@@ -111,6 +111,26 @@ import Combine
         }
         print("PASS: missing/corrupt history survives saves and restarts, then recovers and continues")
     }
+    static func testInitialSaveFailureKeepsDraft(temp: URL, factory: @escaping () -> AgentTaskSource) {
+        let persistence = WorkspacePersistence(url: temp.appendingPathComponent("initial-save-failure/workspace.json"))
+        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+        let chat = workspace.selected!
+        chat.store.mainDraft = "prompt to keep"
+        chat.store.checkpoint = { _ in throw CocoaError(.fileWriteNoPermission) }
+
+        precondition(!workspace.sendMainMessage(conversationID: chat.id),
+                     "A failed initial Agent checkpoint must reject the send")
+        precondition(chat.store.mainDraft == "prompt to keep"
+                     && chat.store.task?.status == .failed
+                     && chat.store.notice?.contains("保存失败") == true,
+                     "A rejected send must leave the draft available for recovery")
+        workspace.shutdown()
+        let restored = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+        precondition(restored.conversation(id: chat.id)?.store.mainDraft == "prompt to keep",
+                     "The draft must survive reopening after an initial Agent save failure")
+        restored.shutdown()
+        print("PASS: failed initial Agent save rejects send and preserves draft through restart")
+    }
     static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("echo-session-\(UUID())")
@@ -151,6 +171,7 @@ import Combine
         var protocolName = "chat_completions"
         let factory = { AgentTaskSource(model: AgentModel(base_url: "http://127.0.0.1:\(port)", model: "fixture", protocol: AgentModel.ProtocolName(rawValue: protocolName)!),
                                         resources: temp.appendingPathComponent("resources")) }
+        testInitialSaveFailureKeepsDraft(temp: temp, factory: factory)
         try await testHistoryReadRecovery(temp: temp, factory: factory)
         let persistence = WorkspacePersistence(url: temp.appendingPathComponent("workspace.json"))
         let workspace = WorkspaceStore(persistence: persistence, sourceFactory: factory)

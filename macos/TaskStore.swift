@@ -422,7 +422,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     @discardableResult func retry() -> Bool {
         guard !retired, canRetry else { return false }
-        if usesAgent { beginAgent(text: nil); return true }
+        if usesAgent { return beginAgent(text: nil) }
         source?.cancel()
         task?.runID = UUID(); task?.status = .running; task?.summary = "正在等待模型回复…"
         responseMessageID = messages.last?.id
@@ -515,16 +515,16 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                 failAgent(error.localizedDescription); return false
             }
         }
-        beginAgent(text: text); return true
+        return beginAgent(text: text)
     }
 
-    private func beginAgent(text: String?) {
-        guard let agent else { return }
+    private func beginAgent(text: String?) -> Bool {
+        guard let agent else { return false }
         let prior = requestMessages
         let source: AgentHistoryInput
         if let agentHistory {
             guard let history = String(data: agentHistory, encoding: .utf8) else {
-                failAgent("Agent 历史格式无效。"); return
+                failAgent("Agent 历史格式无效。"); return true
             }
             source = AgentHistoryInput(type: .v1, history: history)
         } else {
@@ -543,7 +543,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         task?.runID = UUID(); task?.status = .running; task?.summary = "正在请求模型…"
         let input = text.map { appendInput($0) }
         activityDismissed = false; onUserAction?(); lifecycle.send(.started(task!.runID))
-        guard saveAgent() else { task?.status = .failed; return }
+        guard saveAgent() else { task?.status = .failed; return false }
         do {
             agent.observeStream { [weak self] stream in
                 guard let self, !self.retired, self.agentGeneration == generation,
@@ -560,6 +560,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                 })
             try agent.control(input.map { .sendMessage($0) } ?? .continue)
         } catch { failAgent(error.localizedDescription) }
+        return true
     }
 
     @discardableResult private func saveAgent(checkpointID: AgentCheckpointID? = nil) -> Bool {
