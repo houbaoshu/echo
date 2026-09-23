@@ -627,6 +627,31 @@ extension VoiceTests {
     }
 
     @MainActor private static func agentVoiceStartupAndFailureTests() async throws {
+        do {
+            let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
+            var allowed: CheckedContinuation<Bool, Never>?
+            f.permission = { await withCheckedContinuation { allowed = $0 } }
+            defer { allowed?.resume(returning: false); f.shutdown() }
+            _ = f.conversation
+            check(f.store.send("通话前开始的任务"), "the Agent run starts before Live Voice")
+            let run = f.store.task!.runID
+            await f.start()
+            check(allowed != nil && f.voice.snapshot.session == .starting(f.voice.snapshot.session.owner!),
+                  "the call waits for microphone permission while the Agent runs")
+
+            source.complete("启动期间完成的最终回复")
+            await tick()
+            check(f.store.task?.status == .completed && f.synths.isEmpty,
+                  "a final received during startup waits for audio activation")
+            allowed?.resume(returning: true); allowed = nil
+            try await waitForAgentVoice("startup final is spoken") {
+                f.synths.first?.chunks == ["启动期间完成的最终回复"]
+            }
+            f.store.lifecycle.send(.reply(run, .completed("启动期间完成的最终回复")))
+            await tick()
+            check(f.synths.count == 1,
+                  "the deferred final is spoken once after activation")
+        }
         for failure in [false, true] {
             let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
             var allowed: CheckedContinuation<Bool, Never>?

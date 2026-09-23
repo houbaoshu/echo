@@ -86,6 +86,7 @@ enum VoiceCaptureWatchdog {
     private var observation: AnyCancellable?
     private var taskObservation: AnyCancellable?
     private var handledFinalRunID: UUID?
+    private var pendingAgentFinal: (runID: UUID, text: String)?
     private var submissionHadAudio = false
     // The legacy TaskSource adapter has no steering API. Production sessions use AgentSessionSource.
     private var usesAgent: Bool { store?.usesAgent == true }
@@ -191,6 +192,7 @@ enum VoiceCaptureWatchdog {
         textOnlyRunID = !usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
         runID = usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
         handledFinalRunID = nil
+        pendingAgentFinal = nil
         delta = VoiceTextDelta()
         playedAudioForCurrentRun = false
         receivedCapturePacket = false
@@ -235,6 +237,10 @@ enum VoiceCaptureWatchdog {
                     self.updateSnapshot { $0.recognition = .off(.stopping) }
                     self.audio.resetCapture(epoch: self.inputEpoch, paused: true)
                 } else { self.beginRecognition() }
+                if let final = self.pendingAgentFinal {
+                    self.pendingAgentFinal = nil
+                    self.handleAgent(.reply(final.runID, .completed(final.text)))
+                }
                 self.captureTask = Task { [weak self] in
                     // Set only by the audioInput overflow below, which throws the same SettingsError
                     // other capture failures do; the flag is what tells the two apart in the log.
@@ -513,15 +519,19 @@ enum VoiceCaptureWatchdog {
     private func handleAgent(_ event: TaskLifecycleEvent) {
         switch event {
         case .started(let id):
-            interruptReply(); runID = id; handledFinalRunID = nil
+            interruptReply(); runID = id; handledFinalRunID = nil; pendingAgentFinal = nil
             delta = VoiceTextDelta(); playedAudioForCurrentRun = false
             resumeAgentListening()
         case .reply(let id, let reply):
             guard runID == id else { return }
             switch reply {
             case .progress: break // Assistant explanations and tool output never enter TTS.
-            case .completed:
+            case .completed(let text):
                 guard handledFinalRunID != id else { return }
+                if case .starting = snapshot.session {
+                    pendingAgentFinal = (id, text)
+                    return
+                }
                 handledFinalRunID = id
                 // A user already speaking owns the input; do not cut their utterance
                 // off to play a final that arrived before their follow-up was committed.
@@ -535,6 +545,7 @@ enum VoiceCaptureWatchdog {
             }
         case .stopped(let id):
             guard store?.task?.runID == id else { return }
+            if pendingAgentFinal?.runID == id { pendingAgentFinal = nil }
             let hadAudio = playedAudioForCurrentRun
             interruptReply()
             scheduleListeningRecovery(runID: nil, playedAudio: hadAudio)
@@ -758,7 +769,7 @@ enum VoiceCaptureWatchdog {
         audio.stop()
         inputEpoch += 1; audio.resetCapture(epoch: inputEpoch, paused: true)
         store = nil; key = ""
-        textOnlyRunID = nil; handledFinalRunID = nil; submitting = false; submissionHadAudio = false
+        textOnlyRunID = nil; handledFinalRunID = nil; pendingAgentFinal = nil; submitting = false; submissionHadAudio = false
         spoken = nil
         let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0) } ?? snapshot.error
         if let owner, endingAnimationDuration > .zero {
