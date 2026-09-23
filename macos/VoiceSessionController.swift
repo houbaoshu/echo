@@ -103,7 +103,7 @@ import Combine
         super.init()
         audio.onFailure = { [weak self] message in
             guard let self else { return }
-            if self.isActive { self.end(error: message) }
+            if self.isActive { self.end(error: message, reason: .audioDevice) }
             else if self.testing { self.cancelTest(); self.testResult = message }
         }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
@@ -112,7 +112,7 @@ import Combine
         self.workspace = workspace; self.settings = settings
         dictationObservation = workspace.dictation.$state.sink { [weak self] in self?.isDictating = $0.isActive }
     }
-    @objc private func willSleep() { end(); cancelTest() }
+    @objc private func willSleep() { end(reason: .systemSleep); cancelTest() }
 
     func updateSnapshot(_ update: (inout VoiceSessionSnapshot) -> Void) {
         var next = snapshot
@@ -123,18 +123,26 @@ import Combine
         updateSnapshot { $0.error = .init(conversationID: conversationID, message: message) }
     }
 
-    @discardableResult func activate(conversation: WorkspaceConversation?) -> Bool {
+    /// `entry` only labels the diagnostics timeline; it does not change how the call starts.
+    @discardableResult func activate(conversation: WorkspaceConversation?, entry: String = "未标注入口") -> Bool {
         guard snapshot.session.owner == nil else { return false }
+        VoiceDiagnostics.shared.beginTimeline(entry)
         guard let conversation, let settings else {
+            VoiceDiagnostics.shared.cancelTimeline()
             reportError("无法开始语音：缺少会话或设置。", conversationID: conversation?.id)
             VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", error!)
             return false
         }
         do {
-            _ = try settings.savedModelCredentials()
-            let credentials = try settings.savedVoiceCredentials()
-            return start(conversation: conversation, configuration: credentials.configuration, key: credentials.key)
+            let credentials = try VoiceDiagnostics.shared.measure("读取凭据 Keychain") {
+                _ = try settings.savedModelCredentials()
+                return try settings.savedVoiceCredentials()
+            }
+            let started = start(conversation: conversation, configuration: credentials.configuration, key: credentials.key)
+            if !started { VoiceDiagnostics.shared.cancelTimeline() }
+            return started
         } catch {
+            VoiceDiagnostics.shared.cancelTimeline()
             reportError(error.localizedDescription, conversationID: conversation.id)
             VoiceDiagnostics.shared.record("1 API Key", "FAIL", VoiceDiagnostics.reason(error))
             return false
@@ -148,9 +156,16 @@ import Combine
             return false
         }
         cancelTest()
+        // Tests call start() directly; the app always arrives through activate(), which opened it.
+        if !VoiceDiagnostics.shared.isTimelineOpen { VoiceDiagnostics.shared.beginTimeline("start()") }
+        VoiceDiagnostics.shared.mark("start() 进入")
         sessionID = UUID(); let call = sessionID
         self.configuration = configuration; self.key = key; store = conversation.store
-        snapshot = VoiceSessionSnapshot(session: .starting(.init(sessionID: call, conversationID: conversation.id)))
+        // Every $snapshot subscriber runs synchronously inside this assignment, PlanetStore's
+        // sprite load included, so this span is what those subscribers cost the start.
+        VoiceDiagnostics.shared.measure("snapshot=.starting（含同步订阅者）") {
+            snapshot = VoiceSessionSnapshot(session: .starting(.init(sessionID: call, conversationID: conversation.id)))
+        }
         spoken = nil
         textOnlyRunID = !usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
         runID = usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
@@ -174,13 +189,22 @@ import Combine
         }
         startup = Task { [weak self] in
             guard let self, self.sessionID == call, !Task.isCancelled else { return }
+            VoiceDiagnostics.shared.mark("startup Task 开始，请求麦克风权限")
             VoiceDiagnostics.shared.record("4 音频输入", "START", "检查麦克风权限")
             let allowed = await self.permission()
+            VoiceDiagnostics.shared.mark("麦克风权限返回")
             VoiceDiagnostics.shared.record("4 音频输入", allowed ? "PASS" : "FAIL", allowed ? "麦克风权限已允许" : "麦克风权限被拒绝")
             guard self.sessionID == call, !Task.isCancelled else { return }
-            guard allowed else { self.end(error: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。"); return }
+            guard allowed else { self.end(error: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。", reason: .permissionDenied); return }
             do {
-                let stream = try self.audio.start(capture: true)
+                // The engine is built off the main actor; the call can be ended meanwhile, which
+                // makes this throw CancellationError or, at the latest, fail the check below.
+                VoiceDiagnostics.shared.mark("audio.start 开始（后台构建）")
+                let audioStart = ContinuousClock.now
+                let stream = try await self.audio.startInBackground(capture: true)
+                VoiceDiagnostics.shared.recordSpan("audio.start", start: audioStart, duration: audioStart.duration(to: .now))
+                VoiceDiagnostics.shared.mark("audio.start 完成")
+                guard self.sessionID == call, !Task.isCancelled else { return }
                 self.updateSnapshot { $0.session = .active(.init(sessionID: call, conversationID: conversation.id)) }
                 if self.textOnlyRunID != nil {
                     self.updateSnapshot { $0.recognition = .off(.currentReply) }
@@ -190,6 +214,9 @@ import Combine
                     self.audio.resetCapture(epoch: self.inputEpoch, paused: true)
                 } else { self.beginRecognition() }
                 self.captureTask = Task { [weak self] in
+                    // Set only by the audioInput overflow below, which throws the same SettingsError
+                    // other capture failures do; the flag is what tells the two apart in the log.
+                    var uploadBacklog = false
                     do {
                         for try await packet in stream {
                             guard let self, self.sessionID == call, !Task.isCancelled else { return }
@@ -199,25 +226,31 @@ import Combine
                             }
                             if !self.receivedCapturePacket {
                                 self.receivedCapturePacket = true
+                                VoiceDiagnostics.shared.mark("麦克风首包")
                                 self.captureWatchdog?.cancel(); self.captureWatchdog = nil
                                 VoiceDiagnostics.shared.record("4 音频输入", "PASS", "麦克风首包 bytes=\(packet.data.count)，PCM16 / 16000 Hz / 单声道")
                             }
                             if self.bargeInGate != nil {
                                 self.inspectBargeIn(packet.data)
                             } else if case .dropped = self.audioInput?.yield(packet.data) {
+                                uploadBacklog = true
                                 throw SettingsError("语音上传过慢，通话已结束，请检查网络。")
                             }
                         }
                         guard let self, self.sessionID == call, !Task.isCancelled else { return }
-                        self.end(error: "录音已中断，请重新开始通话。")
+                        self.end(error: "录音已中断，请重新开始通话。", reason: .captureEnded)
                     } catch {
                         guard let self, self.sessionID == call, !Task.isCancelled else { return }
                         if error is CancellationError { return }
-                        self.end(error: error is SettingsError ? error.localizedDescription : "录音失败，请检查麦克风。")
+                        self.end(error: error is SettingsError ? error.localizedDescription : "录音失败，请检查麦克风。",
+                                 reason: uploadBacklog ? .uploadBacklog : .captureFailed)
                     }
                 }
-            } catch { if self.sessionID == call { self.end(error: "无法启动音频设备：\(error.localizedDescription)") } }
+            } catch is CancellationError {
+                return
+            } catch { if self.sessionID == call { self.end(error: "无法启动音频设备：\(error.localizedDescription)", reason: .audioStartFailed) } }
         }
+        VoiceDiagnostics.shared.mark("start() 返回")
         return true
     }
     private func beginRecognition(preRoll: Data? = nil) {
@@ -233,23 +266,26 @@ import Combine
         if let preRoll { input.yield(preRoll) }
         let client = makeRecognizer(); recognizer = client
         updateSnapshot { $0.recognition = .connecting }
+        VoiceDiagnostics.shared.mark("ASR 开始连接")
         recognitionTask = Task { [weak self] in
             guard let self else { return }
             guard self.sessionID == call, self.recognitionID == recognition, !Task.isCancelled else { return }
             do {
                 try await client.run(key: self.key, audio: stream, onReady: { [weak self] in
                     guard let self, self.sessionID == call, self.recognitionID == recognition, !self.isMuted else { return }
+                    VoiceDiagnostics.shared.mark("ASR 就绪 → listening")
                     self.updateSnapshot { $0.recognition = .listening }
                 }, receive: { [weak self] result in
                     guard let self, self.sessionID == call, self.recognitionID == recognition, !self.isMuted else { return }
                     self.accept(result)
                 })
                 guard self.sessionID == call, self.recognitionID == recognition, !Task.isCancelled else { return }
-                self.end(error: "语音识别连接已结束，请重新开始通话。")
+                self.end(error: "语音识别连接已结束，请重新开始通话。", reason: .recognitionClosed)
             } catch {
                 guard self.sessionID == call, self.recognitionID == recognition, !Task.isCancelled else { return }
                 if error is CancellationError { return }
-                self.end(error: error is SettingsError ? error.localizedDescription : "语音识别失败，请检查网络和套餐。")
+                self.end(error: error is SettingsError ? error.localizedDescription : "语音识别失败，请检查网络和套餐。",
+                         reason: .recognitionFailed)
             }
         }
     }
@@ -261,7 +297,7 @@ import Combine
             do { try await Task.sleep(for: captureTimeout) } catch { return }
             guard let self, self.sessionID == call, self.inputEpoch == epoch, !Task.isCancelled else { return }
             VoiceDiagnostics.shared.record("4 音频输入", "FAIL", "采集已启用但等待 PCM 首包超时；检查输入设备")
-            self.end(error: "麦克风启动后没有返回音频，请检查输入设备。")
+            self.end(error: "麦克风启动后没有返回音频，请检查输入设备。", reason: .firstPacketTimeout)
         }
     }
     private func stopRecognition(reason: VoiceSessionSnapshot.Recognition.OffReason) {
@@ -407,7 +443,7 @@ import Combine
                 case .completed:
                     textOnlyRunID = nil
                     scheduleListeningRecovery(runID: nil, playedAudio: false)
-                case .failed(let message): end(error: message)
+                case .failed(let message): end(error: message, reason: .replyFailed)
                 }
                 return
             }
@@ -419,7 +455,7 @@ import Combine
                 if synthesizer == nil && synthesisTask == nil {
                     scheduleListeningRecovery(runID: id, playedAudio: false)
                 }
-            case .failed(let message): end(error: message)
+            case .failed(let message): end(error: message, reason: .replyFailed)
             }
         case .stopped(let id):
             if textOnlyRunID == id {
@@ -431,7 +467,7 @@ import Combine
                 interruptReply()
                 scheduleListeningRecovery(runID: nil, playedAudio: hadPlayedAudio)
             }
-        case .retired: end()
+        case .retired: end(reason: .retired)
         }
     }
     private func handleAgent(_ event: TaskLifecycleEvent) {
@@ -455,14 +491,14 @@ import Combine
                 cancelRecovery()
                 stopRecognition(reason: .currentReply)
                 feed(message.content); textInput?.finish()
-            case .failed(let message): end(error: message)
+            case .failed(let message): end(error: message, reason: .replyFailed)
             }
         case .stopped(let id):
             guard store?.task?.runID == id else { return }
             let hadAudio = playedAudioForCurrentRun
             interruptReply()
             scheduleListeningRecovery(runID: nil, playedAudio: hadAudio)
-        case .retired: end()
+        case .retired: end(reason: .retired)
         }
     }
     private func resumeAgentListening() {
@@ -478,7 +514,7 @@ import Combine
             guard !addition.isEmpty else { return }
             if textInput == nil { beginSynthesis() }
             if case .dropped = textInput?.yield(addition) { throw SettingsError("语音合成文本积压过多，请稍后重新开始通话。") }
-        } catch { end(error: error.localizedDescription) }
+        } catch { end(error: error.localizedDescription, reason: .synthesisInput) }
     }
     private func beginSynthesis() {
         guard let runID else { return }
@@ -525,7 +561,8 @@ import Combine
             } catch {
                 guard self.sessionID == call, self.turnID == turn, !Task.isCancelled else { return }
                 if error is CancellationError { return }
-                self.end(error: error is SettingsError ? error.localizedDescription : "语音播放失败，请检查网络与设备。")
+                self.end(error: error is SettingsError ? error.localizedDescription : "语音播放失败，请检查网络与设备。",
+                         reason: .playbackFailed)
             }
         }
     }
@@ -659,10 +696,13 @@ import Combine
         store?.stopTask()
         scheduleListeningRecovery(runID: nil, playedAudio: hadPlayedAudio)
     }
-    func end(error: String? = nil) {
+    /// `reason` and `origin` are diagnostics only: which path ended the call, and for a user
+    /// end, which control's call site asked for it.
+    func end(error: String? = nil, reason: VoiceEndReason = .unspecified, origin: String? = nil) {
         if case .ending = snapshot.session { return }
         if let error { VoiceDiagnostics.shared.record("通话", "FAIL", error) }
         let owner = snapshot.session.owner
+        if owner != nil { recordTermination(reason, origin: origin, error: error) }
         if let owner {
             updateSnapshot {
                 $0.session = .ending(owner)
@@ -682,6 +722,26 @@ import Combine
         spoken = nil
         let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0) } ?? snapshot.error
         snapshot = VoiceSessionSnapshot(error: failure)
+    }
+    /// The state the call was in when it ended. For a user end, `indicator` names the control the
+    /// pet strip was drawing in the end slot: `connecting` is the cancel dot, anything else the planet.
+    private func recordTermination(_ reason: VoiceEndReason, origin: String?, error: String?) {
+        let phase: String
+        switch snapshot.session {
+        case .inactive: phase = "inactive"
+        case .starting: phase = "starting"
+        case .active: phase = "active"
+        case .ending: phase = "ending"
+        }
+        // Enum descriptions carry the module path and run IDs; only the case names matter here.
+        func compact(_ value: Any) -> String {
+            "\(value)".replacingOccurrences(of: #"[\w.]*\.(?=\w+\)?$)|\([0-9A-F-]{36}\)"#, with: "", options: .regularExpression)
+        }
+        var detail = "phase=\(phase) indicator=\(PetSurfacePresentation.indicator(for: snapshot))"
+        detail += " recognition=\(compact(snapshot.recognition)) replyAudio=\(compact(snapshot.replyAudio))"
+        detail += " 首包=\(receivedCapturePacket ? "已收到" : "未收到") error=\(error == nil ? "无" : "有")"
+        if let origin { detail += " origin=\(origin)" }
+        VoiceDiagnostics.shared.endTimeline(reason, detail: detail)
     }
     func cancelTest() {
         probeID = UUID(); probe?.cancel(); probe = nil
@@ -747,7 +807,7 @@ import Combine
         }
     }
     func shutdown() {
-        end()
+        end(reason: .shutdown)
         cancelTest()
         dictationObservation?.cancel()
         dictationObservation = nil

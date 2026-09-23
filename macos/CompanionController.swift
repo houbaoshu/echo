@@ -161,6 +161,8 @@ import Combine
     private func setPetHidden(forVoicePlanet hidden: Bool) {
         guard hidden != petHiddenForVoicePlanet else { return }
         petHiddenForVoicePlanet = hidden
+        VoiceDiagnostics.shared.planetStripHidden = hidden
+        VoiceDiagnostics.shared.mark(hidden ? "桌宠与控制条隐藏（主窗口显示星球）" : "桌宠与控制条恢复显示")
         petPanel.setPaused(hidden)
         if hidden {
             petPanel.orderOut(nil)

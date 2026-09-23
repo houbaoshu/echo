@@ -41,6 +41,23 @@ actor PendingModelTester: ConnectionTesting {
         input = continuation
         return stream
     }
+    /// When set, background starts wait in `heldStarts` until `releaseStarts()`, like a slow
+    /// engine build; unset, they return at once. A stop() meanwhile cancels them, as VoiceAudio does.
+    var holdsStarts = false
+    private var heldStarts: [CheckedContinuation<Void, Never>] = []
+    private var stopCalls = 0
+    var pendingStarts: Int { heldStarts.count }
+    func startInBackground(capture: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+        stop()
+        let stops = stopCalls
+        if holdsStarts { await withCheckedContinuation { heldStarts.append($0) } }
+        guard stopCalls == stops else { throw CancellationError() }
+        return try start(capture: capture)
+    }
+    func releaseStarts() {
+        let held = heldStarts; heldStarts = []
+        for start in held { start.resume() }
+    }
     func resetCapture(epoch: Int, paused: Bool) {
         captureEpoch = epoch
         capturePaused = paused
@@ -56,7 +73,7 @@ actor PendingModelTester: ConnectionTesting {
     }
     func drain() async throws { await onDrain?() }
     func interruptPlayback() { stops += 1; playbackPaused = false; playbackFrames = 0 }
-    func stop() { capturing = false; playbackPaused = false; monitoring = false; playbackFrames = 0; input?.finish(); input = nil }
+    func stop() { stopCalls += 1; capturing = false; playbackPaused = false; monitoring = false; playbackFrames = 0; input?.finish(); input = nil }
 }
 @MainActor final class FakeRecognizer: VoiceRecognizing {
     var callback: (@MainActor (ASRResult) -> Void)?
@@ -193,6 +210,8 @@ actor PendingModelTester: ConnectionTesting {
         try await settingsPageRevisitKeepsSuccessTests()
         try await captureDiagnosticsTests()
         try await configurationChangeTests()
+        try await backgroundAudioStartTests()
+        try await voiceAudioHandoverTests()
         try await AppleSpeechTests.run()
         try await DictationTests.run()
         try await agentVoiceTests()
@@ -513,6 +532,110 @@ actor PendingModelTester: ConnectionTesting {
             return false
         }, "observers never see mute paired with listening during the mute transition")
     }
+    @MainActor static func backgroundAudioStartTests() async throws {
+        func phase(_ voice: VoiceSessionController) -> String {
+            switch voice.snapshot.session {
+            case .inactive: "inactive"
+            case .starting: "starting"
+            case .active: "active"
+            case .ending: "ending"
+            }
+        }
+        do {
+            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            audio.holdsStarts = true
+            var recognizers = 0
+            let voice = VoiceSessionController(audio: audio, recognizer: { recognizers += 1; return FakeRecognizer() },
+                                               synthesizer: { FakeSynthesizer() }, permission: { true })
+            let conversation = WorkspaceConversation(store: store)
+            defer { voice.shutdown(); store.shutdown() }
+            voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
+            await waitUntil { audio.pendingStarts == 1 }
+            var ranMeanwhile = false
+            await Task { @MainActor in ranMeanwhile = true }.value
+            check(audio.pendingStarts == 1 && ranMeanwhile && phase(voice) == "starting",
+                  "while the engine is being built the main actor keeps running and the call stays starting")
+
+            voice.end(reason: .user)
+            let reason = VoiceDiagnostics.shared.lines.last { $0.contains("[通话结束] REASON") }
+            check(phase(voice) == "inactive" && reason?.contains("用户结束 phase=starting") == true,
+                  "ending during the build takes effect at once and logs a user end from starting")
+            audio.releaseStarts()
+            await tick()
+            check(phase(voice) == "inactive" && recognizers == 0 && !audio.capturing,
+                  "a build that finishes after the end never activates the call or opens recognition")
+        }
+        do {
+            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            audio.holdsStarts = true
+            var recognizers = 0
+            let voice = VoiceSessionController(audio: audio, recognizer: { recognizers += 1; return FakeRecognizer() },
+                                               synthesizer: { FakeSynthesizer() }, permission: { true })
+            let conversation = WorkspaceConversation(store: store)
+            defer { voice.shutdown(); store.shutdown() }
+            voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
+            await waitUntil { audio.pendingStarts == 1 }
+            voice.end(reason: .user)
+            check(voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test"),
+                  "a new call can start while the previous one's build is still running")
+            await waitUntil { audio.pendingStarts == 2 }
+            audio.releaseStarts()
+            await waitUntil { phase(voice) == "active" }
+            check(phase(voice) == "active" && recognizers == 1 && audio.capturing,
+                  "only the second call activates when both builds finish")
+        }
+    }
+
+    /// VoiceAudio's handover with an injected build, so no audio hardware is touched.
+    @MainActor static func voiceAudioHandoverTests() async throws {
+        final class Gate: @unchecked Sendable {
+            let release = DispatchSemaphore(value: 0)
+            private let lock = NSLock()
+            private var request: VoiceAudioBuildRequest?
+            var entered: Bool { lock.withLock { request != nil } }
+            var continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation? { lock.withLock { request?.continuation } }
+            func enter(_ request: VoiceAudioBuildRequest) { lock.withLock { self.request = request } }
+        }
+        func unstartedGraph() -> VoiceAudioGraph {
+            let graph = VoiceAudioGraph()
+            graph.engine.attach(graph.player)
+            return graph
+        }
+        do {
+            let gate = Gate(), graph = unstartedGraph()
+            let audio = VoiceAudio(build: { request in
+                gate.enter(request)
+                gate.release.wait()
+                return graph
+            })
+            let start = Task { @MainActor in try await audio.startInBackground(capture: true) }
+            await waitUntil { gate.entered }
+            check(gate.entered, "the build runs off the main actor while the main actor keeps going")
+            audio.stop()
+            gate.release.signal()
+            var cancelled = false
+            do { _ = try await start.value } catch is CancellationError { cancelled = true }
+            check(cancelled, "stop() during the build makes the background start throw CancellationError")
+            await waitUntil { graph.isTornDown }
+            check(graph.isTornDown, "the superseded graph is torn down instead of being handed over")
+            var terminated = false
+            if case .terminated = gate.continuation?.yield(VoiceCapturePacket(data: Data([0, 0]), epoch: 1)) { terminated = true }
+            check(terminated, "the superseded start's capture stream is finished")
+        }
+        for changed in [true, false] {
+            let graph = unstartedGraph()
+            if changed { graph.markChanged() }
+            var handled: [ObjectIdentifier] = []
+            let audio = VoiceAudio(build: { _ in graph }, onConfigurationChange: { handled.append(ObjectIdentifier($0)) })
+            _ = try await audio.startInBackground(capture: true)
+            check(handled == (changed ? [ObjectIdentifier(graph.engine)] : []),
+                  changed ? "a configuration change during the build is handled once the graph is handed over"
+                          : "a quiet build triggers no configuration handling at handover")
+            check(!graph.isTornDown, "an adopted graph belongs to VoiceAudio, not the setup queue")
+            audio.stop()
+        }
+    }
+
     @MainActor static func captureWatchdogPauseTests() async throws {
         // Both starting during a reply and pausing before the first PCM packet
         // must keep an intentional capture pause out of the startup timeout.

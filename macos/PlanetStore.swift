@@ -103,7 +103,9 @@ struct PlanetEntry: Identifiable {
         do {
             // Build before persisting, the way the pet catalog does: a planet that cannot load
             // must not become the saved choice. Nothing is built while Live Voice is idle.
-            let next = active == nil ? nil : try makeStore(at: directory)
+            let next = active == nil ? nil : try VoiceDiagnostics.shared.measure("PlanetStore.select 通话中换星球", id) {
+                try makeStore(at: directory)
+            }
             do { try settings?.selectPlanet(id) } catch { next?.stop(); throw error }
             selectedID = id
             notice = nil
@@ -141,13 +143,18 @@ struct PlanetEntry: Identifiable {
         if let active { return active }
         guard let directory = resolvedDirectory() else { return nil }
         do {
-            let store = try makeStore(at: directory)
+            // Covers what the call waits for when a planet loads: the sprite, then its first frame.
+            let store = try VoiceDiagnostics.shared.measure("PlanetStore.load", directory.lastPathComponent) {
+                try makeStore(at: directory)
+            }
             active = store
             available = animationNames(at: directory)
             playing = nil
             store.start()
             return store
         } catch {
+            // Every later voice state change retries the load; one line per retry shows if that happens.
+            VoiceDiagnostics.shared.mark("PlanetStore.load 失败，下一次状态变化会重试")
             notice = "星球素材无法加载：\(error.localizedDescription)"
             return nil
         }

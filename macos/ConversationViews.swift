@@ -899,7 +899,7 @@ struct ConversationView: View {
         case .sendRecording: dictation.finishRecording(thenSend: sendText)
         case .endVoice:
             guard let owner = voiceOwner else { return }
-            if let workspace { workspace.endVoice(owner: owner) } else { voice.end() }
+            if let workspace { workspace.endVoice(owner: owner) } else { voice.end(reason: .user, origin: "\(#fileID):\(#line)") }
         }
     }
 

@@ -348,7 +348,7 @@ struct WorkspaceSnapshot: Codable {
         target.lastUsed = Date()
         // A failed start reports against this conversation, so the draft stays for the error to
         // hang on — and, being empty, it is what the next attempt reuses.
-        guard voice.activate(conversation: target) else { return false }
+        guard voice.activate(conversation: target, entry: "桌宠·新对话") else { return false }
         scheduleSave()
         return true
     }
@@ -382,15 +382,16 @@ struct WorkspaceSnapshot: Codable {
     @discardableResult func startVoice(conversationID: UUID) -> Bool {
         guard !shuttingDown, voice.snapshot.session.owner == nil,
               let target = conversation(id: conversationID) else { return false }
-        return voice.activate(conversation: target)
+        return voice.activate(conversation: target, entry: "会话")
     }
     func stopVoiceReply(owner: VoiceSessionSnapshot.Owner) {
         guard voice.snapshot.session.owner == owner else { return }
         stop(conversationID: owner.conversationID)
     }
-    func endVoice(owner: VoiceSessionSnapshot.Owner) {
+    /// `file`/`line` name the control that asked, for the call's termination log only.
+    func endVoice(owner: VoiceSessionSnapshot.Owner, file: StaticString = #fileID, line: UInt = #line) {
         guard voice.snapshot.session.owner == owner else { return }
-        voice.end()
+        voice.end(reason: .user, origin: "\(file):\(line)")
     }
     func toggleVoiceMute(owner: VoiceSessionSnapshot.Owner) {
         guard voice.snapshot.session.owner == owner else { return }
@@ -534,7 +535,7 @@ struct WorkspaceSnapshot: Codable {
     func deleteConversation(_ id: UUID) {
         guard let conversation = (conversations + drafts).first(where: { $0.id == id }) else { return }
         if dictation.conversationID == id { dictation.cancel(discard: true) }
-        if voice.conversationID == id { voice.end() }
+        if voice.conversationID == id { voice.end(reason: .conversationDeleted) }
         voice.clearError(conversationID: id)
         conversation.store.shutdown(); observations[id] = nil; lifecycleObservations[id] = nil
         pendingRecency[id] = nil
@@ -675,7 +676,11 @@ struct WorkspaceSnapshot: Codable {
             persistenceNotice = Self.saveBlockedNotice
             return false
         }
-        do { try persistence.save(snapshot); return true }
+        // Logged only during a Live Voice call: every save for its first 10 s, then only slow ones.
+        do {
+            try VoiceDiagnostics.shared.measure("WorkspaceStore.flush", quietAfter: .seconds(10)) { try persistence.save(snapshot) }
+            return true
+        }
         catch { persistenceNotice = "会话保存失败：\(error.localizedDescription)"; return false }
     }
     private static let saveBlockedNotice = "无法备份损坏的会话文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。"

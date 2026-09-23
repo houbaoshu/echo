@@ -156,6 +156,9 @@ struct VoiceConfigurationChangePolicy: Sendable {
     var onFailure: ((String) -> Void)? { get set }
     var inputOutputLatency: TimeInterval { get }
     func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error>
+    /// Same result as `start`, without holding the main actor while the engine is built.
+    /// Throws CancellationError when `stop()` or another start supersedes it first.
+    func startInBackground(capture: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error>
     func resetCapture(epoch: Int, paused: Bool)
     func monitorCapture(epoch: Int)
     func setPlaybackPaused(_ paused: Bool)
@@ -173,6 +176,61 @@ extension VoiceAudioHandling {
     var playbackFrames: Int { 0 }
     func finishCapture() { stop() }
     func resetCapture(epoch: Int, paused: Bool) {}
+    func startInBackground(capture: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+        try start(capture: capture)
+    }
+}
+
+/// A background start's claim on the handover. stop() cancels it from the main actor; the setup
+/// queue reads it right after building, so an abandoned graph is torn down before any later build.
+final class VoiceAudioStartToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    var isCancelled: Bool { lock.withLock { cancelled } }
+    func cancel() { lock.withLock { cancelled = true } }
+}
+
+struct VoiceAudioBuildRequest: Sendable {
+    var capture: Bool
+    var continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation
+}
+
+/// An engine graph between construction and handover. It has exactly one owner at any time:
+/// the setup queue while it is built (or torn down as an orphan), then VoiceAudio on the main
+/// actor once adopted. Nothing else references the engine meanwhile, which is the whole of
+/// what makes the unchecked Sendable sound; only the two flags are touched across threads.
+final class VoiceAudioGraph: @unchecked Sendable {
+    struct Step { var name: String; var start: ContinuousClock.Instant; var duration: Duration }
+    let engine: AVAudioEngine
+    let player: AVAudioPlayerNode
+    var converter: VoicePCMConverter?
+    var tapped = false
+    var duplexSampleRate: Double?
+    var route = VoiceAudioRoute(input: 0, output: 0)
+    var startedAt = Date()
+    var steps: [Step] = []
+    /// Only records that a configuration change arrived before VoiceAudio's own observer existed.
+    var setupObserver: NSObjectProtocol?
+    private let lock = NSLock()
+    private var changed = false
+    private var tornDown = false
+    init(engine: AVAudioEngine = AVAudioEngine(), player: AVAudioPlayerNode = AVAudioPlayerNode()) {
+        self.engine = engine; self.player = player
+    }
+    var changedDuringSetup: Bool { lock.withLock { changed } }
+    func markChanged() { lock.withLock { changed = true } }
+    var isTornDown: Bool { lock.withLock { tornDown } }
+    func removeSetupObserver() {
+        if let setupObserver { NotificationCenter.default.removeObserver(setupObserver) }
+        setupObserver = nil
+    }
+    func teardown() {
+        removeSetupObserver()
+        if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
+        converter?.finish(flush: false); converter = nil
+        player.stop(); engine.stop()
+        lock.withLock { tornDown = true }
+    }
 }
 
 extension AVAudioNode {
@@ -204,7 +262,7 @@ extension AVAudioNode {
     private var headStartSample: AVAudioFramePosition?
     private var trailingByte = Data()
     private var playbackPaused = false
-    private let playbackFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
+    private let playbackFormat = VoiceAudio.makePlaybackFormat()
     private let changePolicy: VoiceConfigurationChangePolicy
     /// Core Audio can post the change before it actually stops the engine; settle first.
     private let restartDelay: Duration
@@ -213,11 +271,24 @@ extension AVAudioNode {
     private var startedAt: Date?
     private var restarts = 0
     private var restartTask: Task<Void, Never>?
+    /// The background start whose graph may still be handed over; stop() cancels and clears it.
+    private var pendingStart: VoiceAudioStartToken?
+    private let build: @Sendable (VoiceAudioBuildRequest) throws -> VoiceAudioGraph
+    private let onConfigurationChange: ((AVAudioEngine) -> Void)?
+    /// Every engine graph, for every VoiceAudio (dictation's included), is built and orphan-torn-down
+    /// here, so at most one voice-processing engine is ever being set up at a time.
+    nonisolated private static let setupQueue = DispatchQueue(label: "local.chiyan.voice-audio-setup", qos: .userInitiated)
 
+    /// `build` and `onConfigurationChange` exist for tests; the defaults are the real engine
+    /// and the configuration-change policy.
     init(policy: VoiceConfigurationChangePolicy = VoiceConfigurationChangePolicy(),
-         restartDelay: Duration = .milliseconds(300)) {
+         restartDelay: Duration = .milliseconds(300),
+         build: @escaping @Sendable (VoiceAudioBuildRequest) throws -> VoiceAudioGraph = { try VoiceAudio.buildGraph($0) },
+         onConfigurationChange: ((AVAudioEngine) -> Void)? = nil) {
         changePolicy = policy
         self.restartDelay = restartDelay
+        self.build = build
+        self.onConfigurationChange = onConfigurationChange
         super.init()
     }
 
@@ -250,71 +321,166 @@ extension AVAudioNode {
         engine?.mainMixerNode.outputVolume = muted ? 0 : 1
     }
 
+    /// Blocks the caller until the graph is running. Dictation, the diagnostic probe and the
+    /// speaker preview keep this; it still queues behind any background build in progress.
     func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         stop()
-        let engine = AVAudioEngine(), player = AVAudioPlayerNode()
-        self.engine = engine; self.player = player
-        // Two seconds at the 20 ms local-monitor cadence (normal ASR uses 200 ms).
-        let (stream, continuation) = AsyncThrowingStream<VoiceCapturePacket, Error>.makeStream(bufferingPolicy: .bufferingOldest(100))
-        self.continuation = continuation
-        var operation = "创建音频引擎"
-        var duplexFormat: AVAudioFormat?
-        VoiceDiagnostics.shared.record("2 服务初始化", "START", "AVAudioEngine capture=\(capture)")
+        let (stream, continuation) = Self.makeCaptureStream()
+        let request = VoiceAudioBuildRequest(capture: capture, continuation: continuation)
+        let build = self.build
+        let graph: VoiceAudioGraph
+        do { graph = try Self.setupQueue.sync { try build(request) } }
+        catch { continuation.finish(); throw error }
+        adopt(graph, continuation: continuation)
+        return stream
+    }
+
+    func startInBackground(capture: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
+        stop()
+        let token = VoiceAudioStartToken(); pendingStart = token
+        let (stream, continuation) = Self.makeCaptureStream()
+        let request = VoiceAudioBuildRequest(capture: capture, continuation: continuation)
+        let build = self.build
+        let graph: VoiceAudioGraph
         do {
-            if capture {
-                // Materialize both I/O nodes before configuring the duplex graph.
-                _ = engine.outputNode
-                let input = engine.inputNode
-                operation = "启用系统语音处理（回声消除）"
-                VoiceDiagnostics.shared.record("2 服务初始化", "START", operation)
-                try input.setVoiceProcessingEnabled(true)
-                VoiceDiagnostics.shared.record("2 服务初始化", "PASS", operation)
-                operation = "读取麦克风格式并安装采集 tap"
-                let deviceFormat = input.outputFormat(forBus: 0)
-                VoiceDiagnostics.shared.record("4 音频输入", "INFO", "设备格式 rate=\(deviceFormat.sampleRate) channels=\(deviceFormat.channelCount)")
-                guard deviceFormat.sampleRate > 0, deviceFormat.channelCount > 0 else { throw SettingsError("没有可用的麦克风。") }
-                // VoiceProcessingIO requires the input node output and output node
-                // input to have the same format (AVAudioIONode.h). The default
-                // mixer route may otherwise keep 44.1 kHz stereo while capture is
-                // 48 kHz, causing kAudioUnitErr_FailedInitialization (-10875).
-                let format = AVAudioFormat(standardFormatWithSampleRate: deviceFormat.sampleRate, channels: 1)!
-                duplexFormat = format
-                let processor = try VoicePCMConverter(source: format, continuation: continuation)
-                captureConverter = processor
-                // The tap runs on CoreAudio's queue. Explicit Sendable prevents Swift 6
-                // from inheriting this method's MainActor isolation and trapping.
-                try input.installTapChecked(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in processor.accept(buffer) }
-                tapped = true
-            } else { continuation.finish() }
-            operation = "连接播放器与输出设备"
-            engine.attach(player)
-            try engine.connectNode(player, to: engine.mainMixerNode, format: playbackFormat)
-            if let duplexFormat {
-                try engine.connectNode(engine.mainMixerNode, to: engine.outputNode, format: duplexFormat)
-                VoiceDiagnostics.shared.record("2 服务初始化", "INFO", "统一双向音频格式 rate=\(duplexFormat.sampleRate) channels=\(duplexFormat.channelCount)；混音器将 24 kHz TTS 重采样")
+            graph = try await withCheckedThrowingContinuation { resume in
+                Self.setupQueue.async {
+                    let result = Result { try build(request) }
+                    if case .success(let graph) = result, token.isCancelled {
+                        graph.teardown(); resume.resume(throwing: CancellationError())
+                    } else { resume.resume(with: result) }
+                }
             }
-            let output = engine.outputNode.inputFormat(forBus: 0)
-            VoiceDiagnostics.shared.record("6 播放器", "INFO", "输出 rate=\(output.sampleRate) channels=\(output.channelCount)")
+        } catch {
+            continuation.finish()
+            guard pendingStart === token else { throw CancellationError() }
+            pendingStart = nil
+            throw error
+        }
+        guard pendingStart === token else {
+            // Superseded between the queue's check and this handover: nobody else ever saw this
+            // graph, so it goes back to its owner to be torn down.
+            continuation.finish()
+            Self.setupQueue.async { graph.teardown() }
+            throw CancellationError()
+        }
+        pendingStart = nil
+        adopt(graph, continuation: continuation)
+        return stream
+    }
+
+    private static func makeCaptureStream() -> (AsyncThrowingStream<VoiceCapturePacket, Error>, AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation) {
+        // Two seconds at the 20 ms local-monitor cadence (normal ASR uses 200 ms).
+        AsyncThrowingStream<VoiceCapturePacket, Error>.makeStream(bufferingPolicy: .bufferingOldest(100))
+    }
+    nonisolated private static func makePlaybackFormat() -> AVAudioFormat {
+        AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
+    }
+    /// Diagnostics from off the main actor, and from the handover, go through the main queue in
+    /// order. Never main.sync: a synchronous start waits on the setup queue from main.
+    nonisolated private static func log(_ stage: String, _ status: String, _ message: String) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { VoiceDiagnostics.shared.record(stage, status, message) } }
+    }
+
+    /// Builds and starts a complete graph on the calling (setup) queue. Nothing outside the
+    /// returned graph references the engine until VoiceAudio adopts it.
+    nonisolated static func buildGraph(_ request: VoiceAudioBuildRequest) throws -> VoiceAudioGraph {
+        let graph = VoiceAudioGraph()
+        let engine = graph.engine, player = graph.player
+        func step<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
+            let start = ContinuousClock.now
+            defer { graph.steps.append(.init(name: name, start: start, duration: start.duration(to: .now))) }
+            return try body()
+        }
+        var operation = "创建音频引擎"
+        log("2 服务初始化", "START", "AVAudioEngine capture=\(request.capture)")
+        do {
+            var duplexFormat: AVAudioFormat?
+            if request.capture {
+                // Materialize both I/O nodes before configuring the duplex graph.
+                let input = step("ioNodes") { _ = engine.outputNode; return engine.inputNode }
+                operation = "启用系统语音处理（回声消除）"
+                log("2 服务初始化", "START", operation)
+                try step("setVoiceProcessingEnabled") { try input.setVoiceProcessingEnabled(true) }
+                log("2 服务初始化", "PASS", operation)
+                operation = "读取麦克风格式并安装采集 tap"
+                try step("tap") {
+                    let deviceFormat = input.outputFormat(forBus: 0)
+                    log("4 音频输入", "INFO", "设备格式 rate=\(deviceFormat.sampleRate) channels=\(deviceFormat.channelCount)")
+                    guard deviceFormat.sampleRate > 0, deviceFormat.channelCount > 0 else { throw SettingsError("没有可用的麦克风。") }
+                    // VoiceProcessingIO requires the input node output and output node
+                    // input to have the same format (AVAudioIONode.h). The default
+                    // mixer route may otherwise keep 44.1 kHz stereo while capture is
+                    // 48 kHz, causing kAudioUnitErr_FailedInitialization (-10875).
+                    let format = AVAudioFormat(standardFormatWithSampleRate: deviceFormat.sampleRate, channels: 1)!
+                    duplexFormat = format
+                    let processor = try VoicePCMConverter(source: format, continuation: request.continuation)
+                    graph.converter = processor
+                    // The tap runs on CoreAudio's queue; the converter is lock-protected.
+                    try input.installTapChecked(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in processor.accept(buffer) }
+                    graph.tapped = true
+                }
+            } else { request.continuation.finish() }
+            operation = "连接播放器与输出设备"
+            try step("connect") {
+                engine.attach(player)
+                try engine.connectNode(player, to: engine.mainMixerNode, format: makePlaybackFormat())
+                if let duplexFormat {
+                    try engine.connectNode(engine.mainMixerNode, to: engine.outputNode, format: duplexFormat)
+                    log("2 服务初始化", "INFO", "统一双向音频格式 rate=\(duplexFormat.sampleRate) channels=\(duplexFormat.channelCount)；混音器将 24 kHz TTS 重采样")
+                }
+            }
+            let output = step("outputFormat") { engine.outputNode.inputFormat(forBus: 0) }
+            log("6 播放器", "INFO", "输出 rate=\(output.sampleRate) channels=\(output.channelCount)")
             guard output.sampleRate > 0, output.channelCount > 0 else { throw SettingsError("没有可用的音频输出设备。") }
+            // From here the engine can reconfigure itself; until VoiceAudio's own observer is
+            // installed at handover, a change is only recorded and replayed then.
+            graph.setupObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { _ in graph.markChanged() }
             operation = "prepare / start 音频引擎"
-            engine.prepare()
+            step("prepare") { engine.prepare() }
             operation = "start 音频引擎"
-            try engine.start(); try player.playAudio()
-            VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "AVAudioEngine running=\(engine.isRunning) player=\(player.isPlaying)")
+            try step("engine.start") { try engine.start() }
+            try step("playAudio") { try player.playAudio() }
+            log("2 服务初始化", "PASS", "AVAudioEngine running=\(engine.isRunning) player=\(player.isPlaying)")
             // The route the running graph sits on. Starting capture is what flips a Bluetooth
             // headset to HFP, so this is sampled after start, once that flip has happened.
-            routeBaseline = .current
-            graphSampleRate = duplexFormat?.sampleRate
-            startedAt = Date()
-            restarts = 0
-            VoiceDiagnostics.shared.record("2 服务初始化", "INFO", "音频路由基线 输入=\(routeBaseline!.input) 输出=\(routeBaseline!.output)")
-            NotificationCenter.default.addObserver(self, selector: #selector(configurationChanged(_:)),
-                name: .AVAudioEngineConfigurationChange, object: engine)
-            return stream
+            graph.route = .current
+            graph.duplexSampleRate = duplexFormat?.sampleRate
+            graph.startedAt = Date()
+            return graph
         } catch {
             let reason = "\(operation)：\(VoiceDiagnostics.reason(error))"
-            VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", reason)
-            stop(); throw SettingsError(reason)
+            log("2 服务初始化", "FAIL", reason)
+            graph.teardown()
+            throw SettingsError(reason)
+        }
+    }
+
+    /// Takes ownership of a running graph on the main actor; every later engine access is here.
+    private func adopt(_ graph: VoiceAudioGraph, continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation) {
+        engine = graph.engine; player = graph.player
+        captureConverter = graph.converter; tapped = graph.tapped
+        self.continuation = continuation
+        routeBaseline = graph.route; graphSampleRate = graph.duplexSampleRate
+        startedAt = graph.startedAt; restarts = 0
+        let steps = graph.steps, route = graph.route
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                for step in steps {
+                    VoiceDiagnostics.shared.recordSpan("audio.start·\(step.name)", start: step.start, duration: step.duration)
+                }
+            }
+        }
+        Self.log("2 服务初始化", "INFO", "音频路由基线 输入=\(route.input) 输出=\(route.output)")
+        // Observe before dropping the setup observer, so no change falls between the two; one
+        // arriving in that overlap may be handled twice, which the restart path tolerates.
+        NotificationCenter.default.addObserver(self, selector: #selector(configurationChanged(_:)),
+            name: .AVAudioEngineConfigurationChange, object: graph.engine)
+        graph.removeSetupObserver()
+        if graph.changedDuringSetup {
+            Self.log("2 服务初始化", "INFO", "AVAudioEngineConfigurationChange 在交接前到达，交接后补做判定")
+            configurationDidChange(graph.engine)
         }
     }
     @objc nonisolated private func configurationChanged(_ notification: Notification) {
@@ -322,8 +488,11 @@ extension AVAudioNode {
         let sourceID = notification.object.map { ObjectIdentifier($0 as AnyObject) }
         Task { @MainActor [weak self] in
             guard let self, let engine = self.engine, ObjectIdentifier(engine) == sourceID else { return }
-            self.handleConfigurationChange(engine)
+            self.configurationDidChange(engine)
         }
+    }
+    private func configurationDidChange(_ engine: AVAudioEngine) {
+        if let onConfigurationChange { onConfigurationChange(engine) } else { handleConfigurationChange(engine) }
     }
     private func handleConfigurationChange(_ engine: AVAudioEngine) {
         guard let routeBaseline, let startedAt else {
@@ -373,11 +542,13 @@ extension AVAudioNode {
         let epoch = generation
         var lastFrames = queuedFrames
         var progressAt = ContinuousClock.now
-        while queuedFrames > 24000 * 5 {
+        // A reply can arrive while a background start is still building the engine; it waits
+        // for the handover under the same no-progress limit as a full queue.
+        while queuedFrames > 24000 * 5 || pendingStart != nil {
             if playbackPaused { progressAt = .now }
             if queuedFrames != lastFrames { lastFrames = queuedFrames; progressAt = .now }
             guard progressAt.duration(to: .now) < .seconds(10) else {
-                VoiceDiagnostics.shared.record("6 播放器", "FAIL", "队列 10 秒无进展 queuedFrames=\(queuedFrames)")
+                VoiceDiagnostics.shared.record("6 播放器", "FAIL", "队列 10 秒无进展 queuedFrames=\(queuedFrames) 等待引擎启动=\(pendingStart != nil)")
                 throw SettingsError("播放器队列停滞，请检查音频输出设备。")
             }
             try await Task.sleep(for: .milliseconds(40))
@@ -448,6 +619,8 @@ extension AVAudioNode {
     func finishCapture() { stop(flushCapture: true) }
     func stop() { stop(flushCapture: false) }
     private func stop(flushCapture: Bool) {
+        // A background start still building is abandoned; its handover finds the token gone.
+        pendingStart?.cancel(); pendingStart = nil
         NotificationCenter.default.removeObserver(self)
         restartTask?.cancel(); restartTask = nil
         routeBaseline = nil; startedAt = nil; graphSampleRate = nil; restarts = 0
