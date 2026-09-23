@@ -32,14 +32,16 @@ struct PlanetEntry: Identifiable {
     private let settings: SettingsStore?
     private let root: URL?
     private var current: PetSurfacePresentation.VoiceIndicator = .inactive
-    /// The clip names this planet's manifest actually declares.
+    /// Standard clips come from the Rust runtime; manifest clips can override or extend them.
     private var available: Set<String> = []
+    private weak var voice: VoiceSessionController?
     private var voiceObservation: AnyCancellable?
     private var reduceMotionObservation: AnyCancellable?
 
     init(settings: SettingsStore? = nil, root: URL? = nil, voice: VoiceSessionController? = nil) {
         self.settings = settings
         self.root = root
+        self.voice = voice
         selectedID = settings?.snapshot.selectedPlanetID ?? Self.defaultID
         voiceObservation = voice?.$snapshot
             .map { PetSurfacePresentation.indicator(for: $0) }
@@ -56,19 +58,17 @@ struct PlanetEntry: Identifiable {
 
     // MARK: - State
 
-    /// Which clip a Live Voice state asks for. A name the manifest does not declare must never
-    /// reach the runtime: `echo_set_animation` rejects an unknown name, and `PetStore` treats
-    /// that as a failure and stops the planet outright.
+    /// Standard animation names are supplied by the Rust runtime even when absent from pet.json.
     static func animationName(for indicator: PetSurfacePresentation.VoiceIndicator,
                               available: Set<String>) -> String {
         let preferred: String
         switch indicator {
         case .inactive: preferred = "idle"
-        case .connecting: preferred = "connecting"
-        case .listening: preferred = "listening"
-        case .thinking: preferred = "thinking"
-        case .speaking: preferred = "speaking"
-        case .ending: preferred = "ending"
+        case .connecting: preferred = "waiting"
+        case .listening: preferred = "idle"
+        case .thinking: preferred = "running"
+        case .speaking: preferred = "spinning"
+        case .ending: preferred = "review"
         }
         // `idle` is the one clip the runtime guarantees, so it is always a safe fallback.
         return available.contains(preferred) ? preferred : "idle"
@@ -90,6 +90,7 @@ struct PlanetEntry: Identifiable {
         active = nil
         playing = nil
         available = []
+        voice?.endingAnimationDuration = .zero
     }
 
     // MARK: - Selection
@@ -114,6 +115,7 @@ struct PlanetEntry: Identifiable {
             active = next
             previous?.stop()
             available = animationNames(at: directory)
+            voice?.endingAnimationDuration = .milliseconds(1030)
             next.start()
             // The indicator stream is de-duplicated, so a swap has to replay the current state
             // itself. Without this the new planet sits in idle until Live Voice happens to move.
@@ -149,6 +151,7 @@ struct PlanetEntry: Identifiable {
             }
             active = store
             available = animationNames(at: directory)
+            voice?.endingAnimationDuration = .milliseconds(1030)
             playing = nil
             store.start()
             return store
@@ -167,6 +170,7 @@ struct PlanetEntry: Identifiable {
                 self?.notice = "星球动画已停止：\(error.localizedDescription)"
                 self?.active = nil
                 self?.playing = nil
+                self?.voice?.endingAnimationDuration = .zero
             }
         }
         store.isPaused = Self.reduceMotion
@@ -230,8 +234,13 @@ struct PlanetEntry: Identifiable {
     }
 
     private func animationNames(at directory: URL) -> Set<String> {
-        // `idle` is always present: the runtime refuses to load a manifest without it.
-        Set(manifest(at: directory)?.animations?.keys ?? [:].keys).union(["idle"])
+        let manifest = manifest(at: directory)
+        let grid = manifest?.frame ?? Self.defaultFrame(version: manifest?.spriteVersionNumber ?? 1)
+        var standard: Set<String> = ["idle", "waiting", "running", "review"]
+        if manifest?.spriteVersionNumber == 2 && grid.columns == 8 && grid.rows >= 11 {
+            standard.insert("spinning")
+        }
+        return Set(manifest?.animations?.keys ?? [:].keys).union(standard)
     }
 
     /// Mirrors the runtime's implicit grid, `runtime/src/model.rs:87-97`.

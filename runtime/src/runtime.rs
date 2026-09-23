@@ -159,3 +159,32 @@ fn current_animation_frame(animation: &Animation, elapsed: Duration) -> FrameTic
     }
     unreachable!("validated animation and normalized elapsed always select a frame")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn bundled_planets_share_continuous_voice_animations() {
+        for name in ["ember-planet", "quiet-planet"] {
+            let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../assets/planets")
+                .join(name);
+            let pet = Pet::load(&directory).unwrap();
+            let running = &pet.animations["running"];
+            assert_eq!(running.loop_start, Some(0));
+            assert!((56..=61).contains(&current_animation_frame(running, Duration::from_secs(10)).sprite_index));
+            let spinning = &pet.animations["spinning"];
+            assert_eq!(spinning.loop_start, Some(0));
+            assert_eq!(spinning.frames.iter().map(|f| f.sprite_index).collect::<Vec<_>>(),
+                       (72..=87).collect::<Vec<_>>());
+            assert_eq!(current_animation_frame(spinning, Duration::from_millis(1920)).sprite_index, 72);
+            let mut runtime = PetRuntime::new(pet).unwrap();
+            runtime.look_at(100.0, 0.0, Duration::ZERO).unwrap();
+            assert_eq!(runtime.advance(Duration::ZERO).sprite_index, 76);
+            runtime.set_animation("spinning", Duration::ZERO).unwrap();
+            assert_eq!(runtime.advance(Duration::ZERO).sprite_index, 72);
+        }
+    }
+}

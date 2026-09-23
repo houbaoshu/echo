@@ -23,6 +23,8 @@ enum VoiceCaptureWatchdog {
 
 @MainActor final class VoiceSessionController: NSObject, ObservableObject {
     @Published private(set) var snapshot = VoiceSessionSnapshot()
+    /// Set by the shared planet store while a sprite is loaded.
+    var endingAnimationDuration: Duration = .zero
     /// The reply being spoken, or the last one, until the next reply's first subtitle.
     @Published private(set) var spoken: SpokenReply?
     /// Playback frames already heard when the current reply's audio began.
@@ -759,7 +761,16 @@ enum VoiceCaptureWatchdog {
         textOnlyRunID = nil; handledFinalRunID = nil; submitting = false; submissionHadAudio = false
         spoken = nil
         let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0) } ?? snapshot.error
-        snapshot = VoiceSessionSnapshot(error: failure)
+        if let owner, endingAnimationDuration > .zero {
+            let reviewDuration = endingAnimationDuration
+            Task { [weak self] in
+                try? await Task.sleep(for: reviewDuration)
+                guard let self, self.snapshot.session == .ending(owner) else { return }
+                self.snapshot = VoiceSessionSnapshot(error: failure)
+            }
+        } else {
+            snapshot = VoiceSessionSnapshot(error: failure)
+        }
     }
     /// The state the call was in when it ended. For a user end, `indicator` names the control the
     /// pet strip was drawing in the end slot: `connecting` is the cancel dot, anything else the planet.

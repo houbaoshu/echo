@@ -230,53 +230,37 @@ actor PendingModelTester: ConnectionTesting {
     /// Live Voice's planet: which clip a state asks for, and what a mid-call swap has to do.
     @MainActor static func planetTests() async throws {
         let states: [(PetSurfacePresentation.VoiceIndicator, String)] = [
-            (.inactive, "idle"), (.connecting, "connecting"), (.listening, "listening"),
-            (.thinking, "thinking"), (.speaking, "speaking"), (.ending, "ending"),
+            (.inactive, "idle"), (.connecting, "waiting"), (.listening, "idle"),
+            (.thinking, "running"), (.speaking, "spinning"), (.ending, "review"),
         ]
-        let declared = Set(states.map(\.1))
         for (indicator, clip) in states {
-            check(PlanetStore.animationName(for: indicator, available: declared) == clip,
-                  "\(indicator) plays its own clip when the manifest declares it")
-            // An undeclared name would be rejected by echo_set_animation and stop the planet,
-            // so a partial manifest has to resolve to the one clip the runtime guarantees.
-            check(PlanetStore.animationName(for: indicator, available: ["idle"]) == "idle",
-                  "\(indicator) falls back to idle rather than naming a clip the manifest lacks")
+            check(PlanetStore.animationName(for: indicator, available: Set(states.map(\.1))) == clip,
+                  "\(indicator) plays the shared runtime clip")
             check(PlanetStore.animationName(for: indicator, available: []) == "idle",
-                  "\(indicator) resolves to idle even with no declared clips at all")
+                  "\(indicator) falls back to idle if the runtime clip is unavailable")
         }
 
-        // The bundled planet has to declare all six, or a state silently degrades to idle.
-        struct BundledManifest: Decodable {
-            struct Clip: Decodable { let frames: [Int] }
-            let animations: [String: Clip]
-        }
-        let bundled = URL(fileURLWithPath: "assets/planets/ember-planet")
-        let manifest = try JSONDecoder().decode(BundledManifest.self,
-                                                from: Data(contentsOf: bundled.appendingPathComponent("pet.json")))
-        for (_, clip) in states {
-            check(manifest.animations[clip] != nil, "the bundled planet declares \(clip)")
-        }
-        // Loading proves every frame number is inside the sheet: Pet::load validates the indices
-        // and refuses the whole manifest otherwise.
-        let bundledStore = try PetStore(directory: bundled)
-        bundledStore.stop()
-        // A blank cell of the sheet is still a valid index, so the runtime would accept it and
-        // the planet would simply disappear in that state. Check the declared cells have ink.
-        let source = CGImageSourceCreateWithURL(bundled.appendingPathComponent("spritesheet.webp") as CFURL, nil)
-        guard let source, let decoded = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
-            fatalError("FAIL: the bundled planet's sprite sheet does not decode")
-        }
-        let (width, height, columns) = (192, 208, 8)
-        for index in Set(manifest.animations.values.flatMap(\.frames)).sorted() {
-            let cell = decoded.cropping(to: CGRect(x: (index % columns) * width, y: (index / columns) * height,
-                                                 width: width, height: height))!
-            var pixels = [UInt8](repeating: 0, count: width * height * 4)
-            let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
-                                    bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-            context.draw(cell, in: CGRect(x: 0, y: 0, width: width, height: height))
-            let opaque = stride(from: 3, to: pixels.count, by: 4).count { pixels[$0] > 32 }
-            check(opaque > width * height / 20, "declared frame \(index) is a drawn cell, not a blank one")
+        // Both bundled sheets use the runtime's standard 8×11 layout, including all spin frames.
+        for name in ["ember-planet", "quiet-planet"] {
+            let bundled = URL(fileURLWithPath: "assets/planets/\(name)")
+            let bundledStore = try PetStore(directory: bundled)
+            bundledStore.stop()
+            let source = CGImageSourceCreateWithURL(bundled.appendingPathComponent("spritesheet.webp") as CFURL, nil)
+            guard let source, let decoded = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                fatalError("FAIL: \(name)'s sprite sheet does not decode")
+            }
+            let (width, height, columns) = (192, 208, 8)
+            for index in [0] + Array(48...53) + Array(56...61) + Array(64...69) + Array(72...87) {
+                let cell = decoded.cropping(to: CGRect(x: (index % columns) * width, y: (index / columns) * height,
+                                                     width: width, height: height))!
+                var pixels = [UInt8](repeating: 0, count: width * height * 4)
+                let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+                                        bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                context.draw(cell, in: CGRect(x: 0, y: 0, width: width, height: height))
+                let opaque = stride(from: 3, to: pixels.count, by: 4).count { pixels[$0] > 32 }
+                check(opaque > width * height / 20, "\(name) standard frame \(index) is drawn")
+            }
         }
 
         // Two planets built from the bundled sprite sheet, so a swap is a real sprite swap.
@@ -291,7 +275,7 @@ actor PendingModelTester: ConnectionTesting {
             try fm.copyItem(at: sheet, to: directory.appendingPathComponent("spritesheet.webp"))
             let manifest = """
             {"id":"\(name)","displayName":"\(name)","spriteVersionNumber":2,
-             "animations":{"speaking":{"frames":[8,9,10,11],"fps":10,"loop":true,"fallback":"idle"}}}
+             "description":"test planet"}
             """
             try Data(manifest.utf8).write(to: directory.appendingPathComponent("pet.json"))
         }
@@ -311,7 +295,7 @@ actor PendingModelTester: ConnectionTesting {
         await tick()
         check(planets.selectedID == "builtin:alpha",
               "a saved planet that is not installed falls back to a bundled one")
-        check(planets.active != nil && planets.playing == "speaking",
+        check(planets.active != nil && planets.playing == "spinning",
               "starting mid-state loads the planet already playing the state the call is in")
 
         let before = planets.active
@@ -319,7 +303,7 @@ actor PendingModelTester: ConnectionTesting {
         check(planets.active !== before && planets.selectedID == "builtin:beta",
               "switching planets during a call swaps the sprite at once")
         // The indicator stream is de-duplicated, so nothing will re-fire to fix this later.
-        check(planets.playing == "speaking",
+        check(planets.playing == "spinning",
               "the new planet resumes the current state instead of waiting for the next one")
         check(settings.snapshot.selectedPlanetID == "builtin:beta", "the swap is the saved choice")
 
@@ -330,9 +314,12 @@ actor PendingModelTester: ConnectionTesting {
         planets.select("builtin:missing")
         check(planets.selectedID == "builtin:beta", "an id with no directory is refused")
 
-        voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
-        await tick()
-        check(planets.active == nil && planets.playing == nil, "ending the call releases the sprite")
+        voice.end()
+        check(planets.playing == "review" && planets.active != nil,
+              "ending shows review before unloading the planet")
+        try await Task.sleep(for: .milliseconds(1100))
+        check(planets.active == nil && planets.playing == nil && voice.snapshot.session == .inactive,
+              "review completes before the call becomes inactive")
     }
 
     /// Starting capture flips a Bluetooth headset from A2DP to HFP, so Core Audio reconfigures

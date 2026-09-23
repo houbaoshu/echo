@@ -123,6 +123,16 @@ impl Pet {
         );
 
         let mut animations = default_animations();
+        if file.sprite_version_number == 2 && frame.columns == 8 && frame.rows >= 11 {
+            animations.insert("spinning".into(), Animation {
+                frames: (72..=87).map(|sprite_index| AnimationFrame {
+                    sprite_index,
+                    duration: Duration::from_millis(120),
+                }).collect(),
+                loop_start: Some(0),
+                fallback: "idle".into(),
+            });
+        }
         for (name, spec) in file.animations {
             let fps = spec.fps.unwrap_or(8.0);
             ensure!(
@@ -274,6 +284,15 @@ fn default_animations() -> HashMap<String, Animation> {
     ] {
         animations.insert(name.into(), app_state_animation(row, count, ms, final_ms));
     }
+    // Live Voice thinking lasts as long as the agent runs; keep this state cycling.
+    animations.insert("running".into(), Animation {
+        frames: (0..6).map(|column| AnimationFrame {
+            sprite_index: 7 * 8 + column,
+            duration: Duration::from_millis(if column == 5 { 220 } else { 120 }),
+        }).collect(),
+        loop_start: Some(0),
+        fallback: "idle".into(),
+    });
     for (alias, name) in [
         ("move_right", "running-right"),
         ("move_left", "running-left"),
