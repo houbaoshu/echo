@@ -216,6 +216,11 @@ struct ActivityCapsule: View {
     /// The Live Voice session that has connected once. The snapshot shows only the current
     /// recognition state, which also reconnects between replies; those keep the voice bar.
     @Published private(set) var connectedVoiceSession: UUID?
+    /// The strip's panel is ordered out while the main window shows the Live Voice planet. An
+    /// ordered-out window still runs its SwiftUI updates, so the strip drops its planet until it
+    /// is back on screen rather than redrawing a copy nobody sees on every frame.
+    @Published private(set) var isSuspended = false
+    func setSuspended(_ suspended: Bool) { if isSuspended != suspended { isSuspended = suspended } }
     func noteVoice(_ snapshot: VoiceSessionSnapshot) {
         guard case .active(let owner) = snapshot.session else {
             if snapshot.session.owner == nil, connectedVoiceSession != nil { connectedVoiceSession = nil }
@@ -335,6 +340,9 @@ struct PetControls: View {
     var planet: PetStore?
     var actions = PetControlActions()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The planet the strip draws: none while suspended, so the hidden strip observes no frames.
+    /// Resuming mounts a fresh `PlanetFrame`, which reads the store's current frame directly.
+    static func visiblePlanet(_ planet: PetStore?, suspended: Bool) -> PetStore? { suspended ? nil : planet }
     private var surface: PetSurfacePresentation {
         PetSurfacePresentation(hovered: presentation.isHovered, composerOpen: presentation.isComposerOpen,
                                draft: presentation.draft, activityCount: store.activityCount,
@@ -408,8 +416,8 @@ struct PetControls: View {
                                 .foregroundStyle(surface.micMuted ? WorkspaceStyle.warning : .primary)
                         }
                         PetSegment(label: "结束语音", identifier: "voice.end", action: { actions.endVoice(owner) }) {
-                            VoicePlanet(store: planet, indicator: surface.voice, muted: surface.micMuted, size: 34,
-                                        surface: .strip)
+                            VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
+                                        indicator: surface.voice, muted: surface.micMuted, size: 34, surface: .strip)
                         }
                         PetSegment(label: surface.speakerMuted ? "开启扬声器" : "静音扬声器", identifier: "voice.speaker",
                                    enabled: surface.muteEnabled, action: { actions.toggleSpeaker(owner) }) {
@@ -434,8 +442,8 @@ struct PetControls: View {
                 }
             } else if voice.snapshot.session.owner != nil {
                 PetCircle(label: "显示语音控制", identifier: "pet.voice.show", action: presentation.closeComposer) {
-                    VoicePlanet(store: planet, indicator: surface.voice, muted: surface.micMuted, size: 32,
-                                surface: .strip)
+                    VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
+                                indicator: surface.voice, muted: surface.micMuted, size: 32, surface: .strip)
                         .accessibilityHidden(true)
                 }
             } else {

@@ -3736,6 +3736,12 @@ private struct ComposerHeightHost: View {
         defer { companion.shutdown() }
         func settle() async throws { try await Task.sleep(for: .milliseconds(200)) }
         func clusterShown() -> Bool { companion.petPanel.isVisible && companion.controlsPanel.isVisible }
+        let suspension = companion.controlsPresentation
+
+        // A suspended strip draws no planet; resuming hands back the same sprite, never a copy.
+        precondition(PetControls.visiblePlanet(pet, suspended: false) === pet, "A shown strip draws the active planet")
+        precondition(PetControls.visiblePlanet(pet, suspended: true) == nil, "A suspended strip observes no planet frames")
+        precondition(PetControls.visiblePlanet(nil, suspended: false) == nil, "Without a planet the strip keeps its fallback")
 
         // A real conversation to read, so the new one below is a draft of its own rather than
         // this same empty one reused.
@@ -3746,6 +3752,7 @@ private struct ComposerHeightHost: View {
         workspace.isMainWindowVisible = true
         try await settle()
         precondition(clusterShown(), "The companion cluster is up while no Live Voice runs")
+        precondition(!suspension.isSuspended, "A shown strip is not suspended")
 
         // Live Voice in a conversation the main window is not showing: nothing steps aside.
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: elsewhere.id)
@@ -3758,6 +3765,7 @@ private struct ComposerHeightHost: View {
         try await settle()
         precondition(!companion.petPanel.isVisible && !companion.controlsPanel.isVisible && !companion.bubblePanel.isVisible,
                      "Viewing the Live Voice conversation hides the whole cluster")
+        precondition(suspension.isSuspended, "Hiding the strip suspends its planet")
         companion.openQuickComposer()
         try await settle()
         precondition(!companion.controlsPresentation.isComposerOpen && !companion.controlsPanel.isVisible,
@@ -3767,12 +3775,13 @@ private struct ComposerHeightHost: View {
         workspace.select(read.id)
         try await settle()
         precondition(clusterShown(), "Leaving the Live Voice conversation restores the cluster")
+        precondition(!suspension.isSuspended, "Restoring the strip resumes its planet")
         workspace.select(elsewhere.id)
         try await settle()
-        precondition(!clusterShown(), "Returning to it steps aside again")
+        precondition(!clusterShown() && suspension.isSuspended, "Returning to it steps aside again")
         workspace.isMainWindowVisible = false
         try await settle()
-        precondition(clusterShown(), "A hidden main window draws no planet, so the pet comes back")
+        precondition(clusterShown() && !suspension.isSuspended, "A hidden main window draws no planet, so the pet comes back")
 
         voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
         try await settle()

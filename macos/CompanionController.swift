@@ -165,9 +165,12 @@ import Combine
         VoiceDiagnostics.shared.mark(hidden ? "桌宠与控制条隐藏（主窗口显示星球）" : "桌宠与控制条恢复显示")
         petPanel.setPaused(hidden)
         if hidden {
+            controlsPresentation.setSuspended(true)
             petPanel.orderOut(nil)
             controlsPanel.orderOut(nil)
         } else {
+            // Resume before the panel returns, so it never shows a frame of the waveform fallback.
+            controlsPresentation.setSuspended(false)
             petPanel.orderFrontRegardless()
             controlsPanel.orderFrontRegardless()
         }
