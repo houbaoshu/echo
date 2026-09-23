@@ -26,10 +26,8 @@ from pathlib import Path
 path = Path(sys.argv[1])
 rows = [json.loads(line) for line in path.read_text().splitlines()]
 counts = collections.Counter(row['event'] for row in rows)
-providers = collections.Counter(row['provider'] for row in rows if row['event'] == 'recording.start')
 print(f'日志：{path}')
-print(f'录音轮数：{counts["recording.start"]}；真实帧：{counts["transport.frame"]}；识别回调：{counts["recognizer.callback"]}')
-print(f'实际识别通道：{dict(providers)}')
+print(f'录音轮数：{counts["recording.start"]}；Apple 原始回调：{counts["apple.rawCallback"]}；识别回调：{counts["recognizer.callback"]}')
 if not counts['recognizer.callback']:
     print('本次没有采集到识别回调，不能用来定位转写覆盖；请保留日志供排查入口/授权。')
 PY

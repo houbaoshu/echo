@@ -752,7 +752,7 @@ private struct ComposerHeightHost: View {
             var expected = initial
             for transcript in ["第一段", "第二段", "第三段"] {
                 editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count))
-                dictation.start(conversation: conversation, key: "test")
+                dictation.start(conversation: conversation)
                 try await refresh()
                 recognizer.emit("临时结果", final: false)
                 precondition(store.mainDraft == expected && editor.string == expected)
@@ -765,7 +765,7 @@ private struct ComposerHeightHost: View {
                 precondition(editor.string == expected, "Native composer retains every previous recording")
             }
             for cancel in [false, true] {
-                dictation.start(conversation: conversation, key: "test")
+                dictation.start(conversation: conversation)
                 try await refresh()
                 let lateResult = recognizer.receive
                 if cancel {
@@ -791,7 +791,7 @@ private struct ComposerHeightHost: View {
         let composingDraft = store.mainDraft
         var appended = ""
         for transcript in ["第一轮转写", "第二轮转写"] {
-            dictation.start(conversation: conversation, key: "test")
+            dictation.start(conversation: conversation)
             try await refresh()
             recognizer.emit(transcript)
             dictation.finishRecording(); recognizer.finish()
@@ -844,7 +844,7 @@ private struct ComposerHeightHost: View {
         precondition(!voice.isActive)
 
         agentStore.mainDraft = "原草稿"
-        dictation.start(conversation: conversation, key: "test")
+        dictation.start(conversation: conversation)
         try await refresh()
         precondition(node("dictation.cancel")?.isAccessibilityEnabled?() == true)
         precondition(node("conversation.stop") == nil)
@@ -857,7 +857,7 @@ private struct ComposerHeightHost: View {
         precondition(node("dictation.cancel")?.accessibilityPerformPress?() == true)
         try await refresh()
         precondition(window.firstResponder is ComposerTextView, "Explicit cancel restores composer focus")
-        dictation.start(conversation: conversation, key: "test")
+        dictation.start(conversation: conversation)
         try await refresh()
         recognizer.emit("定稿中也丢弃")
         dictation.finishRecording()
@@ -871,7 +871,7 @@ private struct ComposerHeightHost: View {
         let editor = window.firstResponder as! ComposerTextView
         editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
         let marked = editor.markedRange()
-        dictation.start(conversation: conversation, key: "test")
+        dictation.start(conversation: conversation)
         try await refresh()
         precondition(editor.hasMarkedText() && editor.markedRange() == marked)
         let composing = editor.string
@@ -903,7 +903,7 @@ private struct ComposerHeightHost: View {
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         let conversation = workspace.selected!
         let host = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice, dictation: dictation,
-            startDictation: { dictation.start(conversation: conversation, key: "test") },
+            startDictation: { dictation.start(conversation: conversation) },
             startVoice: { voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test") },
             conversationID: conversation.id, send: { workspace.sendMainMessage(conversationID: conversation.id) },
             stop: { workspace.stop(conversationID: conversation.id) }, retry: { workspace.retry(conversationID: conversation.id) })
@@ -1451,7 +1451,7 @@ private struct ComposerHeightHost: View {
         })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(dictation: dictation, voice: voice, sourceFactory: { PreviewSource() })
-        dictation.attach(workspace: workspace, settings: settings)
+        dictation.attach(workspace: workspace)
         voice.attach(workspace: workspace, settings: settings)
         let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "menu-\(UUID())")!, settings: settings)
         let window = main.window!

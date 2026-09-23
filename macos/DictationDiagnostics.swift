@@ -88,27 +88,6 @@ import Combine
         record(event, fields)
     }
 
-    func frame(_ frame: VoiceWire.Frame) {
-        var fields: [String: Any] = ["messageType": Int(frame.type), "streamFinal": frame.final,
-                                    "wireSequence": frame.sequence.map { Int($0) } as Any? ?? NSNull(),
-                                    "payloadBytes": frame.payload.count]
-        // Preserve missing fields and raw timestamps for a future replay fixture.
-        // Whitelist recognition fields rather than logging arbitrary server payloads.
-        if let payload = try? JSONSerialization.jsonObject(with: frame.payload) as? [String: Any] {
-            if let result = payload["result"] as? [String: Any] {
-                var asr: [String: Any] = [:]
-                if let text = result["text"] { asr["text"] = text }
-                if let utterances = result["utterances"] as? [[String: Any]] {
-                    asr["utterances"] = utterances.map { utterance in
-                        utterance.filter { ["text", "start_time", "end_time", "definite"].contains($0.key) }
-                    }
-                } else if let utterances = result["utterances"] { asr["utterances"] = utterances }
-                fields["asr"] = ["result": asr]
-            } else { fields["asr"] = payload["result"].map { ["result": $0] } ?? [:] }
-        }
-        record("transport.frame", fields)
-    }
-
     @discardableResult func callback(_ result: ASRResult, accepted: Bool) -> Int {
         callbacks += 1
         record("recognizer.callback", [

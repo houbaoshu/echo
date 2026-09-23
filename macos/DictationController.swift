@@ -8,6 +8,7 @@ import Combine
         var isActive: Bool { self == .recording || self == .finalizing }
     }
     @Published private(set) var state: State = .idle
+    /// The latest cumulative transcript; the draft receives it unless the recording is discarded.
     @Published private(set) var subtitle = ""
     @Published private(set) var error: String?
     @Published private(set) var captureReady = false
@@ -15,21 +16,15 @@ import Combine
     private(set) var conversationID: UUID?
     var isActive: Bool { state.isActive }
     private weak var workspace: WorkspaceStore?
-    private weak var settings: SettingsStore?
     private weak var store: TaskStore?
     private let audio: any VoiceAudioHandling
-    private let makeRecognizer: () -> any VoiceRecognizing
-    private let makeLocalRecognizer: () async throws -> any VoiceRecognizing
+    private let makeRecognizer: () async throws -> any VoiceRecognizing
     private let permission: () async -> Bool
     private let finalizationTimeout: Duration
     private let captureTimeout: Duration
     private var generation = UUID()
     private var retired = false
-    private var tracker = VoiceUtteranceTracker()
-    private var confirmed: [String] = []
     private var finalTranscript: String?
-    /// Apple's latest cumulative hypothesis. Not confirmed; kept when a recording ends without its final.
-    private var recognizedText: String?
     private var recognizer: (any VoiceRecognizing)?
     private var audioInput: AsyncThrowingStream<Data, Error>.Continuation?
     private var startup: Task<Void, Never>?
@@ -42,18 +37,16 @@ import Combine
 
     private var diagnosticState: [String: Any] {
         ["state": String(describing: state), "generation": generation.uuidString,
-         "subtitle": subtitle, "confirmed": confirmed,
+         "subtitle": subtitle,
          "finalTranscript": finalTranscript as Any? ?? NSNull(),
          "draft": store?.mainDraft as Any? ?? NSNull()]
     }
 
     init(audio: any VoiceAudioHandling = VoiceAudio(),
-         recognizer: @escaping () -> any VoiceRecognizing = { DoubaoRecognizer() },
-         localRecognizer: @escaping () async throws -> any VoiceRecognizing = { try await AppleSpeechRecognizer.prepare() },
+         recognizer: @escaping () async throws -> any VoiceRecognizing = { try await AppleSpeechRecognizer.prepare() },
          finalizationTimeout: Duration = .seconds(5), captureTimeout: Duration = .seconds(5),
          permission: @escaping () async -> Bool = { await AVCaptureDevice.requestAccess(for: .audio) }) {
         self.audio = audio; makeRecognizer = recognizer; self.permission = permission
-        makeLocalRecognizer = localRecognizer
         self.finalizationTimeout = finalizationTimeout; self.captureTimeout = captureTimeout
         super.init()
         audio.onFailure = { [weak self] _, failure in
@@ -70,42 +63,13 @@ import Combine
         case .player: "音频设备异常，录音已结束，已保留识别到的文字。"
         }
     }
-    func attach(workspace: WorkspaceStore, settings: SettingsStore) { self.workspace = workspace; self.settings = settings }
+    func attach(workspace: WorkspaceStore) { self.workspace = workspace }
     @objc private func willSleep() { cancel() }
     func clearError() { error = nil; if state == .failed { state = .idle } }
     func start(conversation: WorkspaceConversation) {
-        DictationDiagnostics.shared?.record("dictation.startRequested", fields: [
-            "conversationID": conversation.id.uuidString, "active": isActive, "retired": retired,
-            "hasSettings": settings != nil
-        ])
-        guard !isActive, !retired else { return }
-        guard let settings else { error = "无法开始转写：缺少语音设置。"; state = .failed; return }
-        // Configuration chooses one provider for this recording; runtime failures never switch it.
-        let remoteKey: String?
-        do {
-            remoteKey = try settings.savedDictationKey()
-            DictationDiagnostics.shared?.record("dictation.providerSelected", fields: [
-                "conversationID": conversation.id.uuidString, "provider": "doubao-remote"
-            ])
-        } catch {
-            remoteKey = nil
-            DictationDiagnostics.shared?.record("dictation.providerSelected", fields: [
-                "conversationID": conversation.id.uuidString, "provider": "apple-local",
-                "reason": error.localizedDescription, "errorDomain": (error as NSError).domain,
-                "errorCode": (error as NSError).code
-            ])
-        }
-        start(conversation: conversation, remoteKey: remoteKey)
-    }
-    // Explicit credentials and injected interfaces keep lifecycle tests offline.
-    func start(conversation: WorkspaceConversation, key: String) {
-        start(conversation: conversation, remoteKey: key)
-    }
-    private func start(conversation: WorkspaceConversation, remoteKey: String?) {
         DictationDiagnostics.shared?.record("dictation.startGate", fields: [
             "conversationID": conversation.id.uuidString, "active": isActive, "retired": retired,
-            "voiceActive": workspace?.voice.isActive == true, "voiceTesting": workspace?.voice.testing == true,
-            "provider": remoteKey == nil ? "apple-local" : "doubao-remote"
+            "voiceActive": workspace?.voice.isActive == true, "voiceTesting": workspace?.voice.testing == true
         ])
         guard !retired, !isActive else { return }
         guard workspace?.voice.isActive != true, workspace?.voice.testing != true else {
@@ -114,7 +78,7 @@ import Combine
         generation = UUID(); let current = generation
         captureReady = false; levels = []
         conversationID = conversation.id; store = conversation.store
-        confirmed = []; finalTranscript = nil; recognizedText = nil; tracker = VoiceUtteranceTracker(); subtitle = ""; error = nil; state = .recording
+        finalTranscript = nil; subtitle = ""; error = nil; state = .recording
         diagnosticTrace = nil
         if let logger = DictationDiagnostics.shared {
             diagnosticTrace = DictationTrace(logger: logger, recordingID: current,
@@ -123,16 +87,11 @@ import Combine
                 })
         }
         let trace = diagnosticTrace
-        trace?.record("recording.start", diagnosticState.merging([
-            "provider": remoteKey == nil ? "apple-local" : "doubao-remote"
-        ]) { _, new in new })
+        trace?.record("recording.start", diagnosticState)
         startup = Task { [weak self] in
             guard let self, self.generation == current, !Task.isCancelled else { return }
             let recognizer: any VoiceRecognizing
-            do {
-                if remoteKey != nil { recognizer = self.makeRecognizer() }
-                else { recognizer = try await self.makeLocalRecognizer() }
-            } catch {
+            do { recognizer = try await self.makeRecognizer() } catch {
                 trace?.record("recognizer.prepareFailed", ["errorDomain": (error as NSError).domain,
                     "errorCode": (error as NSError).code])
                 guard self.generation == current, !Task.isCancelled else { return }
@@ -141,10 +100,6 @@ import Combine
             guard self.generation == current, !Task.isCancelled else { recognizer.cancel(); return }
             self.recognizer = recognizer
             trace?.record("recognizer.prepared", ["type": String(describing: type(of: recognizer))])
-            // Only ordinary remote dictation installs the opt-in frame observer.
-            if let remote = recognizer as? DoubaoRecognizer {
-                remote.onDictationFrame = trace.map { trace in { frame in trace.frame(frame) } }
-            }
             if let local = recognizer as? AppleSpeechRecognizer {
                 local.onSpeechResult = trace.map { trace in { result in
                     trace.record("apple.rawCallback", ["text": result.result?.text as Any? ?? NSNull(),
@@ -167,40 +122,35 @@ import Combine
                 self.recognitionTask = Task { [weak self] in
                     guard let self, self.generation == current, !Task.isCancelled else { return }
                     do {
-                        try await recognizer.run(key: remoteKey ?? "", audio: stream) { [weak self] result in
+                        try await recognizer.run(key: "", audio: stream) { [weak self] result in
                             let accepted = self?.generation == current && self?.isActive == true
                             let callbackIndex = trace?.callback(result, accepted: accepted)
                             if let self { trace?.record("callback.before", self.diagnosticState.merging([
                                 "callbackIndex": callbackIndex as Any? ?? NSNull()
                             ]) { _, new in new }) }
                             guard let self, self.generation == current, self.isActive else { return }
-                            let update = self.tracker.accept(result)
-                            // The Apple adapter provides cumulative text across local phrases.
-                            if remoteKey == nil {
-                                self.subtitle = result.result?.text ?? ""
-                                self.recognizedText = self.subtitle
-                            } else { self.subtitle = update.subtitle }
-                            self.confirmed.append(contentsOf: update.committed)
-                            if result.streamFinal, let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-                                self.finalTranscript = text
+                            // The Apple adapter provides cumulative text across local phrases;
+                            // an empty hypothesis never erases it.
+                            let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                            if !text.isEmpty {
+                                self.subtitle = text
+                                if result.streamFinal { self.finalTranscript = text }
                             }
                             trace?.record("callback.after", self.diagnosticState.merging([
-                                "callbackIndex": callbackIndex as Any? ?? NSNull(),
-                                "trackerSubtitle": update.subtitle, "trackerCommitted": update.committed
+                                "callbackIndex": callbackIndex as Any? ?? NSNull()
                             ]) { _, new in new })
                         }
                         trace?.record("recognizer.return", self.diagnosticState)
                         guard self.generation == current, !Task.isCancelled else { return }
-                        let completed = self.state == .finalizing || (remoteKey == nil && self.finalTranscript != nil)
-                        self.complete(error: completed ? nil : "语音识别连接已结束，请重新开始转写。", finished: completed)
+                        let completed = self.state == .finalizing || self.finalTranscript != nil
+                        self.complete(error: completed ? nil : "语音识别已提前结束，请重新开始转写。", finished: completed)
                     } catch {
                         trace?.record("recognizer.error", self.diagnosticState.merging([
                             "errorDomain": (error as NSError).domain, "errorCode": (error as NSError).code,
                             "cancelled": Task.isCancelled
                         ]) { _, new in new })
                         guard self.generation == current, !Task.isCancelled else { return }
-                        self.complete(error: error is SettingsError ? error.localizedDescription :
-                            (remoteKey == nil ? "Apple 本地语音识别失败，请重新开始转写。" : "语音识别失败，请检查网络后重试。"))
+                        self.complete(error: error is SettingsError ? error.localizedDescription : "Apple 本地语音识别失败，请重新开始转写。")
                     }
                 }
                 // Like the call's, the first-packet timeout pauses while VoiceAudio restarts the
@@ -222,7 +172,7 @@ import Combine
                                 self.watchdog?.cancel(); self.watchdog = nil
                                 self.appendLevels(packet.data)
                             }
-                            if case .dropped = input.yield(packet.data) { throw SettingsError("语音上传过慢，请检查网络后重试。") }
+                            if case .dropped = input.yield(packet.data) { throw SettingsError("语音识别处理过慢，请重新开始转写。") }
                         }
                         guard let self, self.generation == current, !Task.isCancelled else { return }
                         if self.state == .finalizing { input.finish() }
@@ -248,7 +198,7 @@ import Combine
         guard state == .recording, captureReady else { return }
         sendWhenFinished = send
         state = .finalizing; captureReady = false; watchdog?.cancel()
-        // Drain captured PCM, send the ASR final packet, then await its final response.
+        // Drain captured PCM, end the recognizer's audio, then await its final result.
         audio.finishCapture()
         let current = generation
         watchdog = Task { [weak self, finalizationTimeout] in
@@ -275,8 +225,8 @@ import Combine
         recognitionTask?.cancel(); recognitionTask = nil; recognizer?.cancel(); recognizer = nil
         audio.stop()
         captureReady = false; levels = []
-        // Callbacks were invalidated above, so Apple's latest text is committed once.
-        let content = finalTranscript ?? recognizedText ?? confirmed.joined(separator: " ")
+        // Callbacks were invalidated above, so the transcript is committed once.
+        let content = finalTranscript ?? subtitle
         if !discard, !content.isEmpty, let store {
             let separator = store.mainDraft.isEmpty || store.mainDraft.hasSuffix("\n") ? "" : "\n"
             diagnosticTrace?.record("draft.append.before", ["draft": store.mainDraft, "content": content, "separator": separator])
@@ -287,7 +237,7 @@ import Combine
                 "draft": store?.mainDraft as Any? ?? NSNull()])
         }
         let completedDraft = store?.mainDraft
-        confirmed = []; finalTranscript = nil; recognizedText = nil; store = nil; conversationID = nil; subtitle = ""
+        finalTranscript = nil; store = nil; conversationID = nil; subtitle = ""
         self.error = error; state = error == nil ? .idle : .failed
         diagnosticTrace?.record("completion.after", diagnosticState.merging(["draft": completedDraft as Any? ?? NSNull()]) { _, new in new })
         send?()

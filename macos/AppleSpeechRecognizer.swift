@@ -38,7 +38,7 @@ import Speech
     func cancel() { task?.cancel(); task = nil }
 }
 
-/// One on-device dictation, using the same PCM stream as Doubao. Never owns a microphone or retries.
+/// One on-device dictation over the shared 16 kHz PCM stream. Never owns a microphone or retries.
 @MainActor final class AppleSpeechRecognizer: VoiceRecognizing {
     private let engine: any AppleSpeechEngine
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -63,7 +63,7 @@ import Speech
             locale.identifier.replacingOccurrences(of: "_", with: "-").lowercased()
         }
         guard let supported = supportedLocales.first(where: { identifier($0) == identifier(target) }) else {
-            throw SettingsError("Apple 语音识别不支持听写语言 \(target.identifier)，请检查首选语言或配置语音专用密钥。")
+            throw SettingsError("Apple 语音识别不支持听写语言 \(target.identifier)，请检查首选语言。")
         }
         return supported
     }
@@ -114,7 +114,7 @@ import Speech
 
     private static func validate(_ engine: any AppleSpeechEngine) throws {
         guard engine.supportsOnDeviceRecognition else {
-            throw SettingsError("此 Mac 不支持 Apple 本地语音识别（\(engine.locale.identifier)）；不会使用 Apple 云端识别。请配置语音专用密钥，或检查该语言的本地语音资源。")
+            throw SettingsError("此 Mac 不支持 Apple 本地语音识别（\(engine.locale.identifier)）；不会使用 Apple 云端识别。请检查该语言的本地语音资源。")
         }
         guard engine.isAvailable else { throw SettingsError("Apple 本地语音识别当前不可用（\(engine.locale.identifier)），请检查该语言的本地语音资源后重试。") }
     }

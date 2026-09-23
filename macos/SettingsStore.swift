@@ -283,16 +283,6 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
         VoiceDiagnostics.shared.record("1 API Key", "PASS", "来源=\(savedVoiceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "已保存的模型密钥" : "语音专用密钥")；非空且格式有效，服务端鉴权待连接验证")
         return (try (snapshot.voice ?? VoiceConfiguration()).validated(), key)
     }
-    func savedDictationKey() throws -> String {
-        guard voiceKeyLoaded else { throw SettingsError("无法读取已保存的语音密钥，请检查钥匙串访问权限。") }
-        // Ordinary STT only accepts an explicit Agent Plan credential. Text model
-        // keys (including keys for other providers) must never select Doubao ASR.
-        let key = savedVoiceKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty, !key.contains("\r"), !key.contains("\n") else {
-            throw SettingsError("普通转写未配置有效的 Agent Plan / 语音专用密钥，将尝试 Apple 本地识别。")
-        }
-        return key
-    }
     // An empty override shares the saved model credential without duplicating it in Keychain.
     // Model form drafts must never silently change the credentials used by voice tests or calls.
     private func resolvedVoiceKey(_ override: String) throws -> String {

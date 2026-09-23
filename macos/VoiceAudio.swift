@@ -80,7 +80,7 @@ final class VoicePCMConverter: @unchecked Sendable {
         if flush, !paused, !pending.isEmpty {
             let capturePacket = VoiceCapturePacket(data: pending, epoch: epoch)
             if case .dropped = continuation.yield(capturePacket) {
-                continuation.finish(throwing: SettingsError("录音尾包上传过慢，已保留识别到的文字。"))
+                continuation.finish(throwing: SettingsError("录音尾包处理过慢，已保留识别到的文字。"))
             }
         }
         pending.removeAll(); continuation.finish()

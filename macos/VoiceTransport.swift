@@ -221,7 +221,6 @@ extension VoiceRecognizing {
 
 @MainActor final class DoubaoRecognizer: VoiceRecognizing {
     private var socket: VoiceSocket?
-    var onDictationFrame: ((VoiceWire.Frame) -> Void)?
     static func configuration() throws -> Data {
         try JSONSerialization.data(withJSONObject: [
             "user": ["uid": "echo-desktop"],
@@ -256,7 +255,6 @@ extension VoiceRecognizing {
                 group.addTask { @MainActor @Sendable in
                     while true {
                         let frame = try await socket.receive(tts: false, timeout: nil)
-                        self.onDictationFrame?(frame)
                         try Task.checkCancellation()
                         var result: ASRResult
                         do { result = try JSONDecoder().decode(ASRResult.self, from: frame.payload) }

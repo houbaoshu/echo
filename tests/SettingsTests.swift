@@ -46,7 +46,8 @@ enum SettingsTests {
         settings.save()
         precondition(settings.notice == nil && !settings.isDirty && settings.snapshot.activeProvider == .openAI)
         precondition(secrets.values["legacy"] == "deepseek-secret", "Saving another provider must not delete the migrated key")
-        precondition(tryValue { try settings.savedDictationKey() } == "agent-plan-secret")
+        precondition(tryValue { try settings.savedVoiceCredentials().key } == "agent-plan-secret",
+                     "Saving a model provider leaves the voice key alone")
         let reopened = SettingsStore(url: url, secrets: secrets)
         precondition(reopened.selectedProvider == .openAI && reopened.apiKey == "openai-secret", "Explicit provider identity survives custom URLs")
         precondition(reopened.draft.baseURL == "https://gateway.example/v1" && reopened.draft.model == "custom-openai")

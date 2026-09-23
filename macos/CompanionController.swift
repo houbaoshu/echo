@@ -65,7 +65,7 @@ import Combine
         let planets = planets ?? PlanetStore(settings: settings, voice: workspace.voice)
         self.planets = planets
         workspace.voice.attach(workspace: workspace, settings: settings)
-        workspace.dictation.attach(workspace: workspace, settings: settings)
+        workspace.dictation.attach(workspace: workspace)
         let placement = ActivityPlacement()
         activityPlacement = placement
         petPanel = PetPanel(store: petStore)
