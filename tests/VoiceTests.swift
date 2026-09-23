@@ -35,6 +35,9 @@ actor PendingModelTester: ConnectionTesting {
     var monitoring = false
     /// Frames heard in the current playback generation; tests advance it to simulate playback.
     var playbackFrames = 0
+    /// Tests set these to replay VoiceAudio recovering from a startup reconfiguration.
+    var isRestartingCapture = false
+    var captureRestartedAt: ContinuousClock.Instant?
     func start(capture: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         capturing = capture
         let (stream, continuation) = AsyncThrowingStream<VoiceCapturePacket, Error>.makeStream()
@@ -194,6 +197,7 @@ actor PendingModelTester: ConnectionTesting {
         snapshotTests()
         try await planetTests()
         try await captureWatchdogPauseTests()
+        try await captureWatchdogRestartTests()
         try await mutedPlaybackTailProtectionTests()
         try await snapshotLifecycleTests()
         try protocolTests()
@@ -212,6 +216,7 @@ actor PendingModelTester: ConnectionTesting {
         try await configurationChangeTests()
         try await backgroundAudioStartTests()
         try await voiceAudioHandoverTests()
+        try await voiceAudioRestartTests()
         try await AppleSpeechTests.run()
         try await DictationTests.run()
         try await agentVoiceTests()
@@ -636,6 +641,98 @@ actor PendingModelTester: ConnectionTesting {
         }
     }
 
+    /// A recovery restart runs on the setup queue with an injected restart, so no audio hardware
+    /// is touched. While the queue owns the engine every main-actor access point must stay off it.
+    @MainActor static func voiceAudioRestartTests() async throws {
+        final class Gate: @unchecked Sendable {
+            let release = DispatchSemaphore(value: 0)
+            private let lock = NSLock()
+            private var lent: VoiceAudioGraph?
+            var graph: VoiceAudioGraph? { lock.withLock { lent } }
+            func enter(_ graph: VoiceAudioGraph) { lock.withLock { lent = graph } }
+        }
+        func adoptedAudio(_ gate: Gate, fails: Bool = false, onConfigurationChange: ((AVAudioEngine) -> Void)? = nil)
+        async throws -> (VoiceAudio, VoiceAudioGraph, AsyncThrowingStream<VoiceCapturePacket, Error>) {
+            let graph = VoiceAudioGraph()
+            graph.engine.attach(graph.player)
+            let audio = VoiceAudio(restartDelay: .milliseconds(1), build: { _ in graph }, restart: { lent, _ in
+                gate.enter(lent)
+                gate.release.wait()
+                if fails { throw SettingsError("restart failed") }
+            }, onConfigurationChange: onConfigurationChange)
+            let stream = try await audio.startInBackground(capture: true)
+            return (audio, graph, stream)
+        }
+        do {
+            let gate = Gate()
+            var decided: [ObjectIdentifier] = []
+            let (audio, graph, _) = try await adoptedAudio(gate) { decided.append(ObjectIdentifier($0)) }
+            defer { audio.stop() }
+            audio.restartCapture(graph.engine)
+            check(audio.isRestartingCapture && audio.captureRestartedAt == nil, "a scheduled restart is flagged at once")
+            await waitUntil { gate.graph != nil }
+            check(gate.graph?.engine === graph.engine, "the engine is restarted on the setup queue while the main actor keeps going")
+
+            var played = false
+            let reply = Task { @MainActor in
+                defer { played = true }
+                try await audio.play(Data(repeating: 0, count: 480))
+            }
+            audio.setOutputMuted(true)
+            audio.setPlaybackPaused(true)
+            audio.interruptPlayback()
+            _ = audio.inputOutputLatency
+            _ = audio.playbackFrames
+            NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: graph.engine)
+            NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: graph.engine)
+            try await Task.sleep(for: .milliseconds(100))
+            check(!played && decided.isEmpty && audio.isRestartingCapture,
+                  "during the restart playback waits and configuration changes are held back")
+
+            gate.release.signal()
+            await waitUntil { !audio.isRestartingCapture }
+            check(audio.captureRestartedAt != nil, "a completed restart records when capture resumed")
+            check(decided == [ObjectIdentifier(graph.engine)],
+                  "changes that arrived during the restart are judged once, after it")
+            check(graph.engine.mainMixerNode.outputVolume == 0, "a mute asked for during the restart is applied after it")
+            await waitUntil { played }
+            check(played, "playback waiting on the restart resumes once it completes")
+            _ = try? await reply.value
+        }
+        do {
+            let gate = Gate()
+            var failures: [String] = []
+            let (audio, graph, stream) = try await adoptedAudio(gate)
+            audio.onFailure = { failures.append($0) }
+            audio.restartCapture(graph.engine)
+            await waitUntil { gate.graph != nil }
+            audio.stop()
+            var capture = stream.makeAsyncIterator()
+            let ended = try await capture.next() == nil
+            check(ended && !audio.isRestartingCapture, "stop() during the restart ends capture at once")
+            check(gate.graph?.isTornDown == false, "the restarting engine is not touched from the main actor")
+            gate.release.signal()
+            await waitUntil { gate.graph?.isTornDown == true }
+            check(gate.graph?.isTornDown == true, "the setup queue tears the engine down once its restart returns")
+            try await Task.sleep(for: .milliseconds(50))
+            check(failures.isEmpty && audio.captureRestartedAt == nil && !audio.isRestartingCapture,
+                  "a restart overtaken by stop() reports nothing and records no recovery")
+        }
+        do {
+            let gate = Gate()
+            var failures: [String] = []
+            let (audio, graph, _) = try await adoptedAudio(gate, fails: true)
+            defer { audio.stop() }
+            audio.onFailure = { failures.append($0) }
+            audio.restartCapture(graph.engine)
+            await waitUntil { gate.graph != nil }
+            gate.release.signal()
+            await waitUntil { !failures.isEmpty }
+            check(failures == ["音频设备已变化，通话已结束，请重新开始。"] && !audio.isRestartingCapture
+                  && audio.captureRestartedAt == nil,
+                  "a failed restart clears the flag, records no recovery and ends the call")
+        }
+    }
     @MainActor static func captureWatchdogPauseTests() async throws {
         // Both starting during a reply and pausing before the first PCM packet
         // must keep an intentional capture pause out of the startup timeout.
@@ -676,6 +773,78 @@ actor PendingModelTester: ConnectionTesting {
                 check(voice.isActive && voice.error == nil && recognizers.last?.packets == 1,
                       "valid first packet after recovery cancels the capture timeout")
             }
+        }
+    }
+    /// A device change while connecting restarted the engine for ~7 s on the main actor, and the
+    /// 5 s first-packet watchdog, which had been counting through the restart, ended the call the
+    /// moment it recovered. The timeout now covers the microphone only, from recovery onwards.
+    @MainActor static func captureWatchdogRestartTests() async throws {
+        let armed = ContinuousClock.now, timeout = Duration.milliseconds(100)
+        func decide(at offset: Int, restartedAt: Int? = nil, restarting: Bool = false) -> VoiceCaptureWatchdog.Decision {
+            VoiceCaptureWatchdog.decide(now: armed + .milliseconds(offset), armedAt: armed,
+                                        restartedAt: restartedAt.map { armed + .milliseconds($0) },
+                                        restarting: restarting, timeout: timeout)
+        }
+        check(decide(at: 0) == .wait(until: armed + .milliseconds(100))
+              && decide(at: 99) == .wait(until: armed + .milliseconds(100))
+              && decide(at: 100) == .fire && decide(at: 250) == .fire,
+              "without a restart the watchdog fires one timeout after it was armed")
+        check(decide(at: 100, restarting: true) == .wait(until: armed + .milliseconds(200))
+              && decide(at: 7000, restarting: true) == .wait(until: armed + .milliseconds(7100))
+              && decide(at: 7000, restartedAt: 300, restarting: true) == .wait(until: armed + .milliseconds(7100)),
+              "while the engine restarts the watchdog waits, however long past its deadline")
+        check(decide(at: 350, restartedAt: 300) == .wait(until: armed + .milliseconds(400))
+              && decide(at: 399, restartedAt: 300) == .wait(until: armed + .milliseconds(400))
+              && decide(at: 400, restartedAt: 300) == .fire,
+              "a restart completing at T fires only at T + timeout")
+        check(decide(at: 50, restartedAt: -500) == .wait(until: armed + .milliseconds(100))
+              && decide(at: 100, restartedAt: -500) == .fire,
+              "a restart from before the watchdog was armed does not shorten or extend it")
+        check(decide(at: 120, restartedAt: 50) == .wait(until: armed + .milliseconds(150))
+              && decide(at: 150, restartedAt: 50) == .fire,
+              "a short restart inside the window restarts the window from its completion")
+
+        // Replays run 4: capture starts, the watchdog is armed, a device change restarts the
+        // engine for longer than the timeout, and the first packet arrives only after recovery.
+        func makeCall() -> (FakeAudio, VoiceSessionController, TaskStore) {
+            let audio = FakeAudio(), store = TaskStore(source: FakeSource())
+            let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
+                                               synthesizer: { FakeSynthesizer() }, captureTimeout: timeout,
+                                               permission: { true })
+            voice.start(conversation: WorkspaceConversation(store: store), configuration: VoiceConfiguration(), key: "test")
+            return (audio, voice, store)
+        }
+        do {
+            let (audio, voice, store) = makeCall()
+            defer { voice.shutdown(); store.shutdown() }
+            await waitUntil { voice.isActive }
+            audio.isRestartingCapture = true
+            try await Task.sleep(for: .milliseconds(300))
+            check(voice.isActive && voice.error == nil,
+                  "an engine restart longer than the timeout does not end the call as a first-packet timeout")
+            audio.isRestartingCapture = false; audio.captureRestartedAt = .now
+            try await Task.sleep(for: .milliseconds(50))
+            audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: audio.captureEpoch))
+            try await Task.sleep(for: .milliseconds(200))
+            check(voice.isActive && voice.error == nil,
+                  "a first packet shortly after the restart completes keeps the call")
+        }
+        do {
+            let (audio, voice, store) = makeCall()
+            defer { voice.shutdown(); store.shutdown() }
+            await waitUntil { voice.isActive }
+            audio.isRestartingCapture = true
+            try await Task.sleep(for: .milliseconds(300))
+            let restartedAt = ContinuousClock.now
+            audio.isRestartingCapture = false; audio.captureRestartedAt = restartedAt
+            try await Task.sleep(for: .milliseconds(30))
+            check(voice.isActive, "the recovered microphone gets a full timeout of its own")
+            await waitUntil { !voice.isActive }
+            let endedAfter = restartedAt.duration(to: .now)
+            let reason = VoiceDiagnostics.shared.lines.last { $0.contains("[通话结束] REASON") }
+            check(!voice.isActive && endedAfter >= timeout && reason?.contains("麦克风首包超时") == true
+                  && voice.error?.contains("没有返回音频") == true,
+                  "with no packet after the restart the call ends as a first-packet timeout, after restartedAt + timeout")
         }
     }
     @MainActor static func mutedPlaybackTailProtectionTests() async throws {

@@ -170,10 +170,17 @@ struct VoiceConfigurationChangePolicy: Sendable {
     func interruptPlayback()
     func finishCapture()
     func stop()
+    /// From a configuration change the policy decided to recover from until that restart
+    /// succeeds or fails; capture delivers nothing meanwhile.
+    var isRestartingCapture: Bool { get }
+    /// When the last recovery restart of the current graph completed.
+    var captureRestartedAt: ContinuousClock.Instant? { get }
 }
 
 extension VoiceAudioHandling {
     var playbackFrames: Int { 0 }
+    var isRestartingCapture: Bool { false }
+    var captureRestartedAt: ContinuousClock.Instant? { nil }
     func finishCapture() { stop() }
     func resetCapture(epoch: Int, paused: Bool) {}
     func startInBackground(capture: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
@@ -199,6 +206,8 @@ struct VoiceAudioBuildRequest: Sendable {
 /// the setup queue while it is built (or torn down as an orphan), then VoiceAudio on the main
 /// actor once adopted. Nothing else references the engine meanwhile, which is the whole of
 /// what makes the unchecked Sendable sound; only the two flags are touched across threads.
+/// A recovery restart lends an adopted engine back to the queue the same way: VoiceAudio
+/// leaves it alone until the queue is done, and a stop() meanwhile has the queue tear it down.
 final class VoiceAudioGraph: @unchecked Sendable {
     struct Step { var name: String; var start: ContinuousClock.Instant; var duration: Duration }
     let engine: AVAudioEngine
@@ -245,9 +254,13 @@ extension AVAudioNode {
 @MainActor final class VoiceAudio: NSObject, VoiceAudioHandling {
     var onFailure: ((String) -> Void)?
     var inputOutputLatency: TimeInterval {
+        // While the setup queue restarts the engine, the last value read on the main actor stands.
+        guard restartingGraph == nil else { return lastInputOutputLatency }
         guard let engine else { return 0 }
-        return engine.inputNode.presentationLatency + engine.outputNode.presentationLatency
+        lastInputOutputLatency = engine.inputNode.presentationLatency + engine.outputNode.presentationLatency
+        return lastInputOutputLatency
     }
+    private var lastInputOutputLatency: TimeInterval = 0
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation?
@@ -271,6 +284,16 @@ extension AVAudioNode {
     private var startedAt: Date?
     private var restarts = 0
     private var restartTask: Task<Void, Never>?
+    private(set) var isRestartingCapture = false
+    private(set) var captureRestartedAt: ContinuousClock.Instant?
+    /// Set while the setup queue owns the engine for a recovery restart. Until it hands the
+    /// engine back, nothing on the main actor touches `engine` or `player`: intents are kept
+    /// below and applied at completion, and stop() leaves the teardown to the queue.
+    private var restartingGraph: VoiceAudioGraph?
+    private var deferredOutputMuted: Bool?
+    private var deferredInterrupt = false
+    private var changedDuringRestart = false
+    private let restart: @Sendable (VoiceAudioGraph, _ resumePlayback: Bool) throws -> Void
     /// The background start whose graph may still be handed over; stop() cancels and clears it.
     private var pendingStart: VoiceAudioStartToken?
     private let build: @Sendable (VoiceAudioBuildRequest) throws -> VoiceAudioGraph
@@ -279,15 +302,17 @@ extension AVAudioNode {
     /// here, so at most one voice-processing engine is ever being set up at a time.
     nonisolated private static let setupQueue = DispatchQueue(label: "local.chiyan.voice-audio-setup", qos: .userInitiated)
 
-    /// `build` and `onConfigurationChange` exist for tests; the defaults are the real engine
-    /// and the configuration-change policy.
+    /// `build`, `restart` and `onConfigurationChange` exist for tests; the defaults are the real
+    /// engine and the configuration-change policy.
     init(policy: VoiceConfigurationChangePolicy = VoiceConfigurationChangePolicy(),
          restartDelay: Duration = .milliseconds(300),
          build: @escaping @Sendable (VoiceAudioBuildRequest) throws -> VoiceAudioGraph = { try VoiceAudio.buildGraph($0) },
+         restart: @escaping @Sendable (VoiceAudioGraph, Bool) throws -> Void = { try VoiceAudio.restartGraph($0, resumePlayback: $1) },
          onConfigurationChange: ((AVAudioEngine) -> Void)? = nil) {
         changePolicy = policy
         self.restartDelay = restartDelay
         self.build = build
+        self.restart = restart
         self.onConfigurationChange = onConfigurationChange
         super.init()
     }
@@ -302,6 +327,7 @@ extension AVAudioNode {
 
     func setPlaybackPaused(_ paused: Bool) {
         playbackPaused = paused
+        guard restartingGraph == nil else { return }  // applied when the restart completes
         if paused { player?.pause() }
         else if engine?.isRunning == true { resumePlayer("恢复播放") }
     }
@@ -317,6 +343,7 @@ extension AVAudioNode {
     }
 
     func setOutputMuted(_ muted: Bool) {
+        guard restartingGraph == nil else { deferredOutputMuted = muted; return }
         // Silence this Voice engine without pausing queued audio or changing system volume.
         engine?.mainMixerNode.outputVolume = muted ? 0 : 1
     }
@@ -457,6 +484,12 @@ extension AVAudioNode {
         }
     }
 
+    /// Restarts an adopted engine that stopped itself, on the setup queue while it owns the graph.
+    nonisolated static func restartGraph(_ graph: VoiceAudioGraph, resumePlayback: Bool) throws {
+        try graph.engine.start()
+        if resumePlayback { try graph.player.playAudio() }
+    }
+
     /// Takes ownership of a running graph on the main actor; every later engine access is here.
     private func adopt(_ graph: VoiceAudioGraph, continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation) {
         engine = graph.engine; player = graph.player
@@ -492,6 +525,14 @@ extension AVAudioNode {
         }
     }
     private func configurationDidChange(_ engine: AVAudioEngine) {
+        // The queue is starting this engine; judge the change once it is back, on the settled route.
+        guard restartingGraph == nil else {
+            if !changedDuringRestart {
+                VoiceDiagnostics.shared.record("2 服务初始化", "INFO", "AVAudioEngineConfigurationChange 在引擎恢复期间到达，恢复完成后补做判定")
+            }
+            changedDuringRestart = true
+            return
+        }
         if let onConfigurationChange { onConfigurationChange(engine) } else { handleConfigurationChange(engine) }
     }
     private func handleConfigurationChange(_ engine: AVAudioEngine) {
@@ -510,8 +551,13 @@ extension AVAudioNode {
         case .restartEngine:
             VoiceDiagnostics.shared.record("2 服务初始化", "INFO",
                 "AVAudioEngineConfigurationChange：启动期同一设备重新配置（蓝牙 A2DP→HFP 等）running=\(engine.isRunning)")
-            scheduleRestart(engine)
+            restartCapture(engine)
         }
+    }
+    /// What the policy's `.restartEngine` does; internal so tests can drive it without a device change.
+    func restartCapture(_ engine: AVAudioEngine) {
+        isRestartingCapture = true
+        scheduleRestart(engine)
     }
     private func endCall(reason: String) {
         VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", "AVAudioEngineConfigurationChange：音频设备变化（\(reason)）")
@@ -521,34 +567,63 @@ extension AVAudioNode {
         restartTask?.cancel()
         restartTask = Task { @MainActor [weak self, restartDelay] in
             try? await Task.sleep(for: restartDelay)
+            // Cancelled means stop() or a newer restart, which now owns isRestartingCapture.
             guard let self, !Task.isCancelled, self.engine === engine else { return }
             guard !engine.isRunning else {
+                // The reconfiguration still interrupted capture, so the first-packet window restarts too.
+                self.isRestartingCapture = false; self.captureRestartedAt = .now
                 VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "重新配置后引擎仍在运行，无需恢复")
                 return
             }
+            guard let player = self.player else { return }
             self.restarts += 1
-            do {
-                try engine.start()
-                if !self.playbackPaused { try self.player?.playAudio() }
-                VoiceDiagnostics.shared.record("2 服务初始化", "PASS",
-                    "启动期设备重新配置后已恢复引擎 attempt=\(self.restarts) running=\(engine.isRunning)")
-            } catch {
-                VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", "恢复引擎失败：\(VoiceDiagnostics.reason(error))")
-                self.onFailure?("音频设备已变化，通话已结束，请重新开始。")
+            // engine.start() here took ~7 s on the main actor under the debugger; the queue does it
+            // now, and the engine is the queue's alone until finishRestart takes it back.
+            let graph = VoiceAudioGraph(engine: engine, player: player)
+            let resumed = !self.playbackPaused, restart = self.restart, began = ContinuousClock.now
+            self.restartingGraph = graph
+            let result = await withCheckedContinuation { done in
+                Self.setupQueue.async { done.resume(returning: Result { try restart(graph, resumed) }) }
             }
+            self.finishRestart(graph, result: result, resumedPlayback: resumed, began: began)
         }
+    }
+    private func finishRestart(_ graph: VoiceAudioGraph, result: Result<Void, Error>,
+                               resumedPlayback resumed: Bool, began: ContinuousClock.Instant) {
+        // stop() came first and handed the engine to the queue for teardown; none of this is ours.
+        guard restartingGraph === graph else { return }
+        restartingGraph = nil
+        isRestartingCapture = false
+        let engine = graph.engine
+        VoiceDiagnostics.shared.recordSpan("audio.restart", start: began, duration: began.duration(to: .now))
+        if case .failure(let error) = result {
+            deferredOutputMuted = nil; deferredInterrupt = false; changedDuringRestart = false
+            VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", "恢复引擎失败：\(VoiceDiagnostics.reason(error))")
+            onFailure?("音频设备已变化，通话已结束，请重新开始。")
+            return
+        }
+        captureRestartedAt = .now
+        VoiceDiagnostics.shared.record("2 服务初始化", "PASS",
+            "启动期设备重新配置后已恢复引擎 attempt=\(restarts) running=\(engine.isRunning)")
+        // What was asked for meanwhile; the queue resumed the player by the state at dispatch.
+        if let muted = deferredOutputMuted { deferredOutputMuted = nil; setOutputMuted(muted) }
+        let interrupted = deferredInterrupt; deferredInterrupt = false
+        if interrupted { graph.player.stop() }
+        if playbackPaused { if resumed, !interrupted { graph.player.pause() } }
+        else if interrupted || !resumed, engine.isRunning { resumePlayer("设备恢复后恢复播放") }
+        if changedDuringRestart { changedDuringRestart = false; configurationDidChange(engine) }
     }
     func play(_ data: Data) async throws {
         let epoch = generation
         var lastFrames = queuedFrames
         var progressAt = ContinuousClock.now
-        // A reply can arrive while a background start is still building the engine; it waits
-        // for the handover under the same no-progress limit as a full queue.
-        while queuedFrames > 24000 * 5 || pendingStart != nil {
+        // A reply can arrive while a background start is still building the engine, or while a
+        // restart recovers it; it waits under the same no-progress limit as a full queue.
+        while queuedFrames > 24000 * 5 || pendingStart != nil || isRestartingCapture {
             if playbackPaused { progressAt = .now }
             if queuedFrames != lastFrames { lastFrames = queuedFrames; progressAt = .now }
             guard progressAt.duration(to: .now) < .seconds(10) else {
-                VoiceDiagnostics.shared.record("6 播放器", "FAIL", "队列 10 秒无进展 queuedFrames=\(queuedFrames) 等待引擎启动=\(pendingStart != nil)")
+                VoiceDiagnostics.shared.record("6 播放器", "FAIL", "队列 10 秒无进展 queuedFrames=\(queuedFrames) 等待引擎启动=\(pendingStart != nil) 等待引擎恢复=\(isRestartingCapture)")
                 throw SettingsError("播放器队列停滞，请检查音频输出设备。")
             }
             try await Task.sleep(for: .milliseconds(40))
@@ -582,7 +657,7 @@ extension AVAudioNode {
         }
     }
     private var playerSample: AVAudioFramePosition? {
-        guard let player, let now = player.lastRenderTime, now.isSampleTimeValid,
+        guard restartingGraph == nil, let player, let now = player.lastRenderTime, now.isSampleTimeValid,
               let time = player.playerTime(forNodeTime: now) else { return nil }
         return time.sampleTime
     }
@@ -607,12 +682,14 @@ extension AVAudioNode {
                 throw SettingsError("播放器未完成音频输出，请检查输出设备。")
             }
             try await Task.sleep(for: .milliseconds(40))
-            guard epoch == generation, engine?.isRunning == true else { throw CancellationError() }
+            // A restarting engine is the queue's to ask; it counts as running until it is handed back.
+            guard epoch == generation, restartingGraph != nil || engine?.isRunning == true else { throw CancellationError() }
         }
     }
     func interruptPlayback() {
         generation = UUID(); queuedFrames = 0; trailingByte = Data(); playbackPaused = false
         scheduledBuffers = []; playedBackFrames = 0; headStartSample = nil
+        guard restartingGraph == nil else { deferredInterrupt = true; return }
         player?.stop()
         if engine?.isRunning == true { resumePlayer("打断后重启播放器") }
     }
@@ -623,12 +700,24 @@ extension AVAudioNode {
         pendingStart?.cancel(); pendingStart = nil
         NotificationCenter.default.removeObserver(self)
         restartTask?.cancel(); restartTask = nil
+        isRestartingCapture = false; captureRestartedAt = nil
+        deferredOutputMuted = nil; deferredInterrupt = false; changedDuringRestart = false
+        lastInputOutputLatency = 0
         routeBaseline = nil; startedAt = nil; graphSampleRate = nil; restarts = 0
         generation = UUID(); queuedFrames = 0; trailingByte = Data(); playbackPaused = false
         scheduledBuffers = []; playedBackFrames = 0; headStartSample = nil
-        if tapped { engine?.inputNode.removeTap(onBus: 0); tapped = false }
+        // The converter is lock-protected, so capture ends now even if the engine is not ours yet.
         captureConverter?.finish(flush: flushCapture); captureConverter = nil
         continuation?.finish(); continuation = nil
-        player?.stop(); engine?.stop(); player = nil; engine = nil
+        if let graph = restartingGraph {
+            // The queue is still starting this engine; it tears it down right after, in order.
+            restartingGraph = nil
+            graph.tapped = tapped
+            Self.setupQueue.async { graph.teardown() }
+        } else {
+            if tapped { engine?.inputNode.removeTap(onBus: 0) }
+            player?.stop(); engine?.stop()
+        }
+        tapped = false; player = nil; engine = nil
     }
 }

@@ -2,6 +2,25 @@ import AppKit
 import AVFoundation
 import Combine
 
+/// The first-packet timeout measures the microphone, not an engine restart: while VoiceAudio
+/// recovers from a startup reconfiguration nothing can arrive, and once it has recovered the
+/// device gets a full timeout of its own.
+enum VoiceCaptureWatchdog {
+    enum Decision: Equatable {
+        case fire
+        case wait(until: ContinuousClock.Instant)
+    }
+    static func decide(now: ContinuousClock.Instant, armedAt: ContinuousClock.Instant,
+                       restartedAt: ContinuousClock.Instant?, restarting: Bool, timeout: Duration) -> Decision {
+        // The restart's length is unknown; look again one timeout later, which is never past
+        // the deadline a restart completing meanwhile will set.
+        if restarting { return .wait(until: now + timeout) }
+        // A restart from before this watchdog was armed says nothing about the current capture.
+        let deadline = max(armedAt, restartedAt ?? armedAt) + timeout
+        return now < deadline ? .wait(until: deadline) : .fire
+    }
+}
+
 @MainActor final class VoiceSessionController: NSObject, ObservableObject {
     @Published private(set) var snapshot = VoiceSessionSnapshot()
     /// The reply being spoken, or the last one, until the next reply's first subtitle.
@@ -292,13 +311,31 @@ import Combine
     private func watchForFirstCapture() {
         captureWatchdog?.cancel(); captureWatchdog = nil
         guard !receivedCapturePacket, !isMuted else { return }
-        let call = sessionID, epoch = inputEpoch
+        let call = sessionID, epoch = inputEpoch, armedAt = ContinuousClock.now
         captureWatchdog = Task { [weak self, captureTimeout] in
-            do { try await Task.sleep(for: captureTimeout) } catch { return }
-            guard let self, self.sessionID == call, self.inputEpoch == epoch, !Task.isCancelled else { return }
-            VoiceDiagnostics.shared.record("4 音频输入", "FAIL", "采集已启用但等待 PCM 首包超时；检查输入设备")
-            self.end(error: "麦克风启动后没有返回音频，请检查输入设备。", reason: .firstPacketTimeout)
+            while let decision = self?.captureWatchdogDecision(call: call, epoch: epoch, armedAt: armedAt, timeout: captureTimeout) {
+                guard case .wait(let deadline) = decision else {
+                    self?.captureTimedOut()
+                    return
+                }
+                do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+            }
         }
+    }
+    /// nil once the watchdog no longer belongs to the current call and capture epoch.
+    private func captureWatchdogDecision(call: UUID, epoch: Int, armedAt: ContinuousClock.Instant,
+                                         timeout: Duration) -> VoiceCaptureWatchdog.Decision? {
+        guard sessionID == call, inputEpoch == epoch, !Task.isCancelled else { return nil }
+        return VoiceCaptureWatchdog.decide(now: .now, armedAt: armedAt, restartedAt: audio.captureRestartedAt,
+                                           restarting: audio.isRestartingCapture, timeout: timeout)
+    }
+    private func captureTimedOut() {
+        var detail = "采集已启用但等待 PCM 首包超时；检查输入设备"
+        if let restartedAt = audio.captureRestartedAt {
+            detail += "（引擎恢复于 \(Int(restartedAt.duration(to: .now) / .milliseconds(1))) ms 前）"
+        }
+        VoiceDiagnostics.shared.record("4 音频输入", "FAIL", detail)
+        end(error: "麦克风启动后没有返回音频，请检查输入设备。", reason: .firstPacketTimeout)
     }
     private func stopRecognition(reason: VoiceSessionSnapshot.Recognition.OffReason) {
         bargeInEchoGuard = nil
