@@ -260,11 +260,12 @@ enum DictationTests {
                                  "A new partial preserves the first phrase in preview without writing the draft")
                 }
             }
-            let expected = termination == "finish" ? "已有草稿\n" + fixture.expected : "已有草稿"
+            // On error the recorded final arrives late; the four phrases were already recognized.
+            let expected = termination == "cancel" ? "已有草稿" : "已有草稿\n" + fixture.expected
             precondition(store.mainDraft == expected,
-                         "Recorded Apple sequence preserves all four phrases on finish; cancellation/error cannot commit them")
+                         "Recorded Apple sequence keeps all four phrases once on finish or error; cancellation commits nothing")
         }
-        print("PASS: Video-annotated 36-callback replay retains four phrases and corrections; cancellation/error preserve draft")
+        print("PASS: Video-annotated 36-callback replay retains four phrases and corrections; errors keep them once, cancellation preserves draft")
     }
 
     // This validates trace fidelity and isolation, not real ASR behavior.
@@ -374,24 +375,71 @@ enum DictationTests {
         precondition(store.mainDraft == draft && dictation.subtitle == "未确认")
         dictation.cancel(discard: true)
         engine.emit("取消后迟到结果", final: true); await VoiceTests.tick()
-        precondition(!audio.capturing && !dictation.isActive && store.mainDraft == draft)
+        precondition(!audio.capturing && !dictation.isActive && store.mainDraft == draft, "Discarding commits nothing")
+
+        // A recording stopped without discarding (switching conversations, hiding the window,
+        // sleep) keeps Apple's latest cumulative text once; late callbacks add nothing.
+        var kept = draft
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        engine.emit("停止前", final: false); await VoiceTests.tick()
+        engine.emit("停止前的文字", final: false); await VoiceTests.tick()
+        dictation.cancel()
+        kept += "\n停止前的文字"
+        precondition(dictation.state == .idle && dictation.error == nil && !audio.capturing && store.mainDraft == kept,
+                     "A non-discarding stop keeps the latest text")
+        engine.emit("停止后迟到", final: true); await VoiceTests.tick()
+        precondition(store.mainDraft == kept, "A late final after a non-discarding stop is not committed again")
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        dictation.cancel()
+        precondition(dictation.state == .idle && store.mainDraft == kept, "A non-discarding stop without text writes nothing")
+
+        // A failed recording keeps the latest text the same way.
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        engine.emit("识别失败前", final: false); await VoiceTests.tick()
+        engine.emit("识别失败前的文字", final: false); await VoiceTests.tick()
+        engine.receive?(nil, "测试识别失败"); await VoiceTests.tick()
+        kept += "\n识别失败前的文字"
+        precondition(dictation.state == .failed && dictation.error?.contains("测试识别失败") == true
+                     && remoteStarts == 0 && store.mainDraft == kept,
+                     "Local runtime failure keeps the latest text and never switches to remote")
+        engine.emit("识别失败后迟到", final: true); await VoiceTests.tick()
+        precondition(store.mainDraft == kept, "A late final after a recognizer failure is not committed again")
 
         dictation.start(conversation: conversation); await VoiceTests.tick()
-        engine.emit("失败时不能提交临时文字", final: false); await VoiceTests.tick()
-        engine.receive?(nil, "测试识别失败"); await VoiceTests.tick()
-        precondition(dictation.state == .failed && dictation.error?.contains("测试识别失败") == true
-                     && remoteStarts == 0 && store.mainDraft == draft, "Local runtime failure never switches to remote")
+        engine.emit("超时前的文字", final: false); await VoiceTests.tick()
+        dictation.finishRecording(); try await Task.sleep(for: .milliseconds(70))
+        kept += "\n超时前的文字"
+        precondition(dictation.state == .failed && !audio.capturing && store.mainDraft == kept
+                     && dictation.error?.contains("已保留识别到的文字") == true, "A final timeout keeps the latest text")
+        engine.emit("超时后迟到", final: true); await VoiceTests.tick()
+        precondition(store.mainDraft == kept, "A late final after a timeout is not committed again")
 
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        engine.emit("设备断开前的文字", final: false); await VoiceTests.tick()
+        audio.onFailure?("音频设备已变化，通话已结束，请重新开始。", .deviceChange)
+        kept += "\n设备断开前的文字"
+        precondition(dictation.state == .failed && !audio.capturing && store.mainDraft == kept
+                     && dictation.error == DictationController.message(for: .deviceChange), "A device failure keeps the latest text")
+        engine.emit("设备断开后迟到", final: true); await VoiceTests.tick()
+        precondition(store.mainDraft == kept, "A late final after a device failure is not committed again")
+
+        // Failures before any recognized text leave the draft alone.
         dictation.start(conversation: conversation); await VoiceTests.tick()
         dictation.finishRecording(); try await Task.sleep(for: .milliseconds(70))
-        precondition(dictation.state == .failed && !audio.capturing && store.mainDraft == draft)
+        precondition(dictation.state == .failed && !audio.capturing && store.mainDraft == kept)
         engine.emit("超时后迟到", final: true); await VoiceTests.tick()
-        precondition(store.mainDraft == draft)
+        precondition(store.mainDraft == kept)
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        audio.onFailure?("音频设备恢复失败，通话已结束，请重新开始。", .recoveryFailed)
+        precondition(dictation.state == .failed && store.mainDraft == kept, "A device failure without text writes nothing")
+        dictation.start(conversation: conversation); await VoiceTests.tick()
+        engine.receive?(nil, "测试识别失败"); await VoiceTests.tick()
+        precondition(dictation.state == .failed && store.mainDraft == kept, "A recognizer failure without text writes nothing")
 
         // Speech can finalize itself (for example at its duration limit).
         dictation.start(conversation: conversation); await VoiceTests.tick()
         engine.emit("自然定稿", final: true); await VoiceTests.tick()
-        precondition(dictation.state == .idle && !audio.capturing && store.mainDraft == draft + "\n自然定稿")
+        precondition(dictation.state == .idle && !audio.capturing && store.mainDraft == kept + "\n自然定稿")
 
         engine.supportsOnDeviceRecognition = false
         dictation.start(conversation: conversation); await VoiceTests.tick()

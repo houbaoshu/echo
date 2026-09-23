@@ -28,6 +28,8 @@ import Combine
     private var tracker = VoiceUtteranceTracker()
     private var confirmed: [String] = []
     private var finalTranscript: String?
+    /// Apple's latest cumulative hypothesis. Not confirmed; kept when a recording ends without its final.
+    private var recognizedText: String?
     private var recognizer: (any VoiceRecognizing)?
     private var audioInput: AsyncThrowingStream<Data, Error>.Continuation?
     private var startup: Task<Void, Never>?
@@ -63,9 +65,9 @@ import Combine
     /// VoiceAudio words its failures for a call; a dictation reports its own recording.
     static func message(for failure: VoiceAudioFailure) -> String {
         switch failure {
-        case .deviceChange: "音频设备已变化，录音已结束，已保留确认的文字。"
-        case .recoveryFailed: "音频设备恢复失败，录音已结束，已保留确认的文字。"
-        case .player: "音频设备异常，录音已结束，已保留确认的文字。"
+        case .deviceChange: "音频设备已变化，录音已结束，已保留识别到的文字。"
+        case .recoveryFailed: "音频设备恢复失败，录音已结束，已保留识别到的文字。"
+        case .player: "音频设备异常，录音已结束，已保留识别到的文字。"
         }
     }
     func attach(workspace: WorkspaceStore, settings: SettingsStore) { self.workspace = workspace; self.settings = settings }
@@ -112,7 +114,7 @@ import Combine
         generation = UUID(); let current = generation
         captureReady = false; levels = []
         conversationID = conversation.id; store = conversation.store
-        confirmed = []; finalTranscript = nil; tracker = VoiceUtteranceTracker(); subtitle = ""; error = nil; state = .recording
+        confirmed = []; finalTranscript = nil; recognizedText = nil; tracker = VoiceUtteranceTracker(); subtitle = ""; error = nil; state = .recording
         diagnosticTrace = nil
         if let logger = DictationDiagnostics.shared {
             diagnosticTrace = DictationTrace(logger: logger, recordingID: current,
@@ -174,7 +176,10 @@ import Combine
                             guard let self, self.generation == current, self.isActive else { return }
                             let update = self.tracker.accept(result)
                             // The Apple adapter provides cumulative text across local phrases.
-                            self.subtitle = remoteKey == nil ? (result.result?.text ?? "") : update.subtitle
+                            if remoteKey == nil {
+                                self.subtitle = result.result?.text ?? ""
+                                self.recognizedText = self.subtitle
+                            } else { self.subtitle = update.subtitle }
                             self.confirmed.append(contentsOf: update.committed)
                             if result.streamFinal, let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                                 self.finalTranscript = text
@@ -249,7 +254,7 @@ import Combine
         watchdog = Task { [weak self, finalizationTimeout] in
             do { try await Task.sleep(for: finalizationTimeout) } catch { return }
             guard let self, self.generation == current else { return }
-            self.complete(error: "等待最终转写超时，已保留确认的文字。")
+            self.complete(error: "等待最终转写超时，已保留识别到的文字。")
         }
     }
     func cancel(discard: Bool = false) {
@@ -270,7 +275,8 @@ import Combine
         recognitionTask?.cancel(); recognitionTask = nil; recognizer?.cancel(); recognizer = nil
         audio.stop()
         captureReady = false; levels = []
-        let content = finalTranscript ?? confirmed.joined(separator: " ")
+        // Callbacks were invalidated above, so Apple's latest text is committed once.
+        let content = finalTranscript ?? recognizedText ?? confirmed.joined(separator: " ")
         if !discard, !content.isEmpty, let store {
             let separator = store.mainDraft.isEmpty || store.mainDraft.hasSuffix("\n") ? "" : "\n"
             diagnosticTrace?.record("draft.append.before", ["draft": store.mainDraft, "content": content, "separator": separator])
@@ -281,7 +287,7 @@ import Combine
                 "draft": store?.mainDraft as Any? ?? NSNull()])
         }
         let completedDraft = store?.mainDraft
-        confirmed = []; finalTranscript = nil; store = nil; conversationID = nil; subtitle = ""
+        confirmed = []; finalTranscript = nil; recognizedText = nil; store = nil; conversationID = nil; subtitle = ""
         self.error = error; state = error == nil ? .idle : .failed
         diagnosticTrace?.record("completion.after", diagnosticState.merging(["draft": completedDraft as Any? ?? NSNull()]) { _, new in new })
         send?()
