@@ -18,6 +18,8 @@ pub struct EchoAgent {
     session: Mutex<SessionHandle>,
 }
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+// Create carries the restored archive; ordinary commands retain their smaller limit.
+const MAX_CREATE_BYTES: usize = 32 * 1024 * 1024;
 
 fn invalid() -> SessionError {
     SessionError::new(ErrorCode::InvalidRequest, "invalid JSON request")
@@ -25,15 +27,15 @@ fn invalid() -> SessionError {
 fn internal() -> SessionError {
     SessionError::new(ErrorCode::Internal, "agent bridge failed")
 }
-unsafe fn parse(request: *const c_char) -> SessionResult<Value> {
+unsafe fn parse(request: *const c_char, max_bytes: usize) -> SessionResult<Value> {
     if request.is_null() {
         return Err(invalid());
     }
     let bytes = unsafe { CStr::from_ptr(request) }.to_bytes();
-    if bytes.len() > MAX_REQUEST_BYTES {
+    if bytes.len() > max_bytes {
         return Err(SessionError::new(
             ErrorCode::RequestTooLarge,
-            "JSON request exceeds 16 MiB",
+            format!("JSON request exceeds {} MiB", max_bytes / (1024 * 1024)),
         ));
     }
     let value: Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
@@ -82,7 +84,7 @@ pub unsafe extern "C" fn echo_agent_create(
         }
     }
     let result = catch_unwind(AssertUnwindSafe(|| -> SessionResult<_> {
-        let value = unsafe { parse(request) }?;
+        let value = unsafe { parse(request, MAX_CREATE_BYTES) }?;
         // An omitted override must not accidentally erase a persisted directory.
         if value
             .get("restore")
@@ -123,7 +125,7 @@ unsafe fn enqueue(
 ) -> *mut c_char {
     let mut request_id = None;
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let value = unsafe { parse(request) }?;
+        let value = unsafe { parse(request, MAX_REQUEST_BYTES) }?;
         request_id = value
             .get("request_id")
             .and_then(Value::as_str)

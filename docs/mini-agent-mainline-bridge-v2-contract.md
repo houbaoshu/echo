@@ -87,7 +87,7 @@ enum ExecutionOutcome { Completed(CommandOutput), Cancelled }
 
 ## 4. Wire v2
 
-保留现有 C 符号、16 MiB 请求限制、字符串独立所有权和 panic 隔离。第 3 阶段 C ABI 已仅接受 v2 请求，v1 wire 返回 `unsupported_version`，**持久化历史仍为 v1**；Swift 调用方已在第 4 阶段升级。版本在读取顶层 JSON 后先检查，再解码 payload；不要把一个合法 v1 请求误报为普通字段错误。generation、request ID、客户端 ID 必须非空；revision 和核心 IDs 必须为正整数。JSON 数字完整保留 u64，不经 Double。
+保留现有 C 符号、普通命令 16 MiB 请求限制、字符串独立所有权和 panic 隔离。携带完整恢复历史的 `create` 请求独立限制为 32 MiB；两者均按编码后的整个 JSON 的 UTF-8 字节数检查。第 3 阶段 C ABI 已仅接受 v2 请求，v1 wire 返回 `unsupported_version`，**持久化历史仍为 v1**；Swift 调用方已在第 4 阶段升级。版本在读取顶层 JSON 后先检查，再解码 payload；不要把一个合法 v1 请求误报为普通字段错误。generation、request ID、客户端 ID 必须非空；revision 和核心 IDs 必须为正整数。JSON 数字完整保留 u64，不经 Double。
 
 普通输入示例：
 

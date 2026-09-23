@@ -1,7 +1,10 @@
 //! Exercise the actual C parser, not a parallel serialization specification.
 use echo_agent::*;
 use serde_json::{Value, json};
-use std::ffi::{CStr, CString, c_char};
+use std::{
+    ffi::{CStr, CString, c_char},
+    time::{Duration, Instant},
+};
 
 fn owned(pointer: *mut c_char) -> Value {
     assert!(!pointer.is_null());
@@ -88,9 +91,131 @@ fn malformed_create_and_oversized_utf8_are_rejected_without_initializing() {
             "invalid_request"
         );
     }
-    let huge = json!({"version":2,"padding":"🌱".repeat(4 * 1024 * 1024)}).to_string();
-    assert_eq!(code(&rejected_create(&huge)), "request_too_large");
-    let input = CString::new(huge).unwrap();
+    let over_create_limit = json!({"version":2,"session_id":"large-history","generation":"large-2",
+        "prompt_path":"/tmp/prompt.md",
+        "model":{"base_url":"http://127.0.0.1:1","model":"test","protocol":"chat_completions"},
+        "restore":{"source":{"type":"v1","history":tool_heavy_history(260)},
+            "input_receipts":[],"pending_inputs":[],"directory":null}})
+    .to_string();
+    assert!(over_create_limit.len() > 32 * 1024 * 1024);
+    assert_eq!(
+        code(&rejected_create(&over_create_limit)),
+        "request_too_large"
+    );
+    let over_command_limit =
+        json!({"version":2,"padding":"🌱".repeat(4 * 1024 * 1024)}).to_string();
+    let input = CString::new(over_command_limit).unwrap();
+    assert_eq!(
+        code(&owned(unsafe {
+            echo_agent_request(std::ptr::null_mut(), input.as_ptr())
+        })),
+        "request_too_large"
+    );
+}
+
+// Each archived command has at most 64 KiB in each output stream, as in production.
+// Many such tool results can still make the complete v1 history exceed 16 MiB.
+fn tool_heavy_history(turn_count: usize) -> String {
+    let mut entries = vec![json!({"id":1,"turn_id":0,
+        "value":{"message":{"role":"system","content":"Answer directly or use bash."}}})];
+    let mut turns = Vec::new();
+    let result = json!({"stdout":"x".repeat(64 * 1024), "stderr":"y".repeat(64 * 1024),
+        "exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false})
+    .to_string();
+    let mut next_id = 2u64;
+    for index in 0..turn_count {
+        let turn_id = next_id;
+        next_id += 1;
+        let call_id = format!("call-{index}");
+        let user_id = next_id;
+        next_id += 1;
+        let proposal_id = next_id;
+        next_id += 1;
+        let result_id = next_id;
+        next_id += 1;
+        let reply_id = next_id;
+        next_id += 1;
+        entries.push(json!({"id":user_id,"turn_id":turn_id,
+            "value":{"message":{"role":"user","content":format!("inspect {index}")}}}));
+        entries.push(json!({"id":proposal_id,"turn_id":turn_id,
+            "value":{"message":{"role":"assistant","content":null,"tool_calls":[{
+                "id":call_id,"type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo ok\"}"}
+            }]}}}));
+        entries.push(json!({"id":result_id,"turn_id":turn_id,
+            "value":{"message":{"role":"tool","tool_call_id":call_id,"content":result}}}));
+        entries.push(json!({"id":reply_id,"turn_id":turn_id,
+            "value":{"message":{"role":"assistant","content":"done"}}}));
+        turns.push(json!({"id":turn_id,"model_calls":2,
+            "outcome":{"status":"completed","reply":"done"}}));
+    }
+    json!({"version":1,"session_id":"large-history","entries":entries,
+        "turns":turns,"directory":null,"next_id":next_id})
+    .to_string()
+}
+
+#[test]
+fn tool_heavy_history_over_16_mib_restores() {
+    let history = tool_heavy_history(225);
+    let temp = tempfile::tempdir().unwrap();
+    let prompt = temp.path().join("prompt.md");
+    std::fs::write(&prompt, "Answer directly.").unwrap();
+    let create = json!({"version":2,"session_id":"large-history","generation":"large-1", "prompt_path":prompt,
+        "model":{"base_url":"http://127.0.0.1:1","model":"test","protocol":"chat_completions"},
+        "restore":{"source":{"type":"v1","history":history},"input_receipts":[],"pending_inputs":[],"directory":null}}).to_string();
+    assert!(create.len() > 16 * 1024 * 1024 && create.len() < 32 * 1024 * 1024);
+    println!("tool-heavy create request: {} bytes", create.len());
+    let input = CString::new(create).unwrap();
+    let mut error = std::ptr::null_mut();
+    let handle = unsafe { echo_agent_create(input.as_ptr(), &mut error) };
+    assert!(
+        !handle.is_null(),
+        "{:?}",
+        (!error.is_null()).then(|| owned(error))
+    );
+    struct Guard(*mut EchoAgent);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            unsafe { echo_agent_destroy(self.0) }
+        }
+    }
+    let handle = Guard(handle);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let poll = owned(unsafe { echo_agent_poll_events(handle.0, 1) });
+        assert!(
+            !poll["batches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|batch| batch["kind"]["type"] == "initialization_failed"),
+            "large history failed core validation"
+        );
+        if let Some(ready) = poll["batches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|batch| batch["kind"]["type"] == "ready")
+        {
+            let restored = ready["checkpoint"]["history"].as_str().unwrap();
+            assert!(restored.len() > 16 * 1024 * 1024 && restored.contains("call-224"));
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "large history did not finish restoring"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn ordinary_command_the_size_of_restored_history_is_still_rejected() {
+    let history = tool_heavy_history(225);
+    let command = json!({"version":2,"request_id":"large","command":{"type":"send_message",
+        "input":{"client_message_id":"large","text":history}}})
+    .to_string();
+    assert!(command.len() > 16 * 1024 * 1024 && command.len() < 32 * 1024 * 1024);
+    let input = CString::new(command).unwrap();
     assert_eq!(
         code(&owned(unsafe {
             echo_agent_request(std::ptr::null_mut(), input.as_ptr())
