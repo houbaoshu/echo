@@ -47,3 +47,6 @@ SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
 //   SWIFT_DEFAULT_ACTOR_ISOLATION (template default MainActor)
 //   SWIFT_APPROACHABLE_CONCURRENCY
 //   SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY
+
+// Test plans own coverage collection; plain Run must not emit default.profraw.
+ENABLE_CODE_COVERAGE = NO

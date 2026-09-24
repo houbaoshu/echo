@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 
 actor TextCollector {
     private(set) var values: [String] = []
@@ -55,59 +56,84 @@ final class ModelURLProtocol: URLProtocol, @unchecked Sendable {
     }
 }
 
-enum ModelTests {
-    static func run() async throws {
+@Suite(.serialized) enum ModelTests {
+    private static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [ModelURLProtocol.self]
-        let session = URLSession(configuration: config)
+        return URLSession(configuration: config)
+    }
+    private static func configuration(_ scenario: String, _ api: ModelAPIProtocol = .chatCompletions) -> ModelConfiguration {
+        ModelConfiguration(baseURL: "https://chat.test/\(scenario)", model: "test", apiProtocol: api)
+    }
+    @Test(arguments: ModelAPIProtocol.allCases) static func requestPreservesContext(api: ModelAPIProtocol) throws {
+        let user = ConversationMessage(role: .user, content: "hello")
+            let messages = [user, ConversationMessage(role: .assistant, content: "partial", status: .stopped)]
+            let request = try ModelConversationClient.request(configuration: configuration("ok", api), key: "key", messages: messages)
+            let data = try #require(request.httpBody)
+            let object = try JSONSerialization.jsonObject(with: data)
+            let body = try #require(object as? [String: Any])
+            let history = try #require(body[api == .responses ? "input" : "messages"] as? [[String: String]])
+            #expect(history == [["role": "user", "content": "hello"], ["role": "assistant", "content": "partial"]])
+            #expect(body["stream"] as? Bool == true)
+            if api == .responses { #expect(body["store"] as? Bool == false) }
+    }
+    @Test static func unicodeDeltasArriveOnce() async throws {
+        let session = makeSession()
         defer { session.invalidateAndCancel() }
         let client = ModelConversationClient(session: session)
         let user = ConversationMessage(role: .user, content: "hello")
-        func configuration(_ scenario: String, _ api: ModelAPIProtocol = .chatCompletions) -> ModelConfiguration {
-            ModelConfiguration(baseURL: "https://chat.test/\(scenario)", model: "test", apiProtocol: api)
-        }
-        for api in ModelAPIProtocol.allCases {
-            let messages = [user, ConversationMessage(role: .assistant, content: "partial", status: .stopped)]
-            let request = try ModelConversationClient.request(configuration: configuration("ok", api), key: "key", messages: messages)
-            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-            let history = body[api == .responses ? "input" : "messages"] as! [[String: String]]
-            precondition(history == [["role": "user", "content": "hello"], ["role": "assistant", "content": "partial"]])
-            precondition(body["stream"] as? Bool == true)
-            if api == .responses { precondition(body["store"] as? Bool == false) }
-        }
         let collector = TextCollector()
         let reply = try await client.respond(configuration: configuration("ok"), key: "", messages: [user]) {
             await collector.append($0)
         }
         let updates = await collector.values
-        precondition(reply == "你好！" && updates == ["你", "你好", "你好！"], "Every text event must be delivered once without a throttle")
-        for scenario in ["eof", "malformed", "length", "empty", "401", "404", "429", "500"] {
+        #expect(reply == "你好！" && updates == ["你", "你好", "你好！"], "Every text event must be delivered once without a throttle")
+    }
+    @Test(arguments: ["eof", "malformed", "length", "empty", "401", "404", "429", "500"])
+    static func transportFailurePreservesParsedText(scenario: String) async throws {
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+        let client = ModelConversationClient(session: session)
+        let user = ConversationMessage(role: .user, content: "hello")
             let received = TextCollector()
             do {
                 _ = try await client.respond(configuration: configuration(scenario), key: "", messages: [user]) { await received.append($0) }
-                preconditionFailure("Expected failure: \(scenario)")
+                Issue.record("Expected failure: \(scenario)")
             } catch {
                 let values = await received.values
                 if ["eof", "malformed", "length"].contains(scenario) {
-                    precondition(values.last == "你好！", "Failure must retain all parsed text: \(scenario)")
+                    #expect(values.last == "你好！", "Failure must retain all parsed text: \(scenario)")
                 }
             }
-        }
+    }
+    @Test static func responsesAndJSONReplies() async throws {
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+        let client = ModelConversationClient(session: session)
+        let user = ConversationMessage(role: .user, content: "hello")
         let responses = try await client.respond(configuration: configuration("responses", .responses), key: "", messages: [user]) { _ in }
-        precondition(responses == "你好")
+        #expect(responses == "你好")
         let json = try await client.respond(configuration: configuration("json"), key: "", messages: [user]) { _ in }
-        precondition(json == "json reply")
+        #expect(json == "json reply")
+    }
+    @Test static func sseFramingAndOpaqueReasoning() throws {
         var buffer = SSEEventBuffer()
-        precondition(tryAccept(&buffer, ": heartbeat") == nil)
-        precondition(tryAccept(&buffer, "event: ignored") == nil)
-        precondition(tryAccept(&buffer, "data: first") == nil)
-        precondition(tryAccept(&buffer, "data: second") == nil)
-        precondition(tryAccept(&buffer, "") == "first\nsecond")
+        #expect(try buffer.accept( ": heartbeat") == nil)
+        #expect(try buffer.accept( "event: ignored") == nil)
+        #expect(try buffer.accept( "data: first") == nil)
+        #expect(try buffer.accept( "data: second") == nil)
+        #expect(try buffer.accept( "") == "first\nsecond")
         var parser = ModelReplyParser(apiProtocol: .responses)
         try parser.accept(#"{"type":"response.reasoning_text.delta","delta":"hidden"}"#)
-        precondition(parser.text.isEmpty)
-        do { try parser.accept(#"{"type":"response.incomplete"}"#); preconditionFailure("incomplete") } catch {}
+        #expect(parser.text.isEmpty)
+        do { try parser.accept(#"{"type":"response.incomplete"}"#); Issue.record("incomplete") } catch {}
 
+    }
+    @Test static func cancellationClosesPendingTransport() async throws {
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+        let client = ModelConversationClient(session: session)
+        let user = ConversationMessage(role: .user, content: "hello")
         // Cancellation must close the actual URLSession transport, even before the first byte.
         let stopped = TextCollector()
         let observer = NotificationCenter.default.addObserver(forName: Notification.Name("ModelFixtureStopped"), object: nil, queue: nil) { note in
@@ -119,18 +145,16 @@ enum ModelTests {
         }
         try await Task.sleep(for: .milliseconds(50))
         pending.cancel()
-        do { _ = try await pending.value; preconditionFailure("Cancellation succeeded") } catch {}
+        do { _ = try await pending.value; Issue.record("Cancellation succeeded") } catch {}
         for _ in 0..<100 {
             if await !stopped.values.isEmpty { break }
             try await Task.sleep(for: .milliseconds(5))
         }
         let stops = await stopped.values
-        precondition(stops == ["closed"], "Cancel must reach URLProtocol.stopLoading")
-        try await sourceRevisionTest()
-        print("PASS: model requests, streaming protocols, failures and transport cancellation")
+        #expect(stops == ["closed"], "Cancel must reach URLProtocol.stopLoading")
     }
-    @MainActor private static func sourceRevisionTest() async throws {
-        let settings = SettingsStore()
+    @Test @MainActor static func cancelledSourceDiscardsLateCallbacks() async throws {
+        let settings = SettingsStore(secrets: NativeMemorySecrets())
         settings.draft.model = "offline-test"; settings.save()
         let client = ControlledModelClient()
         let tested = ModelTaskSource(settings: settings, client: client)
@@ -143,7 +167,7 @@ enum ModelTests {
             try await Task.sleep(for: .milliseconds(5))
         }
         let started = await client.count
-        precondition(started == 1)
+        try #require(started == 1)
         tested.cancel()
         tested.start(messages: messages) { event in if case .progress(let text) = event { received.append(text) } }
         for _ in 0..<200 {
@@ -151,10 +175,10 @@ enum ModelTests {
             try await Task.sleep(for: .milliseconds(5))
         }
         let count = await client.count
-        precondition(count == 2)
+        try #require(count == 2)
         await client.finish(0, text: "stale")
         await client.finish(1, text: "current")
-        precondition(received == ["current"], "ModelTaskSource revision must reject callbacks from a cancelled client")
+        #expect(received == ["current"], "ModelTaskSource revision must reject callbacks from a cancelled client")
     }
-    private static func tryAccept(_ buffer: inout SSEEventBuffer, _ line: String) -> String? { try! buffer.accept(line) }
+
 }

@@ -154,6 +154,14 @@
 			isa = PBXBuildFile;
 			fileRef = 4FAB991673380E8FF8B32862;
 		};
+		75548D3C52D3DD19C3BD3ECB = {
+			isa = PBXBuildFile;
+			fileRef = 7385F3E986D8793A4584EE31;
+		};
+		4861077C58DCA2FD9910205F = {
+			isa = PBXBuildFile;
+			fileRef = 7385F3E986D8793A4584EE31;
+		};
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -359,6 +367,12 @@
 		A3FF57E62DA09C501023D462 = {
 			isa = PBXFileReference;
 			path = tests/native/EchoUITests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		7385F3E986D8793A4584EE31 = {
+			isa = PBXFileReference;
+			path = tests/support/NativeMemorySecrets.swift;
 			sourceTree = "<group>";
 			lastKnownFileType = sourcecode.swift;
 		};
@@ -595,6 +609,7 @@
 				6C29F44D5F2B66D9352D4833,
 				7F5AC5D3C6E9200922133731,
 				A3FF57E62DA09C501023D462,
+				7385F3E986D8793A4584EE31,
 			);
 		};
 		E00000000000000000000011 = {
@@ -1149,36 +1164,36 @@
 			files = (
 			);
 		};
-		E110000000000000000000A1 /* Sources */ = {
+		E110000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				E11000000000000000000B00 /* AgentWire.swift in Sources */,
-				E11000000000000000000B01 /* AgentBridge.swift in Sources */,
-				E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */,
-				E11000000000000000000B03 /* TaskStore.swift in Sources */,
-				E11000000000000000000B04 /* ModelTaskSource.swift in Sources */,
-				E11000000000000000000B05 /* SettingsStore.swift in Sources */,
-				E11000000000000000000B06 /* VoiceProtocol.swift in Sources */,
-				E11000000000000000000B07 /* VoiceDiagnostics.swift in Sources */,
-				E11000000000000000000B08 /* ChatTests.swift in Sources */,
-				E11000000000000000000B09 /* ModelTests.swift in Sources */,
-				E11000000000000000000B0A /* SettingsTests.swift in Sources */,
-				E11000000000000000000B0B /* EchoChatTests.swift in Sources */,
+				E11000000000000000000B00,
+				E11000000000000000000B01,
+				E11000000000000000000B02,
+				E11000000000000000000B03,
+				E11000000000000000000B04,
+				E11000000000000000000B05,
+				E11000000000000000000B06,
+				E11000000000000000000B07,
+				E11000000000000000000B08,
+				E11000000000000000000B09,
+				E11000000000000000000B0A,
+				75548D3C52D3DD19C3BD3ECB,
 			);
 		};
-		E111000000000000000000A1 /* Sources */ = {
+		E111000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				E11100000000000000000B00 /* AgentWire.swift in Sources */,
-				E11100000000000000000B01 /* AgentTaskSource.swift in Sources */,
-				E11100000000000000000B02 /* AgentConnectionTester.swift in Sources */,
-				E11100000000000000000B03 /* TaskStore.swift in Sources */,
-				E11100000000000000000B04 /* ModelTaskSource.swift in Sources */,
-				E11100000000000000000B05 /* SettingsStore.swift in Sources */,
-				E11100000000000000000B06 /* VoiceProtocol.swift in Sources */,
-				E11100000000000000000B07 /* VoiceDiagnostics.swift in Sources */,
-				E11100000000000000000B08 /* AgentTaskSourceTests.swift in Sources */,
-				E11100000000000000000B09 /* EchoAgentTaskSourceTests.swift in Sources */,
+				E11100000000000000000B00,
+				E11100000000000000000B01,
+				E11100000000000000000B02,
+				E11100000000000000000B03,
+				E11100000000000000000B04,
+				E11100000000000000000B05,
+				E11100000000000000000B06,
+				E11100000000000000000B07,
+				E11100000000000000000B08,
+				4861077C58DCA2FD9910205F,
 			);
 		};
 		E112000000000000000000A1 /* Sources */ = {

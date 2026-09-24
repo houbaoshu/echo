@@ -24,9 +24,9 @@
 | `AgentLiveTests.main` | 待迁移 | 见 `tests/AgentLiveTests.swift` | 未验证 |
 | `AgentLiveTests.run` | 待迁移 | 见 `tests/AgentLiveTests.swift` | 未验证 |
 | `AgentSessionTests.main` | 待迁移 | 见 `tests/AgentSessionTests.swift` | 未验证 |
-| `AgentTaskSourceTests.streamTests` | 待迁移 | 见 `tests/AgentTaskSourceTests.swift` | 未验证 |
-| `AgentTaskSourceTests.main` | 待迁移 | 见 `tests/AgentTaskSourceTests.swift` | 未验证 |
-| `AgentTaskSourceTests.wireTests` | 待迁移 | 见 `tests/AgentTaskSourceTests.swift` | 未验证 |
+| `AgentTaskSourceTests.streamTests` | `EchoAgentTaskSourceTests/AgentTaskSourceTests/streamTests()` | 见 `tests/AgentTaskSourceTests.swift` | 未验证 |
+| `AgentTaskSourceTests.main` | `EchoAgentTaskSourceTests/AgentTaskSourceTests/durableInputsSurviveCancellation(cleanupFirst:)` | 见 `tests/AgentTaskSourceTests.swift` | 未验证 |
+| `AgentTaskSourceTests.wireTests` | `EchoAgentTaskSourceTests/AgentTaskSourceTests/wireTests()` | 见 `tests/AgentTaskSourceTests.swift` | 未验证 |
 | `AgentVoiceTests.agentVoiceIntegrationTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
 | `AgentVoiceTests.agentVoiceTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
 | `AgentVoiceTests.agentRefusedFinalTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
@@ -42,8 +42,8 @@
 | `AppleSpeechTests.phraseBoundaryPunctuationTests` | 待迁移 | 见 `tests/AppleSpeechTests.swift` | 未验证 |
 | `AppleSpeechTests.backgroundAuthorizationTests` | 待迁移 | 见 `tests/AppleSpeechTests.swift` | 未验证 |
 | `AppleSpeechTests.localeTests` | 待迁移 | 见 `tests/AppleSpeechTests.swift` | 未验证 |
-| `ChatTests.main` | 待迁移 | 见 `tests/ChatTests.swift` | 未验证 |
-| `ChatTests.contextTests` | 待迁移 | 见 `tests/ChatTests.swift` | 未验证 |
+| `ChatTests.main` | `EchoChatTests/ChatTests/sendStopRetryAndRestore()` | 见 `tests/ChatTests.swift` | 未验证 |
+| `ChatTests.contextTests` | `EchoChatTests/ChatTests/stoppedPartialContext()` | 见 `tests/ChatTests.swift` | 未验证 |
 | `ConversationUITests.main` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
 | `ConversationUITests.main` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
 | `ConversationUITests.run` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
@@ -89,12 +89,12 @@
 | `DictationTests.recordedPauseRegression` | 待迁移 | 见 `tests/DictationTests.swift` | 未验证 |
 | `DictationTests.diagnosticLoggingTests` | 待迁移 | 见 `tests/DictationTests.swift` | 未验证 |
 | `DictationTests.localTests` | 待迁移 | 见 `tests/DictationTests.swift` | 未验证 |
-| `ModelTests.run` | 待迁移 | 见 `tests/ModelTests.swift` | 未验证 |
+| `ModelTests.run` | `EchoChatTests/ModelTests/*` | 见 `tests/ModelTests.swift` | 未验证 |
 | `ModelTests.sourceRevisionTest` | 待迁移 | 见 `tests/ModelTests.swift` | 未验证 |
 | `ProjectFileBrowserTests.run` | 待迁移 | 见 `tests/ProjectFileBrowserTests.swift` | 未验证 |
 | `ProjectFileBrowserTests.testRefreshCoalescesWhileScanning` | 待迁移 | 见 `tests/ProjectFileBrowserTests.swift` | 未验证 |
 | `ProjectFileBrowserTests.testRefreshCommitsDirectoriesSeparately` | 待迁移 | 见 `tests/ProjectFileBrowserTests.swift` | 未验证 |
-| `SettingsTests.run` | 待迁移 | 见 `tests/SettingsTests.swift` | 未验证 |
+| `SettingsTests.run` | `EchoChatTests/SettingsTests/*` | 见 `tests/SettingsTests.swift` | 未验证 |
 | `VoiceBargeInTests.bargeInTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
 | `VoiceBargeInTests.bargeInGateTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
 | `VoiceBargeInTests.bargeInConverterTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
@@ -143,3 +143,9 @@
 - hosted bundle 仅 `@testable import Echo`；测试实际默认 prompt 开 session、确认清理，以及宿主未建立用户工作区窗口。
 - 首次 UI smoke 被 macOS “Enable UI Automation”认证阻挡；用户认证后，修正 runner 容器临时目录校验，`Phase2UIContainer.xcresult` 1 个真正 XCUITest 通过。
 - `DevelopmentDebug` 构建成功；LLDB 在隔离 hosted 模式命中 `main.swift:12`，日志 `lldb.log`。
+
+## Phase 3 / Chat + TaskSource
+
+`NativeFastRetry.xcresult` / `FastRestored.xcresult`：21 个 Swift Testing 方法（含参数化场景），全部通过。`FailureProbe.xcresult` 临时反转 `AgentTaskSourceTests.wireTests` 的 history 断言，确认失败精确定位原用例与源码；随后自动恢复并通过完整 Fast。未改生产业务语义。
+
+Model 请求协议、失败种类和配置迁移端点分别参数化；取消、SSE framing、回复、未知存档版本独立运行。旧 Chat/TaskSource XCTest 总入口已删除。后续仍需继续细分 Chat/Settings 的长状态序列。

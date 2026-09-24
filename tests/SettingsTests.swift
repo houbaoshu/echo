@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 
 @MainActor private final class ProviderSecrets: SecretStore {
     var values: [String: String] = [:]
@@ -15,8 +16,8 @@ import Foundation
     func remove(_ account: String) throws { values[account] = nil }
 }
 
-enum SettingsTests {
-    @MainActor static func run() throws {
+@Suite(.serialized) enum SettingsTests {
+    @Test @MainActor static func providerMigrationAndCredentialRollback() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("provider-settings-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -26,63 +27,63 @@ enum SettingsTests {
         let legacy = #"{"version":1,"model":{"baseURL":"https://api.deepseek.com/v1","model":"existing-deepseek"},"secretAccount":"legacy","selectedPetID":"builtin:chiyan","voiceSecretAccount":"voice"}"#
         try Data(legacy.utf8).write(to: url)
         let settings = SettingsStore(url: url, secrets: secrets)
-        precondition(settings.selectedProvider == .deepSeek && settings.apiKey == "deepseek-secret")
-        precondition(settings.snapshot.secretAccount == "legacy" && settings.draft.model == "existing-deepseek")
-        precondition(settings.draft.apiProtocol == .chatCompletions && !settings.isDirty)
-        precondition(settings.snapshot.quickComposerHotKey, "Settings saved before the quick composer shortcut enable it")
-        precondition(settings.snapshot.selectedPlanetID == SettingsSnapshot.defaultPlanetID,
+        #expect(settings.selectedProvider == .deepSeek && settings.apiKey == "deepseek-secret")
+        #expect(settings.snapshot.secretAccount == "legacy" && settings.draft.model == "existing-deepseek")
+        #expect(settings.draft.apiProtocol == .chatCompletions && !settings.isDirty)
+        #expect(settings.snapshot.quickComposerHotKey, "Settings saved before the quick composer shortcut enable it")
+        #expect(settings.snapshot.selectedPlanetID == SettingsSnapshot.defaultPlanetID,
                      "Settings saved before Live Voice had a planet fall back to the built-in one")
-        precondition(secrets.values.count == 2, "Migration adopts the original reference without touching Keychain")
+        #expect(secrets.values.count == 2, "Migration adopts the original reference without touching Keychain")
         settings.selectProvider(.openAI)
-        precondition(settings.apiKey.isEmpty && settings.draft == ModelProvider.openAI.defaults && settings.isDirty)
-        precondition(tryValue { try settings.savedModelCredentials().key } == "deepseek-secret", "Selection stays a draft until saved")
-        precondition(tryValue { try settings.savedVoiceCredentials().key } == "agent-plan-secret")
+        #expect(settings.apiKey.isEmpty && settings.draft == ModelProvider.openAI.defaults && settings.isDirty)
+        #expect(try tryValue { try settings.savedModelCredentials().key } == "deepseek-secret", "Selection stays a draft until saved")
+        #expect(try tryValue { try settings.savedVoiceCredentials().key } == "agent-plan-secret")
         settings.apiKey = "openai-secret"
         settings.draft = ModelConfiguration(baseURL: "https://gateway.example/v1/", model: "  custom-openai  ", apiProtocol: .responses)
         settings.selectProvider(.deepSeek)
-        precondition(settings.apiKey == "deepseek-secret")
+        #expect(settings.apiKey == "deepseek-secret")
         settings.selectProvider(.openAI)
-        precondition(settings.apiKey == "openai-secret" && settings.draft.apiProtocol == .responses, "Switching retains per-provider drafts")
+        #expect(settings.apiKey == "openai-secret" && settings.draft.apiProtocol == .responses, "Switching retains per-provider drafts")
         settings.save()
-        precondition(settings.notice == nil && !settings.isDirty && settings.snapshot.activeProvider == .openAI)
-        precondition(secrets.values["legacy"] == "deepseek-secret", "Saving another provider must not delete the migrated key")
-        precondition(tryValue { try settings.savedVoiceCredentials().key } == "agent-plan-secret",
+        #expect(settings.notice == nil && !settings.isDirty && settings.snapshot.activeProvider == .openAI)
+        #expect(secrets.values["legacy"] == "deepseek-secret", "Saving another provider must not delete the migrated key")
+        #expect(try tryValue { try settings.savedVoiceCredentials().key } == "agent-plan-secret",
                      "Saving a model provider leaves the voice key alone")
         let reopened = SettingsStore(url: url, secrets: secrets)
-        precondition(reopened.selectedProvider == .openAI && reopened.apiKey == "openai-secret", "Explicit provider identity survives custom URLs")
-        precondition(reopened.draft.baseURL == "https://gateway.example/v1" && reopened.draft.model == "custom-openai")
+        #expect(reopened.selectedProvider == .openAI && reopened.apiKey == "openai-secret", "Explicit provider identity survives custom URLs")
+        #expect(reopened.draft.baseURL == "https://gateway.example/v1" && reopened.draft.model == "custom-openai")
         reopened.setQuickComposerHotKey(false)
-        precondition(!reopened.snapshot.quickComposerHotKey && reopened.hotKeyNotice == nil
+        #expect(!reopened.snapshot.quickComposerHotKey && reopened.hotKeyNotice == nil
                      && !SettingsStore(url: url, secrets: secrets).snapshot.quickComposerHotKey, "Turning the shortcut off persists")
         reopened.selectProvider(.deepSeek)
-        precondition(reopened.apiKey == "deepseek-secret" && reopened.draft.model == "existing-deepseek")
+        #expect(reopened.apiKey == "deepseek-secret" && reopened.draft.model == "existing-deepseek")
         reopened.apiKey = "rotated-deepseek"; reopened.save()
-        precondition(secrets.values["legacy"] == nil && secrets.values.values.contains("openai-secret"))
+        #expect(secrets.values["legacy"] == nil && secrets.values.values.contains("openai-secret"))
         reopened.selectProvider(.openAI)
-        precondition(reopened.apiKey == "openai-secret" && reopened.draft.apiProtocol == .responses)
+        #expect(reopened.apiKey == "openai-secret" && reopened.draft.apiProtocol == .responses)
         reopened.apiKey = ""; reopened.save()
-        precondition(!secrets.values.values.contains("openai-secret") && secrets.values.values.contains("rotated-deepseek"))
+        #expect(!secrets.values.values.contains("openai-secret") && secrets.values.values.contains("rotated-deepseek"))
         reopened.selectProvider(.ollama)
-        precondition(reopened.apiKey.isEmpty && reopened.draft.baseURL == "http://localhost:11434/v1")
+        #expect(reopened.apiKey.isEmpty && reopened.draft.baseURL == "http://localhost:11434/v1")
         reopened.draft.model = "local-model"; reopened.apiKey = "must-not-save"; reopened.save()
-        precondition(reopened.apiKey.isEmpty && reopened.snapshot.secretAccount == nil)
-        precondition(tryValue { try reopened.savedModelCredentials().key }.isEmpty)
-        precondition(tryValue { try reopened.savedVoiceCredentials().key } == "agent-plan-secret")
+        #expect(reopened.apiKey.isEmpty && reopened.snapshot.secretAccount == nil)
+        #expect(try tryValue { try reopened.savedModelCredentials().key }.isEmpty)
+        #expect(try tryValue { try reopened.savedVoiceCredentials().key } == "agent-plan-secret")
         reopened.selectProvider(.deepSeek)
-        precondition(reopened.apiKey == "rotated-deepseek")
+        #expect(reopened.apiKey == "rotated-deepseek")
         reopened.restore()
-        precondition(reopened.selectedProvider == .ollama && !reopened.isDirty)
+        #expect(reopened.selectedProvider == .ollama && !reopened.isDirty)
         reopened.selectProvider(.deepSeek)
         reopened.apiKey = "discard-this-draft"
         reopened.selectProvider(.ollama)
-        precondition(!reopened.isDirty && reopened.canRestoreModel, "Restore remains available for another provider's unsaved edits")
+        #expect(!reopened.isDirty && reopened.canRestoreModel, "Restore remains available for another provider's unsaved edits")
         reopened.restore()
         reopened.selectProvider(.deepSeek)
-        precondition(reopened.apiKey == "rotated-deepseek")
+        #expect(reopened.apiKey == "rotated-deepseek")
         reopened.restore()
         let json = try String(contentsOf: url, encoding: .utf8)
-        for key in secrets.values.values { precondition(!json.contains(key), "JSON must only store Keychain references") }
-        precondition(!json.contains("must-not-save"))
+        for key in secrets.values.values { #expect(!json.contains(key), "JSON must only store Keychain references") }
+        #expect(!json.contains("must-not-save"))
 
         // One provider's unreadable credential cannot block another or erase its own reference.
         let deepSeekAccount = reopened.snapshot.settings(for: .deepSeek).secretAccount!
@@ -90,55 +91,68 @@ enum SettingsTests {
         let locked = SettingsStore(url: url, secrets: secrets)
         locked.selectProvider(.deepSeek)
         locked.draft.model = "changed"; locked.save()
-        precondition(locked.notice != nil && locked.snapshot.activeProvider == .ollama)
-        precondition(secrets.values[deepSeekAccount] == "rotated-deepseek")
+        #expect(locked.notice != nil && locked.snapshot.activeProvider == .ollama)
+        #expect(secrets.values[deepSeekAccount] == "rotated-deepseek")
         locked.selectProvider(.custom)
         locked.draft = ModelConfiguration(baseURL: "https://custom.example/v1", model: "custom")
         locked.apiKey = "custom-secret"; locked.save()
-        precondition(locked.notice == nil && locked.snapshot.activeProvider == .custom)
+        #expect(locked.notice == nil && locked.snapshot.activeProvider == .custom)
         locked.selectProvider(.deepSeek)
         locked.apiKey = "replacement-deepseek"; locked.save()
-        precondition(locked.notice == nil && secrets.values.values.contains("custom-secret"))
-        precondition(tryValue { try locked.savedModelCredentials().key } == "replacement-deepseek")
+        #expect(locked.notice == nil && secrets.values.values.contains("custom-secret"))
+        #expect(try tryValue { try locked.savedModelCredentials().key } == "replacement-deepseek")
 
         // Failed Keychain/disk writes leave active configuration and all saved credentials intact.
         let before = secrets.values
         locked.selectProvider(.openAI); locked.apiKey = "failed-secret"
         secrets.failWrites = true; locked.save(); secrets.failWrites = false
-        precondition(locked.notice != nil && secrets.values == before && locked.snapshot.activeProvider == .deepSeek)
+        #expect(locked.notice != nil && secrets.values == before && locked.snapshot.activeProvider == .deepSeek)
         try FileManager.default.removeItem(at: url)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         locked.save()
-        precondition(locked.notice != nil && secrets.values == before && locked.snapshot.activeProvider == .deepSeek)
+        #expect(locked.notice != nil && secrets.values == before && locked.snapshot.activeProvider == .deepSeek)
         locked.restore()
-        precondition(locked.apiKey == "replacement-deepseek")
+        #expect(locked.apiKey == "replacement-deepseek")
 
+    }
+    @Test(arguments: ["https://unknown.example/v1", "http://localhost:11434/v1", "http://localhost:8080/v1", "https://api.openai.com/v1"])
+    @MainActor static func legacyEndpointMigration(baseURL: String) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("provider-settings-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let secrets = ProviderSecrets()
+        secrets.values["voice"] = "agent-plan-secret"
+        let provider: ModelProvider = baseURL == "http://localhost:11434/v1" ? .ollama : baseURL == "https://api.openai.com/v1" ? .openAI : .custom
         // Custom legacy endpoints and no-key local endpoints retain model configuration.
-        for (baseURL, provider) in [("https://unknown.example/v1", ModelProvider.custom),
-                                    ("http://localhost:11434/v1", .ollama), ("http://localhost:8080/v1", .custom),
-                                    ("https://api.openai.com/v1", .openAI)] {
+
             let fixtureURL = directory.appendingPathComponent("\(UUID()).json")
             let data = try JSONSerialization.data(withJSONObject: ["version": 1, "selectedPetID": "pet",
                 "model": ["baseURL": baseURL, "model": "legacy-model"], "secretAccount": "voice"])
             try data.write(to: fixtureURL)
             let migrated = SettingsStore(url: fixtureURL, secrets: secrets)
-            precondition(migrated.selectedProvider == provider && migrated.draft.baseURL == baseURL && migrated.draft.model == "legacy-model")
-            precondition(migrated.apiKey == (provider == .ollama ? "" : "agent-plan-secret"))
+            #expect(migrated.selectedProvider == provider && migrated.draft.baseURL == baseURL && migrated.draft.model == "legacy-model")
+            #expect(migrated.apiKey == (provider == .ollama ? "" : "agent-plan-secret"))
             try migrated.selectPet("new-pet")
             try migrated.selectPlanet("builtin:test-planet")
             let reload = SettingsStore(url: fixtureURL, secrets: secrets)
-            precondition(reload.selectedProvider == provider && reload.snapshot.selectedPetID == "new-pet")
-            precondition(reload.snapshot.selectedPlanetID == "builtin:test-planet", "The planet choice survives a reload")
-        }
+            #expect(reload.selectedProvider == provider && reload.snapshot.selectedPetID == "new-pet")
+            #expect(reload.snapshot.selectedPlanetID == "builtin:test-planet", "The planet choice survives a reload")
+    }
+    @Test @MainActor static func unknownVersionIsPreserved() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("provider-settings-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let secrets = ProviderSecrets()
         // Unknown versions cannot be overwritten by a model save.
         let unsupported = directory.appendingPathComponent("unsupported.json")
         let original = Data(#"{"version":99}"#.utf8)
         try original.write(to: unsupported)
         let blocked = SettingsStore(url: unsupported, secrets: secrets)
         blocked.apiKey = "blocked-secret"; blocked.save()
-        precondition(blocked.notice != nil && (tryValue { try Data(contentsOf: unsupported) }) == original)
-        precondition(!secrets.values.values.contains("blocked-secret"))
-        print("PASS: provider credentials, migration, switching, endpoint/model restoration, voice isolation and save rollback")
+        let retained = try Data(contentsOf: unsupported)
+        #expect(blocked.notice != nil && retained == original)
+        #expect(!secrets.values.values.contains("blocked-secret"))
+
     }
-    private static func tryValue<T>(_ body: () throws -> T) -> T { try! body() }
+    private static func tryValue<T>(_ body: () throws -> T) throws -> T { try body() }
 }
