@@ -1,3 +1,4 @@
+import Testing
 import AppKit
 import AVFoundation
 import Combine
@@ -165,70 +166,28 @@ actor PendingModelTester: ConnectionTesting {
     func cancel() { cancelled = true; pending?.resume(); pending = nil }
 }
 
-@main struct VoiceTests {
-    @MainActor static var checks = 0
-    @MainActor static func check(_ condition: Bool, _ message: String) {
-        guard condition else { fatalError("FAIL: \(message)") }
-        checks += 1
+@Suite(.serialized) enum EchoVoiceScenarios {}
+
+extension EchoVoiceScenarios {
+@Suite(.serialized) struct VoiceTests {
+    @MainActor static func check(_ condition: Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
+        #expect(condition, "\(message)", sourceLocation: sourceLocation)
     }
-    @MainActor static func rejects(_ message: String, _ action: () throws -> Void) {
-        do { try action(); fatalError("FAIL: expected rejection: \(message)") }
-        catch { checks += 1 }
+    @MainActor static func rejects(_ message: String, _ action: () throws -> Void, sourceLocation: SourceLocation = #_sourceLocation) {
+        do { try action(); Issue.record("Expected rejection: \(message)", sourceLocation: sourceLocation) }
+        catch {}
     }
     @MainActor static func tick() async { try? await Task.sleep(for: .milliseconds(25)) }
-    @MainActor static func waitUntil(_ condition: () -> Bool) async {
+    @MainActor static func waitUntil(_ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async {
         for _ in 0..<100 {
             if condition() { return }
             try? await Task.sleep(for: .milliseconds(5))
         }
-    }
-    @MainActor static func main() async throws {
-        _ = NSApplication.shared
-        if CommandLine.arguments.contains("--dictation-only") {
-            try await AppleSpeechTests.run()
-            try await DictationTests.run()
-            return
-        }
-        if CommandLine.arguments.contains("--agent-integration") {
-            try await agentVoiceIntegrationTests()
-            return
-        }
-        if CommandLine.arguments.contains("--agent-only") {
-            try await agentVoiceTests()
-            print("Passed \(checks) Agent voice adapter checks (simulated ASR/TTS).")
-            return
-        }
-        snapshotTests()
-        try await planetTests()
-        try await captureWatchdogPauseTests()
-        try await captureWatchdogRestartTests()
-        try await mutedPlaybackTailProtectionTests()
-        try await snapshotLifecycleTests()
-        try protocolTests()
-        try settingsTests()
-        try await manualModelTests()
-        try await audioConversionTests()
-        try await playbackDoesNotCreateUserTurn()
-        try await lifecycleTests()
-        try await phase3InvariantsTests()
-        try await bargeInTests()
-        try await phase4FaultAndCleanupTests()
-        await probeTests()
-        await speakerPreviewTests()
-        try await settingsPageRevisitKeepsSuccessTests()
-        try await captureDiagnosticsTests()
-        try await configurationChangeTests()
-        try await backgroundAudioStartTests()
-        try await voiceAudioHandoverTests()
-        try await voiceAudioRestartTests()
-        try await voiceAudioSwitchTests()
-        try await AppleSpeechTests.run()
-        try await DictationTests.run()
-        try await agentVoiceTests()
-        print("Passed \(checks) voice checks (no network, keychain, microphone or playback used).")
+        #expect(condition(), "Asynchronous condition did not become true before the deadline", sourceLocation: sourceLocation)
     }
     /// Live Voice's planet: which clip a state asks for, and what a mid-call swap has to do.
-    @MainActor static func planetTests() async throws {
+    @Test @MainActor static func planetTests() async throws {
+        _ = NSApplication.shared
         let states: [(PetSurfacePresentation.VoiceIndicator, String)] = [
             (.inactive, "idle"), (.connecting, "waiting"), (.listening, "idle"),
             (.thinking, "running"), (.speaking, "spinning"), (.ending, "review"),
@@ -247,7 +206,7 @@ actor PendingModelTester: ConnectionTesting {
             bundledStore.stop()
             let source = CGImageSourceCreateWithURL(bundled.appendingPathComponent("spritesheet.webp") as CFURL, nil)
             guard let source, let decoded = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
-                fatalError("FAIL: \(name)'s sprite sheet does not decode")
+                throw SettingsError("\(name)'s sprite sheet does not decode")
             }
             let (width, height, columns) = (192, 208, 8)
             for index in [0] + Array(48...53) + Array(56...61) + Array(64...69) + Array(72...87) {
@@ -325,7 +284,8 @@ actor PendingModelTester: ConnectionTesting {
     /// Starting capture flips a Bluetooth headset from A2DP to HFP, so Core Audio reconfigures
     /// the route the call just started on and AVAudioEngine stops itself about a second after
     /// start(). Recovering from that must not weaken the protection against a real device switch.
-    @MainActor static func configurationChangeTests() async throws {
+    @Test @MainActor static func configurationChangeTests() async throws {
+        _ = NSApplication.shared
         let policy = VoiceConfigurationChangePolicy()
         let headset = VoiceAudioRoute(input: 111, output: 105)
         func change(current: VoiceAudioRoute = headset, elapsed: TimeInterval = 1.2, restarts: Int = 0,
@@ -442,7 +402,8 @@ actor PendingModelTester: ConnectionTesting {
         }
     }
 
-    @MainActor static func snapshotTests() {
+    @Test @MainActor static func snapshotTests() {
+        _ = NSApplication.shared
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
         let run = UUID()
         var state = VoiceSessionSnapshot()
@@ -499,7 +460,8 @@ actor PendingModelTester: ConnectionTesting {
         check(!state.presentation(modelIsGenerating: false).isActive && state.error?.conversationID == owner.conversationID,
               "a dismissible error retains conversation ownership without retaining a session")
     }
-    @MainActor static func snapshotLifecycleTests() async throws {
+    @Test @MainActor static func snapshotLifecycleTests() async throws {
+        _ = NSApplication.shared
         let source = FakeSource(), audio = FakeAudio(), recognizer = FakeRecognizer(), synth = FakeSynthesizer()
         let store = TaskStore(source: source), voice = VoiceSessionController(audio: audio, recognizer: { recognizer },
             synthesizer: { synth }, tailProtectionDuration: .milliseconds(20), permission: { true })
@@ -575,7 +537,8 @@ actor PendingModelTester: ConnectionTesting {
             return false
         }, "observers never see mute paired with listening during the mute transition")
     }
-    @MainActor static func backgroundAudioStartTests() async throws {
+    @Test @MainActor static func backgroundAudioStartTests() async throws {
+        _ = NSApplication.shared
         func phase(_ voice: VoiceSessionController) -> String {
             switch voice.snapshot.session {
             case .inactive: "inactive"
@@ -630,7 +593,8 @@ actor PendingModelTester: ConnectionTesting {
     }
 
     /// VoiceAudio's handover with an injected build, so no audio hardware is touched.
-    @MainActor static func voiceAudioHandoverTests() async throws {
+    @Test @MainActor static func voiceAudioHandoverTests() async throws {
+        _ = NSApplication.shared
         final class Gate: @unchecked Sendable {
             let release = DispatchSemaphore(value: 0)
             private let lock = NSLock()
@@ -681,7 +645,8 @@ actor PendingModelTester: ConnectionTesting {
 
     /// A recovery restart runs on the setup queue with an injected restart, so no audio hardware
     /// is touched. While the queue owns the engine every main-actor access point must stay off it.
-    @MainActor static func voiceAudioRestartTests() async throws {
+    @Test @MainActor static func voiceAudioRestartTests() async throws {
+        _ = NSApplication.shared
         final class Gate: @unchecked Sendable {
             let release = DispatchSemaphore(value: 0)
             private let lock = NSLock()
@@ -775,7 +740,8 @@ actor PendingModelTester: ConnectionTesting {
     /// Following a device switch mid-call, with no audio hardware: the route and the engine's
     /// running state are the test's, the player is a record of what was scheduled with each
     /// buffer's callback, and every restart waits on the setup queue until released.
-    @MainActor static func voiceAudioSwitchTests() async throws {
+    @Test @MainActor static func voiceAudioSwitchTests() async throws {
+        _ = NSApplication.shared
         let routeA = VoiceAudioRoute(input: 111, output: 105)
         let routeB = VoiceAudioRoute(input: 111, output: 93)
         let routeC = VoiceAudioRoute(input: 100, output: 93)
@@ -1124,7 +1090,8 @@ actor PendingModelTester: ConnectionTesting {
         }
     }
 
-    @MainActor static func captureWatchdogPauseTests() async throws {
+    @Test @MainActor static func captureWatchdogPauseTests() async throws {
+        _ = NSApplication.shared
         // Both starting during a reply and pausing before the first PCM packet
         // must keep an intentional capture pause out of the startup timeout.
         for alreadyGenerating in [true, false] {
@@ -1169,7 +1136,8 @@ actor PendingModelTester: ConnectionTesting {
     /// A device change while connecting restarted the engine for ~7 s on the main actor, and the
     /// 5 s first-packet watchdog, which had been counting through the restart, ended the call the
     /// moment it recovered. The timeout now covers the microphone only, from recovery onwards.
-    @MainActor static func captureWatchdogRestartTests() async throws {
+    @Test @MainActor static func captureWatchdogRestartTests() async throws {
+        _ = NSApplication.shared
         let armed = ContinuousClock.now, timeout = Duration.milliseconds(100)
         func decide(at offset: Int, restartedAt: Int? = nil, restarting: Bool = false) -> VoiceCaptureWatchdog.Decision {
             VoiceCaptureWatchdog.decide(now: armed + .milliseconds(offset), armedAt: armed,
@@ -1238,7 +1206,8 @@ actor PendingModelTester: ConnectionTesting {
                   "with no packet after the restart the call ends as a first-packet timeout, after restartedAt + timeout")
         }
     }
-    @MainActor static func mutedPlaybackTailProtectionTests() async throws {
+    @Test @MainActor static func mutedPlaybackTailProtectionTests() async throws {
+        _ = NSApplication.shared
         for unmuteBeforeExpiry in [true, false] {
             let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
             let synth = FakeSynthesizer(); synth.emitsAudio = true
@@ -1290,7 +1259,8 @@ actor PendingModelTester: ConnectionTesting {
             check(store.messages.last?.status == .completed, "tail protection preserves the completed reply")
         }
     }
-    @MainActor static func captureDiagnosticsTests() async throws {
+    @Test @MainActor static func captureDiagnosticsTests() async throws {
+        _ = NSApplication.shared
         let audio = FakeAudio(), recognizer = FakeRecognizer()
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer },
                                            captureTimeout: .milliseconds(100), permission: { true })
@@ -1311,7 +1281,8 @@ actor PendingModelTester: ConnectionTesting {
         check(reason.contains("-10875") && reason.contains("FailedInitialization") && !reason.contains(secret),
               "diagnostics keep error codes without arbitrary error payloads")
     }
-    @MainActor static func manualModelTests() async throws {
+    @Test @MainActor static func manualModelTests() async throws {
+        _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-manual-settings-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1367,7 +1338,8 @@ actor PendingModelTester: ConnectionTesting {
         settings.save()
         rejects("blank saved model cannot start generation") { _ = try settings.savedModelCredentials() }
     }
-    @MainActor static func probeTests() async {
+    @Test @MainActor static func probeTests() async {
+        _ = NSApplication.shared
         let recognizer = SuspendedRecognizer(), synth = SuspendedSynthesizer(), audio = FakeAudio()
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer }, synthesizer: { synth }, probeTimeout: .milliseconds(100))
         defer { voice.shutdown() }
@@ -1386,7 +1358,8 @@ actor PendingModelTester: ConnectionTesting {
         check(!voice.testing && !voice.testSucceeded && recognizer.pending == nil && voice.testResult?.contains("超时") == true,
               "silent service times out and releases resources")
     }
-    @MainActor static func speakerPreviewTests() async {
+    @Test @MainActor static func speakerPreviewTests() async {
+        _ = NSApplication.shared
         let audio = FakeAudio(), recognizer = FakeRecognizer(), synth = FakeSynthesizer()
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer }, synthesizer: { synth })
         defer { voice.shutdown() }
@@ -1420,7 +1393,8 @@ actor PendingModelTester: ConnectionTesting {
     /// Leaving the voice page and coming back must not restyle a finished result.
     /// The page cancels its probe on disappear, and a cancel that also cleared the
     /// outcome turned the green success mark grey on the way back.
-    @MainActor static func settingsPageRevisitKeepsSuccessTests() async throws {
+    @Test @MainActor static func settingsPageRevisitKeepsSuccessTests() async throws {
+        _ = NSApplication.shared
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("echo-voice-settings-\(UUID())")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1444,7 +1418,7 @@ actor PendingModelTester: ConnectionTesting {
         }
         try await settle()
         voice.test(configuration: settings.voiceDraft, key: "test", preview: false)
-        await tick()
+        await waitUntil { !voice.testing }
         let result = voice.testResult
         check(voice.testSucceeded && result?.contains("识别与合成连接成功") == true, "the page starts from a successful test")
         settings.selectedSection = "模型"
@@ -1457,15 +1431,15 @@ actor PendingModelTester: ConnectionTesting {
         // A new test still starts from a clean outcome, and editing still clears both.
         synth.failure = SettingsError("音色不存在")
         voice.test(configuration: settings.voiceDraft, key: "test", preview: false)
-        await tick()
+        await waitUntil { !voice.testing }
         check(!voice.testSucceeded && voice.testResult == "音色不存在", "a later failure replaces the success")
         synth.failure = nil
         voice.invalidateTest()
         check(voice.testResult == nil && !voice.testSucceeded, "editing the voice form clears the result outright")
-        print("PASS: a successful voice connection test survives leaving and returning to the page")
     }
 
-    @MainActor static func audioConversionTests() async throws {
+    @Test @MainActor static func audioConversionTests() async throws {
+        _ = NSApplication.shared
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 2, interleaved: false)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 9600)!
         buffer.frameLength = 9600
@@ -1509,10 +1483,11 @@ actor PendingModelTester: ConnectionTesting {
         let slow = try VoicePCMConverter(source: format, continuation: slowInput)
         for _ in 0..<5 { slow.accept(buffer) }
         slowInput.finish()
-        do { for try await _ in slowStream {}; fatalError("audio overflow was not detected") }
-        catch { checks += 1 }
+        do { for try await _ in slowStream {}; Issue.record("audio overflow was not detected") }
+        catch {  }
     }
-    @MainActor static func protocolTests() throws {
+    @Test @MainActor static func protocolTests() throws {
+        _ = NSApplication.shared
         // Independent byte fixtures, including a gzip-compressed ASR server response.
         let json = Data("{\"result\":{\"text\":\"你好\"}}".utf8)
         let frame = Data([0x11, 0x93, 0x10, 0, 0xff, 0xff, 0xff, 0xfe]) + VoiceWire.integer(UInt32(json.count)) + json
@@ -1553,7 +1528,8 @@ actor PendingModelTester: ConnectionTesting {
         let asr = try JSONSerialization.jsonObject(with: DoubaoRecognizer.configuration()) as! [String: Any]
         check((asr["request"] as? [String: Any])?["end_window_size"] as? Int == 800, "ASR default endpointing")
     }
-    @MainActor static func settingsTests() throws {
+    @Test @MainActor static func settingsTests() throws {
+        _ = NSApplication.shared
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("echo-voice-tests-\(UUID())")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1614,7 +1590,7 @@ actor PendingModelTester: ConnectionTesting {
         failed.voiceAPIKey = "rollback"; failed.saveVoice()
         check(secrets.values.count == secretCount && failed.snapshot.voiceSecretAccount == nil, "failed disk save rolls back newly stored secret")
     }
-    @MainActor static func playbackDoesNotCreateUserTurn() async throws {
+    @Test @MainActor static func playbackDoesNotCreateUserTurn() async throws {
         let audio = FakeAudio(), source = FakeSource()
         let store = TaskStore(source: source), synth = FakeSynthesizer()
         var recognizers: [FakeRecognizer] = []
@@ -1671,7 +1647,8 @@ actor PendingModelTester: ConnectionTesting {
         check(source.histories.count == 2 && store.messages.last?.role == .assistant,
               "the user may repeat the same words in a later genuine turn")
     }
-    @MainActor static func lifecycleTests() async throws {
+    @Test @MainActor static func lifecycleTests() async throws {
+        _ = NSApplication.shared
         let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: FakeSource())
         let actual = TaskStore(source: source)
         actual.mainDraft = "未发送草稿"; actual.followUpDraft = "跟进草稿"
@@ -1772,7 +1749,8 @@ actor PendingModelTester: ConnectionTesting {
         check(!raceAudio.capturing && !race.isActive, "hangup during permission cannot restart recording")
         race.shutdown()
     }
-    @MainActor static func phase3InvariantsTests() async throws {
+    @Test @MainActor static func phase3InvariantsTests() async throws {
+        _ = NSApplication.shared
         // 1. ASR/TTS mutual exclusion: no simultaneous upload and playback, upload stops during reply
         do {
             let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
@@ -1986,7 +1964,8 @@ actor PendingModelTester: ConnectionTesting {
         }
     }
 
-    @MainActor static func phase4FaultAndCleanupTests() async throws {
+    @Test @MainActor static func phase4FaultAndCleanupTests() async throws {
+        _ = NSApplication.shared
         // 1. Permission refusal fault injection
         do {
             let audio = FakeAudio()
@@ -2324,3 +2303,6 @@ actor PendingModelTester: ConnectionTesting {
         }
     }
 }
+
+}
+typealias VoiceTests = EchoVoiceScenarios.VoiceTests

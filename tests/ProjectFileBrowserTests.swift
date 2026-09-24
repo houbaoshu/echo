@@ -1,17 +1,18 @@
+import Testing
 import Foundation
 import Combine
 import Darwin
 import AppKit
 
-@MainActor enum ProjectFileBrowserTests {
+@MainActor @Suite(.serialized) enum ProjectFileBrowserTests {
     static func wait(_ label: String, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(5)
         while !condition() {
-            precondition(Date() < deadline, "Timed out: \(label)")
+            try #require(Date() < deadline, "Timed out: \(label)")
             try await Task.sleep(for: .milliseconds(10))
         }
     }
-    static func run() async throws {
+    @Test static func filesystemPermissionsWatchersAndPreviews() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("echo-files-\(UUID())").resolvingSymlinksInPath()
         try fm.createDirectory(at: root.appendingPathComponent("dir/empty"), withIntermediateDirectories: true)
@@ -31,75 +32,75 @@ import AppKit
         try write("oversized", Data(repeating: 65, count: ProjectFileIO.previewLimit + 1))
         try fm.createSymbolicLink(atPath: root.appendingPathComponent("link").path, withDestinationPath: "file2.txt")
         try fm.createSymbolicLink(atPath: root.appendingPathComponent("cycle").path, withDestinationPath: ".")
-        precondition(mkfifo(root.appendingPathComponent("pipe").path, 0o600) == 0)
+        #expect(mkfifo(root.appendingPathComponent("pipe").path, 0o600) == 0)
         func preview(_ path: String) -> ProjectFilePreview { ProjectFileIO.preview(root: root.path, path: path) }
-        precondition(preview("file2.txt") == .text("你好\nsecond\tline"))
-        precondition(preview("dir/empty.txt") == .text(""))
-        precondition(preview("utf16le") == .text("文本") && preview("utf16be") == .text("文本"))
-        precondition(preview("utf8bom") == .text("BOM"))
+        #expect(preview("file2.txt") == .text("你好\nsecond\tline"))
+        #expect(preview("dir/empty.txt") == .text(""))
+        #expect(preview("utf16le") == .text("文本") && preview("utf16be") == .text("文本"))
+        #expect(preview("utf8bom") == .text("BOM"))
         for path in ["binary", "unsupported", "oversized", "link", "cycle", "pipe"] {
-            guard case .information = preview(path) else { preconditionFailure("Must not preview \(path)") }
+            guard case .information = preview(path) else { throw SettingsError("Must not preview \(path)") }
         }
-        guard case .text(let limit) = preview("limit") else { preconditionFailure("Exact size limit supported") }
-        precondition(limit.utf8.count == ProjectFileIO.previewLimit)
+        guard case .text(let limit) = preview("limit") else { throw SettingsError("Exact size limit supported") }
+        #expect(limit.utf8.count == ProjectFileIO.previewLimit)
         for path in ["deleted", "../outside", "/etc/passwd", "cycle/file2.txt"] {
-            guard case .failed = preview(path) else { preconditionFailure("Invalid path or ancestor must fail: \(path)") }
+            guard case .failed = preview(path) else { throw SettingsError("Invalid path or ancestor must fail: \(path)") }
         }
         guard case .loaded(let entries) = ProjectFileIO.directory(root: root.path, path: "") else {
-            preconditionFailure("Root must load")
+            throw SettingsError("Root must load")
         }
-        precondition(entries.first?.name == "build")
-        precondition(entries.firstIndex { $0.name == "file2.txt" }! < entries.firstIndex { $0.name == "file10.txt" }!)
-        precondition(!entries.contains { $0.name.hasPrefix(".") })
+        #expect(entries.first?.name == "build")
+        #expect(entries.firstIndex { $0.name == "file2.txt" }! < entries.firstIndex { $0.name == "file10.txt" }!)
+        #expect(!entries.contains { $0.name.hasPrefix(".") })
         for name in ["target", "build", "binary", "unsupported", "oversized", "pipe"] {
-            precondition(entries.contains { $0.name == name }, "Visible content stays in tree: \(name)")
+            #expect(entries.contains { $0.name == name }, "Visible content stays in tree: \(name)")
         }
-        precondition(entries.first { $0.name == "cycle" }?.kind == .symbolicLink)
-        precondition(ProjectFileIO.directory(root: root.path, path: "dir/empty") == .loaded([]))
+        #expect(entries.first { $0.name == "cycle" }?.kind == .symbolicLink)
+        #expect(ProjectFileIO.directory(root: root.path, path: "dir/empty") == .loaded([]))
         try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: root.appendingPathComponent("dir/empty").path)
         guard case .failed(let permission) = ProjectFileIO.directory(root: root.path, path: "dir/empty") else {
-            preconditionFailure("Unreadable directory must fail")
+            throw SettingsError("Unreadable directory must fail")
         }
-        precondition(permission.contains("权限"))
+        #expect(permission.contains("权限"))
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.appendingPathComponent("dir/empty").path)
         try testImages(root: root)
 
         let project = WorkspaceProject(name: "A", path: root.path)
         let browser = ProjectFileBrowserStore()
-        precondition(browser.location == nil)
+        #expect(browser.location == nil)
         browser.togglePreviewExpansion()
-        precondition(!browser.isPreviewExpanded, "No preview cannot expand")
+        #expect(!browser.isPreviewExpanded, "No preview cannot expand")
         browser.select(project: project)
         try await wait("root loaded") { if case .loaded = browser.state.directories[""] { return true }; return false }
-        precondition(browser.state.directories["dir"] == nil, "No eager recursion")
+        #expect(browser.state.directories["dir"] == nil, "No eager recursion")
         browser.toggleDirectory("dir")
         try await wait("expanded") { if case .loaded = browser.state.directories["dir"] { return true }; return false }
         browser.setScrollID("dir")
         browser.openFile("file2.txt")
         try await wait("preview") { browser.state.preview == .text("你好\nsecond\tline") }
         browser.togglePreviewExpansion()
-        precondition(browser.isPreviewExpanded)
+        #expect(browser.isPreviewExpanded)
         browser.refresh()
-        precondition(browser.isPreviewExpanded, "Content refresh preserves expansion")
+        #expect(browser.isPreviewExpanded, "Content refresh preserves expansion")
         browser.returnToDirectory()
-        precondition(!browser.isPreviewExpanded, "Returning to tree collapses preview")
+        #expect(!browser.isPreviewExpanded, "Returning to tree collapses preview")
         browser.togglePreviewExpansion()
-        precondition(!browser.isPreviewExpanded, "A remembered selection in the tree cannot expand")
-        precondition(browser.state.expanded == ["dir"] && browser.state.selectedPath == "file2.txt" && browser.state.scrollID == "dir")
+        #expect(!browser.isPreviewExpanded, "A remembered selection in the tree cannot expand")
+        #expect(browser.state.expanded == ["dir"] && browser.state.selectedPath == "file2.txt" && browser.state.scrollID == "dir")
         browser.select(project: nil)
-        precondition(browser.location == nil && browser.state.directories.isEmpty && browser.state.selectedPath == nil)
+        #expect(browser.location == nil && browser.state.directories.isEmpty && browser.state.selectedPath == nil)
         browser.select(project: project)
-        precondition(browser.state.expanded == ["dir"] && browser.state.selectedPath == "file2.txt")
+        #expect(browser.state.expanded == ["dir"] && browser.state.selectedPath == "file2.txt")
         browser.openFile("file2.txt")
         try await wait("preview after return") { browser.state.preview == .text("你好\nsecond\tline") }
         browser.togglePreviewExpansion()
         browser.openFile("file10.txt")
-        precondition(!browser.isPreviewExpanded, "Changing file clears expansion")
+        #expect(!browser.isPreviewExpanded, "Changing file clears expansion")
         browser.openFile("file2.txt")
         try await wait("original preview") { browser.state.preview == .text("你好\nsecond\tline") }
         try write("file2.txt", Data("updated".utf8))
         browser.refresh(projectID: UUID())
-        precondition(browser.state.preview == .text("你好\nsecond\tline"), "Unrelated background task does not refresh or switch project")
+        #expect(browser.state.preview == .text("你好\nsecond\tline"), "Unrelated background task does not refresh or switch project")
         try await wait("automatic preview update") { browser.state.preview == .text("updated") }
         try fm.removeItem(at: root.appendingPathComponent("file2.txt"))
         try await wait("automatic deleted preview") { if case .failed = browser.state.preview { return true }; return false }
@@ -123,34 +124,34 @@ import AppKit
         try fm.removeItem(at: root.appendingPathComponent("renamed"))
         try await wait("directory deletion") { !names().contains("renamed") }
         browser.toggleDirectory("dir")
-        precondition(!browser.state.expanded.contains("dir"))
+        #expect(!browser.state.expanded.contains("dir"))
         try write("dir/collapsed.txt", Data())
         try await wait("loaded collapsed directory updates") { names("dir").contains("collapsed.txt") }
         browser.toggleDirectory("dir")
-        precondition(browser.state.expanded.contains("dir") && browser.state.scrollID == "dir")
+        #expect(browser.state.expanded.contains("dir") && browser.state.scrollID == "dir")
         let otherRoot = root.appendingPathComponent("other")
         try fm.createDirectory(at: otherRoot, withIntermediateDirectories: true)
         let other = WorkspaceProject(name: "B", path: otherRoot.path)
         browser.openFile("file10.txt")
         browser.togglePreviewExpansion()
         browser.select(project: other)
-        precondition(!browser.isPreviewExpanded, "Changing project clears expansion")
+        #expect(!browser.isPreviewExpanded, "Changing project clears expansion")
         browser.select(project: project)
-        precondition(!browser.isPreviewExpanded, "Cached project cannot restore expansion")
+        #expect(!browser.isPreviewExpanded, "Cached project cannot restore expansion")
         browser.select(project: other)
         try await wait("switch project") { browser.state.directories[""] == .loaded([]) }
         try write("old-project.txt", Data())
         try await Task.sleep(for: .milliseconds(500))
-        precondition(browser.location?.projectID == other.id && browser.state.directories[""] == .loaded([]))
+        #expect(browser.location?.projectID == other.id && browser.state.directories[""] == .loaded([]))
         try write("other/current.txt", Data())
         try await wait("new project watcher") { names().contains("current.txt") }
         browser.select(project: nil)
         try write("other/after-detach.txt", Data())
         try await Task.sleep(for: .milliseconds(500))
-        precondition(browser.location == nil && browser.state.directories.isEmpty)
+        #expect(browser.location == nil && browser.state.directories.isEmpty)
         var relocated = project; relocated.path = root.appendingPathComponent("missing").path
         browser.select(project: relocated)
-        precondition(browser.state.selectedPath == nil && browser.state.expanded.isEmpty)
+        #expect(browser.state.selectedPath == nil && browser.state.expanded.isEmpty)
         try await wait("missing root") { if case .failed = browser.state.directories[""] { return true }; return false }
 
         // Inject slow readers to force old root, old project and old preview results
@@ -168,17 +169,14 @@ import AppKit
         slow.select(project: moved); slow.openFile("new")
         try await wait("new result") { slow.state.preview == .text("/fastnew") }
         try await Task.sleep(for: .milliseconds(250))
-        precondition(slow.location?.root == "/fast" && slow.state.preview == .text("/fastnew"))
-        precondition(slow.state.directories[""] == .loaded([.init(path: "/fast", name: "/fast", kind: .file)]))
+        #expect(slow.location?.root == "/fast" && slow.state.preview == .text("/fastnew"))
+        #expect(slow.state.directories[""] == .loaded([.init(path: "/fast", name: "/fast", kind: .file)]))
         slow.openFile("old"); slow.openFile("new")
         try await Task.sleep(for: .milliseconds(250))
-        precondition(slow.state.preview == .text("/fastnew"))
+        #expect(slow.state.preview == .text("/fastnew"))
         slow.select(project: old); slow.select(project: nil)
         try await Task.sleep(for: .milliseconds(250))
-        precondition(slow.location == nil && slow.state.directories.isEmpty)
-        print("PASS: file browser encodings, limits, links, permissions, lazy tree, memory navigation, filesystem watching and late-result isolation")
-        try await testRefreshCommitsDirectoriesSeparately()
-        try await testRefreshCoalescesWhileScanning()
+        #expect(slow.location == nil && slow.state.directories.isEmpty)
     }
 
     /// Records what each run loop turn changed, so a refresh that alters several
@@ -232,7 +230,7 @@ import AppKit
         }
     }
 
-    static func testRefreshCoalescesWhileScanning() async throws {
+    @Test static func testRefreshCoalescesWhileScanning() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-refresh-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -245,10 +243,10 @@ import AppKit
 
         gate.setVersion(2)
         for _ in 0..<100 { browser.refresh() }
-        precondition(gate.counts.calls == 1, "Repeated refreshes must not start overlapping scans")
+        #expect(gate.counts.calls == 1, "Repeated refreshes must not start overlapping scans")
         browser.select(project: nil)
         browser.select(project: project)
-        precondition(gate.counts.calls == 1, "Returning to the same location must wait for its old scan")
+        #expect(gate.counts.calls == 1, "Returning to the same location must wait for its old scan")
 
         gate.releaseFirst()
         try await wait("coalesced refresh applied latest result") {
@@ -257,10 +255,9 @@ import AppKit
             ])
         }
         try await Task.sleep(for: .milliseconds(100))
-        precondition(gate.counts.calls == 2 && gate.counts.peak == 1,
+        #expect(gate.counts.calls == 2 && gate.counts.peak == 1,
                      "The burst must produce one follow-up scan, with no concurrent scans")
         browser.select(project: nil)
-        print("PASS: high-frequency refreshes coalesce per location and apply the latest listing")
     }
 
     /// Several directories changing in one refresh must reach the list in separate run loop
@@ -268,7 +265,7 @@ import AppKit
     /// single SwiftUI update make it insert rows from inside its own delegate callbacks —
     /// see docs/repros/swiftui-outline-list-reentrancy.swift, which logs
     /// "Application performed a reentrant operation in its NSTableView delegate".
-    static func testRefreshCommitsDirectoriesSeparately() async throws {
+    @Test static func testRefreshCommitsDirectoriesSeparately() async throws {
         let folders = (0..<6).map { "folder\($0)" }
         let grown = ContentFlag()
         // Returns immediately, so every directory's read finishes in the same instant and
@@ -294,7 +291,7 @@ import AppKit
         guard let observer = CFRunLoopObserverCreateWithHandler(
             nil, CFRunLoopActivity.beforeWaiting.rawValue, true, 0, { _, _ in
                 MainActor.assumeIsolated { recorder.turn += 1 }
-            }) else { preconditionFailure("Could not observe the run loop") }
+            }) else { throw SettingsError("Could not observe the run loop") }
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         defer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
         let subscription = browser.$state.sink { state in
@@ -311,9 +308,9 @@ import AppKit
             }
         }
         try await Task.sleep(for: .milliseconds(200))
-        precondition(recorder.changedDirectories >= folders.count,
+        #expect(recorder.changedDirectories >= folders.count,
                      "Every grown folder is observed: \(recorder.changedDirectories)")
-        precondition(recorder.busiestTurn == 1,
+        #expect(recorder.busiestTurn == 1,
                      "A run loop turn carries at most one changed directory, saw \(recorder.busiestTurn) in one turn")
 
         // An unchanged refresh must not rewrite anything: a rewrite rebuilds the subtree
@@ -326,9 +323,8 @@ import AppKit
         defer { quietSubscription.cancel() }
         browser.refresh()
         try await Task.sleep(for: .milliseconds(300))
-        precondition(quiet.changedDirectories == 0,
+        #expect(quiet.changedDirectories == 0,
                      "An unchanged refresh rewrites no directory, saw \(quiet.changedDirectories)")
-        print("PASS: refresh commits each changed directory in its own run loop turn and rewrites nothing unchanged")
     }
 
     private static func testImages(root: URL) throws {
@@ -347,39 +343,38 @@ import AppKit
         }
         for (ext, format) in [("PNG", NSBitmapImageRep.FileType.png), ("jpg", .jpeg), ("jpeg", .jpeg), ("gif", .gif)] {
             let data = bitmap.representation(using: format, properties: [:])!
-            if ext == "PNG" { precondition(data.count > ProjectFileIO.previewLimit) }
+            if ext == "PNG" { #expect(data.count > ProjectFileIO.previewLimit) }
             guard case .image(let image) = try preview("sample.\(ext)", data) else {
-                preconditionFailure("Must decode \(ext), independently of the text limit")
+                throw SettingsError("Must decode \(ext), independently of the text limit")
             }
-            precondition(image.width == 768 && image.height == 512)
+            #expect(image.width == 768 && image.height == 512)
         }
         let webp = try Data(contentsOf: EchoTestResources.resource("pets/chiyan/spritesheet.webp"))
-        guard case .image = try preview("sample.webp", webp) else { preconditionFailure("System supports WebP") }
+        guard case .image = try preview("sample.webp", webp) else { throw SettingsError("System supports WebP") }
         let wide = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8192, pixelsHigh: 16,
             bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
         wide.bitmapData!.initialize(repeating: 0, count: wide.bytesPerRow * wide.pixelsHigh)
         guard case .image(let reduced) = try preview("wide.png", wide.representation(using: .png, properties: [:])!) else {
-            preconditionFailure("Large dimensions must be downsampled")
+            throw SettingsError("Large dimensions must be downsampled")
         }
-        precondition(reduced.width == 4096 && reduced.height == 8)
+        #expect(reduced.width == 4096 && reduced.height == 8)
         for (name, data) in [("broken.png", Data("invalid image".utf8)), ("empty.jpg", Data()),
                              ("unsupported.svg", Data("<svg></svg>".utf8))] {
-            guard case .information(let message) = try preview(name, data) else { preconditionFailure(name) }
-            precondition(message.contains("无法预览图片"))
+            guard case .information(let message) = try preview(name, data) else { throw SettingsError(name) }
+            #expect(message.contains("无法预览图片"))
         }
         let oversized = root.appendingPathComponent("large.png")
         try Data().write(to: oversized)
         let handle = try FileHandle(forWritingTo: oversized)
         try handle.truncate(atOffset: UInt64(ProjectFileIO.imagePreviewLimit + 1))
         try handle.close()
-        precondition(ProjectFileIO.preview(root: root.path, path: "large.png") == .information("图片超过 32 MiB，无法预览。"))
+        #expect(ProjectFileIO.preview(root: root.path, path: "large.png") == .information("图片超过 32 MiB，无法预览。"))
         try FileManager.default.createSymbolicLink(atPath: root.appendingPathComponent("link.png").path,
                                                  withDestinationPath: "sample.PNG")
         guard case .information(let message) = ProjectFileIO.preview(root: root.path, path: "link.png") else {
-            preconditionFailure("Images must retain descriptor-relative link protection")
+            throw SettingsError("Images must retain descriptor-relative link protection")
         }
-        precondition(message.contains("符号链接"))
-        print("PASS: PNG above 1 MiB, JPEG/JPG, GIF, WebP, image downsampling, corrupt/unsupported images, image size limit and links")
+        #expect(message.contains("符号链接"))
     }
 }

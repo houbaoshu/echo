@@ -1,3 +1,4 @@
+import Testing
 import AVFoundation
 import Speech
 
@@ -19,12 +20,9 @@ import Speech
     }
 }
 
-enum AppleSpeechTests {
-    @MainActor static func run() async throws {
-        try await recordedDevicePauseRegression()
-        try await phraseBoundaryPunctuationTests()
-        try await localeTests()
-        try await backgroundAuthorizationTests()
+extension EchoVoiceScenarios {
+@Suite(.serialized) enum AppleSpeechTests {
+    @Test @MainActor static func capabilityAndCancellation() async throws {
         let engine = TestAppleSpeechEngine()
         for (capability, available, status, expected) in [
             (false, true, SFSpeechRecognizerAuthorizationStatus.authorized, "不支持 Apple 本地"),
@@ -36,14 +34,14 @@ enum AppleSpeechTests {
             engine.supportsOnDeviceRecognition = capability; engine.isAvailable = available
             do {
                 _ = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { status })
-                preconditionFailure("Unsupported local recognition must fail closed")
-            } catch { precondition(error.localizedDescription.contains(expected)) }
-            precondition(engine.starts == 0)
+                Issue.record("Unsupported local recognition must fail closed")
+            } catch { #expect(error.localizedDescription.contains(expected)) }
+            #expect(engine.starts == 0)
         }
         do {
-            _ = try await AppleSpeechRecognizer.prepare(engine: nil, permission: { preconditionFailure("Unsupported language must not request authorization") })
-            preconditionFailure("Unsupported language must fail")
-        } catch { precondition(error.localizedDescription.contains("无法初始化")) }
+            _ = try await AppleSpeechRecognizer.prepare(engine: nil, permission: { Issue.record("Unsupported language must not request authorization"); return .denied })
+            Issue.record("Unsupported language must fail")
+        } catch { #expect(error.localizedDescription.contains("无法初始化")) }
         engine.supportsOnDeviceRecognition = true; engine.isAvailable = true
 
         var authorization: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>?
@@ -53,15 +51,15 @@ enum AppleSpeechTests {
             }
         }
         await VoiceTests.tick(); preparation.cancel(); authorization?.resume(returning: .authorized)
-        do { _ = try await preparation.value; preconditionFailure("Cancelled permission must not prepare a recognizer") }
-        catch { precondition(error is CancellationError && engine.starts == 0) }
+        do { _ = try await preparation.value; Issue.record("Cancelled permission must not prepare a recognizer") }
+        catch { #expect(error is CancellationError && engine.starts == 0) }
 
         let buffer = try AppleSpeechRecognizer.pcmBuffer(Data([0, 128, 255, 127, 0, 0]))
-        precondition(buffer.format.sampleRate == 16000 && buffer.format.channelCount == 1 && buffer.frameLength == 3)
-        precondition(buffer.int16ChannelData![0][0] == Int16.min && buffer.int16ChannelData![0][1] == Int16.max)
+        #expect(buffer.format.sampleRate == 16000 && buffer.format.channelCount == 1 && buffer.frameLength == 3)
+        #expect(buffer.int16ChannelData![0][0] == Int16.min && buffer.int16ChannelData![0][1] == Int16.max)
         for invalid in [Data(), Data([1])] {
-            do { _ = try AppleSpeechRecognizer.pcmBuffer(invalid); preconditionFailure("Invalid PCM must fail") }
-            catch { precondition(error.localizedDescription.contains("无效")) }
+            do { _ = try AppleSpeechRecognizer.pcmBuffer(invalid); Issue.record("Invalid PCM must fail") }
+            catch { #expect(error.localizedDescription.contains("无效")) }
         }
 
         let recognizer = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
@@ -69,52 +67,51 @@ enum AppleSpeechTests {
         var received: [ASRResult] = []
         let recognition = Task { try await recognizer.run(key: "", audio: audio) { received.append($0) } }
         await VoiceTests.tick()
-        precondition(engine.request?.requiresOnDeviceRecognition == true && engine.request?.shouldReportPartialResults == true
+        #expect(engine.request?.requiresOnDeviceRecognition == true && engine.request?.shouldReportPartialResults == true
                      && engine.request?.addsPunctuation == true)
         input.yield(Data([0, 0])); input.finish()
         engine.emit("临时", final: false); await VoiceTests.tick()
-        precondition(received.count == 1 && !received[0].streamFinal)
+        #expect(received.count == 1 && !received[0].streamFinal)
         engine.emit("最终", final: true)
         try await recognition.value
-        precondition(received.count == 2 && received[1].streamFinal && engine.cancels > 0)
+        #expect(received.count == 2 && received[1].streamFinal && engine.cancels > 0)
         engine.emit("迟到", final: true); await VoiceTests.tick()
-        precondition(received.count == 2)
+        #expect(received.count == 2)
 
         let cancelled = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         let (pendingAudio, _) = AsyncThrowingStream<Data, Error>.makeStream()
-        let pending = Task { try await cancelled.run(key: "", audio: pendingAudio) { _ in preconditionFailure("Cancelled recognition delivered a result") } }
+        let pending = Task { try await cancelled.run(key: "", audio: pendingAudio) { _ in Issue.record("Cancelled recognition delivered a result") } }
         await VoiceTests.tick(); pending.cancel()
-        do { try await pending.value; preconditionFailure("Cancellation must terminate the task") }
-        catch { precondition(error is CancellationError) }
+        do { try await pending.value; Issue.record("Cancellation must terminate the task") }
+        catch { #expect(error is CancellationError) }
         engine.emit("取消后的迟到结果", final: true); await VoiceTests.tick()
 
         let directlyCancelled = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         let directTask = Task {
             try await directlyCancelled.run(key: "", audio: pendingAudio) { _ in
-                preconditionFailure("Direct cancel must discard even queued results")
+                Issue.record("Direct cancel must discard even queued results")
             }
         }
         await VoiceTests.tick()
         engine.emit("取消前排队的结果", final: true)
         directlyCancelled.cancel()
-        do { try await directTask.value; preconditionFailure("Direct cancellation must terminate the task") }
-        catch { precondition(error is CancellationError) }
+        do { try await directTask.value; Issue.record("Direct cancellation must terminate the task") }
+        catch { #expect(error is CancellationError) }
 
         let silent = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
-        let silentTask = Task { try await silent.run(key: "", audio: pendingAudio) { _ in preconditionFailure("Empty final must not be committed") } }
+        let silentTask = Task { try await silent.run(key: "", audio: pendingAudio) { _ in Issue.record("Empty final must not be committed") } }
         await VoiceTests.tick(); engine.emit("  ", final: true)
-        do { try await silentTask.value; preconditionFailure("Empty recognition must report a useful error") }
-        catch { precondition(error.localizedDescription.contains("未识别到清晰语音")) }
+        do { try await silentTask.value; Issue.record("Empty recognition must report a useful error") }
+        catch { #expect(error.localizedDescription.contains("未识别到清晰语音")) }
 
         let changed = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         let starts = engine.starts
         engine.supportsOnDeviceRecognition = false
-        do { try await changed.run(key: "", audio: pendingAudio) { _ in }; preconditionFailure("Changed capability must fail closed") }
-        catch { precondition(error.localizedDescription.contains("不支持 Apple 本地") && engine.starts == starts) }
-        print("PASS: Apple on-device capability, authorization, PCM, finalization and cancellation")
+        do { try await changed.run(key: "", audio: pendingAudio) { _ in }; Issue.record("Changed capability must fail closed") }
+        catch { #expect(error.localizedDescription.contains("不支持 Apple 本地") && engine.starts == starts) }
     }
 
-    @MainActor private static func recordedDevicePauseRegression() async throws {
+    @Test @MainActor static func recordedDevicePauseRegression() async throws {
         struct Callback: Decodable {
             let text: String
             let streamFinal: Bool
@@ -138,12 +135,12 @@ enum AppleSpeechTests {
                 streamFinal: callback.streamFinal, localSegment: segment), nil)
             await VoiceTests.tick()
             if index == 9 {
-                precondition(results.last?.result?.text == "这是我的第一句话 这",
+                #expect(results.last?.result?.text == "这是我的第一句话 这",
                              "Real Apple phrase metadata must protect the first phrase before the second partial arrives")
             }
         }
         try await run.value
-        precondition(results.last?.streamFinal == true && results.last?.result?.text == "这是我的第一句话。这是我的第二句话",
+        #expect(results.last?.streamFinal == true && results.last?.result?.text == "这是我的第一句话。这是我的第二句话",
                      "Real empty request-final must preserve both finalized phrases, split by the real 3.87 s pause")
         // Identity is acoustic, not textual: duplicate metadata is idempotent,
         // while actually repeating the same words in another phrase is retained.
@@ -158,8 +155,7 @@ enum AppleSpeechTests {
         }
         repeatInput.finish(); engine.emit("再说一次", final: true)
         try await repeatRun.value
-        precondition(results.last?.result?.text == "再说一次。再说一次", "Only distinct speech segments append")
-        print("PASS: Raw device callback replay preserves phrase boundaries and empty terminal result")
+        #expect(results.last?.result?.text == "再说一次。再说一次", "Only distinct speech segments append")
     }
 
     /// Replays phrase callbacks, then an empty request-final; returns every delivered text.
@@ -182,7 +178,7 @@ enum AppleSpeechTests {
 
     // Gaps mirror the device probe: natural phrase ends at 2-4 s of silence,
     // Apple's forced ~60 s cut at 0.12 s mid-word.
-    @MainActor private static func phraseBoundaryPunctuationTests() async throws {
+    @Test @MainActor static func phraseBoundaryPunctuationTests() async throws {
         let cases: [(callbacks: [(text: String, start: Double?, duration: Double)], expected: String, reason: String)] = [
             ([("第一句话", 0, 1.6), ("第二句话", 3.6, 1.6)], "第一句话。第二句话", "A long pause ends the sentence"),
             ([("你吃饭了吗？", 0, 1.5), ("吃过了", 4.5, 1)], "你吃饭了吗？吃过了", "Existing terminal punctuation is not repeated"),
@@ -195,40 +191,39 @@ enum AppleSpeechTests {
         ]
         for (callbacks, expected, reason) in cases {
             let texts = try await replay(callbacks)
-            precondition(texts.last == expected, "\(reason): \(texts.last ?? "<none>")")
+            #expect(texts.last == expected, "\(reason): \(texts.last ?? "<none>")")
         }
 
         let revised = try await replay([("你吃饭了吗", 0, 1.5), ("好的", 4, 1), ("你吃饭了吗？", 0, 1.6),
                                         ("不要停", 10, 1), ("顿", 13, 1), ("不要停", 10, 2.9)])
-        precondition(revised[1] == "你吃饭了吗。好的" && revised[2] == "你吃饭了吗？好的",
+        #expect(revised[1] == "你吃饭了吗。好的" && revised[2] == "你吃饭了吗？好的",
                      "A repeated phrase that gains a question mark rebuilds without a duplicate: \(revised)")
-        precondition(revised[4] == "你吃饭了吗？好的。不要停。顿" && revised.last == "你吃饭了吗？好的。不要停顿",
+        #expect(revised[4] == "你吃饭了吗？好的。不要停。顿" && revised.last == "你吃饭了吗？好的。不要停顿",
                      "A repeated phrase updates its end, and with it the gap: \(revised)")
 
         let partial = try await replay([("第一句话", 0, 1.6), ("第二", nil, 0), ("第二句话", 3.6, 1.6)])
-        precondition(partial[1] == "第一句话 第二" && partial.last == "第一句话。第二句话",
+        #expect(partial[1] == "第一句话 第二" && partial.last == "第一句话。第二句话",
                      "The untimed partial boundary keeps its space until the phrase finishes: \(partial)")
-        print("PASS: Apple phrase boundaries punctuate long pauses only, never duplicating or splitting words")
     }
 
-    @MainActor private static func backgroundAuthorizationTests() async throws {
+    @Test @MainActor static func backgroundAuthorizationTests() async throws {
         for status in [SFSpeechRecognizerAuthorizationStatus.authorized, .denied, .restricted] {
             let engine = TestAppleSpeechEngine()
             do {
                 _ = try await AppleSpeechRecognizer.prepare(engine: engine) {
                     await AppleSpeechRecognizer.requestSpeechAuthorization { completion in
                         DispatchQueue.global().async {
-                            precondition(!Thread.isMainThread)
+                            #expect(!Thread.isMainThread)
                             completion(status)
                         }
                     }
                 }
-                precondition(status == .authorized)
+                #expect(status == .authorized)
             } catch {
-                precondition(status != .authorized && error is SettingsError)
+                #expect(status != .authorized && error is SettingsError)
             }
             MainActor.assertIsolated()
-            precondition(engine.starts == 0, "Authorization alone must not start recording or recognition")
+            #expect(engine.starts == 0, "Authorization alone must not start recording or recognition")
         }
 
         // A delayed TCC response must remain harmless after cancelling dictation.
@@ -243,28 +238,27 @@ enum AppleSpeechTests {
         pending.cancel()
         let completion = reply!
         DispatchQueue.global().async { completion(.authorized) }
-        do { _ = try await pending.value; preconditionFailure("Cancelled background authorization must not prepare ASR") }
-        catch { precondition(error is CancellationError && engine.starts == 0) }
-        print("PASS: Speech authorization on background TCC queue, denial and late cancellation")
+        do { _ = try await pending.value; Issue.record("Cancelled background authorization must not prepare ASR") }
+        catch { #expect(error is CancellationError && engine.starts == 0) }
     }
 
-    @MainActor private static func localeTests() async throws {
+    @Test @MainActor static func localeTests() async throws {
         let supported: Set<Locale> = [Locale(identifier: "zh_CN"), Locale(identifier: "en_US"), Locale(identifier: "fr-FR")]
         for preference in ["zh", "zh-CN", "zh_CN", "zh-Hans", "zh-Hans-CN", "zh-Hans-US"] {
             let selected = try AppleSpeechRecognizer.speechLocale(preferredLanguages: [preference, "en-US"], supportedLocales: supported)
-            precondition(selected == Locale(identifier: "zh_CN"), "Chinese preferences must select supported Mandarin zh-CN")
+            #expect(selected == Locale(identifier: "zh_CN"), "Chinese preferences must select supported Mandarin zh-CN")
         }
         for preference in ["en", "en-US", "en_US", "en-CN", "en-GB"] {
             let selected = try AppleSpeechRecognizer.speechLocale(preferredLanguages: [preference, "zh-CN"], supportedLocales: supported)
-            precondition(selected == Locale(identifier: "en_US"), "English preferences must select supported en-US regardless of region")
+            #expect(selected == Locale(identifier: "en_US"), "English preferences must select supported en-US regardless of region")
         }
         let french = try AppleSpeechRecognizer.speechLocale(preferredLanguages: ["fr-FR"], supportedLocales: supported)
-        precondition(french == Locale(identifier: "fr-FR"), "An explicitly supported other language is preserved")
+        #expect(french == Locale(identifier: "fr-FR"), "An explicitly supported other language is preserved")
         for available: Set<Locale> in [[], [Locale(identifier: "en-US")]] {
             do {
                 _ = try AppleSpeechRecognizer.speechLocale(preferredLanguages: ["zh-Hans-CN", "en-US"], supportedLocales: available)
-                preconditionFailure("Missing Mandarin support must not silently select English")
-            } catch { precondition(error.localizedDescription.contains("zh-CN")) }
+                Issue.record("Missing Mandarin support must not silently select English")
+            } catch { #expect(error.localizedDescription.contains("zh-CN")) }
         }
         for language in ["zh-CN", "en-US"] {
             let engine = TestAppleSpeechEngine()
@@ -272,12 +266,14 @@ enum AppleSpeechTests {
             engine.supportsOnDeviceRecognition = false
             do {
                 _ = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
-                preconditionFailure("Being a supported speech locale does not guarantee on-device recognition")
+                Issue.record("Being a supported speech locale does not guarantee on-device recognition")
             } catch {
-                precondition(error.localizedDescription.contains("不支持 Apple 本地")
+                #expect(error.localizedDescription.contains("不支持 Apple 本地")
                              && error.localizedDescription.contains(engine.locale.identifier) && engine.starts == 0)
             }
         }
-        print("PASS: Chinese/English speech locale selection and per-language on-device capability")
     }
 }
+
+}
+typealias AppleSpeechTests = EchoVoiceScenarios.AppleSpeechTests

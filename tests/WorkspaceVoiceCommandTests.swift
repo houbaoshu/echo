@@ -1,3 +1,4 @@
+import Testing
 import Foundation
 
 @MainActor private final class CommandSource: TaskSource {
@@ -67,12 +68,11 @@ import Foundation
     func remove(_ account: String) throws { values[account] = nil }
 }
 
-@MainActor enum WorkspaceVoiceCommandTests {
+@MainActor @Suite(.serialized) enum WorkspaceVoiceCommandTests {
     static func tick() async { try? await Task.sleep(for: .milliseconds(25)) }
-    static func run() async {
-        var checks = 0
-        func check(_ condition: @autoclosure () -> Bool, _ message: String) {
-            precondition(condition(), message); checks += 1
+    @Test static func routesVoiceCommands() async {
+        func check(_ condition: @autoclosure () -> Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
+            #expect(condition(), "\(message)", sourceLocation: sourceLocation)
         }
         let audio = CommandAudio()
         var permission: CheckedContinuation<Bool, Never>?
@@ -134,7 +134,7 @@ import Foundation
         check(synths.count == 1 && voice.snapshot == aState, "B Retry and completion cannot enter A TTS or change A state")
         sa.onCancel = { oldModel(.completed("late completion from cancel")) }
         sa.onStart = {
-            precondition(oldSynth.cancelled && !a.store.messages.contains { $0.content == "late completion from cancel" },
+            #expect(oldSynth.cancelled && !a.store.messages.contains { $0.content == "late completion from cancel" },
                          "Old TTS and model callbacks are invalid before the new source starts")
         }
         a.store.followUpDraft = "A replacement"; a.store.toggleFollowUp()
@@ -227,17 +227,14 @@ import Foundation
         workspace.deleteConversation(b.id)
         check(voice.snapshot.error == nil, "deleting B clears its attributed error")
         check(!voice.isActive && !audio.capturing, "voice resources remain released after deleting B")
-        print("PASS: \(checks) Workspace Voice command checks (fake audio/ASR/TTS only)")
-        await runPetEntry()
     }
 
     /// The pet's own Live Voice entry. The main window's button binds the conversation being
     /// read; this one must never do that — it brings its own conversation and leaves the
     /// selection, the sidebar and the desktop activity exactly as they were.
-    static func runPetEntry() async {
-        var checks = 0
-        func check(_ condition: @autoclosure () -> Bool, _ message: String) {
-            precondition(condition(), message); checks += 1
+    @Test static func petStartsItsOwnConversation() async {
+        func check(_ condition: @autoclosure () -> Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
+            #expect(condition(), "\(message)", sourceLocation: sourceLocation)
         }
         let audio = CommandAudio()
         var permission: CheckedContinuation<Bool, Never>?
@@ -287,6 +284,5 @@ import Foundation
               "Speaking promotes the draft into the sidebar under its first line")
         check(workspace.selectedID == blank.id, "Promotion still leaves the viewed conversation selected")
         workspace.endVoice(owner: third)
-        print("PASS: \(checks) pet Live Voice entry checks (its own conversation, never the one being read)")
     }
 }

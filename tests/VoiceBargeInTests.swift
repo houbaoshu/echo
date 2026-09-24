@@ -1,3 +1,5 @@
+import AppKit
+import Testing
 import AVFoundation
 import Combine
 import Foundation
@@ -48,16 +50,8 @@ extension VoiceTests {
         return data
     }
 
-    @MainActor static func bargeInTests() async throws {
-        bargeInGateTests()
-        try await bargeInConverterTests()
-        try await bargeInSuccessTests()
-        try await bargeInRejectionTests()
-        try await bargeInCancellationTests()
-        try await bargeInCompletionAndWatchdogTests()
-    }
-
-    @MainActor private static func bargeInGateTests() {
+    @Test @MainActor static func bargeInGateTests() {
+        _ = NSApplication.shared
         let voice = activityPCM(), silence = Data(repeating: 0, count: 640)
         var gate = VoiceBargeInGate()
         for frame in [silence, activityPCM(amplitude: 0.002), Data([1]), activityPCM(amplitude: 0)] {
@@ -108,7 +102,8 @@ extension VoiceTests {
         check(!oversized.permits("任何候选"), "an incomplete echo reference fails closed")
     }
 
-    @MainActor private static func bargeInConverterTests() async throws {
+    @Test @MainActor static func bargeInConverterTests() async throws {
+        _ = NSApplication.shared
         let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800)!
         buffer.frameLength = 4800
@@ -128,7 +123,8 @@ extension VoiceTests {
               "reset clears resampler history as well as pending bytes at the acoustic boundary")
     }
 
-    @MainActor private static func bargeInSuccessTests() async throws {
+    @Test @MainActor static func bargeInSuccessTests() async throws {
+        _ = NSApplication.shared
         for finalFirst in [false, true] {
             let f = BargeInFixture()
             defer { f.shutdown() }
@@ -169,7 +165,7 @@ extension VoiceTests {
             f.recognizers[1].emit("我想换一个问题", start: 0, end: 500, final: true)
             oldModel(.completed("旧回复迟到"))
             do { try await oldTTS(Data([3, 4])); check(false, "old TTS must reject") }
-            catch is CancellationError { checks += 1 }
+            catch is CancellationError {  }
             check(f.source.histories.count == 2 && f.store.messages[1].status == .stopped
                   && f.voice.snapshot.bargeIn == .off, "duplicates and old model/TTS cannot affect the new run")
         }
@@ -194,7 +190,8 @@ extension VoiceTests {
               "old drain completion cannot resume listening or alter a new run")
     }
 
-    @MainActor private static func bargeInRejectionTests() async throws {
+    @Test @MainActor static func bargeInRejectionTests() async throws {
+        _ = NSApplication.shared
         do {
             let f = BargeInFixture() // real 800 ms activity deadline, not the 3 s ASR deadline
             defer { f.shutdown() }
@@ -240,7 +237,8 @@ extension VoiceTests {
         }
     }
 
-    @MainActor private static func bargeInCancellationTests() async throws {
+    @Test @MainActor static func bargeInCancellationTests() async throws {
+        _ = NSApplication.shared
         for action in ["mute", "stop", "send", "end", "failure", "restart"] {
             let f = BargeInFixture(timeout: .milliseconds(240))
             defer { f.shutdown() }
@@ -287,7 +285,8 @@ extension VoiceTests {
         }
     }
 
-    @MainActor private static func bargeInCompletionAndWatchdogTests() async throws {
+    @Test @MainActor static func bargeInCompletionAndWatchdogTests() async throws {
+        _ = NSApplication.shared
         do {
             let f = BargeInFixture(timeout: .milliseconds(220))
             var finishDrain: CheckedContinuation<Void, Never>?

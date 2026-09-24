@@ -1,3 +1,5 @@
+import AppKit
+import Testing
 import Foundation
 
 @MainActor final class ScriptedVoiceAgent: AgentSessionSource {
@@ -29,7 +31,7 @@ import Foundation
             events: [AgentEvent(version: 1, session_id: sessionID, turn_id: turnID, operation_id: operation, kind: kind)]))
     }
     func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
-        preconditionFailure("Voice must use the unified Agent session")
+        Issue.record("Voice must use the unified Agent session")
     }
     func open(sessionID: String, generation: String, restore: AgentRestore,
               receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws {
@@ -233,7 +235,6 @@ extension VoiceTests {
             f.shutdown()
             await AgentBridge.waitForShutdown()
         }
-        print("Passed \(checks) Agent voice integration checks (local model fixture, real Rust/bash, simulated ASR/TTS).")
     }
 
     @MainActor private static func waitForAgentVoice(_ label: String, _ condition: () -> Bool) async throws {
@@ -244,7 +245,8 @@ extension VoiceTests {
         }
     }
 
-    @MainActor static func agentVoiceTests() async throws {
+    @Test @MainActor static func agentVoiceTests() async throws {
+        _ = NSApplication.shared
         do {
             let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
             defer { f.shutdown() }
@@ -310,20 +312,14 @@ extension VoiceTests {
             check(source.cancels == 1 && f.store.isGenerating && !f.audio.capturing,
                   "ending Live Voice releases audio without cancelling the Agent")
         }
-        try await agentFinalAudioTests()
-        try await agentReplyStreamTests()
-        try await agentSpokenReplyTests()
-        try await agentVoiceUnseenTests()
-        try await agentVoiceStartupAndFailureTests()
-        try await agentVoiceRecoveryTests()
-        try await agentRefusedFinalTests()
     }
 
     /// A finished utterance stops being a pending partial whatever becomes of it. `sendAgent`
     /// appends the user message before it can fail, so a refused admission that kept the
     /// partial would show the same sentence twice — once as the message, once as speech still
     /// being recognised — and a refusal before any message would show one that was never sent.
-    @MainActor private static func agentRefusedFinalTests() async throws {
+    @Test @MainActor static func agentRefusedFinalTests() async throws {
+        _ = NSApplication.shared
         let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
         defer { f.shutdown() }
         await f.start(); f.holdPlayback(); f.speak("第一个问题")
@@ -352,7 +348,8 @@ extension VoiceTests {
               "an unsubmittable final becomes neither a message nor a leftover partial: \(f.voice.subtitle)")
     }
 
-    @MainActor private static func agentVoiceRecoveryTests() async throws {
+    @Test @MainActor static func agentVoiceRecoveryTests() async throws {
+        _ = NSApplication.shared
         let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
         defer { f.shutdown() }
         await f.start(); f.holdPlayback(); f.speak("第一次问题")
@@ -385,7 +382,8 @@ extension VoiceTests {
 
     /// The streamed reply follows real deltas per model step, keeps the last reply between
     /// turns and never reaches speech before the final reply.
-    @MainActor private static func agentReplyStreamTests() async throws {
+    @Test @MainActor static func agentReplyStreamTests() async throws {
+        _ = NSApplication.shared
         let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
         defer { f.shutdown() }
         await f.start(); f.holdPlayback()
@@ -441,7 +439,8 @@ extension VoiceTests {
 
     /// The muted bubble follows what speech has actually played: subtitles time each character,
     /// playback frames say how far the audio got, and the text is shown on that same timeline.
-    @MainActor private static func agentSpokenReplyTests() async throws {
+    @Test @MainActor static func agentSpokenReplyTests() async throws {
+        _ = NSApplication.shared
         let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
         defer { f.shutdown() }
         await f.start(); f.holdPlayback()
@@ -519,7 +518,8 @@ extension VoiceTests {
     }
 
     /// While Live Voice runs its conversation is in progress; ending the session makes it unseen.
-    @MainActor private static func agentVoiceUnseenTests() async throws {
+    @Test @MainActor static func agentVoiceUnseenTests() async throws {
+        _ = NSApplication.shared
         for viewed in [false, true] {
             let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
             defer { f.shutdown() }
@@ -565,7 +565,8 @@ extension VoiceTests {
         check(f.workspace.unseenCompletedCount == 0, "an empty Live Voice session creates no unseen item")
     }
 
-    @MainActor private static func agentFinalAudioTests() async throws {
+    @Test @MainActor static func agentFinalAudioTests() async throws {
+        _ = NSApplication.shared
         for finalFirst in [false, true] {
             let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
             defer { f.shutdown() }
@@ -611,7 +612,7 @@ extension VoiceTests {
             check(source.commands.map(\.0) == ["send_message", "send_message"] && f.store.task?.runID != run
                   && f.voice.snapshot.recognition == .listening, "one final starts the next round after completed playback")
             do { try await oldAudio(Data([1, 2])); check(false, "old audio must be rejected") }
-            catch is CancellationError { checks += 1 }
+            catch is CancellationError {  }
             f.releasePlayback(); await tick()
             check(f.voice.snapshot.recognition == .listening && f.synths.count == 1,
                   "old playback drain cannot change the new round or replay its predecessor")
@@ -626,7 +627,8 @@ extension VoiceTests {
         check(source.commands.count == 2 && source.cancels == 0, "the preserved utterance can start the next round")
     }
 
-    @MainActor private static func agentVoiceStartupAndFailureTests() async throws {
+    @Test @MainActor static func agentVoiceStartupAndFailureTests() async throws {
+        _ = NSApplication.shared
         do {
             let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
             var allowed: CheckedContinuation<Bool, Never>?
