@@ -547,9 +547,9 @@ private struct ComposerHeightHost: View {
         // is an LSUIElement app with no Dock tile to fall back on.
         guard let toolbar = window.toolbar else { preconditionFailure("No toolbar") }
         let identifiers = toolbar.items.map(\.itemIdentifier)
-        precondition(identifiers == [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace,
-                                     .inspectorTrackingSeparator, .toggleInspector],
-                     "The toolbar is AppKit's two toggles around the tracking separators, got \(identifiers.map(\.rawValue))")
+        precondition(identifiers == [.toggleSidebar, .sidebarTrackingSeparator,
+                                     .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector],
+                     "The Inspector toggle follows a flexible space after its tracking separator, got \(identifiers.map(\.rawValue))")
         precondition(!identifiers.contains { $0.rawValue == "chiyan.title" }, "No hand-drawn title item")
 
         // Both items carry a nil target, so AppKit sends their selector up the responder

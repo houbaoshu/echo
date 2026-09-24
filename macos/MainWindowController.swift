@@ -441,8 +441,8 @@ struct MainWindowLayout {
 
     /// AppKit's own column toggles, in the places it puts them: the sidebar's at the
     /// leading edge before its tracking separator, the inspector's at the trailing edge
-    /// after its own. They carry the system icon, the stateful tooltip and the validation,
-    /// and the title is drawn by the window between the two separators.
+    /// after a flexible space following its tracking separator. They carry the system icon,
+    /// the stateful tooltip and the validation, and the title is drawn by the window.
     ///
     /// They are here because without them a collapsed sidebar is a dead end: the settings
     /// gear rides in that column's footer accessory and disappears with it, Echo is an
@@ -454,7 +454,7 @@ struct MainWindowLayout {
     /// overwrites on the next collapse anyway (measured, [D-tooltips]).
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, .inspectorTrackingSeparator, .toggleInspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector]
     }
     /// Required even with nothing to build: NSToolbar creates no items at all — standard
     /// identifiers included — unless the delegate answers this selector. Measured in
