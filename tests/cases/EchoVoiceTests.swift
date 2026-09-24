@@ -9,7 +9,6 @@ import XCTest
 /// the script selected them with --agent-integration — so they stay a separate
 /// entry point, selectable with -only-testing.
 final class VoiceSuite: XCTestCase {
-    override class func setUp() { EchoTestEnvironment.useProjectRootAsWorkingDirectory() }
 
     func testVoice() async throws {
         // VoiceTests.checks is a shared counter and both entry points now run in
@@ -20,7 +19,6 @@ final class VoiceSuite: XCTestCase {
 }
 
 final class AgentVoiceIntegrationSuite: XCTestCase {
-    override class func setUp() { EchoTestEnvironment.useProjectRootAsWorkingDirectory() }
 
     func testAgentVoiceIntegration() async throws {
         await MainActor.run { VoiceTests.checks = 0 }

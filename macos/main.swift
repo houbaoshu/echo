@@ -8,6 +8,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var workspaceCommands: WorkspaceCommands?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        do {
+            if let mode = try TestBootstrap.mode() {
+                switch mode {
+                case .hosted: return
+                case .ui(let root, let defaults):
+                    installMenus()
+                    let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: TestBootstrap.Secrets())
+                    settings.setQuickComposerHotKey(false)
+                    let pets = PetCatalog(settings: settings,
+                        builtinRoot: Bundle.main.resourceURL?.appendingPathComponent("pets"),
+                        importedRoot: root.appendingPathComponent("pets"))
+                    self.pets = pets
+                    let store = try pets.loadInitial()
+                    let voice = VoiceSessionController(audio: TestBootstrap.Audio(),
+                        recognizer: { TestBootstrap.Recognizer() }, synthesizer: { TestBootstrap.Synthesizer() }, permission: { true })
+                    let dictation = DictationController(audio: TestBootstrap.Audio(),
+                        recognizer: { TestBootstrap.Recognizer() }, permission: { true })
+                    let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("workspace.json")),
+                        dictation: dictation, voice: voice, sourceFactory: { TestBootstrap.Source() })
+                    let planets = PlanetStore(settings: settings, root: Bundle.main.resourceURL?.appendingPathComponent("planets"), voice: voice)
+                    companion = CompanionController(petStore: store, workspace: workspace, settings: settings,
+                        pets: pets, planets: planets, defaults: defaults)
+                    store.start()
+                    companion?.showMainWindow()
+                    return
+                }
+            }
+        } catch {
+            FileHandle.standardError.write(Data("Echo test launch failed: \(error)\n".utf8))
+            exit(2)
+        }
+        #endif
         if let index = CommandLine.arguments.firstIndex(of: "--acceptance-test") {
             guard CommandLine.arguments.count == index + 3 else { exit(2) }
             Task { @MainActor in

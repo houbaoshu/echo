@@ -5,7 +5,6 @@ import XCTest
 /// keeps running through it. These tests build real windows and need a desktop
 /// session.
 final class WorkspaceSuite: XCTestCase {
-    override class func setUp() { EchoTestEnvironment.useProjectRootAsWorkingDirectory() }
 
     func testWorkspace() async throws {
         try await WorkspaceTests.main()

@@ -224,7 +224,7 @@ enum DictationTests {
             let callbacks: [Callback]
             let phraseEnds: [Int]
         }
-        let url = URL(fileURLWithPath: "tests/fixtures/apple-dictation-pause-20260914.json")
+        let url = EchoTestResources.resource("fixtures/apple-dictation-pause-20260914.json")
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
         let engine = TestAppleSpeechEngine(), store = TaskStore(source: FakeSource())
         let dictation = DictationController(audio: FakeAudio(), recognizer: {

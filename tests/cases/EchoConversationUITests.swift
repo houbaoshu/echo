@@ -5,7 +5,6 @@ import XCTest
 /// absent here, so it takes the default path. Preview screenshots are written
 /// under build/, relative to the working directory.
 final class ConversationUISuite: XCTestCase {
-    override class func setUp() { EchoTestEnvironment.useProjectRootAsWorkingDirectory() }
 
     func testConversationUI() async throws {
         try await ConversationUITests.main()

@@ -121,7 +121,7 @@ enum AppleSpeechTests {
             let speechStart: Double?
             let speechDuration: Double?
         }
-        let fixture = try String(contentsOfFile: "tests/fixtures/apple-speech-device-pauses-20260914.jsonl", encoding: .utf8)
+        let fixture = try String(contentsOf: EchoTestResources.resource("fixtures/apple-speech-device-pauses-20260914.jsonl"), encoding: .utf8)
         let callbacks = try fixture.split(separator: "\n").map {
             try JSONDecoder().decode(Callback.self, from: Data($0.utf8))
         }

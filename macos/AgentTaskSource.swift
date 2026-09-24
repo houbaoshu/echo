@@ -14,8 +14,8 @@ import Foundation
     private var closingBridges: [UUID: AgentBridge] = [:]
     private var cleanupWaiters: [() -> Void] = []
     private var streamReceiver: ((AgentStream) -> Void)?
-    init(settings: SettingsStore) {
-        resources = Bundle.main.resourceURL
+    init(settings: SettingsStore, resources: URL? = Bundle.main.resourceURL) {
+        self.resources = resources
         credentials = {
             let (config, key) = try settings.savedModelCredentials()
             return AgentModel(base_url: config.baseURL, model: config.model, api_key: key,

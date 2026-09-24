@@ -329,7 +329,7 @@ private struct ComposerHeightHost: View {
         view.layoutSubtreeIfNeeded()
         if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/chat-v1-preview.png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("chat-v1-preview.png"))
         } else { preconditionFailure("Could not render chat preview") }
         window.orderOut(nil)
         print("PASS: Enter, Shift+Enter, IME, Markdown blocks; preview: build/chat-v1-preview.png")
@@ -952,7 +952,7 @@ private struct ComposerHeightHost: View {
                 try await refresh()
                 guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { preconditionFailure("Screenshot unavailable") }
                 host.cacheDisplay(in: host.bounds, to: bitmap)
-                try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/composer-\(name)-\(suffix).png"))
+                try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("composer-\(name)-\(suffix).png"))
             }
             if narrow { window.setContentSize(NSSize(width: 720, height: 600)) }
             try await refresh()
@@ -1307,7 +1307,7 @@ private struct ComposerHeightHost: View {
     }
 
     @MainActor private static func testPointerMonitorLifecycle() async throws {
-        let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let point = NSPoint(x: 10, y: 10)
         let panel = PetPanel(store: pet, pointerLocation: { point })
         var samples = 0
@@ -1373,7 +1373,7 @@ private struct ComposerHeightHost: View {
         }
         if let bitmap = root.bitmapImageRepForCachingDisplay(in: root.bounds) {
             root.cacheDisplay(in: root.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/stage4-short-transcript.png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("stage4-short-transcript.png"))
         }
         precondition(abs(scroll.contentView.bounds.minY + scroll.contentInsets.top) < 1, "Short conversations remain top aligned")
         var reply = (1...70).map { "回复第 \($0) 行" }.joined(separator: "\n\n")
@@ -1593,7 +1593,7 @@ private struct ComposerHeightHost: View {
     @MainActor private static func testPetComposerPointerFocus() async throws {
         precondition(CGPreflightPostEventAccess(), "Pet composer test needs Accessibility permission to post events")
         NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
-        let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let source = PreviewSource()
         let workspace = WorkspaceStore(sourceFactory: { source })
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: SettingsStore(secrets: ComposerSecrets()))
@@ -2541,7 +2541,7 @@ private struct ComposerHeightHost: View {
         precondition(findAccessibility("voice.speaker", in: petHost)?.accessibilityLabel?() == "开启扬声器")
         if let bitmap = petHost.bitmapImageRepForCachingDisplay(in: petHost.bounds) {
             petHost.cacheDisplay(in: petHost.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/pet-voice-end.png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("pet-voice-end.png"))
         }
         precondition(findAccessibility("voice.end", in: petHost)?.accessibilityPerformPress?() == true)
         precondition(!voice.isActive && endVoiceCalled && !startVoiceCalled, "Pet orb ends its owned Voice session")
@@ -2681,7 +2681,7 @@ private struct ComposerHeightHost: View {
         func snapshot(_ name: String) throws {
             guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
             host.cacheDisplay(in: host.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/\(name).png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("\(name).png"))
         }
         func key(_ code: UInt16, _ characters: String) -> NSEvent {
             NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
@@ -2765,7 +2765,7 @@ private struct ComposerHeightHost: View {
     }
 
     @MainActor private static func testCompanionQuickComposerLifecycle() async throws {
-        let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let source = PreviewSource()
         let workspace = WorkspaceStore(sourceFactory: { source })
         let settings = SettingsStore(secrets: ComposerSecrets())
@@ -3398,7 +3398,7 @@ private struct ComposerHeightHost: View {
 
     @MainActor private static func testLiveVoiceTurnKeepsTaskCardHidden() async throws {
         for scenario in ["fresh conversation", "card closed with ×"] {
-            let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+            let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
             let source = PreviewSource()
             var recognizers: [ComposerRecognizer] = []
             let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
@@ -3458,7 +3458,7 @@ private struct ComposerHeightHost: View {
         func snapshot(_ name: String) throws {
             guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
             host.cacheDisplay(in: host.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/\(name).png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("\(name).png"))
         }
 
         // Live Voice connecting, listening and waiting show no bubble.
@@ -3569,7 +3569,7 @@ private struct ComposerHeightHost: View {
             return bitmap.representation(using: .png, properties: [:])
         }
         let connecting = render()
-        try connecting?.write(to: URL(fileURLWithPath: "build/pet-voice-connecting.png"))
+        try connecting?.write(to: EchoTestResources.output("pet-voice-connecting.png"))
         try await Task.sleep(for: .milliseconds(300)); host.layoutSubtreeIfNeeded()
         precondition(connecting != nil && render() == connecting, "The connecting dot is still, without animation")
         precondition(node("voice.connecting") != nil && node("voice.end") == nil && node("voice.mute") == nil
@@ -3635,7 +3635,7 @@ private struct ComposerHeightHost: View {
         try await refresh()
         if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
             host.cacheDisplay(in: host.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/pet-composer-project.png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("pet-composer-project.png"))
         }
         precondition(axValue(node("pet.project.name")) == folder.lastPathComponent, "The chosen project shows as a chip")
         precondition(node("pet.send")?.accessibilityPerformPress?() == true && sent.last?.1 == projectID
@@ -3686,7 +3686,7 @@ private struct ComposerHeightHost: View {
         }
         first.invalidate(); second.invalidate()
 
-        let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
         let settings = SettingsStore(secrets: ComposerSecrets())
@@ -3728,7 +3728,7 @@ private struct ComposerHeightHost: View {
     /// The pet steps aside for the main window's Live Voice planet, and for nothing else: the
     /// rule is about what is on screen, not about whether a session is running somewhere.
     @MainActor private static func testPetHidesOnlyForTheVoiceConversationOnScreen() async throws {
-        let pet = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
         let settings = SettingsStore(secrets: ComposerSecrets())
@@ -4019,7 +4019,7 @@ private struct ComposerHeightHost: View {
         main.inspectorItem.viewController.view.layoutSubtreeIfNeeded()
         if let view = main.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/project-files-empty.png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("project-files-empty.png"))
         }
         precondition(findAccessibility("projectFiles.unassociated", in: main.inspectorItem.viewController.view) == nil,
                      "Unassociated inspector stays blank")
@@ -4382,12 +4382,12 @@ private struct ComposerHeightHost: View {
         try await Task.sleep(for: .milliseconds(100)); previewHost.layoutSubtreeIfNeeded()
         if let bitmap = previewHost.bitmapImageRepForCachingDisplay(in: previewHost.bounds) {
             previewHost.cacheDisplay(in: previewHost.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/project-file-preview.png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("project-file-preview.png"))
         }
         previewWindow.orderOut(nil)
         if let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
             content.cacheDisplay(in: content.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: "build/project-chat-preview.png"))
+            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("project-chat-preview.png"))
         }
         workspace.fileBrowser.returnToDirectory()
 
@@ -4491,7 +4491,7 @@ private struct ComposerHeightHost: View {
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
         voice.attach(workspace: workspace, settings: settings)
-        let pets = PetCatalog(settings: settings, builtinRoot: URL(fileURLWithPath: "assets/pets"))
+        let pets = PetCatalog(settings: settings, builtinRoot: EchoTestResources.resource("pets"))
         let main = MainWindowController(workspace: workspace, defaults: UserDefaults(suiteName: "settings-keys-\(UUID())")!,
                                         settings: settings, pets: pets)
         var window = main.window!
@@ -4811,7 +4811,7 @@ private struct ComposerHeightHost: View {
     @MainActor private static func snapshot(_ window: NSWindow, _ name: String) throws {
         let capture = Process()
         capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", "build/\(name).png"]
+        capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", EchoTestResources.output("\(name).png").path]
         try capture.run(); capture.waitUntilExit()
     }
     /// Where an element is drawn, in screen coordinates, so a test can assert what sits above

@@ -353,7 +353,7 @@ import AppKit
             }
             precondition(image.width == 768 && image.height == 512)
         }
-        let webp = try Data(contentsOf: URL(fileURLWithPath: "assets/pets/chiyan/spritesheet.webp"))
+        let webp = try Data(contentsOf: EchoTestResources.resource("pets/chiyan/spritesheet.webp"))
         guard case .image = try preview("sample.webp", webp) else { preconditionFailure("System supports WebP") }
         let wide = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8192, pixelsHigh: 16,
             bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false, isPlanar: false,

@@ -24,6 +24,7 @@ import Combine
 }
 
 @MainActor final class CompanionController: NSObject, NSWindowDelegate {
+    private let defaults: UserDefaults
     let workspace: WorkspaceStore
     let settings: SettingsStore
     let pets: PetCatalog
@@ -58,7 +59,8 @@ import Combine
     var isHotKeyRegistered: Bool { hotKey?.isRegistered == true }
 
     init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore? = nil, pets: PetCatalog? = nil,
-         planets: PlanetStore? = nil) {
+         planets: PlanetStore? = nil, defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         self.workspace = workspace
         let settings = settings ?? SettingsStore()
         self.settings = settings; self.pets = pets ?? PetCatalog(settings: settings)
@@ -330,7 +332,7 @@ import Combine
     }
     private func ensureMainController() {
         if mainController == nil {
-            mainController = MainWindowController(workspace: workspace, settings: settings, pets: pets, planets: planets)
+            mainController = MainWindowController(workspace: workspace, defaults: defaults, settings: settings, pets: pets, planets: planets)
         }
     }
     private func presentMainWindow() {

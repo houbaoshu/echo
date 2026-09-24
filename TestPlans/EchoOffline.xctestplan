@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "configurations": [
+    {
+      "id": "67aedf9d-ae48-4afb-a6e5-810e6bc2543a",
+      "name": "Offline",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "environmentVariableEntries": [
+      {
+        "key": "ECHO_TEST_MODE",
+        "value": "hosted"
+      }
+    ],
+    "testTimeoutsEnabled": true,
+    "defaultTestExecutionTimeAllowance": 180,
+    "maximumTestExecutionTimeAllowance": 240
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E110000000000000000000AA",
+        "name": "EchoChatTests"
+      },
+      "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E111000000000000000000AA",
+        "name": "EchoAgentTaskSourceTests"
+      },
+      "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E113000000000000000000AA",
+        "name": "EchoVoiceTests"
+      },
+      "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E114000000000000000000AA",
+        "name": "EchoWorkspaceTests"
+      },
+      "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E115000000000000000000AA",
+        "name": "EchoConversationUITests"
+      },
+      "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "622BCBC3AA8DF672AAC38174",
+        "name": "EchoAppIntegrationTests"
+      },
+      "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "03A21A103EBCD69617CCBCC0",
+        "name": "EchoUITests"
+      },
+      "parallelizable": false
+    }
+  ]
+}

@@ -122,15 +122,15 @@ import Foundation
 
 extension VoiceTests {
     @MainActor static func agentVoiceIntegrationTests() async throws {
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let root = EchoTestResources.root
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-voice-\(UUID())")
         let resources = temp.appendingPathComponent("resources")
         try FileManager.default.createDirectory(at: resources.appendingPathComponent("agent"), withIntermediateDirectories: true)
-        try FileManager.default.copyItem(at: root.appendingPathComponent("build/agent/conversation.md"),
+        try FileManager.default.copyItem(at: root.appendingPathComponent("agent/conversation.md"),
             to: resources.appendingPathComponent("agent/conversation.md"))
         defer { try? FileManager.default.removeItem(at: temp) }
         let server = Process(); server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        server.arguments = [root.appendingPathComponent("tests/agent-session-server.py").path]
+        server.arguments = [root.appendingPathComponent("agent-session-server.py").path]
         let pipe = Pipe(); server.standardOutput = pipe
         try server.run(); defer { server.terminate(); server.waitUntilExit() }
         let port = String(decoding: pipe.fileHandleForReading.availableData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)

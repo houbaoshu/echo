@@ -70,6 +70,90 @@
 		E12400000000000000000B00 /* VoiceLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12400000000000000000F00 /* VoiceLiveTests.swift */; };
 		E12500000000000000000B00 /* VoiceSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12500000000000000000F00 /* VoiceSoakTests.swift */; };
 		E12600000000000000000B00 /* AppleSpeechDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12600000000000000000F00 /* AppleSpeechDeviceTests.swift */; };
+		830373170115C92C8D7D60E3 = {
+			isa = PBXBuildFile;
+			fileRef = 2D11BE1C34798D95A2C2829F;
+		};
+		BC0769A420E4834B8D65FD1E = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001D;
+		};
+		2D34581B87695B5017C83A31 = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001E;
+		};
+		B704670FAF0415C2098489CE = {
+			isa = PBXBuildFile;
+			fileRef = 4FAB991673380E8FF8B32862;
+		};
+		310594A3D21751F9BCAF03A9 = {
+			isa = PBXBuildFile;
+			fileRef = 6C29F44D5F2B66D9352D4833;
+		};
+		99C4C78ABC6C2DE4D996106D = {
+			isa = PBXBuildFile;
+			fileRef = 2D11BE1C34798D95A2C2829F;
+		};
+		51DC2E4A0F04C3BD9B586531 = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001D;
+		};
+		D4D51A52463450D85F5130CA = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001E;
+		};
+		15784511C1E7338371B29560 = {
+			isa = PBXBuildFile;
+			fileRef = 4FAB991673380E8FF8B32862;
+		};
+		1541E4EF44E8EF009D756EEA = {
+			isa = PBXBuildFile;
+			fileRef = 6C29F44D5F2B66D9352D4833;
+		};
+		EE2B5A483F67D04C0F2A9F6A = {
+			isa = PBXBuildFile;
+			fileRef = 2D11BE1C34798D95A2C2829F;
+		};
+		13097CB5A528800655A06D1D = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001D;
+		};
+		2BA7D416B8B284177C6B0063 = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001E;
+		};
+		0FA787DDAEEE6CA7A1CB6062 = {
+			isa = PBXBuildFile;
+			fileRef = 4FAB991673380E8FF8B32862;
+		};
+		3AF8D4AD502931A821406912 = {
+			isa = PBXBuildFile;
+			fileRef = 6C29F44D5F2B66D9352D4833;
+		};
+		E8EDE3C7E84B8F4E694DC62E = {
+			isa = PBXBuildFile;
+			fileRef = 7F5AC5D3C6E9200922133731;
+		};
+		F7EF4AB9C967C47A9F18B500 = {
+			isa = PBXBuildFile;
+			fileRef = A3FF57E62DA09C501023D462;
+		};
+		56D2BD3B47652805232C88CB = {
+			isa = PBXBuildFile;
+			fileRef = 2D11BE1C34798D95A2C2829F;
+		};
+		87F70ACE1CF52F8B6D4370FE = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001D;
+		};
+		6771922A9E34FF614BC65987 = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001E;
+		};
+		BA58539A1084FC7D31A34408 = {
+			isa = PBXBuildFile;
+			fileRef = 4FAB991673380E8FF8B32862;
+		};
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -164,6 +248,20 @@
 			remoteGlobalIDString = E000000000000000000000A0;
 			remoteInfo = RustCore;
 		};
+		507230118C775255B830D7CC = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F;
+			proxyType = 1;
+			remoteGlobalIDString = E0000000000000000000002F;
+			remoteInfo = Echo;
+		};
+		A306D7140E1A148E6CDC32FA = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F;
+			proxyType = 1;
+			remoteGlobalIDString = E0000000000000000000002F;
+			remoteInfo = Echo;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -222,6 +320,48 @@
 		E12500000000000000000F00 /* VoiceSoakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceSoakTests.swift; path = tests/VoiceSoakTests.swift; sourceTree = "<group>"; };
 		E126000000000000000000FF /* AppleSpeechCheck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AppleSpeechCheck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E12600000000000000000F00 /* AppleSpeechDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppleSpeechDeviceTests.swift; path = tests/AppleSpeechDeviceTests.swift; sourceTree = "<group>"; };
+		2D11BE1C34798D95A2C2829F = {
+			isa = PBXFileReference;
+			path = tests/support/EchoTestResources.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		4FAB991673380E8FF8B32862 = {
+			isa = PBXFileReference;
+			path = tests/fixtures;
+			sourceTree = "<group>";
+			lastKnownFileType = folder;
+		};
+		6C29F44D5F2B66D9352D4833 = {
+			isa = PBXFileReference;
+			path = "tests/agent-session-server.py";
+			sourceTree = "<group>";
+			lastKnownFileType = text.script.python;
+		};
+		E2DD4E7379914193D6F68337 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			path = EchoAppIntegrationTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7F5AC5D3C6E9200922133731 = {
+			isa = PBXFileReference;
+			path = tests/native/AppIntegrationTests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		E2D88B0EC8C4D64A02775E4A = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			path = EchoUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		A3FF57E62DA09C501023D462 = {
+			isa = PBXFileReference;
+			path = tests/native/EchoUITests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -440,38 +580,45 @@
 		};
 		E00000000000000000000010 = {
 			isa = PBXGroup;
-			children = (
-				E0000000000000000000001B /* Echo.xcconfig */,
-				A2D38BBF3062D573000AB0C0 /* Assets.xcassets */,
-				E0000000000000000000001C /* Echo-Development.xcconfig */,
-				E0000000000000000000001D /* pets */,
-				E0000000000000000000001E /* planets */,
-				E0000000000000000000002A /* macos */,
-				E00000000000000000000011 /* Products */,
-				A2D389D83062804A000AB0C0 /* Recovered References */,
-			);
 			sourceTree = "<group>";
-		};
-		E00000000000000000000011 /* Products */ = {
-			isa = PBXGroup;
 			children = (
-				E0000000000000000000001A /* Echo.app */,
-				E126000000000000000000FF /* AppleSpeechCheck.app */,
-				E125000000000000000000FF /* Echo.app */,
-				E124000000000000000000FF /* Echo.app */,
-				E123000000000000000000FF /* Echo.app */,
-				E122000000000000000000FF /* Echo.app */,
-				E121000000000000000000FF /* Echo.app */,
-				E120000000000000000000FF /* Echo.app */,
-				E116000000000000000000FF /* EchoShortcutUITests */,
-				E115000000000000000000FF /* EchoConversationUITests.xctest */,
-				E114000000000000000000FF /* EchoWorkspaceTests.xctest */,
-				E113000000000000000000FF /* EchoVoiceTests.xctest */,
-				E112000000000000000000FF /* EchoAgentSessionTests */,
-				E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */,
-				E110000000000000000000FF /* EchoChatTests.xctest */,
+				E0000000000000000000001B,
+				A2D38BBF3062D573000AB0C0,
+				E0000000000000000000001C,
+				E0000000000000000000001D,
+				E0000000000000000000001E,
+				E0000000000000000000002A,
+				E00000000000000000000011,
+				A2D389D83062804A000AB0C0,
+				2D11BE1C34798D95A2C2829F,
+				4FAB991673380E8FF8B32862,
+				6C29F44D5F2B66D9352D4833,
+				7F5AC5D3C6E9200922133731,
+				A3FF57E62DA09C501023D462,
 			);
+		};
+		E00000000000000000000011 = {
+			isa = PBXGroup;
 			name = Products;
+			children = (
+				E0000000000000000000001A,
+				E126000000000000000000FF,
+				E125000000000000000000FF,
+				E124000000000000000000FF,
+				E123000000000000000000FF,
+				E122000000000000000000FF,
+				E121000000000000000000FF,
+				E120000000000000000000FF,
+				E116000000000000000000FF,
+				E115000000000000000000FF,
+				E114000000000000000000FF,
+				E113000000000000000000FF,
+				E112000000000000000000FF,
+				E111000000000000000000FF,
+				E110000000000000000000FF,
+				E2DD4E7379914193D6F68337,
+				E2D88B0EC8C4D64A02775E4A,
+			);
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -553,86 +700,90 @@
 			productReference = E112000000000000000000FF /* EchoAgentSessionTests */;
 			productType = "com.apple.product-type.tool";
 		};
-		E113000000000000000000AA /* EchoVoiceTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E113000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoVoiceTests" */;
-			buildPhases = (
-				E113000000000000000000A3 /* Stage Agent conversation prompt */,
-				E113000000000000000000A1 /* Sources */,
-				E113000000000000000000A2 /* Frameworks */,
-			);
-			buildRules = (
-			);
+		E113000000000000000000AA = {
 			dependencies = (
-				E113000000000000000000C2 /* PBXTargetDependency */,
+				E113000000000000000000C2,
 			);
+			buildConfigurationList = E113000000000000000000EE;
+			productReference = E113000000000000000000FF;
+			productType = "com.apple.product-type.bundle.unit-test";
+			productName = EchoVoiceTests;
+			isa = PBXNativeTarget;
 			fileSystemSynchronizedGroups = (
-				E0000000000000000000002A /* macos */,
+				E0000000000000000000002A,
+			);
+			buildPhases = (
+				E113000000000000000000A3,
+				E113000000000000000000A1,
+				E113000000000000000000A2,
+				72A06BFDE903275E43C80EAA,
 			);
 			name = EchoVoiceTests;
-			productName = EchoVoiceTests;
-			productReference = E113000000000000000000FF /* EchoVoiceTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
-		E114000000000000000000AA /* EchoWorkspaceTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E114000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoWorkspaceTests" */;
-			buildPhases = (
-				E114000000000000000000A1 /* Sources */,
-				E114000000000000000000A2 /* Frameworks */,
-			);
 			buildRules = (
 			);
+		};
+		E114000000000000000000AA = {
 			dependencies = (
-				E114000000000000000000C2 /* PBXTargetDependency */,
+				E114000000000000000000C2,
 			);
+			buildConfigurationList = E114000000000000000000EE;
+			productReference = E114000000000000000000FF;
+			productType = "com.apple.product-type.bundle.unit-test";
+			productName = EchoWorkspaceTests;
+			isa = PBXNativeTarget;
 			fileSystemSynchronizedGroups = (
-				E0000000000000000000002A /* macos */,
+				E0000000000000000000002A,
+			);
+			buildPhases = (
+				E114000000000000000000A1,
+				E114000000000000000000A2,
+				D9ACF51671A57B65239B33F7,
 			);
 			name = EchoWorkspaceTests;
-			productName = EchoWorkspaceTests;
-			productReference = E114000000000000000000FF /* EchoWorkspaceTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
-		E115000000000000000000AA /* EchoConversationUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E115000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoConversationUITests" */;
-			buildPhases = (
-				E115000000000000000000A1 /* Sources */,
-				E115000000000000000000A2 /* Frameworks */,
-			);
 			buildRules = (
 			);
+		};
+		E115000000000000000000AA = {
 			dependencies = (
-				E115000000000000000000C2 /* PBXTargetDependency */,
+				E115000000000000000000C2,
 			);
+			buildConfigurationList = E115000000000000000000EE;
+			productReference = E115000000000000000000FF;
+			productType = "com.apple.product-type.bundle.unit-test";
+			productName = EchoConversationUITests;
+			isa = PBXNativeTarget;
 			fileSystemSynchronizedGroups = (
-				E0000000000000000000002A /* macos */,
+				E0000000000000000000002A,
+			);
+			buildPhases = (
+				E115000000000000000000A1,
+				E115000000000000000000A2,
+				37EA92C562684C9CD33FEE01,
 			);
 			name = EchoConversationUITests;
-			productName = EchoConversationUITests;
-			productReference = E115000000000000000000FF /* EchoConversationUITests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
-		E116000000000000000000AA /* EchoShortcutUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E116000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoShortcutUITests" */;
-			buildPhases = (
-				E116000000000000000000A1 /* Sources */,
-				E116000000000000000000A2 /* Frameworks */,
-			);
 			buildRules = (
 			);
+		};
+		E116000000000000000000AA = {
 			dependencies = (
-				E116000000000000000000C2 /* PBXTargetDependency */,
+				E116000000000000000000C2,
 			);
+			buildConfigurationList = E116000000000000000000EE;
+			productReference = E116000000000000000000FF;
+			productType = "com.apple.product-type.tool";
+			productName = EchoShortcutUITests;
+			isa = PBXNativeTarget;
 			fileSystemSynchronizedGroups = (
-				E0000000000000000000002A /* macos */,
+				E0000000000000000000002A,
+			);
+			buildPhases = (
+				E116000000000000000000A1,
+				E116000000000000000000A2,
+				7633F35541B4813CB40DBEE5,
 			);
 			name = EchoShortcutUITests;
-			productName = EchoShortcutUITests;
-			productReference = E116000000000000000000FF /* EchoShortcutUITests */;
-			productType = "com.apple.product-type.tool";
+			buildRules = (
+			);
 		};
 		E120000000000000000000AA /* KeychainProbe */ = {
 			isa = PBXNativeTarget;
@@ -764,51 +915,85 @@
 			productReference = E126000000000000000000FF /* AppleSpeechCheck.app */;
 			productType = "com.apple.product-type.application";
 		};
+		622BCBC3AA8DF672AAC38174 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9878E8517CACCF13CBC43B2C;
+			buildPhases = (
+				0E6F4B30E5FF5F26E5E610FE,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D105D730EDDDD06003ABAA32,
+			);
+			name = EchoAppIntegrationTests;
+			productName = EchoAppIntegrationTests;
+			productReference = E2DD4E7379914193D6F68337;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		03A21A103EBCD69617CCBCC0 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B20E4A57862756873091C6BB;
+			buildPhases = (
+				1FF8AA0D0458CA05A92B8B35,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C2D6DBC3F944CB13AF3C4749,
+			);
+			name = EchoUITests;
+			productName = EchoUITests;
+			productReference = E2D88B0EC8C4D64A02775E4A;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		E0000000000000000000000F /* Project object */ = {
+		E0000000000000000000000F = {
+			buildConfigurationList = E000000000000000000000B0;
+			targets = (
+				E000000000000000000000A0,
+				E0000000000000000000002F,
+				E126000000000000000000AA,
+				E125000000000000000000AA,
+				E124000000000000000000AA,
+				E123000000000000000000AA,
+				E122000000000000000000AA,
+				E121000000000000000000AA,
+				E120000000000000000000AA,
+				E116000000000000000000AA,
+				E115000000000000000000AA,
+				E114000000000000000000AA,
+				E113000000000000000000AA,
+				E112000000000000000000AA,
+				E111000000000000000000AA,
+				E110000000000000000000AA,
+				622BCBC3AA8DF672AAC38174,
+				03A21A103EBCD69617CCBCC0,
+			);
+			minimizedProjectReferenceProxies = 1;
+			developmentRegion = en;
+			knownRegions = (
+				en,
+				Base,
+			);
 			isa = PBXProject;
+			productRefGroup = E00000000000000000000011;
+			projectDirPath = "";
 			attributes = {
-				BuildIndependentTargetsInParallel = 1;
 				LastUpgradeCheck = 2700;
+				BuildIndependentTargetsInParallel = 1;
 				TargetAttributes = {
 					E0000000000000000000002F = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
-			buildConfigurationList = E000000000000000000000B0 /* Build configuration list for PBXProject "Echo" */;
-			developmentRegion = en;
 			hasScannedForEncodings = 0;
-			knownRegions = (
-				en,
-				Base,
-			);
-			mainGroup = E00000000000000000000010;
-			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
-			productRefGroup = E00000000000000000000011 /* Products */;
-			projectDirPath = "";
 			projectRoot = "";
-			targets = (
-				E000000000000000000000A0 /* RustCore */,
-				E0000000000000000000002F /* Echo */,
-				E126000000000000000000AA /* AppleSpeechDeviceProbe */,
-				E125000000000000000000AA /* VoiceSoakProbe */,
-				E124000000000000000000AA /* VoiceLiveProbe */,
-				E123000000000000000000AA /* AgentLiveProbe */,
-				E122000000000000000000AA /* AgentBridgeProbe */,
-				E121000000000000000000AA /* KeychainProbeRebuilt */,
-				E120000000000000000000AA /* KeychainProbe */,
-				E116000000000000000000AA /* EchoShortcutUITests */,
-				E115000000000000000000AA /* EchoConversationUITests */,
-				E114000000000000000000AA /* EchoWorkspaceTests */,
-				E113000000000000000000AA /* EchoVoiceTests */,
-				E112000000000000000000AA /* EchoAgentSessionTests */,
-				E111000000000000000000AA /* EchoAgentTaskSourceTests */,
-				E110000000000000000000AA /* EchoChatTests */,
-			);
+			preferredProjectObjectVersion = 77;
+			mainGroup = E00000000000000000000010;
 		};
 /* End PBXProject section */
 
@@ -820,6 +1005,49 @@
 				A2D38BC03062D573000AB0C0 /* Assets.xcassets in Resources */,
 				E00000000000000000000031 /* planets in Resources */,
 			);
+		};
+		72A06BFDE903275E43C80EAA = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BC0769A420E4834B8D65FD1E,
+				2D34581B87695B5017C83A31,
+				B704670FAF0415C2098489CE,
+				310594A3D21751F9BCAF03A9,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D9ACF51671A57B65239B33F7 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				51DC2E4A0F04C3BD9B586531,
+				D4D51A52463450D85F5130CA,
+				15784511C1E7338371B29560,
+				1541E4EF44E8EF009D756EEA,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		37EA92C562684C9CD33FEE01 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				13097CB5A528800655A06D1D,
+				2BA7D416B8B284177C6B0063,
+				0FA787DDAEEE6CA7A1CB6062,
+				3AF8D4AD502931A821406912,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7633F35541B4813CB40DBEE5 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				87F70ACE1CF52F8B6D4370FE,
+				6771922A9E34FF614BC65987,
+				BA58539A1084FC7D31A34408,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
@@ -844,15 +1072,12 @@
 				"",
 			);
 		};
-		E113000000000000000000A3 /* Stage Agent conversation prompt */ = {
+		E113000000000000000000A3 = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = "Stage Agent conversation prompt";
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
 			shellPath = /bin/zsh;
-			shellScript = (
-				"\"$PROJECT_DIR/scripts/xcode-stage-agent-prompt.sh\"",
-				"",
-			);
+			alwaysOutOfDate = 1;
+			name = "Copy Agent conversation prompt";
 		};
 		E122000000000000000000A3 /* Copy Agent conversation prompt */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -962,40 +1187,44 @@
 				E11200000000000000000B00 /* AgentSessionTests.swift in Sources */,
 			);
 		};
-		E113000000000000000000A1 /* Sources */ = {
+		E113000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				E11300000000000000000B00 /* VoiceTests.swift in Sources */,
-				E11300000000000000000B01 /* VoiceBargeInTests.swift in Sources */,
-				E11300000000000000000B02 /* AgentVoiceTests.swift in Sources */,
-				E11300000000000000000B03 /* AppleSpeechTests.swift in Sources */,
-				E11300000000000000000B04 /* DictationTests.swift in Sources */,
-				E11300000000000000000B05 /* EchoTestEnvironment.swift in Sources */,
-				E11300000000000000000B06 /* EchoVoiceTests.swift in Sources */,
+				E11300000000000000000B00,
+				E11300000000000000000B01,
+				E11300000000000000000B02,
+				E11300000000000000000B03,
+				E11300000000000000000B04,
+				E11300000000000000000B05,
+				E11300000000000000000B06,
+				830373170115C92C8D7D60E3,
 			);
 		};
-		E114000000000000000000A1 /* Sources */ = {
+		E114000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				E11400000000000000000B00 /* WorkspaceTests.swift in Sources */,
-				E11400000000000000000B01 /* WorkspaceVoiceCommandTests.swift in Sources */,
-				E11400000000000000000B02 /* ProjectFileBrowserTests.swift in Sources */,
-				E11400000000000000000B03 /* EchoTestEnvironment.swift in Sources */,
-				E11400000000000000000B04 /* EchoWorkspaceTests.swift in Sources */,
+				E11400000000000000000B00,
+				E11400000000000000000B01,
+				E11400000000000000000B02,
+				E11400000000000000000B03,
+				E11400000000000000000B04,
+				99C4C78ABC6C2DE4D996106D,
 			);
 		};
-		E115000000000000000000A1 /* Sources */ = {
+		E115000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				E11500000000000000000B00 /* ConversationUITests.swift in Sources */,
-				E11500000000000000000B01 /* EchoTestEnvironment.swift in Sources */,
-				E11500000000000000000B02 /* EchoConversationUITests.swift in Sources */,
+				E11500000000000000000B00,
+				E11500000000000000000B01,
+				E11500000000000000000B02,
+				EE2B5A483F67D04C0F2A9F6A,
 			);
 		};
-		E116000000000000000000A1 /* Sources */ = {
+		E116000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				E11600000000000000000B00 /* ConversationUITests.swift in Sources */,
+				E11600000000000000000B00,
+				56D2BD3B47652805232C88CB,
 			);
 		};
 		E120000000000000000000A1 /* Sources */ = {
@@ -1041,6 +1270,22 @@
 			files = (
 				E12600000000000000000B00 /* AppleSpeechDeviceTests.swift in Sources */,
 			);
+		};
+		0E6F4B30E5FF5F26E5E610FE = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E8EDE3C7E84B8F4E694DC62E,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1FF8AA0D0458CA05A92B8B35 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F7EF4AB9C967C47A9F18B500,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
@@ -1109,6 +1354,16 @@
 			isa = PBXTargetDependency;
 			target = E000000000000000000000A0 /* RustCore */;
 			targetProxy = E126000000000000000000C1 /* PBXContainerItemProxy */;
+		};
+		D105D730EDDDD06003ABAA32 = {
+			isa = PBXTargetDependency;
+			target = E0000000000000000000002F;
+			targetProxy = 507230118C775255B830D7CC;
+		};
+		C2D6DBC3F944CB13AF3C4749 = {
+			isa = PBXTargetDependency;
+			target = E0000000000000000000002F;
+			targetProxy = A306D7140E1A148E6CDC32FA;
 		};
 /* End PBXTargetDependency section */
 
@@ -1623,160 +1878,681 @@
 			};
 			name = Development;
 		};
+		BC922EC25F5E741774A2A67D = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = DevelopmentDebug;
+		};
+		7C24AADB0138B35F2FB9EC5D = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = TestPerformance;
+		};
+		57D8403FA1C16D676AE4051A = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = DevelopmentDebug;
+		};
+		1599C4DF5444123A7256F867 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = TestPerformance;
+		};
+		B965EDD9E2A310CABA4BC41B = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "NATIVE_SHORTCUT_TESTS $(inherited)";
+			};
+			name = DevelopmentDebug;
+		};
+		F21B908697FEE871EE148BB3 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "NATIVE_SHORTCUT_TESTS $(inherited)";
+			};
+			name = TestPerformance;
+		};
+		B2BE80F5FAB3130F6E3DEAEB = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			};
+			name = DevelopmentDebug;
+		};
+		F7A5B059276761FC780EF146 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			};
+			name = TestPerformance;
+		};
+		F0E13B6A9531DCA4D0C2B9DA = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_NAME = Echo;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				OTHER_LDFLAGS = "";
+			};
+			name = DevelopmentDebug;
+		};
+		D6FC14D8925E339C9FA78E47 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_NAME = Echo;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				OTHER_LDFLAGS = "";
+			};
+			name = TestPerformance;
+		};
+		D7455667C335B081D16FEA0F = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = E0000000000000000000001C;
+			buildSettings = {
+				ONLY_ACTIVE_ARCH = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG ECHO_TEST_SUPPORT $(inherited)";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				COPY_PHASE_STRIP = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+			};
+			name = DevelopmentDebug;
+		};
+		22B7DC6D02FA19DEE0E0B262 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = E0000000000000000000001B;
+			buildSettings = {
+				ONLY_ACTIVE_ARCH = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG ECHO_TEST_SUPPORT $(inherited)";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				CLANG_ENABLE_MODULES = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				COPY_PHASE_STRIP = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+			};
+			name = TestPerformance;
+		};
+		5F5459E05617E7DCD7BBC87E = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = DevelopmentDebug;
+		};
+		19F90618FD9EF1B4F47E61AA = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = TestPerformance;
+		};
+		E696C5A4CB8F5CEBF7F44906 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = DevelopmentDebug;
+		};
+		32B302BAEC15825E67419D8F = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = TestPerformance;
+		};
+		9D93A9D04BBBA7125FF43FA2 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				OTHER_LDFLAGS = "";
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				PRODUCT_NAME = Echo;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+			};
+			name = DevelopmentDebug;
+		};
+		D4D768C73EBB38EFBC7E7DFE = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				OTHER_LDFLAGS = "";
+				SWIFT_SUPPRESS_WARNINGS = YES;
+				PRODUCT_NAME = Echo;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
+			};
+			name = TestPerformance;
+		};
+		9515FEE421E6E8A442E397DE = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_NAME = Echo;
+			};
+			name = DevelopmentDebug;
+		};
+		6343BDB4A99363C237585793 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_NAME = Echo;
+			};
+			name = TestPerformance;
+		};
+		2DF90D85ADAE379E28BFA324 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_NAME = Echo;
+			};
+			name = DevelopmentDebug;
+		};
+		3E3EBD3C2ECC1766A78064B1 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_NAME = Echo;
+			};
+			name = TestPerformance;
+		};
+		C3AE36B6786C5952EEABA5A7 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = DevelopmentDebug;
+		};
+		792DBE74BA1DA2615E46E477 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = TestPerformance;
+		};
+		6A48A1D5F33886B91E741EF3 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = DevelopmentDebug;
+		};
+		40C39ED3BF9D0151F6F63B3E = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+			};
+			name = TestPerformance;
+		};
+		EB8EC5DD9BB679ABD9270062 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+			};
+			name = DevelopmentDebug;
+		};
+		030D00D0AC643C25E1B9531C = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+			};
+			name = TestPerformance;
+		};
+		5A3E7C4206CDF6C9C463BF62 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_NAME = Echo;
+			};
+			name = DevelopmentDebug;
+		};
+		9A495657E778382DF8146E92 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_NAME = Echo;
+			};
+			name = TestPerformance;
+		};
+		E4587057A4E073E23C12BDDA = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_NAME = Echo;
+			};
+			name = DevelopmentDebug;
+		};
+		AC421B476D46283834A723BE = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = macos/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_NAME = Echo;
+			};
+			name = TestPerformance;
+		};
+		2B1F5D93A013CCB653DFF4B0 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
+				PRODUCT_NAME = AppleSpeechCheck;
+			};
+			name = DevelopmentDebug;
+		};
+		88AEAD973214DB06B69A690E = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
+				PRODUCT_NAME = AppleSpeechCheck;
+			};
+			name = TestPerformance;
+		};
+		575AF9A28192AB9F615E2977 = {
+			isa = XCBuildConfiguration;
+			name = Debug;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+			};
+		};
+		A711BD3B9D43218A776FD400 = {
+			isa = XCBuildConfiguration;
+			name = Release;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+			};
+		};
+		BB599283B500BE53C72F41F5 = {
+			isa = XCBuildConfiguration;
+			name = Development;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+			};
+		};
+		0C1A9DC14734D66CB823D882 = {
+			isa = XCBuildConfiguration;
+			name = DevelopmentDebug;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+			};
+		};
+		413FF6747D018C67D809C100 = {
+			isa = XCBuildConfiguration;
+			name = TestPerformance;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+			};
+		};
+		76533DE637A362DC8CCDD42C = {
+			isa = XCBuildConfiguration;
+			name = Debug;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_TARGET_NAME = Echo;
+			};
+		};
+		E03D486E050F507DC348CCEE = {
+			isa = XCBuildConfiguration;
+			name = Release;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_TARGET_NAME = Echo;
+			};
+		};
+		67764DBF7CF65458E4D6C55B = {
+			isa = XCBuildConfiguration;
+			name = Development;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_TARGET_NAME = Echo;
+			};
+		};
+		84D06E58075760B5862DD680 = {
+			isa = XCBuildConfiguration;
+			name = DevelopmentDebug;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_TARGET_NAME = Echo;
+			};
+		};
+		3ABC5D686E6518355FE888A3 = {
+			isa = XCBuildConfiguration;
+			name = TestPerformance;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
+				OTHER_LDFLAGS = "";
+				CODE_SIGN_IDENTITY = "-";
+				TEST_TARGET_NAME = Echo;
+			};
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		E000000000000000000000B0 /* Build configuration list for PBXProject "Echo" */ = {
+		E000000000000000000000B0 = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E000000000000000000000D0 /* Debug configuration for PBXProject "Echo" */,
-				E000000000000000000000D1 /* Release configuration for PBXProject "Echo" */,
-				E000000000000000000000D6 /* Development configuration for PBXProject "Echo" */,
+				E000000000000000000000D0,
+				E000000000000000000000D1,
+				E000000000000000000000D6,
+				D7455667C335B081D16FEA0F,
+				22B7DC6D02FA19DEE0E0B262,
 			);
 			defaultConfigurationName = Release;
 		};
-		E000000000000000000000B1 /* Build configuration list for PBXNativeTarget "Echo" */ = {
+		E000000000000000000000B1 = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E000000000000000000000D2 /* Debug configuration for PBXNativeTarget "Echo" */,
-				E000000000000000000000D3 /* Release configuration for PBXNativeTarget "Echo" */,
-				E000000000000000000000D7 /* Development configuration for PBXNativeTarget "Echo" */,
+				E000000000000000000000D2,
+				E000000000000000000000D3,
+				E000000000000000000000D7,
+				EB8EC5DD9BB679ABD9270062,
+				030D00D0AC643C25E1B9531C,
 			);
 			defaultConfigurationName = Release;
 		};
-		E000000000000000000000B2 /* Build configuration list for PBXAggregateTarget "RustCore" */ = {
+		E000000000000000000000B2 = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E000000000000000000000D4 /* Debug configuration for PBXAggregateTarget "RustCore" */,
-				E000000000000000000000D5 /* Release configuration for PBXAggregateTarget "RustCore" */,
-				E000000000000000000000D8 /* Development configuration for PBXAggregateTarget "RustCore" */,
+				E000000000000000000000D4,
+				E000000000000000000000D5,
+				E000000000000000000000D8,
+				B2BE80F5FAB3130F6E3DEAEB,
+				F7A5B059276761FC780EF146,
 			);
 			defaultConfigurationName = Release;
 		};
-		E110000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoChatTests" */ = {
+		E110000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E110000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoChatTests" */,
-				E110000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoChatTests" */,
-				E110000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoChatTests" */,
+				E110000000000000000000D0,
+				E110000000000000000000D1,
+				E110000000000000000000D2,
+				5F5459E05617E7DCD7BBC87E,
+				19F90618FD9EF1B4F47E61AA,
 			);
 			defaultConfigurationName = Release;
 		};
-		E111000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoAgentTaskSourceTests" */ = {
+		E111000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E111000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */,
-				E111000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */,
-				E111000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */,
+				E111000000000000000000D0,
+				E111000000000000000000D1,
+				E111000000000000000000D2,
+				E696C5A4CB8F5CEBF7F44906,
+				32B302BAEC15825E67419D8F,
 			);
 			defaultConfigurationName = Release;
 		};
-		E112000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoAgentSessionTests" */ = {
+		E112000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E112000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoAgentSessionTests" */,
-				E112000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoAgentSessionTests" */,
-				E112000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoAgentSessionTests" */,
+				E112000000000000000000D0,
+				E112000000000000000000D1,
+				E112000000000000000000D2,
+				C3AE36B6786C5952EEABA5A7,
+				792DBE74BA1DA2615E46E477,
 			);
 			defaultConfigurationName = Release;
 		};
-		E113000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoVoiceTests" */ = {
+		E113000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E113000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoVoiceTests" */,
-				E113000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoVoiceTests" */,
-				E113000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoVoiceTests" */,
+				E113000000000000000000D0,
+				E113000000000000000000D1,
+				E113000000000000000000D2,
+				6A48A1D5F33886B91E741EF3,
+				40C39ED3BF9D0151F6F63B3E,
 			);
 			defaultConfigurationName = Release;
 		};
-		E114000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoWorkspaceTests" */ = {
+		E114000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E114000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoWorkspaceTests" */,
-				E114000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoWorkspaceTests" */,
-				E114000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoWorkspaceTests" */,
+				E114000000000000000000D0,
+				E114000000000000000000D1,
+				E114000000000000000000D2,
+				BC922EC25F5E741774A2A67D,
+				7C24AADB0138B35F2FB9EC5D,
 			);
 			defaultConfigurationName = Release;
 		};
-		E115000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoConversationUITests" */ = {
+		E115000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E115000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoConversationUITests" */,
-				E115000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoConversationUITests" */,
-				E115000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoConversationUITests" */,
+				E115000000000000000000D0,
+				E115000000000000000000D1,
+				E115000000000000000000D2,
+				57D8403FA1C16D676AE4051A,
+				1599C4DF5444123A7256F867,
 			);
 			defaultConfigurationName = Release;
 		};
-		E116000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoShortcutUITests" */ = {
+		E116000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E116000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoShortcutUITests" */,
-				E116000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoShortcutUITests" */,
-				E116000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoShortcutUITests" */,
+				E116000000000000000000D0,
+				E116000000000000000000D1,
+				E116000000000000000000D2,
+				B965EDD9E2A310CABA4BC41B,
+				F21B908697FEE871EE148BB3,
 			);
 			defaultConfigurationName = Release;
 		};
-		E120000000000000000000EE /* Build configuration list for PBXNativeTarget "KeychainProbe" */ = {
+		E120000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E120000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbe" */,
-				E120000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbe" */,
-				E120000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbe" */,
+				E120000000000000000000D0,
+				E120000000000000000000D1,
+				E120000000000000000000D2,
+				F0E13B6A9531DCA4D0C2B9DA,
+				D6FC14D8925E339C9FA78E47,
 			);
 			defaultConfigurationName = Release;
 		};
-		E121000000000000000000EE /* Build configuration list for PBXNativeTarget "KeychainProbeRebuilt" */ = {
+		E121000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E121000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
-				E121000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
-				E121000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
+				E121000000000000000000D0,
+				E121000000000000000000D1,
+				E121000000000000000000D2,
+				9D93A9D04BBBA7125FF43FA2,
+				D4D768C73EBB38EFBC7E7DFE,
 			);
 			defaultConfigurationName = Release;
 		};
-		E122000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentBridgeProbe" */ = {
+		E122000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E122000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentBridgeProbe" */,
-				E122000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentBridgeProbe" */,
-				E122000000000000000000D2 /* Development configuration for PBXNativeTarget "AgentBridgeProbe" */,
+				E122000000000000000000D0,
+				E122000000000000000000D1,
+				E122000000000000000000D2,
+				9515FEE421E6E8A442E397DE,
+				6343BDB4A99363C237585793,
 			);
 			defaultConfigurationName = Release;
 		};
-		E123000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentLiveProbe" */ = {
+		E123000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E123000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentLiveProbe" */,
-				E123000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentLiveProbe" */,
-				E123000000000000000000D2 /* Development configuration for PBXNativeTarget "AgentLiveProbe" */,
+				E123000000000000000000D0,
+				E123000000000000000000D1,
+				E123000000000000000000D2,
+				2DF90D85ADAE379E28BFA324,
+				3E3EBD3C2ECC1766A78064B1,
 			);
 			defaultConfigurationName = Release;
 		};
-		E124000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceLiveProbe" */ = {
+		E124000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E124000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceLiveProbe" */,
-				E124000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceLiveProbe" */,
-				E124000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceLiveProbe" */,
+				E124000000000000000000D0,
+				E124000000000000000000D1,
+				E124000000000000000000D2,
+				5A3E7C4206CDF6C9C463BF62,
+				9A495657E778382DF8146E92,
 			);
 			defaultConfigurationName = Release;
 		};
-		E125000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceSoakProbe" */ = {
+		E125000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E125000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceSoakProbe" */,
-				E125000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceSoakProbe" */,
-				E125000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceSoakProbe" */,
+				E125000000000000000000D0,
+				E125000000000000000000D1,
+				E125000000000000000000D2,
+				E4587057A4E073E23C12BDDA,
+				AC421B476D46283834A723BE,
 			);
 			defaultConfigurationName = Release;
 		};
-		E126000000000000000000EE /* Build configuration list for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
+		E126000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E126000000000000000000D0 /* Debug configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
-				E126000000000000000000D1 /* Release configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
-				E126000000000000000000D2 /* Development configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
+				E126000000000000000000D0,
+				E126000000000000000000D1,
+				E126000000000000000000D2,
+				2B1F5D93A013CCB653DFF4B0,
+				88AEAD973214DB06B69A690E,
 			);
+			defaultConfigurationName = Release;
+		};
+		9878E8517CACCF13CBC43B2C = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				575AF9A28192AB9F615E2977,
+				A711BD3B9D43218A776FD400,
+				BB599283B500BE53C72F41F5,
+				0C1A9DC14734D66CB823D882,
+				413FF6747D018C67D809C100,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B20E4A57862756873091C6BB = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				76533DE637A362DC8CCDD42C,
+				E03D486E050F507DC348CCEE,
+				67764DBF7CF65458E4D6C55B,
+				84D06E58075760B5862DD680,
+				3ABC5D686E6518355FE888A3,
+			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */

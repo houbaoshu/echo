@@ -242,7 +242,7 @@ actor PendingModelTester: ConnectionTesting {
 
         // Both bundled sheets use the runtime's standard 8×11 layout, including all spin frames.
         for name in ["ember-planet", "quiet-planet"] {
-            let bundled = URL(fileURLWithPath: "assets/planets/\(name)")
+            let bundled = EchoTestResources.resource("planets/\(name)")
             let bundledStore = try PetStore(directory: bundled)
             bundledStore.stop()
             let source = CGImageSourceCreateWithURL(bundled.appendingPathComponent("spritesheet.webp") as CFURL, nil)
@@ -268,7 +268,7 @@ actor PendingModelTester: ConnectionTesting {
         let root = fm.temporaryDirectory.appendingPathComponent("echo-planets-\(UUID())")
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
-        let sheet = URL(fileURLWithPath: "assets/planets/ember-planet/spritesheet.webp")
+        let sheet = EchoTestResources.resource("planets/ember-planet/spritesheet.webp")
         for name in ["alpha", "beta"] {
             let directory = root.appendingPathComponent(name)
             try fm.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1429,7 +1429,7 @@ actor PendingModelTester: ConnectionTesting {
         synth.emitsAudio = true
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer }, synthesizer: { synth })
         defer { voice.shutdown() }
-        let pets = PetCatalog(settings: settings, builtinRoot: URL(fileURLWithPath: "assets/pets"))
+        let pets = PetCatalog(settings: settings, builtinRoot: EchoTestResources.resource("pets"))
         settings.selectedSection = "语音"
         let view = NSHostingView(rootView: SettingsView(settings: settings, voice: voice, pets: pets, planets: PlanetStore())
             .frame(width: 820, height: 640))
@@ -2297,7 +2297,7 @@ actor PendingModelTester: ConnectionTesting {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, permission: { true })
-            let store = try PetStore(directory: URL(fileURLWithPath: "assets/pets/chiyan"))
+            let store = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
             let workspace = WorkspaceStore(voice: voice, sourceFactory: { FakeSource() })
             let settings = SettingsStore(secrets: FakeSecrets())
             settings.draft.model = "test"; settings.apiKey = "test"; settings.save()

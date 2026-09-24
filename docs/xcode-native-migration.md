@@ -6,7 +6,7 @@
 
 所有本次日志和 xcresult 位于 `/private/tmp/echo-native-migration/`。该目录不提交。沙箱内首次尝试因 Swift 宏插件和 Rust host dylib 加载失败，未执行测试；清除本次临时 checkout 的 Rust 缓存后重跑。真实服务、Keychain 授权及 Speech 设备测试尚未执行。历史基线报告不作为本轮通过证据。
 
-基线实测：`BehaviorBaseline.xcresult` 发现 6 个 XCTest，5 通过、1 runner crash、0 skip。崩溃为 `VoiceTests.swift:171` 的 “the page starts from a successful test”，调用场景 `settingsPageRevisitKeepsSuccessTests`；旧实现使用固定短 sleep 等待异步成功，正在单独重跑定位。Session CLI 完整通过。所有旧断言与场景源码保持原样。
+基线实测：`BehaviorBaseline.xcresult` 发现 6 个 XCTest，5 通过、1 runner crash、0 skip。崩溃为 `VoiceTests.swift:171` 的 “the page starts from a successful test”，调用场景 `settingsPageRevisitKeepsSuccessTests`；旧实现使用固定短 sleep 等待异步成功，`VoiceRetry.xcresult` 单独重跑通过；固定 25 ms sleep 存在调度敏感性。Session CLI 和 Bridge Probe 完整通过。所有旧断言与场景源码保持原样。
 
 构建基线修正：原 adapter 传入 SDKROOT/MACOSX_DEPLOYMENT_TARGET 时，干净构建的 zerofrom_derive dylib 出现 `mis-aligned LINKEDIT string pool`。原生 Cargo 和移除这两个 host 环境变量的最小隔离环境均完成 release 构建。行为基线仅在临时副本跳过 adapter，使用相同源码单独构建的静态库；不计为原工程干净构建通过。
 
@@ -135,3 +135,11 @@
 | `WorkspaceTests.sessionCleanupTests` | 待迁移 | 见 `tests/WorkspaceTests.swift` | 未验证 |
 | `WorkspaceTests.streamingPersistenceTests` | 待迁移 | 见 `tests/WorkspaceTests.swift` | 未验证 |
 | `WorkspaceVoiceCommandTests.run` | 待迁移 | 见 `tests/WorkspaceVoiceCommandTests.swift` | 未验证 |
+
+## Phase 2 验证
+
+- `Phase2Resources.xcresult`：8 个 XCTest 全部通过，0 skip，保留旧行为断言验证 bundle 资源迁移。
+- Rust release 库位于 `DerivedData/Build/Intermediates.noindex/EchoCargo`；无 repo `build/target`。原有目录完整移动到 `/private/tmp/echo-native-migration/preexisting/`，未删除。
+- hosted bundle 仅 `@testable import Echo`；测试实际默认 prompt 开 session、确认清理，以及宿主未建立用户工作区窗口。
+- 首次 UI smoke 被 macOS “Enable UI Automation”认证阻挡；用户认证后，修正 runner 容器临时目录校验，`Phase2UIContainer.xcresult` 1 个真正 XCUITest 通过。
+- `DevelopmentDebug` 构建成功；LLDB 在隔离 hosted 模式命中 `main.swift:12`，日志 `lldb.log`。

@@ -8,9 +8,6 @@ emulate -R zsh
 # LINKEDIT string pool"), breaking every plain command line build until
 # target/release was deleted. cargo therefore runs in a minimal environment.
 #
-# The two variables that must survive are the ones the existing chain already
-# sets, so both entry points produce the same artifacts and cargo does not
-# rebuild the workspace whenever they alternate.
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
 # Resolve the caller's toolchain before isolating Xcode's environment. GUI
 # builds may omit Cargo from PATH, so also check relocated and default homes.
@@ -21,15 +18,13 @@ fi
 cargo_executable="${cargo_executable:a}"
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
-# Xcode's SDKROOT is version-qualified (MacOSX27.0.sdk) where xcrun reports the
-# unqualified path; resolve it the same way the command line build does.
-unset SDKROOT
-source scripts/swift-env.sh
+# Do not export Xcode's SDK/deployment flags to Rust host proc macros. On Xcode
+# 27 they can produce a dylib with a misaligned LINKEDIT string table. Cargo's
+# target triple and the selected developer toolchain resolve the SDK themselves.
+: "${ECHO_CARGO_TARGET_DIR:?Xcode must set ECHO_CARGO_TARGET_DIR to an output directory}"
 typeset -a environment=(
     "HOME=$HOME"
     "PATH=${cargo_executable:h}:/usr/bin:/bin:/usr/sbin:/sbin"
-    "SDKROOT=$SDKROOT"
-    "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
 )
 # Honour a relocated Cargo or rustup, and proxy settings needed for a first fetch.
 for name in CARGO_HOME RUSTUP_HOME RUSTUP_TOOLCHAIN SSL_CERT_FILE HTTPS_PROXY HTTP_PROXY ALL_PROXY NO_PROXY; do
@@ -39,4 +34,4 @@ done
 # Always release: the Swift side has only ever linked the optimized libraries, and
 # an Xcode configuration does not change which Rust profile the app expects.
 exec /usr/bin/env -i "${environment[@]}" \
-    "$cargo_executable" build --locked --release --target aarch64-apple-darwin
+    "$cargo_executable" build --locked --release --target aarch64-apple-darwin --target-dir "$ECHO_CARGO_TARGET_DIR"
