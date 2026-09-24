@@ -170,6 +170,78 @@
 			isa = PBXBuildFile;
 			fileRef = 8F2881896384F498C40EE91C;
 		};
+		94832A520768771E7285B39A = {
+			isa = PBXBuildFile;
+			fileRef = E12200000000000000000F02;
+		};
+		775CBE322F97683D29D5475B = {
+			isa = PBXBuildFile;
+			fileRef = D99CD76EFF731DB92DDFA79A;
+		};
+		62B9BFB9095B17879C439924 = {
+			isa = PBXBuildFile;
+			fileRef = 7385F3E986D8793A4584EE31;
+		};
+		A48445E581B7F7391D46A313 = {
+			isa = PBXBuildFile;
+			fileRef = 2D11BE1C34798D95A2C2829F;
+		};
+		FF254346769C9FDC16CF24D0 = {
+			isa = PBXBuildFile;
+			fileRef = 20E8498B36C974B322A0269D;
+		};
+		B9DDF01A179493CDC0297D15 = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001D;
+		};
+		67E3BE61ADD66DEBB9546F63 = {
+			isa = PBXBuildFile;
+			fileRef = E0000000000000000000001E;
+		};
+		FCF779D250617E9855A786C5 = {
+			isa = PBXBuildFile;
+			fileRef = 4FAB991673380E8FF8B32862;
+		};
+		9593AF60BDC2B03A67992826 = {
+			isa = PBXBuildFile;
+			fileRef = 89D5CB17C33E07630F4519C6;
+		};
+		294ED11A4A5B711A39E812CB = {
+			isa = PBXBuildFile;
+			fileRef = 6BF4D83C4FDB9149833754EA;
+		};
+		D0D95B5D5B964B6609913AA4 = {
+			isa = PBXBuildFile;
+			fileRef = 89D5CB17C33E07630F4519C6;
+		};
+		53B597DF7242A6CFEDC2ABB6 = {
+			isa = PBXBuildFile;
+			fileRef = 6BF4D83C4FDB9149833754EA;
+		};
+		33BB6A82233EFF9DFDC2428A = {
+			isa = PBXBuildFile;
+			fileRef = 73026C88846F78AF31164388;
+		};
+		EA00F9556CAAB30BC2B7D398 = {
+			isa = PBXBuildFile;
+			fileRef = DE960C7BBE6919DA1C1553E7;
+		};
+		409C6E725EC1FA882D622090 = {
+			isa = PBXBuildFile;
+			fileRef = 217FBCD630BAAD4A12C88F95;
+		};
+		6817F4D9EBEF250F3A26ED4F = {
+			isa = PBXBuildFile;
+			fileRef = 70EFE33F996D835481AF1A0E;
+		};
+		F26EAD91B663BB2BCD833522 = {
+			isa = PBXBuildFile;
+			fileRef = 2D11BE1C34798D95A2C2829F;
+		};
+		20CC54B4487082597103767B = {
+			isa = PBXBuildFile;
+			fileRef = 804A0B2C452FA2B53B548DFB;
+		};
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -278,6 +350,13 @@
 			remoteGlobalIDString = E0000000000000000000002F;
 			remoteInfo = Echo;
 		};
+		BE09CD65A8420556AA94AD9B = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E0000000000000000000000F;
+			proxyType = 1;
+			remoteGlobalIDString = E000000000000000000000A0;
+			remoteInfo = RustCore;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -304,7 +383,13 @@
 		E11100000000000000000F01 /* AgentTaskSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentTaskSource.swift; path = macos/AgentTaskSource.swift; sourceTree = "<group>"; };
 		E11100000000000000000F08 /* AgentTaskSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentTaskSourceTests.swift; path = tests/AgentTaskSourceTests.swift; sourceTree = "<group>"; };
 		E11100000000000000000F09 /* EchoAgentTaskSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoAgentTaskSourceTests.swift; path = tests/cases/EchoAgentTaskSourceTests.swift; sourceTree = "<group>"; };
-		E112000000000000000000FF /* EchoAgentSessionTests */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = EchoAgentSessionTests; sourceTree = BUILT_PRODUCTS_DIR; };
+		E112000000000000000000FF = {
+			path = EchoIntegrationTests.xctest;
+			isa = PBXFileReference;
+			includeInIndex = 0;
+			explicitFileType = wrapper.cfbundle;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
 		E11200000000000000000F00 /* AgentSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentSessionTests.swift; path = tests/AgentSessionTests.swift; sourceTree = "<group>"; };
 		E113000000000000000000FF /* EchoVoiceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoVoiceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E11300000000000000000F00 /* VoiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceTests.swift; path = tests/VoiceTests.swift; sourceTree = "<group>"; };
@@ -332,7 +417,6 @@
 		E120000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E12000000000000000000F00 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = main.swift; path = "tests/keychain-probe/main.swift"; sourceTree = "<group>"; };
 		E121000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		E122000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E12200000000000000000F02 /* AgentBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentBridgeTests.swift; path = tests/AgentBridgeTests.swift; sourceTree = "<group>"; };
 		E123000000000000000000FF /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E12300000000000000000F00 /* AgentLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentLiveTests.swift; path = tests/AgentLiveTests.swift; sourceTree = "<group>"; };
@@ -395,6 +479,66 @@
 			path = tests/legacy/ShortcutRegression.swift;
 			sourceTree = "<group>";
 			lastKnownFileType = sourcecode.swift;
+		};
+		D99CD76EFF731DB92DDFA79A = {
+			isa = PBXFileReference;
+			path = tests/support/LoopbackModelServer.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		20E8498B36C974B322A0269D = {
+			isa = PBXFileReference;
+			path = tests/support/SessionFixture.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		89D5CB17C33E07630F4519C6 = {
+			isa = PBXFileReference;
+			path = tests/support/VoiceFakes.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		6BF4D83C4FDB9149833754EA = {
+			isa = PBXFileReference;
+			path = tests/support/AgentVoiceFixture.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		73026C88846F78AF31164388 = {
+			isa = PBXFileReference;
+			path = tests/native/AgentVoiceIntegrationTests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		DE960C7BBE6919DA1C1553E7 = {
+			isa = PBXFileReference;
+			path = tests/native/RuntimeIntegrationTests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		217FBCD630BAAD4A12C88F95 = {
+			isa = PBXFileReference;
+			path = tests/native/HistoryIntegrationTests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		5A407C27DB7ECAE4527DA014 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			path = EchoCABITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		70EFE33F996D835481AF1A0E = {
+			isa = PBXFileReference;
+			path = tests/native/CABITests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		804A0B2C452FA2B53B548DFB = {
+			isa = PBXFileReference;
+			path = tests/AgentBridgeMemory.c;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.c.c;
 		};
 /* End PBXFileReference section */
 
@@ -542,11 +686,6 @@
 			files = (
 			);
 		};
-		E122000000000000000000A2 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			files = (
-			);
-		};
 		E123000000000000000000A2 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
@@ -631,6 +770,15 @@
 				A3FF57E62DA09C501023D462,
 				7385F3E986D8793A4584EE31,
 				8F2881896384F498C40EE91C,
+				D99CD76EFF731DB92DDFA79A,
+				20E8498B36C974B322A0269D,
+				89D5CB17C33E07630F4519C6,
+				6BF4D83C4FDB9149833754EA,
+				73026C88846F78AF31164388,
+				DE960C7BBE6919DA1C1553E7,
+				217FBCD630BAAD4A12C88F95,
+				70EFE33F996D835481AF1A0E,
+				804A0B2C452FA2B53B548DFB,
 			);
 		};
 		E00000000000000000000011 = {
@@ -642,7 +790,6 @@
 				E125000000000000000000FF,
 				E124000000000000000000FF,
 				E123000000000000000000FF,
-				E122000000000000000000FF,
 				E121000000000000000000FF,
 				E120000000000000000000FF,
 				E116000000000000000000FF,
@@ -654,6 +801,7 @@
 				E110000000000000000000FF,
 				E2DD4E7379914193D6F68337,
 				E2D88B0EC8C4D64A02775E4A,
+				5A407C27DB7ECAE4527DA014,
 			);
 			sourceTree = "<group>";
 		};
@@ -716,25 +864,27 @@
 			productReference = E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		E112000000000000000000AA /* EchoAgentSessionTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E112000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoAgentSessionTests" */;
-			buildPhases = (
-				E112000000000000000000A1 /* Sources */,
-				E112000000000000000000A2 /* Frameworks */,
+		E112000000000000000000AA = {
+			dependencies = (
+				E112000000000000000000C2,
 			);
+			buildConfigurationList = E112000000000000000000EE;
+			productReference = E112000000000000000000FF;
+			productType = "com.apple.product-type.bundle.unit-test";
+			productName = EchoIntegrationTests;
+			isa = PBXNativeTarget;
+			fileSystemSynchronizedGroups = (
+				E0000000000000000000002A,
+			);
+			buildPhases = (
+				E112000000000000000000A1,
+				E112000000000000000000A2,
+				DBFE12719D46C3EEE749B575,
+				B052DFAFF61A3F322544B935,
+			);
+			name = EchoIntegrationTests;
 			buildRules = (
 			);
-			dependencies = (
-				E112000000000000000000C2 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				E0000000000000000000002A /* macos */,
-			);
-			name = EchoAgentSessionTests;
-			productName = EchoAgentSessionTests;
-			productReference = E112000000000000000000FF /* EchoAgentSessionTests */;
-			productType = "com.apple.product-type.tool";
 		};
 		E113000000000000000000AA = {
 			dependencies = (
@@ -847,24 +997,6 @@
 			name = KeychainProbeRebuilt;
 			productName = KeychainProbeRebuilt;
 			productReference = E121000000000000000000FF /* Echo.app */;
-			productType = "com.apple.product-type.application";
-		};
-		E122000000000000000000AA /* AgentBridgeProbe */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E122000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentBridgeProbe" */;
-			buildPhases = (
-				E122000000000000000000A3 /* Copy Agent conversation prompt */,
-				E122000000000000000000A1 /* Sources */,
-				E122000000000000000000A2 /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				E122000000000000000000C2 /* PBXTargetDependency */,
-			);
-			name = AgentBridgeProbe;
-			productName = AgentBridgeProbe;
-			productReference = E122000000000000000000FF /* Echo.app */;
 			productType = "com.apple.product-type.application";
 		};
 		E123000000000000000000AA /* AgentLiveProbe */ = {
@@ -983,6 +1115,23 @@
 			productReference = E2D88B0EC8C4D64A02775E4A;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		D195CA55926718EBFE5327CD = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3520EF9078A9455D970D3C11;
+			buildPhases = (
+				A63B539E6599A77F3DB2E41F,
+				3516E35B59948405AB869408,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				33EBA7A9F21211F0F4980636,
+			);
+			name = EchoCABITests;
+			productName = EchoCABITests;
+			productReference = 5A407C27DB7ECAE4527DA014;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -995,7 +1144,6 @@
 				E125000000000000000000AA,
 				E124000000000000000000AA,
 				E123000000000000000000AA,
-				E122000000000000000000AA,
 				E121000000000000000000AA,
 				E120000000000000000000AA,
 				E116000000000000000000AA,
@@ -1007,6 +1155,7 @@
 				E110000000000000000000AA,
 				622BCBC3AA8DF672AAC38174,
 				03A21A103EBCD69617CCBCC0,
+				D195CA55926718EBFE5327CD,
 			);
 			minimizedProjectReferenceProxies = 1;
 			developmentRegion = en;
@@ -1049,7 +1198,6 @@
 				BC0769A420E4834B8D65FD1E,
 				2D34581B87695B5017C83A31,
 				B704670FAF0415C2098489CE,
-				310594A3D21751F9BCAF03A9,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1060,7 +1208,6 @@
 				51DC2E4A0F04C3BD9B586531,
 				D4D51A52463450D85F5130CA,
 				15784511C1E7338371B29560,
-				1541E4EF44E8EF009D756EEA,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1071,7 +1218,6 @@
 				13097CB5A528800655A06D1D,
 				2BA7D416B8B284177C6B0063,
 				0FA787DDAEEE6CA7A1CB6062,
-				3AF8D4AD502931A821406912,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1082,6 +1228,16 @@
 				87F70ACE1CF52F8B6D4370FE,
 				6771922A9E34FF614BC65987,
 				BA58539A1084FC7D31A34408,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DBFE12719D46C3EEE749B575 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B9DDF01A179493CDC0297D15,
+				67E3BE61ADD66DEBB9546F63,
+				FCF779D250617E9855A786C5,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1114,16 +1270,6 @@
 			shellPath = /bin/zsh;
 			alwaysOutOfDate = 1;
 			name = "Copy Agent conversation prompt";
-		};
-		E122000000000000000000A3 /* Copy Agent conversation prompt */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = "Copy Agent conversation prompt";
-			shellPath = /bin/zsh;
-			shellScript = (
-				"\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"",
-				"",
-			);
 		};
 		E123000000000000000000A3 /* Copy Agent conversation prompt */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1177,6 +1323,28 @@
 				"",
 			);
 		};
+		B052DFAFF61A3F322544B935 = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			alwaysOutOfDate = 1;
+			files = (
+			);
+			name = "Copy Agent conversation prompt";
+			shellPath = /bin/sh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3516E35B59948405AB869408 = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			alwaysOutOfDate = 1;
+			files = (
+			);
+			name = "Copy Agent conversation prompt";
+			shellPath = /bin/sh;
+			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -1217,10 +1385,20 @@
 				4861077C58DCA2FD9910205F,
 			);
 		};
-		E112000000000000000000A1 /* Sources */ = {
+		E112000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				E11200000000000000000B00 /* AgentSessionTests.swift in Sources */,
+				E11200000000000000000B00,
+				94832A520768771E7285B39A,
+				775CBE322F97683D29D5475B,
+				62B9BFB9095B17879C439924,
+				A48445E581B7F7391D46A313,
+				FF254346769C9FDC16CF24D0,
+				D0D95B5D5B964B6609913AA4,
+				53B597DF7242A6CFEDC2ABB6,
+				33BB6A82233EFF9DFDC2428A,
+				EA00F9556CAAB30BC2B7D398,
+				409C6E725EC1FA882D622090,
 			);
 		};
 		E113000000000000000000A1 = {
@@ -1231,9 +1409,9 @@
 				E11300000000000000000B02,
 				E11300000000000000000B03,
 				E11300000000000000000B04,
-				E11300000000000000000B05,
 				830373170115C92C8D7D60E3,
-				D6D3319559E35006823B431F,
+				9593AF60BDC2B03A67992826,
+				294ED11A4A5B711A39E812CB,
 			);
 		};
 		E114000000000000000000A1 = {
@@ -1242,7 +1420,6 @@
 				E11400000000000000000B00,
 				E11400000000000000000B01,
 				E11400000000000000000B02,
-				E11400000000000000000B03,
 				99C4C78ABC6C2DE4D996106D,
 			);
 		};
@@ -1250,7 +1427,6 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				E11500000000000000000B00,
-				E11500000000000000000B01,
 				EE2B5A483F67D04C0F2A9F6A,
 			);
 		};
@@ -1271,14 +1447,6 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				E12100000000000000000B00 /* main.swift in Sources */,
-			);
-		};
-		E122000000000000000000A1 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			files = (
-				E12200000000000000000B00 /* AgentWire.swift in Sources */,
-				E12200000000000000000B01 /* AgentBridge.swift in Sources */,
-				E12200000000000000000B02 /* AgentBridgeTests.swift in Sources */,
 			);
 		};
 		E123000000000000000000A1 /* Sources */ = {
@@ -1318,6 +1486,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				F7EF4AB9C967C47A9F18B500,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A63B539E6599A77F3DB2E41F = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6817F4D9EBEF250F3A26ED4F,
+				F26EAD91B663BB2BCD833522,
+				20CC54B4487082597103767B,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1398,6 +1576,11 @@
 			isa = PBXTargetDependency;
 			target = E0000000000000000000002F;
 			targetProxy = A306D7140E1A148E6CDC32FA;
+		};
+		33EBA7A9F21211F0F4980636 = {
+			isa = PBXTargetDependency;
+			target = E000000000000000000000A0;
+			targetProxy = BE09CD65A8420556AA94AD9B;
 		};
 /* End PBXTargetDependency section */
 
@@ -1561,27 +1744,33 @@
 			};
 			name = Development;
 		};
-		E112000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoAgentSessionTests" */ = {
+		E112000000000000000000D0 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "-";
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
 			};
 			name = Debug;
 		};
-		E112000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoAgentSessionTests" */ = {
+		E112000000000000000000D1 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "-";
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
 			};
 			name = Release;
 		};
-		E112000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoAgentSessionTests" */ = {
+		E112000000000000000000D2 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "-";
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
 			};
 			name = Development;
 		};
@@ -1774,33 +1963,6 @@
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
 				SWIFT_SUPPRESS_WARNINGS = YES;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
-			};
-			name = Development;
-		};
-		E122000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentBridgeProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_NAME = Echo;
-			};
-			name = Debug;
-		};
-		E122000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentBridgeProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_NAME = Echo;
-			};
-			name = Release;
-		};
-		E122000000000000000000D2 /* Development configuration for PBXNativeTarget "AgentBridgeProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_NAME = Echo;
 			};
 			name = Development;
 		};
@@ -2118,24 +2280,6 @@
 			};
 			name = TestPerformance;
 		};
-		9515FEE421E6E8A442E397DE = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_NAME = Echo;
-			};
-			name = DevelopmentDebug;
-		};
-		6343BDB4A99363C237585793 = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_NAME = Echo;
-			};
-			name = TestPerformance;
-		};
 		2DF90D85ADAE379E28BFA324 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2159,6 +2303,8 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "-";
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
 			};
 			name = DevelopmentDebug;
 		};
@@ -2167,6 +2313,8 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "-";
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
 			};
 			name = TestPerformance;
 		};
@@ -2375,6 +2523,71 @@
 				TEST_TARGET_NAME = Echo;
 			};
 		};
+		B6A5B949E41FD4DD831F77AE = {
+			isa = XCBuildConfiguration;
+			name = Debug;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
+				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
+				CODE_SIGN_IDENTITY = "-";
+				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				ENABLE_ADDRESS_SANITIZER = YES;
+			};
+		};
+		8B87AB235CA9125555A96483 = {
+			isa = XCBuildConfiguration;
+			name = Release;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
+				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
+				CODE_SIGN_IDENTITY = "-";
+				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				ENABLE_ADDRESS_SANITIZER = YES;
+			};
+		};
+		DF677491C6225B3BD17E932E = {
+			isa = XCBuildConfiguration;
+			name = Development;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
+				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
+				CODE_SIGN_IDENTITY = "-";
+				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				ENABLE_ADDRESS_SANITIZER = YES;
+			};
+		};
+		C4FCC78DDDF52372CCC3EAA1 = {
+			isa = XCBuildConfiguration;
+			name = DevelopmentDebug;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
+				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
+				CODE_SIGN_IDENTITY = "-";
+				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				ENABLE_ADDRESS_SANITIZER = YES;
+			};
+		};
+		24E57788A25B61C46A2A9F12 = {
+			isa = XCBuildConfiguration;
+			name = TestPerformance;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
+				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
+				CODE_SIGN_IDENTITY = "-";
+				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				ENABLE_ADDRESS_SANITIZER = YES;
+			};
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -2510,17 +2723,6 @@
 			);
 			defaultConfigurationName = Release;
 		};
-		E122000000000000000000EE = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E122000000000000000000D0,
-				E122000000000000000000D1,
-				E122000000000000000000D2,
-				9515FEE421E6E8A442E397DE,
-				6343BDB4A99363C237585793,
-			);
-			defaultConfigurationName = Release;
-		};
 		E123000000000000000000EE = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -2585,6 +2787,18 @@
 				67764DBF7CF65458E4D6C55B,
 				84D06E58075760B5862DD680,
 				3ABC5D686E6518355FE888A3,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3520EF9078A9455D970D3C11 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B6A5B949E41FD4DD831F77AE,
+				8B87AB235CA9125555A96483,
+				DF677491C6225B3BD17E932E,
+				C4FCC78DDDF52372CCC3EAA1,
+				24E57788A25B61C46A2A9F12,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

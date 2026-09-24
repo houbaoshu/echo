@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "configurations": [
+    {
+      "id": "f939251f-b0d7-4606-9594-268a71d2b2a7",
+      "name": "Address Sanitizer",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "environmentVariableEntries": [
+      {
+        "key": "ECHO_TEST_MODE",
+        "value": "hosted"
+      }
+    ],
+    "testTimeoutsEnabled": true,
+    "defaultTestExecutionTimeAllowance": 180,
+    "maximumTestExecutionTimeAllowance": 240,
+    "addressSanitizer": {
+      "enabled": true
+    }
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "D195CA55926718EBFE5327CD",
+        "name": "EchoCABITests"
+      },
+      "parallelizable": false
+    }
+  ]
+}

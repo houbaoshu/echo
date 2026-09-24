@@ -129,15 +129,14 @@ open build/Echo.app
 cargo test --locked --workspace
 cargo clippy --locked --workspace -- -D warnings
 xcodebuild test -scheme EchoTests
-/bin/zsh scripts/test-agent-bridge.sh
-/bin/zsh scripts/test-agent-session.sh
+xcodebuild test -project Echo.xcodeproj -scheme Echo -testPlan EchoOffline -only-testing:EchoIntegrationTests
 /bin/zsh scripts/test-native-shortcuts.sh
 /bin/zsh scripts/test-signing.sh
 ```
 
 `EchoTests` scheme 覆盖聊天 / 模型 / 设置、Agent 任务源、语音、工作区与会话 UI。单独运行某一项用 `-only-testing`，例如 `xcodebuild test -scheme EchoTests -only-testing:EchoChatTests` 或 `-only-testing:EchoVoiceTests/AgentVoiceIntegrationSuite`（对应原来的 `--agent-integration`）。
 
-其余几个套件必须以可执行文件而非 XCTest bundle 运行，每个都有对应的 Xcode target，脚本只负责构建、准备夹具和运行：`test-agent-bridge.sh` 与 `test-agent-session.sh` 依赖 `Bundle.main` 定位打包好的 prompt，而 XCTest bundle 里 `Bundle.main` 是 Xcode 的 `xctest`；`test-native-shortcuts.sh` 的原生菜单与真实指针场景需要 `NSApplication.run()` 事件循环，该循环以 `exit(0)` 结束，XCTest 宿主会判为崩溃。
+Agent、Session、AgentVoice 的 production bridge 场景已进入 `EchoIntegrationTests`，默认 App bundle 资源路径由 `EchoAppIntegrationTests` 验证。真实快捷键旧入口暂保留，待 XCUITest 等价覆盖后退役。
 
 这些入口使用模拟依赖或本机测试服务，不依赖真实模型 / 语音服务。Agent 集成测试需要 Python 3 和本机回环端口权限，部分测试会在临时项目执行 bash；UI 测试需在桌面环境运行。默认签名回归不访问真实钥匙串。
 
@@ -158,7 +157,7 @@ xcodebuild test -scheme EchoTests
 | `/bin/zsh scripts/test-agent-live.sh` | 用已保存模型配置验证真实回复和临时项目读改验 |
 | `/bin/zsh scripts/test-voice-live.sh --play` | 验证真实 ASR → Rust Agent → TTS 链路并播放；不录麦克风，去掉 `--play` 跳过播放 |
 | `/bin/zsh scripts/test-voice-soak.sh [秒数] [--cut 秒数]` | 长连接空闲浸泡，检查 socket 有序关闭；日志写入 `build/test-logs/voice-soak-*.log` |
-| `/bin/zsh scripts/test-agent-ffi.sh` | 仅 Rust/C 的 ASAN 探针，检查 C ABI 的所有权与生命周期 |
+| `xcodebuild test -project Echo.xcodeproj -scheme Echo -testPlan EchoSanitizers` | 仅 Rust/C 的 ASAN 探针，检查 C ABI 的所有权与生命周期 |
 | `/bin/zsh scripts/diagnose-voice.sh` | 构建开发签名应用，检查采集、连接和播放，日志位于 `build/test-logs/voice-diagnostic.log` |
 | `/bin/zsh scripts/trace-dictation.sh` | 跟踪普通听写回调；先构建开发签名应用并退出已运行实例，日志写入 `build/test-logs/dictation-*.jsonl` |
 

@@ -74,6 +74,14 @@
         "name": "EchoUITests"
       },
       "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E112000000000000000000AA",
+        "name": "EchoIntegrationTests"
+      },
+      "parallelizable": false
     }
   ]
 }

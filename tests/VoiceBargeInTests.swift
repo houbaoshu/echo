@@ -41,13 +41,7 @@ import Foundation
 
 extension VoiceTests {
     static func activityPCM(amplitude: Double = 0.05, samples: Int = 320) -> Data {
-        var data = Data()
-        for i in 0..<samples {
-            let sample = Int16(sin(Double(i) * .pi * 2 * 440 / 16000) * amplitude * 32767)
-            let bits = UInt16(bitPattern: sample)
-            data.append(UInt8(bits & 255)); data.append(UInt8(bits >> 8))
-        }
-        return data
+        VoiceFixtureSupport.activityPCM(amplitude: amplitude, samples: samples)
     }
 
     @Test @MainActor static func bargeInGateTests() {

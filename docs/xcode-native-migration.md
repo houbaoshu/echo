@@ -157,3 +157,12 @@ Model 请求协议、失败种类和配置迁移端点分别参数化；取消�
 ## Phase 3 / View
 
 `NativeViewIsolated.xcresult`：30 个独立 XCTest 全部通过（71 秒），0 skip。Target 更名 EchoViewTests；IME/TextKit/布局/视图组件断言原生化，截图输出系统临时目录。真实事件旧 CLI 暂移至 `tests/legacy/ShortcutRegression.swift`，仅在 UI 等价场景通过后删除。
+
+## Phase 4 / Production integration
+
+- `NativeIntegrationSockets.xcresult`：Bridge 2 + Session 13 个原生方法通过。Swift loopback HTTP/SSE fixture 保留真实 socket、分段 Unicode、工具、延迟、取消和断线；监听使用非阻塞 accept + 50ms poll，关闭有明确 deadline。
+- `NativeIntegrationVoice.xcresult`：Voice 47 个原生方法与 Integration 通过；AgentVoice 的五种路由 × 两协议，以及 Markdown 流式 × 两协议转入 Integration，不再由 Voice 粗包装重复执行。假音频与 fixture 提取共享支持文件。
+- `NativeHistoryRuntimeRetry.xcresult`：Integration 21 个方法（含 14 个参数化输入）全部通过。新增真实 read/edit/verify、跨协议恢复、v1 history/v2 checkpoint/receipt/projection/opaque reasoning 校验；新增 Runtime 错误、真实帧复制、销毁后 CGImage 数据生命期覆盖。
+- `NativeCABI.xcresult`：XCTest 驱动公开 C ABI 的 500 次 create/poll/reject/cancel/destroy/free，Address Sanitizer 通过。C 条件失败返回源码行到 XCTest；只对 C/Swift 消费者插桩，不宣称覆盖 Rust 内部所有访存。
+- 原 Session CLI 转为 EchoIntegrationTests；旧 AgentBridgeProbe、三个重复 shell、model Python fixture、Voice 粗包装和全局 cwd helper 退役。session Python fixture 暂供 packaged 系统入口，待 Xcode FixtureServer 建成后删除。
+- 所有 Integration suites 共享串行父 suite；每场景独立临时目录与端口，关闭后检查 Rust 活跃会话归零。真实服务、Speech、Keychain 授权测试未运行。
