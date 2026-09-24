@@ -37,6 +37,7 @@ DerivedData/
 !/docs/mini-agent-mainline-bridge-v2-plan.md
 !/docs/mini-agent-mainline-bridge-v2-contract.md
 !/docs/xcode-test-migration-inventory.md
+!/docs/xcode-native-migration.md
 # framework 缺陷的独立复现，不属于任何测试套件
 !/docs/repros/
 # swiftc → Xcode 迁移的应用产物基线。shell 构建路径已不存在，无法再生
