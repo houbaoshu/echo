@@ -166,6 +166,10 @@
 			isa = PBXBuildFile;
 			fileRef = E11300000000000000000F06;
 		};
+		A87BB5069B9FA96999A3F1AC = {
+			isa = PBXBuildFile;
+			fileRef = 8F2881896384F498C40EE91C;
+		};
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -315,7 +319,13 @@
 		E11400000000000000000F01 /* WorkspaceVoiceCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WorkspaceVoiceCommandTests.swift; path = tests/WorkspaceVoiceCommandTests.swift; sourceTree = "<group>"; };
 		E11400000000000000000F02 /* ProjectFileBrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ProjectFileBrowserTests.swift; path = tests/ProjectFileBrowserTests.swift; sourceTree = "<group>"; };
 		E11400000000000000000F04 /* EchoWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoWorkspaceTests.swift; path = tests/cases/EchoWorkspaceTests.swift; sourceTree = "<group>"; };
-		E115000000000000000000FF /* EchoConversationUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoConversationUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E115000000000000000000FF = {
+			path = EchoViewTests.xctest;
+			isa = PBXFileReference;
+			includeInIndex = 0;
+			explicitFileType = wrapper.cfbundle;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
 		E11500000000000000000F00 /* ConversationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ConversationUITests.swift; path = tests/ConversationUITests.swift; sourceTree = "<group>"; };
 		E11500000000000000000F02 /* EchoConversationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = EchoConversationUITests.swift; path = tests/cases/EchoConversationUITests.swift; sourceTree = "<group>"; };
 		E116000000000000000000FF /* EchoShortcutUITests */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = EchoShortcutUITests; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -377,6 +387,12 @@
 		7385F3E986D8793A4584EE31 = {
 			isa = PBXFileReference;
 			path = tests/support/NativeMemorySecrets.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		8F2881896384F498C40EE91C = {
+			isa = PBXFileReference;
+			path = tests/legacy/ShortcutRegression.swift;
 			sourceTree = "<group>";
 			lastKnownFileType = sourcecode.swift;
 		};
@@ -614,6 +630,7 @@
 				7F5AC5D3C6E9200922133731,
 				A3FF57E62DA09C501023D462,
 				7385F3E986D8793A4584EE31,
+				8F2881896384F498C40EE91C,
 			);
 		};
 		E00000000000000000000011 = {
@@ -763,25 +780,25 @@
 			);
 		};
 		E115000000000000000000AA = {
-			dependencies = (
-				E115000000000000000000C2,
+			buildRules = (
 			);
 			buildConfigurationList = E115000000000000000000EE;
 			productReference = E115000000000000000000FF;
 			productType = "com.apple.product-type.bundle.unit-test";
-			productName = EchoConversationUITests;
+			productName = EchoViewTests;
 			isa = PBXNativeTarget;
 			fileSystemSynchronizedGroups = (
 				E0000000000000000000002A,
+			);
+			dependencies = (
+				E115000000000000000000C2,
 			);
 			buildPhases = (
 				E115000000000000000000A1,
 				E115000000000000000000A2,
 				37EA92C562684C9CD33FEE01,
 			);
-			name = EchoConversationUITests;
-			buildRules = (
-			);
+			name = EchoViewTests;
 		};
 		E116000000000000000000AA = {
 			dependencies = (
@@ -1234,15 +1251,14 @@
 			files = (
 				E11500000000000000000B00,
 				E11500000000000000000B01,
-				E11500000000000000000B02,
 				EE2B5A483F67D04C0F2A9F6A,
 			);
 		};
 		E116000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				E11600000000000000000B00,
 				56D2BD3B47652805232C88CB,
+				A87BB5069B9FA96999A3F1AC,
 			);
 		};
 		E120000000000000000000A1 /* Sources */ = {
@@ -1629,33 +1645,33 @@
 			};
 			name = Development;
 		};
-		E115000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoConversationUITests" */ = {
+		E115000000000000000000D0 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
 			};
 			name = Debug;
 		};
-		E115000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoConversationUITests" */ = {
+		E115000000000000000000D1 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
 			};
 			name = Release;
 		};
-		E115000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoConversationUITests" */ = {
+		E115000000000000000000D2 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
+				CODE_SIGN_IDENTITY = "-";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
 			};
 			name = Development;
 		};
@@ -1921,7 +1937,7 @@
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
 				CODE_SIGN_IDENTITY = "-";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 			};
 			name = DevelopmentDebug;
@@ -1931,7 +1947,7 @@
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
 				CODE_SIGN_IDENTITY = "-";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoConversationUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 			};
 			name = TestPerformance;

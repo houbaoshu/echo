@@ -55,7 +55,7 @@
       "target": {
         "containerPath": "container:Echo.xcodeproj",
         "identifier": "E115000000000000000000AA",
-        "name": "EchoConversationUITests"
+        "name": "EchoViewTests"
       },
       "parallelizable": false
     },

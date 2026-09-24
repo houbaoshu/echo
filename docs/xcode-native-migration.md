@@ -153,3 +153,7 @@ Model 请求协议、失败种类和配置迁移端点分别参数化；取消�
 ## Phase 3 / Voice + Workspace
 
 `NativeVoiceWorkspace.xcresult` 通过：Voice 47 个 Swift Testing 方法，含 Apple Speech/Dictation 录制回放和假音频；Workspace 10 个方法，含真实临时文件/权限/watcher。Voice 使用串行父 suite 隔离共享 diagnostics；旧 AgentVoice production 集成入口暂保留，等待 Phase 4。固定等待连接成功改为明确条件与 deadline。
+
+## Phase 3 / View
+
+`NativeViewIsolated.xcresult`：30 个独立 XCTest 全部通过（71 秒），0 skip。Target 更名 EchoViewTests；IME/TextKit/布局/视图组件断言原生化，截图输出系统临时目录。真实事件旧 CLI 暂移至 `tests/legacy/ShortcutRegression.swift`，仅在 UI 等价场景通过后删除。
