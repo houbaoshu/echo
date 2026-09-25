@@ -20,7 +20,8 @@ typedef struct EchoAgent EchoAgent;
  * present when it changed since the previous poll; it is never checkpointed.
  * A Cancelled batch confirms Stop
  * cleanup; active_sessions confirms close/destroy cleanup for process shutdown.
- * See docs/mini-agent-mainline-bridge-v2-contract.md for full JSON types.
+ * See agent-bridge/src/wire.rs and Mini Agent's conversation::runner types
+ * for the complete JSON schema.
  * All JSON strings use UTF-8. Inputs are borrowed only during the call.
  * Every returned char* (including errors) must be freed with string_free.
  * Calls never wait for network, commands, event capacity or worker shutdown.

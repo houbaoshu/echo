@@ -245,8 +245,7 @@ private struct ComposerHeightHost: View {
         window.orderOut(nil)
     }
 
-    /// The composer grows with its content and stops at `maxLines`. Nothing covered this
-    /// before, and the migration to TextKit 2 replaced the engine that measures it.
+    /// The TextKit 2 composer grows with its content and stops at `maxLines`.
     func testComposerAdaptiveHeight() async throws {
         for (fontSize, minHeight, maxLines) in [(WorkspaceStyle.bodySize, CGFloat(44), 6), (CGFloat(13), CGFloat(20), 1)] {
             let draft = ComposerDraft()
@@ -307,7 +306,7 @@ private struct ComposerHeightHost: View {
         }
     }
 
-    /// 阶段 2 (P1-1…P1-5): the window's structure comes from system parts.
+    /// The window's structure comes from system parts.
     ///
     /// The sidebar's header and footer are NSSplitViewItemAccessoryViewControllers rather
     /// than views stacked with the list and a floating button pinned to the root view; the
@@ -554,7 +553,7 @@ private struct ComposerHeightHost: View {
         // Stops are identified by the COLUMN they live in, not by class or identifier. The
         // chat transcript's stop is the key view SwiftUI builds for `.focusable()`, and that
         // view carries neither the SwiftUI view's accessibility identifier nor any public
-        // type (measured in docs/repros/window-focus-ring.swift [F1]).
+        // type.
         func area(of view: NSView) -> String {
             for (name, root) in [("sidebar", main.sidebarItem.viewController.view),
                                  ("conversation", main.conversationItem.viewController.view),

@@ -263,7 +263,7 @@ import AppKit
     /// Several directories changing in one refresh must reach the list in separate run loop
     /// turns. The sidebar list is an NSOutlineView, and two of its groups gaining rows in a
     /// single SwiftUI update make it insert rows from inside its own delegate callbacks —
-    /// see docs/repros/swiftui-outline-list-reentrancy.swift, which logs
+    /// see tests/tools/SwiftUIOutlineListReentrancy.swift, which logs
     /// "Application performed a reentrant operation in its NSTableView delegate".
     @Test static func testRefreshCommitsDirectoriesSeparately() async throws {
         let folders = (0..<6).map { "folder\($0)" }

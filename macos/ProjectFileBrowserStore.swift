@@ -150,7 +150,7 @@ enum ProjectFilePreview: Equatable, Sendable {
     /// Results are applied one per run loop turn, and only where the listing actually
     /// changed. The sidebar list is an NSOutlineView, and two of its groups gaining rows
     /// in a single SwiftUI update make it insert rows from inside its own delegate
-    /// callbacks — see docs/repros/swiftui-outline-list-reentrancy.swift. Reading every
+    /// callbacks — see tests/tools/SwiftUIOutlineListReentrancy.swift. Reading every
     /// directory concurrently but committing the results one at a time keeps each group's
     /// insertion in an update of its own.
     func refresh() {

@@ -1,6 +1,6 @@
 # 固定 Speech 设备输入
 
-保存自迁移前已经生成的 WAV，仅为合成语音，没有用户录音。所有资源是 16 kHz、单声道、PCM16。`paused.wav` 由“这是我的第一句话／第二句话／第三句话”分别追加四秒静音拼接；`mixed.wav` 是中文、英文、中文串联。生成来源为历史 `xcode-generate-speech-fixtures.sh` 的 Tingting/Samantha 短语。构建只复制资源。
+固定 WAV 均由 Tingting/Samantha 合成短语生成，没有用户录音。所有资源是 16 kHz、单声道、PCM16。`paused.wav` 由“这是我的第一句话／第二句话／第三句话”分别追加四秒静音拼接；`mixed.wav` 是中文、英文、中文串联。构建只复制资源。
 
 | 文件 | 帧数 | SHA-256 |
 |---|---:|---|

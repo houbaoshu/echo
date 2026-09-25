@@ -46,8 +46,7 @@ import Combine
 /// clear button, the focus ring, the Escape-clears-the-query semantics and the
 /// input-method handling all come from NSSearchField instead of being redrawn here.
 ///
-/// Reverified on macOS 27 / Xcode 27, 2026-09-20 (P3-3; standalone probe in
-/// docs/repros/stage5-native-search-focus.md): without a navigation container,
+/// On macOS 27, without a navigation container,
 /// both automatic and sidebar placements render no field. NavigationSplitView +
 /// sidebar placement renders one but introduces another split and squeezes the
 /// results to 144pt inside a 620pt panel; automatic placement still has no field in
@@ -115,8 +114,8 @@ struct WorkspaceSearchField: NSViewRepresentable {
 ///
 /// It draws the panel's whole surface, so it carries the material, the corner radius and
 /// the border; `SearchPalettePanel` is a clear borderless window behind it. Living in its
-/// own window is also what keeps the main window's Tab order untouched while it is open
-/// (measured in docs/repros/split-accessory-window-chrome.md). The sidebar keeps
+/// own window is also what keeps the main window's Tab order untouched while it is open.
+/// The sidebar keeps
 /// listing every chat; matching happens only here, and the column's collapsed or expanded
 /// state is none of this view's business.
 ///

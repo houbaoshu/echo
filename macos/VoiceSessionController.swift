@@ -36,7 +36,7 @@ enum VoiceCaptureWatchdog {
         guard spoken.runID == runID, playedAudioForCurrentRun else { return 0 }
         return Double(max(0, audio.playbackFrames - speechBaseFrames)) / 24000
     }
-    // Read-only adapters keep the existing UI in place until its planned migration.
+    // Read-only projections consumed by the existing voice UI.
     var presentation: VoiceSessionPresentation { snapshot.presentation(modelIsGenerating: store?.isGenerating == true) }
     var conversationID: UUID? { snapshot.session.owner?.conversationID }
     var subtitle: String { snapshot.subtitle }

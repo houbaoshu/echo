@@ -32,9 +32,8 @@ enum WorkspaceStyle {
     // above have, and that is a measurement, not an oversight. Increase Contrast is a
     // system-wide accessibility setting, not an appearance a view can be handed: with it
     // off, `NSAppearance(named: .accessibilityHighContrastAqua)` hands back plain aqua
-    // (`docs/repros/status-color-contrast.swift` [C1]). So a run on a machine that has
-    // the setting off cannot tell whether a system colour carries its own high-contrast
-    // variant ([C2] is inconclusive for exactly that reason) — and if it does, deepening
+    // on a machine with that setting off. Such a run cannot tell whether a system
+    // colour carries its own high-contrast variant — and if it does, deepening
     // the hue here as well would correct it twice. Adjusting a colour the system already
     // adjusts is the worse failure, so this defers to the system for the hue.
     //
@@ -58,7 +57,7 @@ enum WorkspaceStyle {
     private static func statusFill(_ base: NSColor) -> NSColor {
         NSColor(name: nil) { appearance in
             // A nested system colour resolves against the appearance being asked about:
-            // the provider already runs with it current for drawing ([C3]), so this picks
+            // the provider already runs with it current for drawing, so this picks
             // up the light or dark variant without setting an appearance itself — and
             // must not, since the provider is called on whatever thread draws.
             let resolved = base.usingColorSpace(.sRGB) ?? base
@@ -73,7 +72,7 @@ extension NSFont {
     /// `NSLayoutManager.defaultLineHeight(for:)` on macOS 27.0: identical for the
     /// 11-14 pt system fonts this app draws with. The composer measures at 14 pt
     /// (`WorkspaceStyle.bodySize`) and 13 pt; check the font size before adding a caller
-    /// outside that range. Re-measured in `docs/repros/textkit2-composer-sync.swift` [A9].
+    /// outside that range.
     var defaultLineHeight: CGFloat { ceil(ascender - descender + leading) }
 }
 
@@ -122,13 +121,12 @@ extension NSFont {
 ///
 /// No text control lives here, and none may. An accessory's contents are ordered after
 /// the column body in the window's key view loop, which would put the chat composer
-/// between this column's header and this column's list; measured, with no app code in it,
-/// in docs/repros/split-accessory-window-chrome.md [E]. The magnifier is a button, and
+/// between this column's header and this column's list. The magnifier is a button, and
 /// buttons do not join the loop, so the header cannot disturb it. Search itself opens in a
 /// floating panel of its own (SearchPalette.swift), so it is not in this window at all.
 ///
 /// The paddings are the old ones minus what the accessory contributes — 10pt
-/// leading/trailing and 9pt top/bottom (measured in the same file, [A]) — so the title and
+/// leading/trailing and 9pt top/bottom — so the title and
 /// the button land exactly where they did before: 18pt in, 16pt down.
 struct WorkspaceSidebarHeader: View {
     @ObservedObject var workspace: WorkspaceStore
@@ -211,7 +209,7 @@ struct WorkspaceSidebar: View {
             // joins this group and 最近 at once. The bug is in SwiftUI's own bridge —
             // OutlineListCoordinator expands a group item while applying its row diff, and
             // NSOutlineView inserts rows from inside that call's delegate callbacks.
-            // docs/repros/swiftui-outline-list-reentrancy.swift reproduces it in a plain
+            // tests/tools/SwiftUIOutlineListReentrancy.swift reproduces it in a plain
             // two-Section List with none of Echo in it. Nothing visible misbehaves, and the
             // fix does not belong here: do not reshape Echo's state updates, split publishes
             // or delay them to dodge it.
@@ -366,8 +364,7 @@ struct WorkspaceSidebar: View {
 
 /// Clicking a SwiftUI List changes selection without taking keyboard focus. Bind
 /// FocusState directly to the List: `.focusable()` would insert a proxy that cannot
-/// drive its rows. Reverified on macOS 27, 2026-09-20; see the standalone
-/// docs/repros/stage5-native-search-focus.md probe (mode 4).
+/// drive its rows.
 @MainActor final class SidebarListFocus: ObservableObject {
     @Published private(set) var request = 0
     func take() {
@@ -564,9 +561,7 @@ struct ConversationView: View {
             // The chat itself is a Tab stop, which is what makes the window's focus
             // ring 侧栏列表 → 会话记录 → 输入框 → 检查器 instead of skipping the
             // conversation. SwiftUI builds a real key view for `.focusable()` and
-            // AppKit places it geometrically, with no traversal code of Echo's own —
-            // measured, with Full Keyboard Access off, in
-            // docs/repros/window-focus-ring.swift [F1].
+            // AppKit places it geometrically, with no traversal code of Echo's own.
             .focusable()
             // Being a Tab stop is all that was wanted from `.focusable()`; the focus
             // effect came along with it and does not belong on a scroll area. AppKit
@@ -574,24 +569,22 @@ struct ConversationView: View {
             // first responder repaints zero pixels, while an NSTextField in the same
             // window repaints 35k for its ring — yet `.focusable()` leaves the backing
             // scroll view at focusRingType .default and a plain click paints a ring
-            // around the whole conversation column (measured, 32k pixels spanning the
-            // column, in docs/repros/transcript-click-focus.md [C2]). This is AppKit's
-            // own switch for that — it sets focusRingType to .none ([C3]) — not a focus
+            // around the whole conversation column. This is AppKit's own switch for
+            // that — it sets focusRingType to .none — not a focus
             // style of Echo's own, and it leaves the Tab stop, the keys below and the
             // accessibility element untouched.
             .focusEffectDisabled()
             // A click on the chat is not a request to type into the chat. `.focusable()`
             // hands the keyboard to the transcript's key view on mouse-down, and from
             // then on the composer receives nothing at all: measured, a keystroke after
-            // clicking the transcript never reached the draft ([C5]). Handing it straight
+            // clicking the transcript never reached the draft. Handing it straight
             // back is what the mouse meant. Tab is unaffected and still stops here, and a
-            // drag never fires a TapGesture, so selecting text in a message is untouched
-            // ([C7]).
+            // drag never fires a TapGesture, so selecting text in a message is untouched.
             .simultaneousGesture(TapGesture().onEnded {
                 workspace?.requestComposerFocus(conversationID: conversationID)
             })
             // That key view is NOT inside the scroll view, so scrollPageDown: and
-            // friends reach nobody ([F3]). SwiftUI's own path is the one that works.
+            // friends reach nobody. SwiftUI's own path is the one that works.
             .onKeyPress(keys: [.upArrow, .downArrow, .pageUp, .pageDown, .home, .end]) { transcriptKey($0) }
             .accessibilityIdentifier("conversation.transcript")
             .accessibilityLabel("会话记录")
@@ -948,7 +941,7 @@ struct AgentToolView: View {
 /// A TextKit 2 undo bypasses `shouldChangeText(in:replacementString:)` entirely, so
 /// `ComposerTextView.isSuspended` cannot stop it and a Cmd-Z under the dictation preview
 /// would wipe the draft. `NSTextView` vends its undo manager through its delegate, so the
-/// gate lives here instead. Measured in `docs/repros/textkit2-composer-sync.swift` [A6/A11].
+/// gate lives here instead.
 /// Owning the manager also stops the composer sharing the window's undo stack.
 final class ComposerUndoManager: UndoManager, @unchecked Sendable {
     /// Mirrors `ComposerTextView.isSuspended`; only the main actor touches it.
@@ -1165,7 +1158,7 @@ struct NativeComposer: NSViewRepresentable {
     /// Adopts `NSTextViewDelegate` only to vend `composerUndo`. Text changes arrive through
     /// `NSTextStorageDelegate`, because in TextKit 2 the document is the `NSTextStorage` and
     /// `didChangeText()` only covers edits that route through `shouldChangeTextInRange:` —
-    /// which macOS 27's undo does not. See `docs/repros/textkit2-composer-sync.swift`.
+    /// which macOS 27's undo does not.
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
         var parent: NativeComposer
         var handledFocusRequest = 0

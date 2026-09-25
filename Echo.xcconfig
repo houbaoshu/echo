@@ -42,8 +42,7 @@ CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO
 // Keep production and native test targets on the same warning policy.
 SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
 
-// Keep the existing source semantics during the migration; these settings
-// introduce separate concurrency/import behavior changes:
+// Do not enable these independently; they alter actor isolation and import behavior:
 //   SWIFT_DEFAULT_ACTOR_ISOLATION (template default MainActor)
 //   SWIFT_APPROACHABLE_CONCURRENCY
 //   SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY

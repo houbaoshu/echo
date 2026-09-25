@@ -11,8 +11,5 @@
       <BuildableProductRunnable runnableDebuggingMode="0">
          <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="5F4E1269555C5EFFC17A6AAE" BuildableName="EchoFrameworkRepros" BlueprintName="EchoFrameworkRepros" ReferencedContainer="container:Echo.xcodeproj" />
       </BuildableProductRunnable>
-      <CommandLineArguments>
-         <CommandLineArgument argument="scroll-anchor-tail" isEnabled="YES" />
-      </CommandLineArguments>
    </LaunchAction>
 </Scheme>

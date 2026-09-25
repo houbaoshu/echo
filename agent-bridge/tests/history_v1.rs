@@ -1,5 +1,4 @@
-//! Immutable v1 compatibility baseline. These exercise today's dependency;
-//! they must continue passing when the dependency changes in stage 3.
+//! Immutable v1 compatibility fixtures exercise the current history decoder.
 use mini_agent::conversation::{Conversation, ConversationConfig, ConversationHistory, Operation};
 use serde_json::{Value, json};
 

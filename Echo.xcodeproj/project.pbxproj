@@ -262,29 +262,9 @@
 			isa = PBXBuildFile;
 			fileRef = E6DAA41743D56B6467CB43F9;
 		};
-		2D21847F491C59DB5BF514C2 = {
-			isa = PBXBuildFile;
-			fileRef = 383FE781EB93C3E37C5FF971;
-		};
-		86BCD19472B3006F6DB754F0 = {
-			isa = PBXBuildFile;
-			fileRef = E99CD8DAB98A21555BB91288;
-		};
 		066D4A271DFD208FC9B7EE6B = {
 			isa = PBXBuildFile;
 			fileRef = 017854AC34F5C611DA191769;
-		};
-		49BD7D576AF0C51790B40AC4 = {
-			isa = PBXBuildFile;
-			fileRef = 82102E9B95D767D3D2F848F9;
-		};
-		13E47591141F7F8F9D1A5C0B = {
-			isa = PBXBuildFile;
-			fileRef = EFB7C39F3B86B179420903CB;
-		};
-		56C0D37BC280026A35A7806D = {
-			isa = PBXBuildFile;
-			fileRef = 50A44080BE30DB686D2F2987;
 		};
 		77C91A29491194B10AD602E6 = {
 			isa = PBXBuildFile;
@@ -744,39 +724,9 @@
 			path = EchoFrameworkRepros;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		383FE781EB93C3E37C5FF971 = {
-			isa = PBXFileReference;
-			path = docs/repros/FrameworkRepros.swift;
-			sourceTree = "<group>";
-			lastKnownFileType = sourcecode.swift;
-		};
-		E99CD8DAB98A21555BB91288 = {
-			isa = PBXFileReference;
-			path = "docs/repros/scroll-anchor-tail.swift";
-			sourceTree = "<group>";
-			lastKnownFileType = sourcecode.swift;
-		};
 		017854AC34F5C611DA191769 = {
 			isa = PBXFileReference;
-			path = "docs/repros/swiftui-outline-list-reentrancy.swift";
-			sourceTree = "<group>";
-			lastKnownFileType = sourcecode.swift;
-		};
-		82102E9B95D767D3D2F848F9 = {
-			isa = PBXFileReference;
-			path = "docs/repros/textkit2-composer-sync.swift";
-			sourceTree = "<group>";
-			lastKnownFileType = sourcecode.swift;
-		};
-		EFB7C39F3B86B179420903CB = {
-			isa = PBXFileReference;
-			path = "docs/repros/status-color-contrast.swift";
-			sourceTree = "<group>";
-			lastKnownFileType = sourcecode.swift;
-		};
-		50A44080BE30DB686D2F2987 = {
-			isa = PBXFileReference;
-			path = "docs/repros/window-focus-ring.swift";
+			path = "tests/tools/SwiftUIOutlineListReentrancy.swift";
 			sourceTree = "<group>";
 			lastKnownFileType = sourcecode.swift;
 		};
@@ -1066,12 +1016,7 @@
 				DD5CA30C697920C91E817DFD,
 				AC2342CC6EB3F55C38085D3E,
 				E6DAA41743D56B6467CB43F9,
-				383FE781EB93C3E37C5FF971,
-				E99CD8DAB98A21555BB91288,
 				017854AC34F5C611DA191769,
-				82102E9B95D767D3D2F848F9,
-				EFB7C39F3B86B179420903CB,
-				50A44080BE30DB686D2F2987,
 				BDB246AE9C0537E3D5EAD79A,
 				22A54F78A48D702464CB4A47,
 				2615EC88665C3BC946D57DCE,
@@ -1981,12 +1926,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				2D21847F491C59DB5BF514C2,
-				86BCD19472B3006F6DB754F0,
 				066D4A271DFD208FC9B7EE6B,
-				49BD7D576AF0C51790B40AC4,
-				13E47591141F7F8F9D1A5C0B,
-				56C0D37BC280026A35A7806D,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

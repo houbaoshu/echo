@@ -1,5 +1,5 @@
 //! Version 2 JSON C ABI. Persistent conversation archives remain version 1.
-//! See include/echo_agent.h and docs/mini-agent-mainline-bridge-v2-contract.md.
+//! The C boundary is declared in include/echo_agent.h; envelopes are in wire.rs.
 mod session;
 pub mod wire;
 
