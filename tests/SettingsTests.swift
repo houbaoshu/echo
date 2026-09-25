@@ -16,8 +16,23 @@ import Testing
     func remove(_ account: String) throws { values[account] = nil }
 }
 
+@MainActor private func withSavedProviders(_ body: (URL, ProviderSecrets, SettingsStore) throws -> Void) throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("provider-failure-\(UUID())")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appendingPathComponent("settings.json"), secrets = ProviderSecrets()
+    let settings = SettingsStore(url: url, secrets: secrets)
+    settings.selectProvider(.deepSeek)
+    settings.draft.model = "existing-deepseek"; settings.apiKey = "rotated-deepseek"; settings.save()
+    try #require(settings.notice == nil)
+    settings.selectProvider(.ollama)
+    settings.draft.model = "local-model"; settings.save()
+    try #require(settings.notice == nil && settings.snapshot.activeProvider == .ollama)
+    try body(url, secrets, SettingsStore(url: url, secrets: secrets))
+}
+
 @Suite(.serialized) enum SettingsTests {
-    @Test @MainActor static func providerMigrationAndCredentialRollback() throws {
+    @Test @MainActor static func providerMigrationDraftsAndCredentialRotation() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("provider-settings-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -85,35 +100,49 @@ import Testing
         for key in secrets.values.values { #expect(!json.contains(key), "JSON must only store Keychain references") }
         #expect(!json.contains("must-not-save"))
 
-        // One provider's unreadable credential cannot block another or erase its own reference.
-        let deepSeekAccount = reopened.snapshot.settings(for: .deepSeek).secretAccount!
-        secrets.unreadable.insert(deepSeekAccount)
-        let locked = SettingsStore(url: url, secrets: secrets)
-        locked.selectProvider(.deepSeek)
-        locked.draft.model = "changed"; locked.save()
-        #expect(locked.notice != nil && locked.snapshot.activeProvider == .ollama)
-        #expect(secrets.values[deepSeekAccount] == "rotated-deepseek")
-        locked.selectProvider(.custom)
-        locked.draft = ModelConfiguration(baseURL: "https://custom.example/v1", model: "custom")
-        locked.apiKey = "custom-secret"; locked.save()
-        #expect(locked.notice == nil && locked.snapshot.activeProvider == .custom)
-        locked.selectProvider(.deepSeek)
-        locked.apiKey = "replacement-deepseek"; locked.save()
-        #expect(locked.notice == nil && secrets.values.values.contains("custom-secret"))
-        #expect(try tryValue { try locked.savedModelCredentials().key } == "replacement-deepseek")
+    }
 
-        // Failed Keychain/disk writes leave active configuration and all saved credentials intact.
-        let before = secrets.values
-        locked.selectProvider(.openAI); locked.apiKey = "failed-secret"
-        secrets.failWrites = true; locked.save(); secrets.failWrites = false
-        #expect(locked.notice != nil && secrets.values == before && locked.snapshot.activeProvider == .deepSeek)
-        try FileManager.default.removeItem(at: url)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        locked.save()
-        #expect(locked.notice != nil && secrets.values == before && locked.snapshot.activeProvider == .deepSeek)
-        locked.restore()
-        #expect(locked.apiKey == "replacement-deepseek")
+    @Test @MainActor static func unreadableCredentialDoesNotBlockAnotherProvider() throws {
+        try withSavedProviders { url, secrets, reopened in
+            // One provider's unreadable credential cannot block another or erase its own reference.
+            let deepSeekAccount = try #require(reopened.snapshot.settings(for: .deepSeek).secretAccount)
+            secrets.unreadable.insert(deepSeekAccount)
+            let locked = SettingsStore(url: url, secrets: secrets)
+            locked.selectProvider(.deepSeek)
+            locked.draft.model = "changed"; locked.save()
+            #expect(locked.notice != nil && locked.snapshot.activeProvider == .ollama)
+            #expect(secrets.values[deepSeekAccount] == "rotated-deepseek")
+            locked.selectProvider(.custom)
+            locked.draft = ModelConfiguration(baseURL: "https://custom.example/v1", model: "custom")
+            locked.apiKey = "custom-secret"; locked.save()
+            #expect(locked.notice == nil && locked.snapshot.activeProvider == .custom)
+            locked.selectProvider(.deepSeek)
+            locked.apiKey = "replacement-deepseek"; locked.save()
+            #expect(locked.notice == nil && secrets.values.values.contains("custom-secret"))
+            #expect(try tryValue { try locked.savedModelCredentials().key } == "replacement-deepseek")
+        }
+    }
 
+    @Test @MainActor static func failedCredentialAndDiskWritesRollBack() throws {
+        try withSavedProviders { url, secrets, locked in
+            locked.selectProvider(.custom)
+            locked.draft = ModelConfiguration(baseURL: "https://custom.example/v1", model: "custom")
+            locked.apiKey = "custom-secret"; locked.save()
+            locked.selectProvider(.deepSeek)
+            locked.apiKey = "replacement-deepseek"; locked.save()
+            try #require(locked.notice == nil)
+            // Failed Keychain/disk writes leave active configuration and all saved credentials intact.
+            let before = secrets.values
+            locked.selectProvider(.openAI); locked.apiKey = "failed-secret"
+            secrets.failWrites = true; locked.save(); secrets.failWrites = false
+            #expect(locked.notice != nil && secrets.values == before && locked.snapshot.activeProvider == .deepSeek)
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            locked.save()
+            #expect(locked.notice != nil && secrets.values == before && locked.snapshot.activeProvider == .deepSeek)
+            locked.restore()
+            #expect(locked.apiKey == "replacement-deepseek")
+        }
     }
     @Test(arguments: ["https://unknown.example/v1", "http://localhost:11434/v1", "http://localhost:8080/v1", "https://api.openai.com/v1"])
     @MainActor static func legacyEndpointMigration(baseURL: String) throws {

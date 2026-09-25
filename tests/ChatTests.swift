@@ -14,9 +14,9 @@ import Testing
 
 @Suite(.serialized) struct ChatTests {
     @Test @MainActor static func sendStopRetryAndRestore() async throws {
-        let source = ChatSource(), store = TaskStore()
+        let source = ChatSource()
         let chat = TaskStore(source: source)
-        defer { chat.shutdown(); store.shutdown() }
+        defer { chat.shutdown() }
         #expect(!chat.send(" \n "), "Whitespace must not submit")
         #expect(chat.send("Hello"))
         #expect(chat.messages.count == 2, "Sending must immediately create a user and assistant placeholder")
@@ -67,6 +67,20 @@ import Testing
         let interrupted = TaskStore(snapshot: restored.snapshot, source: source)
         #expect(interrupted.messages.last?.status == .interrupted && interrupted.canRetry)
         #expect(interrupted.messages.last?.id == restored.messages.last?.id)
+        let before = chat.messages
+        chat.shutdown(); source.callbacks[4](.completed("retired"))
+        #expect(chat.messages == before && !chat.send("after shutdown"))
+        restored.shutdown(); interrupted.shutdown()
+    }
+    @Test @MainActor static func legacyArchiveCompatibilityAndCleanup() throws {
+        let source = ChatSource()
+        let failing = ChatSource()
+        let seed = TaskStore(source: failing)
+        defer { seed.shutdown() }
+        try #require(seed.send("Hello"))
+        try #require(failing.callbacks.count == 1)
+        failing.callbacks[0](.failed("before first text"))
+        let archiveSource = seed.snapshot
         let decoder = JSONDecoder()
         let legacy = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000001","role":"assistant","text":"old","isComplete":false}"#.utf8))
         #expect(legacy.content == "old" && legacy.status == .interrupted && legacy.timestamp == Date(timeIntervalSince1970: 0))
@@ -81,25 +95,28 @@ import Testing
         #expect(acceptedSteering.steering == nil, "An archived accepted-steering caption is not shown again")
         let queuedSteering = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000005","role":"user","content":"follow up","steering":"待处理"}"#.utf8))
         #expect(queuedSteering.steering == "待处理", "A queued follow-up keeps its caption")
-        var queuedArchive = chat.snapshot
+        var queuedArchive = archiveSource
         queuedArchive.messages = [queuedSteering]
         let reopened = TaskStore(snapshot: queuedArchive, source: nil)
         #expect(reopened.messages.first?.steering == "已中断", "A follow-up left queued at quit reopens as interrupted")
         reopened.shutdown()
         let canned = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000002","role":"assistant","text":"已检查现有素材，保留赤焰的动画帧"}"#.utf8))
-        var archive = chat.snapshot
+        var archive = archiveSource
         archive.messages = [canned]
         let cleaned = TaskStore(snapshot: archive, source: nil)
+        defer { cleaned.shutdown() }
         #expect(cleaned.messages.isEmpty && cleaned.task == nil, "Old canned demo output is removed")
         let unknownCompletion = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000003","role":"assistant","text":"legacy partial"}"#.utf8))
-        archive.messages = [chat.messages[0], unknownCompletion]
+        archive.messages = [seed.messages[0], unknownCompletion]
         let legacyFailure = TaskStore(snapshot: archive, source: nil)
+        defer { legacyFailure.shutdown() }
         #expect(legacyFailure.messages.last?.status == .failed && legacyFailure.requestMessages.count == 1,
             "Latest legacy reply without completion metadata inherits the terminal task status")
         archive.messages = [ConversationMessage(role: .user, content: canned.content)]
         let real = TaskStore(snapshot: archive, source: nil)
+        defer { real.shutdown() }
         #expect(real.messages.first?.content == canned.content, "New real messages matching demo text are retained")
-        archive.messages = [chat.messages[0]]
+        archive.messages = [seed.messages[0]]
         let oldFailure = TaskStore(snapshot: archive, source: source)
         #expect(oldFailure.messages.last?.status == .failed, "Legacy failures before first text must show their error and Retry in the conversation")
         oldFailure.retry()
@@ -108,13 +125,12 @@ import Testing
         let stoppedAtShutdown = oldFailure.messages
         source.callbacks.last?(.progress("after shutdown"))
         #expect(oldFailure.messages == stoppedAtShutdown && oldFailure.messages.last?.status == .interrupted)
-        let before = chat.messages
-        chat.shutdown(); source.callbacks[4](.completed("retired"))
-        #expect(chat.messages == before && !chat.send("after shutdown"))
-        restored.shutdown(); interrupted.shutdown()
-        #expect(store.send("missing configuration"))
+    }
+    @Test @MainActor static func missingConfigurationProducesFailure() throws {
+        let store = TaskStore()
+        defer { store.shutdown() }
+        try #require(store.send("missing configuration"))
         #expect(store.messages.last?.status == .failed)
-        print("PASS: chat states, Stop, Retry, context and archive compatibility")
     }
     @Test @MainActor static func stoppedPartialContext() throws {
         let source = ChatSource(), store = TaskStore(source: ChatSource())
