@@ -127,8 +127,7 @@ extension VoiceEndReason {
         timelineStart.map { "+" + Self.milliseconds($0.duration(to: instant)) }
     }
     private static func milliseconds(_ duration: Duration) -> String {
-        let parts = duration.components
-        return String(format: "%.1fms", Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15)
+        String(format: "%.1fms", duration / .milliseconds(1))
     }
 
     // `nonisolated` so a URLSession delegate callback, which never runs on the main actor,

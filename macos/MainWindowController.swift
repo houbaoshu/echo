@@ -57,11 +57,10 @@ struct MainWindowLayout {
     /// Rebuilding it here instead of at each state change is one place rather than a list
     /// of triggers to keep in sync, and it costs a recalculation only when someone
     /// actually presses Tab. AppKit enters through both pairs, so all four are covered.
-    private func refreshKeyViewLoop() { recalculateKeyViewLoop() }
-    override func selectNextKeyView(_ sender: Any?) { refreshKeyViewLoop(); super.selectNextKeyView(sender) }
-    override func selectPreviousKeyView(_ sender: Any?) { refreshKeyViewLoop(); super.selectPreviousKeyView(sender) }
-    override func selectKeyView(following view: NSView) { refreshKeyViewLoop(); super.selectKeyView(following: view) }
-    override func selectKeyView(preceding view: NSView) { refreshKeyViewLoop(); super.selectKeyView(preceding: view) }
+    override func selectNextKeyView(_ sender: Any?) { recalculateKeyViewLoop(); super.selectNextKeyView(sender) }
+    override func selectPreviousKeyView(_ sender: Any?) { recalculateKeyViewLoop(); super.selectPreviousKeyView(sender) }
+    override func selectKeyView(following view: NSView) { recalculateKeyViewLoop(); super.selectKeyView(following: view) }
+    override func selectKeyView(preceding view: NSView) { recalculateKeyViewLoop(); super.selectKeyView(preceding: view) }
 }
 
 @MainActor final class MainSplitController: NSSplitViewController {
@@ -248,14 +247,12 @@ struct MainWindowLayout {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    @discardableResult private func pin(_ view: NSView, to parent: NSView) -> [NSLayoutConstraint] {
+    private func pin(_ view: NSView, to parent: NSView) {
         view.translatesAutoresizingMaskIntoConstraints = false
-        let constraints = [view.leadingAnchor.constraint(equalTo: parent.leadingAnchor),
+        NSLayoutConstraint.activate([view.leadingAnchor.constraint(equalTo: parent.leadingAnchor),
                                      view.trailingAnchor.constraint(equalTo: parent.trailingAnchor),
                                      view.topAnchor.constraint(equalTo: parent.topAnchor),
-                                     view.bottomAnchor.constraint(equalTo: parent.bottomAnchor)]
-        NSLayoutConstraint.activate(constraints)
-        return constraints
+                                     view.bottomAnchor.constraint(equalTo: parent.bottomAnchor)])
     }
     func showSettings() {
         searchPalette.isOpen = false
@@ -336,7 +333,6 @@ struct MainWindowLayout {
     /// will see the next time they launch Echo.
     func focusSearch() {
         showWorkspace()
-        present()
         searchPalette.isOpen = true
     }
     private func setVisibility(sidebar: Bool, inspector: Bool) {
@@ -416,11 +412,6 @@ struct MainWindowLayout {
     }
     private func refreshTitle() {
         window?.title = workspace.selected?.title ?? "新会话"
-        // One line, the chat's own. The project used to ride here as a subtitle, which
-        // gave every chat in a project a permanently two-line titlebar for something the
-        // column and the search results already say. An empty subtitle is what removes
-        // the second line.
-        window?.subtitle = ""
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { hideMainWindow(); return false }
     func windowDidMiniaturize(_ notification: Notification) { workspace.isMainWindowVisible = false; workspace.flush() }

@@ -26,18 +26,15 @@
 		E11000000000000000000B01 /* AgentBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F01 /* AgentBridge.swift */; };
 		E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F02 /* AgentConnectionTester.swift */; };
 		E11000000000000000000B03 /* TaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F03 /* TaskStore.swift */; };
-		E11000000000000000000B04 /* ModelTaskSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F04 /* ModelTaskSource.swift */; };
 		E11000000000000000000B05 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F05 /* SettingsStore.swift */; };
 		E11000000000000000000B06 /* VoiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F06 /* VoiceProtocol.swift */; };
 		E11000000000000000000B07 /* VoiceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F07 /* VoiceDiagnostics.swift */; };
 		E11000000000000000000B08 /* ChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F08 /* ChatTests.swift */; };
-		E11000000000000000000B09 /* ModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F09 /* ModelTests.swift */; };
 		E11000000000000000000B0A /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F0A /* SettingsTests.swift */; };
 		E11100000000000000000B00 /* AgentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F00 /* AgentWire.swift */; };
 		E11100000000000000000B01 /* AgentTaskSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11100000000000000000F01 /* AgentTaskSource.swift */; };
 		E11100000000000000000B02 /* AgentConnectionTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F02 /* AgentConnectionTester.swift */; };
 		E11100000000000000000B03 /* TaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F03 /* TaskStore.swift */; };
-		E11100000000000000000B04 /* ModelTaskSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F04 /* ModelTaskSource.swift */; };
 		E11100000000000000000B05 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F05 /* SettingsStore.swift */; };
 		E11100000000000000000B06 /* VoiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F06 /* VoiceProtocol.swift */; };
 		E11100000000000000000B07 /* VoiceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F07 /* VoiceDiagnostics.swift */; };
@@ -460,12 +457,10 @@
 		E11000000000000000000F01 /* AgentBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentBridge.swift; path = macos/AgentBridge.swift; sourceTree = "<group>"; };
 		E11000000000000000000F02 /* AgentConnectionTester.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentConnectionTester.swift; path = macos/AgentConnectionTester.swift; sourceTree = "<group>"; };
 		E11000000000000000000F03 /* TaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TaskStore.swift; path = macos/TaskStore.swift; sourceTree = "<group>"; };
-		E11000000000000000000F04 /* ModelTaskSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTaskSource.swift; path = macos/ModelTaskSource.swift; sourceTree = "<group>"; };
 		E11000000000000000000F05 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsStore.swift; path = macos/SettingsStore.swift; sourceTree = "<group>"; };
 		E11000000000000000000F06 /* VoiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceProtocol.swift; path = macos/VoiceProtocol.swift; sourceTree = "<group>"; };
 		E11000000000000000000F07 /* VoiceDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceDiagnostics.swift; path = macos/VoiceDiagnostics.swift; sourceTree = "<group>"; };
 		E11000000000000000000F08 /* ChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatTests.swift; path = tests/ChatTests.swift; sourceTree = "<group>"; };
-		E11000000000000000000F09 /* ModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelTests.swift; path = tests/ModelTests.swift; sourceTree = "<group>"; };
 		E11000000000000000000F0A /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsTests.swift; path = tests/SettingsTests.swift; sourceTree = "<group>"; };
 		E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoAgentTaskSourceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E11100000000000000000F01 /* AgentTaskSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentTaskSource.swift; path = macos/AgentTaskSource.swift; sourceTree = "<group>"; };
@@ -1054,13 +1049,11 @@
 				E11100000000000000000F01,
 				E11000000000000000000F02,
 				E11000000000000000000F03,
-				E11000000000000000000F04,
 				E11000000000000000000F05,
 				E11000000000000000000F06,
 				E11000000000000000000F07,
 				E11100000000000000000F08,
 				E11000000000000000000F08,
-				E11000000000000000000F09,
 				E11000000000000000000F0A,
 			);
 			sourceTree = "<group>";
@@ -1796,12 +1789,10 @@
 				E11000000000000000000B01,
 				E11000000000000000000B02,
 				E11000000000000000000B03,
-				E11000000000000000000B04,
 				E11000000000000000000B05,
 				E11000000000000000000B06,
 				E11000000000000000000B07,
 				E11000000000000000000B08,
-				E11000000000000000000B09,
 				E11000000000000000000B0A,
 				75548D3C52D3DD19C3BD3ECB,
 			);
@@ -1813,7 +1804,6 @@
 				E11100000000000000000B01,
 				E11100000000000000000B02,
 				E11100000000000000000B03,
-				E11100000000000000000B04,
 				E11100000000000000000B05,
 				E11100000000000000000B06,
 				E11100000000000000000B07,

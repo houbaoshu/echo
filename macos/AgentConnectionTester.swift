@@ -9,12 +9,10 @@ struct ModelConnectionTester: ConnectionTesting {
         let configuration = try configuration.validated()
         guard !key.contains("\r"), !key.contains("\n") else { throw SettingsError("API Key 不能包含换行。") }
         try Task.checkCancellation()
-        let bridge = try AgentBridge(sessionID: UUID().uuidString, model: AgentModel(
-            base_url: configuration.baseURL, model: configuration.model, api_key: key,
-            protocol: configuration.apiProtocol == .responses ? .responses : .chat_completions), resources: resources)
+        let bridge = try AgentBridge(sessionID: UUID().uuidString, model: AgentModel(configuration, key: key),
+                                     resources: resources)
         defer { bridge.cancel(); bridge.close() }
         var result: Result<Void, Error>?
-        var retainedCheckpoint: AgentCheckpoint?
         bridge.onFailure = { _ in result = .failure(SettingsError("Agent 连接测试失败，请检查应用资源与模型配置。")) }
         bridge.onClosed = {
             if result == nil { result = .failure(SettingsError("Agent 连接测试意外结束。")) }
@@ -22,10 +20,7 @@ struct ModelConnectionTester: ConnectionTesting {
         bridge.onBatch = { [weak bridge] batch in
             guard let bridge, result == nil else { return }
             do {
-                if let cp = batch.checkpoint {
-                    retainedCheckpoint = cp
-                    try bridge.send(.acknowledgeCheckpoint(cp.id))
-                }
+                if let cp = batch.checkpoint { try bridge.send(.acknowledgeCheckpoint(cp.id)) }
                 if batch.kind.type == .ready {
                     try bridge.send(.sendMessage(AgentInput(client_message_id: UUID().uuidString, text:
                         "This is a tool capability test. Return exactly one bash tool call with command: printf 'ECHO_TOOL_PROBE'. Do not answer with text. The host will inspect the call without executing it.")))
@@ -54,7 +49,6 @@ struct ModelConnectionTester: ConnectionTesting {
             try await Task.sleep(for: .milliseconds(25))
         }
         try Task.checkCancellation()
-        withExtendedLifetime(retainedCheckpoint) {}
         try result!.get()
     }
 }

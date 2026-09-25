@@ -82,13 +82,10 @@ struct VoiceSettingsView: View {
                 if voice.testing {
                     SettingsTestProgress(identifier: "voiceSettings.cancelTest") { voice.cancelTest() }
                 }
-                // Same place, same mark and same colours as the model page's connection
-                // test, so a result reads the same on both. Only the wording differs,
-                // because only voice can report what it did without recording.
+                // Only the wording differs from the model page's result, because only voice
+                // can report what it did without recording.
                 if let result = voice.testResult {
-                    Label(result, systemImage: voice.testSucceeded ? "checkmark.circle" : "info.circle")
-                        .font(WorkspaceStyle.caption).foregroundStyle(voice.testSucceeded ? WorkspaceStyle.success : WorkspaceStyle.secondary)
-                        .textSelection(.enabled).accessibilityIdentifier("voiceSettings.testResult")
+                    SettingsTestResult(text: result, succeeded: voice.testSucceeded, identifier: "voiceSettings.testResult")
                 }
             }
             Section {

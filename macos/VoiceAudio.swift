@@ -744,8 +744,7 @@ extension AVAudioNode {
         }
     }
     private static func seconds(_ duration: Duration) -> String {
-        let parts = duration.components
-        return (Double(parts.seconds) + Double(parts.attoseconds) / 1e18).formatted(.number.precision(.fractionLength(0...1)))
+        (duration / .seconds(1)).formatted(.number.precision(.fractionLength(0...1)))
     }
     /// Stopped by Core Audio and not yet lent for a restart: a switch flushes the player about
     /// 100 ms before its configuration change arrives.
@@ -785,8 +784,10 @@ extension AVAudioNode {
         let entry = ScheduledBuffer(id: nextBufferID, frames: count, buffer: buffer)
         nextBufferID += 1
         scheduledBuffers.append(entry)
-        if wasEmpty { headStartSample = playerSample }
-        if wasEmpty { VoiceDiagnostics.shared.record("6 播放器", "START", "scheduleBuffer frames=\(count) running=\(engine.isRunning) playing=\(player.isPlaying)") }
+        if wasEmpty {
+            headStartSample = playerSample
+            VoiceDiagnostics.shared.record("6 播放器", "START", "scheduleBuffer frames=\(count) running=\(engine.isRunning) playing=\(player.isPlaying)")
+        }
         schedule(entry, on: player)
     }
     /// New and re-queued buffers alike; the callback names the playback generation and the

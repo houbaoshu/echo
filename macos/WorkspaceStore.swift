@@ -318,9 +318,7 @@ struct WorkspaceSnapshot: Codable {
     /// main window's draft or changes the selection; the first send makes it the activity.
     @discardableResult func sendQuickMessage(_ text: String, projectID: UUID? = nil) -> Bool {
         guard !shuttingDown, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        let validProject = projects.contains { $0.id == projectID } ? projectID : nil
-        let conversation = WorkspaceConversation(projectID: validProject, title: "新对话", store: TaskStore(source: sourceFactory()))
-        drafts.append(conversation); bind(conversation)
+        let conversation = makeDraft(projectID: validProjectID(projectID))
         if send(text, conversationID: conversation.id) { return true }
         if conversation.store.messages.isEmpty {
             conversation.store.shutdown(); observations[conversation.id] = nil; lifecycleObservations[conversation.id] = nil
@@ -334,17 +332,9 @@ struct WorkspaceSnapshot: Codable {
     /// is reused rather than adding another one, the way `newConversation` reuses one.
     @discardableResult func startVoiceInNewConversation(projectID: UUID? = nil) -> Bool {
         guard !shuttingDown, voice.snapshot.session.owner == nil else { return false }
-        let validProject = projects.contains { $0.id == projectID } ? projectID : nil
-        let target: WorkspaceConversation
+        let validProject = validProjectID(projectID)
         // Never the selected one: reusing what the main window shows is the takeover this avoids.
-        if let spare = drafts.filter({ $0.id != selectedID && $0.projectID == validProject
-                                       && canAssociateProject(conversationID: $0.id) })
-            .sorted(by: { $0.lastUsed == $1.lastUsed ? $0.id.uuidString < $1.id.uuidString : $0.lastUsed > $1.lastUsed }).first {
-            target = spare
-        } else {
-            target = WorkspaceConversation(projectID: validProject, title: "新对话", store: TaskStore(source: sourceFactory()))
-            drafts.append(target); bind(target)
-        }
+        let target = reusableDraft(projectID: validProject, excluding: selectedID) ?? makeDraft(projectID: validProject)
         target.lastUsed = Date()
         // A failed start reports against this conversation, so the draft stays for the error to
         // hang on — and, being empty, it is what the next attempt reuses.
@@ -498,15 +488,8 @@ struct WorkspaceSnapshot: Codable {
         scheduleSave()
     }
     @discardableResult func newConversation(projectID: UUID? = nil) -> WorkspaceConversation {
-        let validProject = projects.contains { $0.id == projectID } ? projectID : nil
-        let conversation: WorkspaceConversation
-        if let existing = drafts.filter({ $0.projectID == validProject && canAssociateProject(conversationID: $0.id) })
-            .sorted(by: { $0.lastUsed == $1.lastUsed ? $0.id.uuidString < $1.id.uuidString : $0.lastUsed > $1.lastUsed }).first {
-            conversation = existing
-        } else {
-            conversation = WorkspaceConversation(projectID: validProject, title: "新对话", store: TaskStore(source: sourceFactory()))
-            drafts.append(conversation); bind(conversation)
-        }
+        let validProject = validProjectID(projectID)
+        let conversation = reusableDraft(projectID: validProject) ?? makeDraft(projectID: validProject)
         if selectedID != conversation.id { dictation.cancel(); flush() }
         selectedID = conversation.id
         conversation.lastUsed = Date()
@@ -567,6 +550,16 @@ struct WorkspaceSnapshot: Codable {
             $0.title.localizedStandardContains(query)
                 || $0.store.messages.contains { $0.content.localizedStandardContains(query) }
         })
+    }
+    private func validProjectID(_ id: UUID?) -> UUID? { projects.contains { $0.id == id } ? id : nil }
+    /// The most recent empty draft in `projectID` that can still take a project.
+    private func reusableDraft(projectID: UUID?, excluding: UUID? = nil) -> WorkspaceConversation? {
+        byRecency(drafts.filter { $0.id != excluding && $0.projectID == projectID && canAssociateProject(conversationID: $0.id) }).first
+    }
+    private func makeDraft(projectID: UUID?) -> WorkspaceConversation {
+        let conversation = WorkspaceConversation(projectID: projectID, title: "新对话", store: TaskStore(source: sourceFactory()))
+        drafts.append(conversation); bind(conversation)
+        return conversation
     }
     private func byRecency(_ conversations: [WorkspaceConversation]) -> [WorkspaceConversation] {
         conversations.sorted {

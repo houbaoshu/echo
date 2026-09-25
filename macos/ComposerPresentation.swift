@@ -32,8 +32,6 @@ struct ComposerPresentation {
     /// The model output control beside a non-empty draft: stop while generating, resume once stopped.
     let output: Action?
     let canStop: Bool
-    /// The last reply was stopped by the user and can be continued.
-    let canResume: Bool
     let stopEnabled: Bool
     let microphoneEnabled: Bool
     let muteEnabled: Bool
@@ -46,7 +44,6 @@ struct ComposerPresentation {
         let empty = store.mainDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         canStop = store.isGenerating || (ownsVoice && voice.presentation.isReplyAudioActive)
         stopEnabled = store.task?.status != .stopping
-        canResume = store.task?.status == .stopped && store.canRetry
         microphoneEnabled = !voice.isActive && !voice.testing && !dictation.isActive
         if case .active = voice.snapshot.session { muteEnabled = ownsVoice } else { muteEnabled = false }
         canSend = !recording && !empty && store.canSubmit && (store.usesAgent || !store.isGenerating)
@@ -63,6 +60,8 @@ struct ComposerPresentation {
             output = nil
         } else {
             mode = .normal
+            // The last reply was stopped by the user and can be continued.
+            let canResume = store.task?.status == .stopped && store.canRetry
             let outputAction: Action? = canStop ? .stop : canResume ? .resume : nil
             primary = !empty ? .send : outputAction ?? .startVoice
             switch primary {

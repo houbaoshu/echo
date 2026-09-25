@@ -100,6 +100,19 @@ struct SettingsTestProgress: View {
     }
 }
 
+/// A finished connection test, shown in the same place with the same mark and colours on both
+/// sections, so a result reads the same wherever it came from.
+struct SettingsTestResult: View {
+    let text: String
+    let succeeded: Bool
+    let identifier: String
+    var body: some View {
+        Label(text, systemImage: succeeded ? "checkmark.circle" : "info.circle")
+            .font(WorkspaceStyle.caption).foregroundStyle(succeeded ? WorkspaceStyle.success : WorkspaceStyle.secondary)
+            .textSelection(.enabled).accessibilityIdentifier(identifier)
+    }
+}
+
 struct ModelSettingsView: View {
     @ObservedObject var settings: SettingsStore
     @State private var revealsKey = false
@@ -160,9 +173,7 @@ struct ModelSettingsView: View {
                     SettingsTestProgress(identifier: "settings.cancelTest") { settings.cancelTest() }
                 }
                 if let result = settings.testResult {
-                    Label(result, systemImage: settings.testSucceeded ? "checkmark.circle" : "info.circle")
-                        .font(WorkspaceStyle.caption).foregroundStyle(settings.testSucceeded ? WorkspaceStyle.success : WorkspaceStyle.secondary)
-                        .textSelection(.enabled).accessibilityIdentifier("settings.testResult")
+                    SettingsTestResult(text: result, succeeded: settings.testSucceeded, identifier: "settings.testResult")
                 }
                 if let notice = settings.notice {
                     Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
@@ -215,25 +226,11 @@ struct PetSettingsView: View {
             Section {
                 if let notice = pets.notice { Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled) }
                 ScrollViewReader { proxy in
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 16) {
+                    LazyVGrid(columns: SpriteCard.columns, spacing: 16) {
                         ForEach(pets.entries) { pet in
-                            let selected = pets.selectedID == pet.id
-                            Button { pets.activate(pet.id) } label: {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    Image(decorative: pet.preview, scale: 1).resizable().interpolation(.high).scaledToFit()
-                                        .frame(height: 130).frame(maxWidth: .infinity).padding(.top, 8)
-                                    HStack {
-                                        Text(pet.name).font(WorkspaceStyle.medium).lineLimit(1)
-                                        Spacer()
-                                        if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
-                                    }
-                                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                            }.buttonStyle(PetCardButtonStyle(selected: selected)).id(pet.id)
-                                // Keep the system focus ring on the card's own shape.
-                                .contentShape(.focusEffect, RoundedRectangle(cornerRadius: 16))
-                                .accessibilityAddTraits(selected ? [.isSelected] : [])
-                                .accessibilityLabel("\(pet.name)，\(selected ? "当前精灵" : "点击切换")")
-                                .accessibilityIdentifier("settings.pet.\(pet.id)")
+                            SpriteCard(name: pet.name, preview: pet.preview, selected: pets.selectedID == pet.id,
+                                       currentLabel: "当前精灵", identifier: "settings.pet.\(pet.id)") { pets.activate(pet.id) }
+                                .id(pet.id)
                         }
                     }.onChange(of: pets.highlightedID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
                 }
@@ -261,25 +258,11 @@ struct PlanetSettingsView: View {
                     Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
                         .textSelection(.enabled).accessibilityIdentifier("settings.planet.notice")
                 }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 16)], spacing: 16) {
+                LazyVGrid(columns: SpriteCard.columns, spacing: 16) {
                     ForEach(planets.entries) { planet in
-                        let selected = planets.selectedID == planet.id
-                        Button { planets.select(planet.id) } label: {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Image(decorative: planet.preview, scale: 1).resizable().interpolation(.high).scaledToFit()
-                                    .frame(height: 130).frame(maxWidth: .infinity).padding(.top, 8)
-                                HStack {
-                                    Text(planet.name).font(WorkspaceStyle.medium).lineLimit(1)
-                                    Spacer()
-                                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
-                                }
-                            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(PetCardButtonStyle(selected: selected)).id(planet.id)
-                            // Keep the system focus ring on the card's own shape.
-                            .contentShape(.focusEffect, RoundedRectangle(cornerRadius: 16))
-                            .accessibilityAddTraits(selected ? [.isSelected] : [])
-                            .accessibilityLabel("\(planet.name)，\(selected ? "当前星球" : "点击切换")")
-                            .accessibilityIdentifier("settings.planet.\(planet.id)")
+                        SpriteCard(name: planet.name, preview: planet.preview, selected: planets.selectedID == planet.id,
+                                   currentLabel: "当前星球", identifier: "settings.planet.\(planet.id)") { planets.select(planet.id) }
+                            .id(planet.id)
                     }
                 }
             } header: {
@@ -292,8 +275,38 @@ struct PlanetSettingsView: View {
     }
 }
 
+/// One pet or planet in its settings grid. Both grids draw this one card, so they cannot drift.
+struct SpriteCard: View {
+    static let columns = [GridItem(.adaptive(minimum: 170), spacing: 16)]
+    let name: String
+    let preview: CGImage
+    let selected: Bool
+    /// How VoiceOver names the selected card: 当前精灵 or 当前星球.
+    let currentLabel: String
+    let identifier: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 12) {
+                Image(decorative: preview, scale: 1).resizable().interpolation(.high).scaledToFit()
+                    .frame(height: 130).frame(maxWidth: .infinity).padding(.top, 8)
+                HStack {
+                    Text(name).font(WorkspaceStyle.medium).lineLimit(1)
+                    Spacer()
+                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
+                }
+            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        }.buttonStyle(PetCardButtonStyle(selected: selected))
+            // Keep the system focus ring on the card's own shape.
+            .contentShape(.focusEffect, RoundedRectangle(cornerRadius: 16))
+            .accessibilityAddTraits(selected ? [.isSelected] : [])
+            .accessibilityLabel("\(name)，\(selected ? currentLabel : "点击切换")")
+            .accessibilityIdentifier(identifier)
+    }
+}
+
 /// The pet card is a selectable tile, so it carries the states a system row does:
-/// hover, pressed, selected and disabled. Shared with the planet grid above.
+/// hover, pressed, selected and disabled.
 struct PetCardButtonStyle: ButtonStyle {
     let selected: Bool
     func makeBody(configuration: Configuration) -> some View {

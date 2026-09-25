@@ -11,21 +11,12 @@ import Combine
 
 /// The palette's search field, addressed by identity.
 ///
-/// Opening the palette has to hand the insertion point to the real field, and Escape has
-/// to know whether the person is still typing a query. Walking the view tree for an
-/// accessibility identifier answered neither reliably: it reads SwiftUI's private
-/// hierarchy and only reports anything once accessibility is switched on. AppKit already
-/// answers both — an NSControl being edited stays its field editor's delegate — so the
-/// question becomes an identity check against the field the palette built.
+/// Opening the palette has to hand the insertion point to the real field. Walking the
+/// view tree for an accessibility identifier did not do that reliably: it reads SwiftUI's
+/// private hierarchy and only reports anything once accessibility is switched on, so the
+/// palette keeps the field it built instead.
 @MainActor final class WorkspaceSearchFocus {
     fileprivate weak var field: NSSearchField?
-    /// True while the insertion point is in the sidebar's search field.
-    var isFocused: Bool {
-        guard let field, let window = field.window else { return false }
-        if window.firstResponder === field { return true }
-        guard let editor = window.firstResponder as? NSTextView, editor.isFieldEditor else { return false }
-        return editor.delegate as AnyObject? === field
-    }
     /// The palette's window may still be coming up when this runs, and a hidden view
     /// refuses first responder, so retry briefly before giving up.
     func focus(attempt: Int = 0) {
@@ -130,7 +121,9 @@ struct ChatSearchPalette: View {
     @State private var focus = WorkspaceSearchFocus()
     private var results: [WorkspaceConversation] { workspace.conversations(matching: query) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // One full-text search per render; `results` scans every message of every chat.
+        let results = results
+        return VStack(alignment: .leading, spacing: 8) {
             WorkspaceSearchField(text: $query, focus: focus,
                                  onMove: { move($0) }, onSubmit: { open(highlighted) }, onCancel: close)
                 .padding(.horizontal, 12).padding(.top, 12)
@@ -175,8 +168,8 @@ struct ChatSearchPalette: View {
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.1), lineWidth: 1))
         .font(WorkspaceStyle.body)
         .accessibilityIdentifier("palette")
-        .onAppear { highlighted = results.first?.id; focus.focus() }
-        .onChange(of: query) { _, _ in highlighted = results.first?.id }
+        .onAppear { highlighted = self.results.first?.id; focus.focus() }
+        .onChange(of: query) { _, _ in highlighted = self.results.first?.id }
     }
     private func move(_ delta: Int) {
         let ids = results.map(\.id)

@@ -1,26 +1,16 @@
+mod common;
+
 use axum::{Json, Router, routing::post};
+use common::{Handle, owned, wait_for_shutdown as shutdown};
 use echo_agent::*;
 use serde_json::{Value, json};
 use std::{
-    ffi::{CStr, CString, c_char},
+    ffi::CString,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::sync::Notify;
 
-struct Handle(*mut EchoAgent);
-impl Drop for Handle {
-    fn drop(&mut self) {
-        unsafe { echo_agent_destroy(self.0) }
-    }
-}
-fn owned(pointer: *mut c_char) -> Value {
-    assert!(!pointer.is_null());
-    let result =
-        unsafe { serde_json::from_str(CStr::from_ptr(pointer).to_str().unwrap()).unwrap() };
-    unsafe { echo_agent_string_free(pointer) };
-    result
-}
 fn create(base: &str, prompt: &std::path::Path, protocol: &str, history: Option<Value>) -> Handle {
     let request = CString::new(
         json!({"version":2,"session_id":"session-一","generation":format!("generation-{}", next_id()),"prompt_path":prompt,
@@ -132,13 +122,6 @@ fn event(frame: &Value, kind: &str) -> bool {
     frame["events"]
         .as_array()
         .is_some_and(|events| events.iter().any(|event| event["kind"]["type"] == kind))
-}
-async fn shutdown() {
-    let start = Instant::now();
-    while echo_agent_active_sessions() != 0 {
-        assert!(start.elapsed() < Duration::from_secs(5));
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
 }
 
 #[derive(Clone)]

@@ -155,15 +155,9 @@ import Combine
                 }
                 // Like the call's, the first-packet timeout pauses while VoiceAudio restarts the
                 // engine and gives the recovered microphone a full timeout of its own.
-                let armedAt = ContinuousClock.now
-                self.watchdog = Task { [weak self, captureTimeout] in
-                    while let decision = self?.captureWatchdogDecision(recording: current, armedAt: armedAt, timeout: captureTimeout) {
-                        guard case .wait(let deadline) = decision else {
-                            self?.complete(error: "麦克风没有返回音频，请检查输入设备。"); return
-                        }
-                        do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
-                    }
-                }
+                self.watchdog = VoiceCaptureWatchdog.watch(self.audio, timeout: self.captureTimeout,
+                    isCurrent: { [weak self] in self?.generation == current && self?.state == .recording },
+                    onTimeout: { [weak self] in self?.complete(error: "麦克风没有返回音频，请检查输入设备。") })
                 self.captureTask = Task { [weak self] in
                     do {
                         for try await packet in captured {
@@ -184,13 +178,6 @@ import Combine
                 }
             } catch { self.complete(error: "无法启动麦克风，请检查输入设备。") }
         }
-    }
-    /// nil once the watchdog no longer belongs to the current recording.
-    private func captureWatchdogDecision(recording: UUID, armedAt: ContinuousClock.Instant,
-                                         timeout: Duration) -> VoiceCaptureWatchdog.Decision? {
-        guard generation == recording, state == .recording, !Task.isCancelled else { return nil }
-        return VoiceCaptureWatchdog.decide(now: .now, armedAt: armedAt, restartedAt: audio.captureRestartedAt,
-                                           restarting: audio.isRestartingCapture, timeout: timeout)
     }
     /// Ends this recording. With `send`, the final transcript is sent once recognized instead of left for editing.
     func finishRecording(thenSend send: (() -> Void)? = nil) {

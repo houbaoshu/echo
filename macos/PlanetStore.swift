@@ -26,14 +26,12 @@ struct PlanetEntry: Identifiable {
     @Published var notice: String?
     /// The clip the planet is playing, so a test can assert a swap kept the current state.
     private(set) var playing: String?
-
-    nonisolated static let defaultID = SettingsSnapshot.defaultPlanetID
+    /// How long the runtime's `review` clip plays once: five 150 ms frames and a 280 ms hold.
+    private static let endingDuration: Duration = .milliseconds(1030)
 
     private let settings: SettingsStore?
     private let root: URL?
     private var current: PetSurfacePresentation.VoiceIndicator = .inactive
-    /// Standard clips come from the Rust runtime; manifest clips can override or extend them.
-    private var available: Set<String> = []
     private weak var voice: VoiceSessionController?
     private var voiceObservation: AnyCancellable?
     private var reduceMotionObservation: AnyCancellable?
@@ -42,7 +40,7 @@ struct PlanetEntry: Identifiable {
         self.settings = settings
         self.root = root
         self.voice = voice
-        selectedID = settings?.snapshot.selectedPlanetID ?? Self.defaultID
+        selectedID = settings?.snapshot.selectedPlanetID ?? SettingsSnapshot.defaultPlanetID
         voiceObservation = voice?.$snapshot
             .map { PetSurfacePresentation.indicator(for: $0) }
             .removeDuplicates()
@@ -58,38 +56,38 @@ struct PlanetEntry: Identifiable {
 
     // MARK: - State
 
-    /// Standard animation names are supplied by the Rust runtime even when absent from pet.json.
-    static func animationName(for indicator: PetSurfacePresentation.VoiceIndicator,
-                              available: Set<String>) -> String {
-        let preferred: String
+    /// The clip each state asks for. The runtime decides whether a sprite has it; `idle` is the
+    /// one clip it guarantees, so that is what plays in its place.
+    static func animationName(for indicator: PetSurfacePresentation.VoiceIndicator) -> String {
         switch indicator {
-        case .inactive: preferred = "idle"
-        case .connecting: preferred = "waiting"
-        case .listening: preferred = "idle"
-        case .thinking: preferred = "running"
-        case .speaking: preferred = "spinning"
-        case .ending: preferred = "review"
+        case .inactive: "idle"
+        case .connecting: "waiting"
+        case .listening: "idle"
+        case .thinking: "running"
+        case .speaking: "spinning"
+        case .ending: "review"
         }
-        // `idle` is the one clip the runtime guarantees, so it is always a safe fallback.
-        return available.contains(preferred) ? preferred : "idle"
     }
 
     private func apply(_ indicator: PetSurfacePresentation.VoiceIndicator, force: Bool = false) {
         current = indicator
         guard indicator != .inactive else { release(); return }
         guard let store = load() else { return }
-        let name = Self.animationName(for: indicator, available: available)
+        let name = Self.animationName(for: indicator)
         guard force || name != playing else { return }
-        playing = name
-        store.play(name)
+        playing = store.play(name, fallback: "idle")
     }
 
     private func release() {
-        guard active != nil else { return }
-        active?.stop()
+        guard let active else { return }
+        active.stop()
+        unload()
+    }
+
+    /// Forgets the sprite and everything derived from it.
+    private func unload() {
         active = nil
         playing = nil
-        available = []
         voice?.endingAnimationDuration = .zero
     }
 
@@ -114,8 +112,7 @@ struct PlanetEntry: Identifiable {
             let previous = active
             active = next
             previous?.stop()
-            available = animationNames(at: directory)
-            voice?.endingAnimationDuration = .milliseconds(1030)
+            voice?.endingAnimationDuration = Self.endingDuration
             next.start()
             // The indicator stream is de-duplicated, so a swap has to replay the current state
             // itself. Without this the new planet sits in idle until Live Voice happens to move.
@@ -150,8 +147,7 @@ struct PlanetEntry: Identifiable {
                 try makeStore(at: directory)
             }
             active = store
-            available = animationNames(at: directory)
-            voice?.endingAnimationDuration = .milliseconds(1030)
+            voice?.endingAnimationDuration = Self.endingDuration
             playing = nil
             store.start()
             return store
@@ -168,9 +164,7 @@ struct PlanetEntry: Identifiable {
         store.onFailure = { [weak self] error in
             MainActor.assumeIsolated {
                 self?.notice = "星球动画已停止：\(error.localizedDescription)"
-                self?.active = nil
-                self?.playing = nil
-                self?.voice?.endingAnimationDuration = .zero
+                self?.unload()
             }
         }
         store.isPaused = Self.reduceMotion
@@ -210,7 +204,6 @@ struct PlanetEntry: Identifiable {
     // MARK: - Manifest
 
     private struct Manifest: Decodable {
-        struct Ignored: Decodable {}
         struct Frame: Decodable {
             let width: Int
             let height: Int
@@ -222,8 +215,6 @@ struct PlanetEntry: Identifiable {
         var spritesheetPath: String?
         var spriteVersionNumber: Int?
         var frame: Frame?
-        /// Only the keys matter here: which clips this planet declares.
-        var animations: [String: Ignored]?
     }
 
     private func manifest(at directory: URL) -> Manifest? {
@@ -231,16 +222,6 @@ struct PlanetEntry: Identifiable {
         guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1_048_576,
               let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(Manifest.self, from: data)
-    }
-
-    private func animationNames(at directory: URL) -> Set<String> {
-        let manifest = manifest(at: directory)
-        let grid = manifest?.frame ?? Self.defaultFrame(version: manifest?.spriteVersionNumber ?? 1)
-        var standard: Set<String> = ["idle", "waiting", "running", "review"]
-        if manifest?.spriteVersionNumber == 2 && grid.columns == 8 && grid.rows >= 11 {
-            standard.insert("spinning")
-        }
-        return Set(manifest?.animations?.keys ?? [:].keys).union(standard)
     }
 
     /// Mirrors the runtime's implicit grid, `runtime/src/model.rs:87-97`.

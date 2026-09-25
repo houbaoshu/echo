@@ -30,8 +30,7 @@ final class AgentBridge {
         let json = try Self.encode(config)
         var error: UnsafeMutablePointer<CChar>?
         let pointer = json.withCString { echo_agent_create($0, &error) }
-        let failure = error.flatMap { try? JSONDecoder().decode(AgentWireReply.self, from: Data(String(cString: $0).utf8)) }
-        echo_agent_string_free(error)
+        let failure: AgentWireReply? = try? Self.decode(error)
         guard let pointer else { throw failure?.admission.error ?? AgentBridgeError(message: "无法创建 Agent 会话。") }
         self.sessionID = sessionID
         self.generation = generation
@@ -105,7 +104,6 @@ final class AgentBridge {
     private static func decode<T: Decodable>(_ pointer: UnsafeMutablePointer<CChar>?) throws -> T {
         guard let pointer else { throw AgentBridgeError(message: "Agent 返回空数据。") }
         defer { echo_agent_string_free(pointer) }
-        let data = Data(String(cString: pointer).utf8)
-        return try JSONDecoder().decode(T.self, from: data)
+        return try JSONDecoder().decode(T.self, from: Data(bytes: pointer, count: strlen(pointer)))
     }
 }

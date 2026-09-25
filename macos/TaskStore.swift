@@ -678,15 +678,17 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         if let notification { lifecycle.send(notification) }
         guard task?.status == .running, pendingInputs.isEmpty, batch.kind.type == .tool_pending,
               let operation = batch.kind.operation_id, let path = batch.kind.directory,
-              let cp = batch.checkpoint else { return }
+              let checkpointID = batch.checkpoint?.id else { return }
         pendingOperation = operation; waitingForProject = true; task?.summary = "等待项目空闲…"
         let generation = agentGeneration
+        // Captures only the checkpoint's ID: this waits as long as the project stays busy,
+        // and the checkpoint itself carries the whole history.
         let ready = { [weak self] in
             guard let self, self.agentGeneration == generation, self.pendingOperation == operation,
                   self.task?.status == .running, self.pendingInputs.isEmpty else { return }
             self.waitingForProject = false
-            guard self.saveAgent(checkpointID: cp.id) else { return }
-            do { try self.agent?.control(.authorizeTool(cp.id, operationID: operation, directory: path)) }
+            guard self.saveAgent(checkpointID: checkpointID) else { return }
+            do { try self.agent?.control(.authorizeTool(checkpointID, operationID: operation, directory: path)) }
             catch { self.failAgent(error.localizedDescription) }
         }
         if let acquireDirectory { acquireDirectory(path, ready) } else { ready() }
@@ -728,12 +730,15 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         // Legacy assistant messages have no input receipt. Import preserves their
         // order; transfer their UI identity once, without examining history JSON.
         var legacyAssistants = importingLegacy ? requestMessages.filter { $0.role == .assistant && $0.coreID == nil } : []
+        // Indexed once per checkpoint; every entry looks up its receipt, message and tool here.
+        let receipts = Dictionary(inputReceipts.map { ($0.message_id, $0) }, uniquingKeysWith: { first, _ in first })
+        let byCoreID = Dictionary(messages.compactMap { m in m.coreID.map { ($0, m) } }, uniquingKeysWith: { first, _ in first })
+        let byClientID = Dictionary(messages.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { first, _ in first })
+        let knownTools = Dictionary(tools.map { ("\($0.entryID):\($0.callID)", $0) }, uniquingKeysWith: { first, _ in first })
         for entry in entries {
             let id = entry.message_id
             if entry.type == .message, let role = entry.role, let text = entry.text {
-                let receipt = inputReceipts.first { $0.message_id == id }
-                var visible = messages.first { $0.coreID == id }
-                    ?? messages.first { $0.id.uuidString == receipt?.client_message_id }
+                var visible = byCoreID[id] ?? receipts[id].flatMap { byClientID[$0.client_message_id] }
                 if visible == nil && role == .assistant && !legacyAssistants.isEmpty {
                     visible = legacyAssistants.removeFirst()
                 }
@@ -742,7 +747,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                 if role == .user && message.steering == "待处理" { message.steering = nil }
                 projectedMessages.append(message); anchor = message.id
             } else if entry.type == .tool, let call = entry.call_id, let command = entry.command {
-                var tool = tools.first { $0.entryID == id && $0.callID == call }
+                var tool = knownTools["\(id):\(call)"]
                     ?? AgentToolRecord(callID: call, entryID: id, turnID: entry.turn_id, afterMessageID: anchor, command: command)
                 tool.afterMessageID = anchor; tool.result = entry.result
                 if let result = entry.result {
@@ -756,9 +761,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                 projectedTools.append(tool)
             }
         }
-        let unresolved = messages.filter { message in
-            pendingInputs.contains { $0.client_message_id == message.id.uuidString }
-        }
+        let pending = Set(pendingInputs.map(\.client_message_id))
+        let unresolved = messages.filter { pending.contains($0.id.uuidString) }
         messages = projectedMessages + unresolved
         tools = projectedTools
         importingLegacy = false

@@ -19,6 +19,21 @@ enum VoiceCaptureWatchdog {
         let deadline = max(armedAt, restartedAt ?? armedAt) + timeout
         return now < deadline ? .wait(until: deadline) : .fire
     }
+    /// Arms the timeout now and calls `onTimeout` once it passes. The task ends by itself as soon
+    /// as `isCurrent` says the capture it was armed for is no longer the current one.
+    @MainActor static func watch(_ audio: any VoiceAudioHandling, timeout: Duration,
+                                 isCurrent: @escaping @MainActor () -> Bool,
+                                 onTimeout: @escaping @MainActor () -> Void) -> Task<Void, Never> {
+        let armedAt = ContinuousClock.now
+        return Task { @MainActor [weak audio] in
+            while let audio, isCurrent(), !Task.isCancelled {
+                let decision = decide(now: .now, armedAt: armedAt, restartedAt: audio.captureRestartedAt,
+                                      restarting: audio.isRestartingCapture, timeout: timeout)
+                guard case .wait(let deadline) = decision else { onTimeout(); return }
+                do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+            }
+        }
+    }
 }
 
 @MainActor final class VoiceSessionController: NSObject, ObservableObject {
@@ -86,7 +101,6 @@ enum VoiceCaptureWatchdog {
     private var observation: AnyCancellable?
     private var taskObservation: AnyCancellable?
     private var handledFinalRunID: UUID?
-    private var pendingAgentFinal: (runID: UUID, text: String)?
     private var submissionHadAudio = false
     // The legacy TaskSource adapter has no steering API. Production sessions use AgentSessionSource.
     private var usesAgent: Bool { store?.usesAgent == true }
@@ -139,6 +153,8 @@ enum VoiceCaptureWatchdog {
     func updateSnapshot(_ update: (inout VoiceSessionSnapshot) -> Void) {
         var next = snapshot
         update(&next)
+        // Every task mutation comes through here; an unchanged snapshot must not re-render its observers.
+        guard next != snapshot else { return }
         snapshot = next
     }
     private func reportError(_ message: String, conversationID: UUID?) {
@@ -192,7 +208,6 @@ enum VoiceCaptureWatchdog {
         textOnlyRunID = !usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
         runID = usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
         handledFinalRunID = nil
-        pendingAgentFinal = nil
         delta = VoiceTextDelta()
         playedAudioForCurrentRun = false
         receivedCapturePacket = false
@@ -237,9 +252,9 @@ enum VoiceCaptureWatchdog {
                     self.updateSnapshot { $0.recognition = .off(.stopping) }
                     self.audio.resetCapture(epoch: self.inputEpoch, paused: true)
                 } else { self.beginRecognition() }
-                if let final = self.pendingAgentFinal {
-                    self.pendingAgentFinal = nil
-                    self.handleAgent(.reply(final.runID, .completed(final.text)))
+                // A final that arrived while the call was starting is spoken now that it can be.
+                if let run = self.runID, self.store?.task?.runID == run, self.store?.task?.status == .completed {
+                    self.speakFinal(run)
                 }
                 self.captureTask = Task { [weak self] in
                     // Set only by the audioInput overflow below, which throws the same SettingsError
@@ -320,23 +335,10 @@ enum VoiceCaptureWatchdog {
     private func watchForFirstCapture() {
         captureWatchdog?.cancel(); captureWatchdog = nil
         guard !receivedCapturePacket, !isMuted else { return }
-        let call = sessionID, epoch = inputEpoch, armedAt = ContinuousClock.now
-        captureWatchdog = Task { [weak self, captureTimeout] in
-            while let decision = self?.captureWatchdogDecision(call: call, epoch: epoch, armedAt: armedAt, timeout: captureTimeout) {
-                guard case .wait(let deadline) = decision else {
-                    self?.captureTimedOut()
-                    return
-                }
-                do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
-            }
-        }
-    }
-    /// nil once the watchdog no longer belongs to the current call and capture epoch.
-    private func captureWatchdogDecision(call: UUID, epoch: Int, armedAt: ContinuousClock.Instant,
-                                         timeout: Duration) -> VoiceCaptureWatchdog.Decision? {
-        guard sessionID == call, inputEpoch == epoch, !Task.isCancelled else { return nil }
-        return VoiceCaptureWatchdog.decide(now: .now, armedAt: armedAt, restartedAt: audio.captureRestartedAt,
-                                           restarting: audio.isRestartingCapture, timeout: timeout)
+        let call = sessionID, epoch = inputEpoch
+        captureWatchdog = VoiceCaptureWatchdog.watch(audio, timeout: captureTimeout,
+            isCurrent: { [weak self] in self?.sessionID == call && self?.inputEpoch == epoch },
+            onTimeout: { [weak self] in self?.captureTimedOut() })
     }
     private func captureTimedOut() {
         var detail = "采集已启用但等待 PCM 首包超时；检查输入设备"
@@ -519,38 +521,38 @@ enum VoiceCaptureWatchdog {
     private func handleAgent(_ event: TaskLifecycleEvent) {
         switch event {
         case .started(let id):
-            interruptReply(); runID = id; handledFinalRunID = nil; pendingAgentFinal = nil
+            interruptReply(); runID = id; handledFinalRunID = nil
             delta = VoiceTextDelta(); playedAudioForCurrentRun = false
             resumeAgentListening()
         case .reply(let id, let reply):
             guard runID == id else { return }
             switch reply {
             case .progress: break // Assistant explanations and tool output never enter TTS.
-            case .completed(let text):
-                guard handledFinalRunID != id else { return }
-                if case .starting = snapshot.session {
-                    pendingAgentFinal = (id, text)
-                    return
-                }
-                handledFinalRunID = id
-                // A user already speaking owns the input; do not cut their utterance
-                // off to play a final that arrived before their follow-up was committed.
-                guard let message = store?.responseMessage, message.role == .assistant, message.status == .completed,
-                      case .active = snapshot.session, subtitle.isEmpty, !submitting,
-                      !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                cancelRecovery()
-                stopRecognition(reason: .currentReply)
-                feed(message.content); textInput?.finish()
+            case .completed:
+                // Still starting: activation speaks it once audio is up, from the store's state.
+                if case .starting = snapshot.session { return }
+                speakFinal(id)
             case .failed(let message): end(error: message, reason: .replyFailed)
             }
         case .stopped(let id):
             guard store?.task?.runID == id else { return }
-            if pendingAgentFinal?.runID == id { pendingAgentFinal = nil }
             let hadAudio = playedAudioForCurrentRun
             interruptReply()
             scheduleListeningRecovery(runID: nil, playedAudio: hadAudio)
         case .retired: end(reason: .retired)
         }
+    }
+    private func speakFinal(_ id: UUID) {
+        guard handledFinalRunID != id else { return }
+        handledFinalRunID = id
+        // A user already speaking owns the input; do not cut their utterance
+        // off to play a final that arrived before their follow-up was committed.
+        guard let message = store?.responseMessage, message.role == .assistant, message.status == .completed,
+              case .active = snapshot.session, subtitle.isEmpty, !submitting,
+              !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        cancelRecovery()
+        stopRecognition(reason: .currentReply)
+        feed(message.content); textInput?.finish()
     }
     private func resumeAgentListening() {
         guard usesAgent, case .active = snapshot.session, !submitting,
@@ -769,7 +771,7 @@ enum VoiceCaptureWatchdog {
         audio.stop()
         inputEpoch += 1; audio.resetCapture(epoch: inputEpoch, paused: true)
         store = nil; key = ""
-        textOnlyRunID = nil; handledFinalRunID = nil; pendingAgentFinal = nil; submitting = false; submissionHadAudio = false
+        textOnlyRunID = nil; handledFinalRunID = nil; submitting = false; submissionHadAudio = false
         spoken = nil
         let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0) } ?? snapshot.error
         if let owner, endingAnimationDuration > .zero {

@@ -1,18 +1,14 @@
 //! Exercise the actual C parser, not a parallel serialization specification.
+mod common;
+
+use common::owned;
 use echo_agent::*;
 use serde_json::{Value, json};
 use std::{
-    ffi::{CStr, CString, c_char},
+    ffi::CString,
     time::{Duration, Instant},
 };
 
-fn owned(pointer: *mut c_char) -> Value {
-    assert!(!pointer.is_null());
-    let result =
-        unsafe { serde_json::from_str(CStr::from_ptr(pointer).to_str().unwrap()).unwrap() };
-    unsafe { echo_agent_string_free(pointer) };
-    result
-}
 fn rejected_create(request: &str) -> Value {
     let input = CString::new(request).unwrap();
     let mut error = std::ptr::null_mut();

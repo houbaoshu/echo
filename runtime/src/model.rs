@@ -124,14 +124,17 @@ impl Pet {
 
         let mut animations = default_animations();
         if file.sprite_version_number == 2 && frame.columns == 8 && frame.rows >= 11 {
-            animations.insert("spinning".into(), Animation {
-                frames: (72..=87).map(|sprite_index| AnimationFrame {
-                    sprite_index,
-                    duration: Duration::from_millis(120),
-                }).collect(),
-                loop_start: Some(0),
-                fallback: "idle".into(),
-            });
+            animations.insert(
+                "spinning".into(),
+                looping(
+                    (72..=87)
+                        .map(|sprite_index| AnimationFrame {
+                            sprite_index,
+                            duration: Duration::from_millis(120),
+                        })
+                        .collect(),
+                ),
+            );
         }
         for (name, spec) in file.animations {
             let fps = spec.fps.unwrap_or(8.0);
@@ -249,13 +252,27 @@ fn idle_animation() -> Animation {
     }
 }
 
-fn app_state_animation(row: usize, count: usize, ms: u64, final_ms: u64) -> Animation {
-    let primary: Vec<_> = (0..count)
+/// One row of the standard sheet, holding `final_ms` on its last frame.
+fn row_frames(row: usize, count: usize, ms: u64, final_ms: u64) -> Vec<AnimationFrame> {
+    (0..count)
         .map(|column| AnimationFrame {
             sprite_index: row * 8 + column,
             duration: Duration::from_millis(if column + 1 == count { final_ms } else { ms }),
         })
-        .collect();
+        .collect()
+}
+
+/// Cycles its frames for as long as the state lasts.
+fn looping(frames: Vec<AnimationFrame>) -> Animation {
+    Animation {
+        frames,
+        loop_start: Some(0),
+        fallback: "idle".into(),
+    }
+}
+
+fn app_state_animation(row: usize, count: usize, ms: u64, final_ms: u64) -> Animation {
+    let primary = row_frames(row, count, ms, final_ms);
     // Reference behavior: play the action three times, then loop the idle tail.
     Animation {
         frames: primary
@@ -279,20 +296,12 @@ fn default_animations() -> HashMap<String, Animation> {
         ("jumping", 4, 5, 140, 280),
         ("failed", 5, 8, 140, 240),
         ("waiting", 6, 6, 150, 260),
-        ("running", 7, 6, 120, 220),
         ("review", 8, 6, 150, 280),
     ] {
         animations.insert(name.into(), app_state_animation(row, count, ms, final_ms));
     }
     // Live Voice thinking lasts as long as the agent runs; keep this state cycling.
-    animations.insert("running".into(), Animation {
-        frames: (0..6).map(|column| AnimationFrame {
-            sprite_index: 7 * 8 + column,
-            duration: Duration::from_millis(if column == 5 { 220 } else { 120 }),
-        }).collect(),
-        loop_start: Some(0),
-        fallback: "idle".into(),
-    });
+    animations.insert("running".into(), looping(row_frames(7, 6, 120, 220)));
     for (alias, name) in [
         ("move_right", "running-right"),
         ("move_left", "running-left"),

@@ -5,18 +5,17 @@ emulate -R zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
 summarize() {
     python3 - "$1" <<'PY'
-import math, re, statistics, sys
+import re, statistics, sys
 lines = open(sys.argv[1], encoding='utf-8', errors='replace').read().splitlines()
 calls, current = [], None
 mark = re.compile(r'\[计时\] MARK \+([\d.]+)ms (.+)$')
 span = re.compile(r'\[计时\] SPAN \+([\d.]+)ms (.+?) 耗时 ([\d.]+)ms')
 reason = re.compile(r'\[通话结束\] REASON (\+\S+) (.*)$')
-frames = re.compile(r'\[通话结束\] INFO PlanetFrame body 次数 (.+)$')
 for line in lines:
     if m := mark.search(line):
         offset, name = float(m[1]), m[2]
         if offset == 0.0 and name.startswith('开始'):
-            current = {'entry': name, 'marks': {}, 'spans': {}, 'reason': None, 'frames': ''}
+            current = {'entry': name, 'marks': {}, 'spans': {}, 'reason': None}
             calls.append(current)
         elif current is not None:
             current['marks'].setdefault(name, offset)
@@ -26,8 +25,6 @@ for line in lines:
         current['spans'].setdefault(m[2].strip(), []).append(float(m[3]))
     elif m := reason.search(line):
         current['reason'] = f'{m[1]} {m[2]}'
-    elif m := frames.search(line):
-        current['frames'] = m[1]
 if not calls:
     sys.exit('没有找到任何通话（缺少 "MARK +0.0ms 开始" 行）。')
 
@@ -60,16 +57,6 @@ for i, call in enumerate(calls, 1):
     print(f'  #{i} {call["entry"]}  click→listening={f"{listening:.0f}ms" if listening is not None else "—"}'
           f'  audio.start={f"{audio:.0f}ms" if audio is not None else "—"}')
     print(f'     REASON {call["reason"] or "（日志中没有结束行）"}')
-    if call['frames']: print(f'     PlanetFrame {call["frames"]}')
-    # P1-A: chat-window planet frames while connecting (10 fps animation). Counting stops at the
-    # REASON line, so the listening stretch (4 fps) is subtracted as an upper bound, plus one mount.
-    r = re.match(r'\+([\d.]+)ms', call['reason'] or '')
-    if call['frames'] and listening is not None and r:
-        chat = sum(int(v) for v in re.findall(r'聊天窗口·[^=]+=(\d+)', call['frames']))
-        after = math.ceil(4 * (float(r[1]) - listening) / 1000) + 1
-        expected = 10 * listening / 1000
-        if expected > 0:
-            print(f'     连接期聊天窗口帧 ≥{max(0, chat - after)} / 期望 {expected:.0f}（{max(0, chat - after) / expected:.0%}，验收 ≥80%）')
 PY
 }
 

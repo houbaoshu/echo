@@ -23,8 +23,8 @@ func voiceDeadline<T: Sendable>(_ seconds: Double = 30, socket: URLSessionWebSoc
 /// a later operation on a socket that was already gone.
 enum VoiceIO: String, Sendable { case send, receive, ping }
 
-/// Blocks redirects exactly as `NoRedirectDelegate` does, and additionally records the
-/// WebSocket lifecycle that `URLSessionWebSocketTask` never reports to its caller: the
+/// Blocks redirects, so a credential-bearing request never reaches a redirect target, and
+/// records the WebSocket lifecycle that `URLSessionWebSocketTask` never reports to its caller: the
 /// handshake, the peer's close frame and code, and the error the task completed with.
 /// A close reason is remote payload, so its length is recorded and its bytes are not.
 final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable {
@@ -101,8 +101,7 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
     private var age: String { "age=\(opened.duration(to: .now).components.seconds)s" }
     private func since(_ instant: ContinuousClock.Instant?) -> String {
         guard let instant else { return "never" }
-        let elapsed = instant.duration(to: .now).components
-        return "\(elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000)ms"
+        return "\(Int(instant.duration(to: .now) / .milliseconds(1)))ms"
     }
     private var counters: String {
         "\(age) sent=\(sentFrames) received=\(receivedFrames) pongs=\(pongs)" +

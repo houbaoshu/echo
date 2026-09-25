@@ -233,12 +233,9 @@ import Combine
         }
     }
     private func controlsContentFrame(hovered: Bool) -> CGRect {
-        let presentation = controlsPresentation
-        let surface = PetSurfacePresentation(hovered: hovered, composerOpen: presentation.isComposerOpen, draft: presentation.draft,
-            activityCount: taskStore.activityCount, activitiesCollapsed: taskStore.activitiesCollapsed,
-            unseenCompleted: workspace.unseenCompletedCount, voice: workspace.voice.snapshot, canStartVoice: workspace.voice.canStartCall,
-            runningTasks: workspace.runningTaskCount, composerSent: presentation.collapsesOnExit,
-            connectedVoiceSession: presentation.connectedVoiceSession)
+        let surface = controlsPresentation.surface(hovered: hovered, store: taskStore, voice: workspace.voice,
+                                                   unseenCompleted: workspace.unseenCompletedCount,
+                                                   runningTasks: workspace.runningTaskCount)
         let frames = CompanionLayout(pet: petPanel.frame, activity: activityPanel.frame, controls: controlsPanel.frame)
         return frames.controlsContent(width: surface.width)
     }

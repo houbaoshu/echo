@@ -177,8 +177,6 @@ struct WorkspaceSidebar: View {
     @State private var projectHeaderHovered = false
     @State private var recentHeaderHovered = false
     @State private var hoveredProject: UUID?
-    @FocusState private var newConversationFocused: Bool
-    @FocusState private var addProjectFocused: Bool
     @State private var selectedRow: RowID?
     private var selection: Binding<RowID?> {
         Binding(get: {
@@ -248,15 +246,9 @@ struct WorkspaceSidebar: View {
         HStack(spacing: 4) {
             Text("最近").accessibilityIdentifier("workspace.recent.title")
             Spacer(minLength: 8)
-            Button { workspace.newConversation(projectID: workspace.selected?.projectID) } label: {
-                Image(systemName: "square.and.pencil").font(.system(size: 13))
-                    .frame(width: 24, height: 24).contentShape(Rectangle())
-            }.buttonStyle(.plain).focused($newConversationFocused)
-                .foregroundStyle(WorkspaceStyle.secondary)
-                .help("新对话 ⌘N").accessibilityLabel("新对话")
-                .accessibilityIdentifier("workspace.recent.newConversation")
-                .opacity(recentHeaderHovered || newConversationFocused ? 1 : 0)
-                .allowsHitTesting(recentHeaderHovered || newConversationFocused)
+            HoverRevealButton(symbol: "square.and.pencil", label: "新对话", help: "新对话 ⌘N", visible: recentHeaderHovered) {
+                workspace.newConversation(projectID: workspace.selected?.projectID)
+            }.accessibilityIdentifier("workspace.recent.newConversation")
         }.frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onHover { recentHeaderHovered = $0 }
@@ -265,15 +257,9 @@ struct WorkspaceSidebar: View {
         HStack(spacing: 4) {
             Text("项目").accessibilityIdentifier("workspace.projects.title")
             Spacer(minLength: 8)
-            Button { WorkspaceActions.chooseFolder { _ = workspace.addProject(url: $0) } } label: {
-                Image(systemName: "plus").font(.system(size: 13))
-                    .frame(width: 24, height: 24).contentShape(Rectangle())
-            }.buttonStyle(.plain).focused($addProjectFocused)
-                .foregroundStyle(WorkspaceStyle.secondary)
-                .help("添加项目文件夹").accessibilityLabel("添加项目文件夹")
-                .accessibilityIdentifier("workspace.projects.add")
-                .opacity(projectHeaderHovered || addProjectFocused ? 1 : 0)
-                .allowsHitTesting(projectHeaderHovered || addProjectFocused)
+            HoverRevealButton(symbol: "plus", label: "添加项目文件夹", visible: projectHeaderHovered) {
+                WorkspaceActions.chooseFolder { _ = workspace.addProject(url: $0) }
+            }.accessibilityIdentifier("workspace.projects.add")
         }.frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onHover { projectHeaderHovered = $0 }
@@ -299,7 +285,8 @@ struct WorkspaceSidebar: View {
                     .accessibilityHidden(true)
                 Text(project.name).lineLimit(1)
                 Spacer(minLength: 0)
-                ProjectRowNewConversation(visible: hoveredProject == project.id) {
+                HoverRevealButton(symbol: "square.and.pencil", label: "新对话", help: "在此项目中新建对话",
+                                  visible: hoveredProject == project.id) {
                     newProjectConversation(project.id)
                 }.accessibilityIdentifier("workspace.project.newConversation.\(project.id)")
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -502,22 +489,24 @@ struct ConversationView: View {
         var contentHeight: CGFloat = 0
     }
     var body: some View {
-        VStack(spacing: 0) {
+        // Grouped once, rather than filtering every tool for each realized row.
+        let tools = Dictionary(grouping: store.tools, by: \.afterMessageID)
+        return VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 28) {
                     ForEach(store.messages) { message in
                         HStack(alignment: .top) {
                             if message.role == .user { Spacer(minLength: 44) }
                             ConversationMessageView(message: message,
-                                retry: store.canRetry && message.id == store.messages.last?.id ? retry : nil,
+                                retry: message.id == store.messages.last?.id && store.canRetry ? retry : nil,
                                 showsProgress: !isVoiceOwner)
                             if message.role == .assistant { Spacer(minLength: 0) }
                         }.id(message.id)
-                        ForEach(store.tools.filter { $0.afterMessageID == message.id }) { tool in
+                        ForEach(tools[message.id] ?? []) { tool in
                             AgentToolView(tool: tool).id("tool.\(tool.turnID).\(tool.id)")
                         }
                     }
-                    ForEach(store.tools.filter { $0.afterMessageID == nil }) { tool in AgentToolView(tool: tool) }
+                    ForEach(tools[nil] ?? []) { tool in AgentToolView(tool: tool) }
                     // What is being said, in the place what was said will keep. A spoken
                     // follow-up becomes a message in `store.messages`, which is drawn above
                     // the stream, so the words wait here rather than below the reply — being
@@ -714,7 +703,9 @@ struct ConversationView: View {
         return false
     }
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // Built once per render: each build trims the draft and evaluates `canRetry`.
+        let presentation = presentation
+        return VStack(alignment: .leading, spacing: 10) {
             NativeComposer(text: $store.mainDraft, focusRequest: focusRequest,
                            isSuspended: presentation.isDictating,
                            diagnostics: !voice.isActive && !voice.testing && dictation.diagnosticTrace?.conversationID == conversationID

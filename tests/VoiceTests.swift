@@ -33,16 +33,15 @@ extension EchoVoiceScenarios {
             (.thinking, "running"), (.speaking, "spinning"), (.ending, "review"),
         ]
         for (indicator, clip) in states {
-            check(PlanetStore.animationName(for: indicator, available: Set(states.map(\.1))) == clip,
-                  "\(indicator) plays the shared runtime clip")
-            check(PlanetStore.animationName(for: indicator, available: []) == "idle",
-                  "\(indicator) falls back to idle if the runtime clip is unavailable")
+            check(PlanetStore.animationName(for: indicator) == clip, "\(indicator) plays the shared runtime clip")
         }
 
         // Both bundled sheets use the runtime's standard 8×11 layout, including all spin frames.
         for name in ["ember-planet", "quiet-planet"] {
             let bundled = EchoTestResources.resource("planets/\(name)")
             let bundledStore = try PetStore(directory: bundled)
+            check(bundledStore.play("no-such-clip", fallback: "idle") == "idle",
+                  "\(name) plays idle in place of a clip its sheet lacks")
             bundledStore.stop()
             let source = CGImageSourceCreateWithURL(bundled.appendingPathComponent("spritesheet.webp") as CFURL, nil)
             guard let source, let decoded = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -119,6 +118,16 @@ extension EchoVoiceScenarios {
         try await Task.sleep(for: .milliseconds(1100))
         check(planets.active == nil && planets.playing == nil && voice.snapshot.session == .inactive,
               "review completes before the call becomes inactive")
+
+        // A clip the runtime accepts can still fail on its first tick. That stops the planet, and
+        // the clip it asked for must not outlive the sprite.
+        voice.updateSnapshot { $0 = VoiceSessionSnapshot(); $0.session = .active(owner); $0.recognition = .listening }
+        check(planets.active != nil && planets.playing == "idle", "listening loads the planet again")
+        planets.active?.advance = { _, _ in false }
+        voice.updateSnapshot { $0.agentActivity = "正在请求模型…" }
+        check(planets.active == nil && planets.playing == nil && planets.notice?.hasPrefix("星球动画已停止") == true,
+              "a tick that fails after its clip was accepted unloads the planet and forgets the clip")
+        voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
     }
 
     /// Starting capture flips a Bluetooth headset from A2DP to HFP, so Core Audio reconfigures

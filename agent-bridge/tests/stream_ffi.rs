@@ -1,27 +1,17 @@
 //! Streamed model text crosses the C ABI in poll results, outside batches and checkpoints.
+mod common;
+
 use axum::{Router, body::Body, http::header::CONTENT_TYPE, response::IntoResponse, routing::post};
+use common::{Handle, owned, wait_for_shutdown};
 use echo_agent::*;
 use serde_json::{Value, json};
 use std::{
-    ffi::{CStr, CString, c_char},
+    ffi::CString,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 
-struct Handle(*mut EchoAgent);
-impl Drop for Handle {
-    fn drop(&mut self) {
-        unsafe { echo_agent_destroy(self.0) }
-    }
-}
-fn owned(pointer: *mut c_char) -> Value {
-    assert!(!pointer.is_null());
-    let result =
-        unsafe { serde_json::from_str(CStr::from_ptr(pointer).to_str().unwrap()).unwrap() };
-    unsafe { echo_agent_string_free(pointer) };
-    result
-}
 fn request(handle: &Handle, command: Value) {
     let request =
         CString::new(json!({"version":2,"request_id":"r","command":command}).to_string()).unwrap();
@@ -166,9 +156,5 @@ async fn poll_carries_coalesced_stream_text_outside_checkpoints() {
         .unwrap();
     assert_eq!(finished["kind"]["outcome"]["reply"], "Hello");
     drop(handle);
-    let start = Instant::now();
-    while echo_agent_active_sessions() != 0 {
-        assert!(start.elapsed() < Duration::from_secs(5));
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    wait_for_shutdown().await;
 }

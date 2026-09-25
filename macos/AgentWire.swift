@@ -20,6 +20,15 @@ struct AgentModel: Codable {
     var api_key: String?
     var `protocol`: ProtocolName
 }
+extension AgentModel {
+    init(_ configuration: ModelConfiguration, key: String?) {
+        let wire: ProtocolName = switch configuration.apiProtocol {
+        case .chatCompletions: .chat_completions
+        case .responses: .responses
+        }
+        self.init(base_url: configuration.baseURL, model: configuration.model, api_key: key, protocol: wire)
+    }
+}
 struct AgentInput: Codable, Equatable {
     var client_message_id: String
     var text: String

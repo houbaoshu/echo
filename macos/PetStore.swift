@@ -34,6 +34,8 @@ final class PetStore: ObservableObject {
     private let images: [CGImage]
     private var timer: Timer?
     var onFailure: ((Error) -> Void)?
+    /// The runtime's tick. Only tests replace it, to fail a tick the way a runtime error would.
+    var advance: (OpaquePointer, UnsafeMutablePointer<EchoTick>) -> Bool = { echo_tick($0, $1) }
 
     init(directory: URL) throws {
         struct Metadata: Decodable { var displayName: String? }
@@ -121,6 +123,18 @@ final class PetStore: ObservableObject {
         refresh()
     }
 
+    /// Plays `animation` when this sprite has it and `fallback` otherwise, returning the clip that
+    /// plays. The runtime is what knows a sheet's clips, so callers never mirror its catalogue.
+    @discardableResult func play(_ animation: String, fallback: String) -> String? {
+        guard let handle else { return nil }
+        if echo_set_animation(handle.pointer, animation) {
+            refresh()
+            return self.handle == nil ? nil : animation
+        }
+        play(fallback)
+        return self.handle == nil ? nil : fallback
+    }
+
     func stop() {
         timer?.invalidate()
         timer = nil
@@ -132,7 +146,7 @@ final class PetStore: ObservableObject {
         timer = nil
         guard let handle else { return }
         var tick = EchoTick()
-        guard echo_tick(handle.pointer, &tick), Int(tick.sprite_index) < images.count else {
+        guard advance(handle.pointer, &tick), Int(tick.sprite_index) < images.count else {
             fail(PetError(message: "精灵动画推进失败。"))
             return
         }

@@ -178,13 +178,6 @@ protocol ConnectionTesting: Sendable {
     func test(configuration: ModelConfiguration, key: String) async throws
 }
 
-// Do not forward a credential-bearing request to a redirect target.
-final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
-}
 @MainActor final class SettingsStore: ObservableObject {
     @Published var voiceDraft = VoiceConfiguration()
     @Published var voiceAPIKey = ""
@@ -376,16 +369,14 @@ final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     }
     func setQuickComposerHotKey(_ enabled: Bool) {
         guard enabled != snapshot.quickComposerHotKey else { return }
-        var next = snapshot; next.quickComposerHotKey = enabled
-        do { try persist(next); snapshot = next }
+        do { try update { $0.quickComposerHotKey = enabled } }
         catch { hotKeyNotice = error is SettingsError ? error.localizedDescription : "快捷键设置保存失败，请检查目录写入权限。" }
     }
-    func selectPet(_ id: String) throws {
-        var next = snapshot; next.selectedPetID = id
-        try persist(next); snapshot = next
-    }
-    func selectPlanet(_ id: String) throws {
-        var next = snapshot; next.selectedPlanetID = id
+    func selectPet(_ id: String) throws { try update { $0.selectedPetID = id } }
+    func selectPlanet(_ id: String) throws { try update { $0.selectedPlanetID = id } }
+    /// One saved preference: the published snapshot changes only once the file has it.
+    private func update(_ change: (inout SettingsSnapshot) -> Void) throws {
+        var next = snapshot; change(&next)
         try persist(next); snapshot = next
     }
     func restore() {

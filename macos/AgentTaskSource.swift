@@ -18,8 +18,7 @@ import Foundation
         self.resources = resources
         credentials = {
             let (config, key) = try settings.savedModelCredentials()
-            return AgentModel(base_url: config.baseURL, model: config.model, api_key: key,
-                              protocol: config.apiProtocol == .responses ? .responses : .chat_completions)
+            return AgentModel(config, key: key)
         }
     }
     init(model: AgentModel, resources: URL) {

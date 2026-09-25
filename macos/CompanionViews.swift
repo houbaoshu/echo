@@ -5,13 +5,10 @@ import SwiftUI
 /// transparent, so the system material is what samples the desktop behind them.
 struct CompanionBackground<SurfaceShape: InsettableShape>: View {
     var shape: SurfaceShape
-    var hovered = false
     var body: some View {
         Color.clear
             .glassEffect(.regular, in: shape)
-            .overlay {
-                shape.strokeBorder(.primary.opacity(hovered ? 0.24 : 0.14), lineWidth: 0.75)
-            }
+            .overlay { shape.strokeBorder(.primary.opacity(0.14), lineWidth: 0.75) }
     }
 }
 
@@ -221,6 +218,16 @@ struct ActivityCapsule: View {
     /// is back on screen rather than redrawing a copy nobody sees on every frame.
     @Published private(set) var isSuspended = false
     func setSuspended(_ suspended: Bool) { if isSuspended != suspended { isSuspended = suspended } }
+    /// The strip's layout from the live stores. The drawn strip and the controller's hover
+    /// hit-frame both read it here, so the pointer target always matches the width on screen.
+    func surface(hovered: Bool, store: TaskStore, voice: VoiceSessionController,
+                 unseenCompleted: Int, runningTasks: Int) -> PetSurfacePresentation {
+        PetSurfacePresentation(hovered: hovered, composerOpen: isComposerOpen, draft: draft,
+                               activityCount: store.activityCount, activitiesCollapsed: store.activitiesCollapsed,
+                               unseenCompleted: unseenCompleted, voice: voice.snapshot, canStartVoice: voice.canStartCall,
+                               runningTasks: runningTasks, composerSent: collapsesOnExit,
+                               connectedVoiceSession: connectedVoiceSession)
+    }
     func noteVoice(_ snapshot: VoiceSessionSnapshot) {
         guard case .active(let owner) = snapshot.session else {
             if snapshot.session.owner == nil, connectedVoiceSession != nil { connectedVoiceSession = nil }
@@ -257,17 +264,17 @@ struct PetControlActions {
     var toggleTray: (() -> Void)?
 }
 
-/// The pill behind the strip's controls. Unlike the activity card and the bubble, the strip floats
-/// directly over the desktop beside the pet, so it stays as quiet as a system surface can be: clear
-/// glass rather than the frosted regular pane, a hairline edge, and no drawn fill of its own. Swap
-/// `glass` back to `.regular` if the controls ever need to carry their own contrast.
-private struct PetControlBackground: View {
-    private static let glass: Glass = .clear
-    var hovered: Bool
+/// The surface behind the strip's pills and round controls. Unlike the activity card and the
+/// bubble, the strip floats directly over the desktop beside the pet, so it stays as quiet as a
+/// system surface can be: clear glass rather than the frosted regular pane, a hairline edge, and no
+/// drawn fill of its own. Swap the glass back to `.regular` if the controls ever need to carry their
+/// own contrast.
+private struct PetControlBackground<SurfaceShape: InsettableShape>: View {
+    var shape: SurfaceShape
     var body: some View {
         Color.clear
-            .glassEffect(Self.glass, in: Capsule())
-            .overlay { Capsule().strokeBorder(.primary.opacity(hovered ? 0.12 : 0.06), lineWidth: 0.5) }
+            .glassEffect(.clear, in: shape)
+            .overlay { shape.strokeBorder(.primary.opacity(0.06), lineWidth: 0.5) }
     }
 }
 
@@ -319,10 +326,7 @@ private struct PetCircle<Label: View>: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .background {
-            Color.clear.glassEffect(.clear, in: Circle())
-                .overlay { Circle().strokeBorder(.primary.opacity(0.06), lineWidth: 0.5) }
-        }
+        .background { PetControlBackground(shape: Circle()) }
         .opacity(enabled ? 1 : 0.4)
         .companionControlActive().disabled(!enabled)
         .help(label).accessibilityLabel(label).accessibilityIdentifier(identifier)
@@ -347,12 +351,8 @@ struct PetControls: View {
     /// Resuming mounts a fresh `PlanetFrame`, which reads the store's current frame directly.
     static func visiblePlanet(_ planet: PetStore?, suspended: Bool) -> PetStore? { suspended ? nil : planet }
     private var surface: PetSurfacePresentation {
-        PetSurfacePresentation(hovered: presentation.isHovered, composerOpen: presentation.isComposerOpen,
-                               draft: presentation.draft, activityCount: store.activityCount,
-                               activitiesCollapsed: store.activitiesCollapsed, unseenCompleted: unseenCompleted,
-                               voice: voice.snapshot, canStartVoice: voice.canStartCall,
-                               runningTasks: runningTasks, composerSent: presentation.collapsesOnExit,
-                               connectedVoiceSession: presentation.connectedVoiceSession)
+        presentation.surface(hovered: presentation.isHovered, store: store, voice: voice,
+                             unseenCompleted: unseenCompleted, runningTasks: runningTasks)
     }
     var body: some View {
         let surface = surface
@@ -395,7 +395,7 @@ struct PetControls: View {
                     }
                 }
                 .padding(.horizontal, PetSurfacePresentation.pillPadding)
-                .background { PetControlBackground(hovered: false) }
+                .background { PetControlBackground(shape: Capsule()) }
             } else if surface.showsStatus {
                 statusControls(surface)
             } else {
@@ -429,7 +429,7 @@ struct PetControls: View {
                         }
                     }
                     .padding(.horizontal, PetSurfacePresentation.pillPadding)
-                    .background { PetControlBackground(hovered: false) }
+                    .background { PetControlBackground(shape: Capsule()) }
                     .help(voice.status.isEmpty ? "Live Voice" : voice.status)
                 }
                 if surface.tray != .none { trayCircle(surface) }
@@ -464,7 +464,7 @@ struct PetControls: View {
     private func collapsedBar(_ surface: PetSurfacePresentation) -> some View {
         let size = PetSurfacePresentation.collapsedSize
         let fill: AnyShapeStyle = surface.unseenCompleted > 0
-            ? AnyShapeStyle(Color(nsColor: .systemGreen).opacity(0.8))
+            ? AnyShapeStyle(WorkspaceStyle.success.opacity(0.8))
             : AnyShapeStyle(.primary.opacity(0.16))
         return Capsule().fill(fill)
             .frame(width: size.width, height: size.height)
@@ -511,7 +511,7 @@ struct PetControls: View {
         }
         .padding(.leading, workspace == nil ? 14 : 5).padding(.trailing, 5)
         .frame(width: PetSurfacePresentation.composerWidth, height: PetSurfacePresentation.circle)
-        .background { PetControlBackground(hovered: false) }
+        .background { PetControlBackground(shape: Capsule()) }
     }
 
     private func projectButton(_ workspace: WorkspaceStore) -> some View {
@@ -699,7 +699,9 @@ struct CompanionBubbleShape: InsettableShape {
     }
 }
 
-struct CompanionBubble: View {
+/// Equatable so the playback timeline's ticks re-render it only when the heard text moves,
+/// rather than re-parsing the reply's Markdown twenty times a second.
+struct CompanionBubble: View, Equatable {
     let content: CompanionBubbleContent
     let tailOnTop: Bool
     let petCenterX: CGFloat
@@ -810,6 +812,7 @@ struct WorkspaceCompanionBubble: View {
             CompanionBubble(content: CompanionBubbleContent(voice: voice.snapshot, spoken: voice.spoken,
                                                             position: voice.spokenPosition, notice: state.notice),
                             tailOnTop: placement.isBelowPet, petCenterX: state.petCenterX)
+                .equatable()
         }
     }
 }
