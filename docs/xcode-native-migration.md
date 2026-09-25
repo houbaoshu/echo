@@ -16,125 +16,18 @@
 
 ## 场景映射
 
-下列是基线可辨认的场景入口；迁移期间更新原生标识与证据。状态为“待迁移”的行仍通过原 harness 执行，不能计作原生覆盖。
+[逐场景映射](xcode-native-cases.tsv)列出旧场景、原生 test identifier、fixture 源码与该场景实测证据。Swift Testing 的参数化标识保留参数标签，具体输入由 Xcode Test Navigator／xcresult 展开；同一用例在不同计划中只注册一次。
 
-| 原场景 | 原生标识 | fixture | 验证 |
-|---|---|---|---|
-| `AgentBridgeTests.main` | 待迁移 | 见 `tests/AgentBridgeTests.swift` | 未验证 |
-| `AgentLiveTests.main` | 待迁移 | 见 `tests/AgentLiveTests.swift` | 未验证 |
-| `AgentLiveTests.run` | 待迁移 | 见 `tests/AgentLiveTests.swift` | 未验证 |
-| `AgentSessionTests.main` | 待迁移 | 见 `tests/AgentSessionTests.swift` | 未验证 |
-| `AgentTaskSourceTests.streamTests` | `EchoAgentTaskSourceTests/AgentTaskSourceTests/streamTests()` | 见 `tests/AgentTaskSourceTests.swift` | 未验证 |
-| `AgentTaskSourceTests.main` | `EchoAgentTaskSourceTests/AgentTaskSourceTests/durableInputsSurviveCancellation(cleanupFirst:)` | 见 `tests/AgentTaskSourceTests.swift` | 未验证 |
-| `AgentTaskSourceTests.wireTests` | `EchoAgentTaskSourceTests/AgentTaskSourceTests/wireTests()` | 见 `tests/AgentTaskSourceTests.swift` | 未验证 |
-| `AgentVoiceTests.agentVoiceIntegrationTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
-| `AgentVoiceTests.agentVoiceTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
-| `AgentVoiceTests.agentRefusedFinalTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
-| `AgentVoiceTests.agentVoiceRecoveryTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
-| `AgentVoiceTests.agentReplyStreamTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
-| `AgentVoiceTests.agentSpokenReplyTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
-| `AgentVoiceTests.agentVoiceUnseenTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
-| `AgentVoiceTests.agentFinalAudioTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
-| `AgentVoiceTests.agentVoiceStartupAndFailureTests` | 待迁移 | 见 `tests/AgentVoiceTests.swift` | 未验证 |
-| `AppleSpeechDeviceTests.main` | 待迁移 | 见 `tests/AppleSpeechDeviceTests.swift` | 未验证 |
-| `AppleSpeechTests.run` | 待迁移 | 见 `tests/AppleSpeechTests.swift` | 未验证 |
-| `AppleSpeechTests.recordedDevicePauseRegression` | 待迁移 | 见 `tests/AppleSpeechTests.swift` | 未验证 |
-| `AppleSpeechTests.phraseBoundaryPunctuationTests` | 待迁移 | 见 `tests/AppleSpeechTests.swift` | 未验证 |
-| `AppleSpeechTests.backgroundAuthorizationTests` | 待迁移 | 见 `tests/AppleSpeechTests.swift` | 未验证 |
-| `AppleSpeechTests.localeTests` | 待迁移 | 见 `tests/AppleSpeechTests.swift` | 未验证 |
-| `ChatTests.main` | `EchoChatTests/ChatTests/sendStopRetryAndRestore()` | 见 `tests/ChatTests.swift` | 未验证 |
-| `ChatTests.contextTests` | `EchoChatTests/ChatTests/stoppedPartialContext()` | 见 `tests/ChatTests.swift` | 未验证 |
-| `ConversationUITests.main` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.main` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.run` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testComposerAdaptiveHeight` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testWindowChromeAndSidebarAccessories` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testConsecutiveDictationAppends` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testStoppingAndDictationEscape` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testComposerActionMatrix` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testCodeCopyAndSyntaxPreview` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testAutomaticColumnThresholds` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testPointerMonitorLifecycle` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testTranscriptTailAnchors` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testNativeMenuShortcuts` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testPetComposerPointerFocus` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testWorkspaceSidebarPointerAndKeyboard` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testProjectPickerKeyboardScroll` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testSearchResultAccessibilityActivation` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testProjectDetachPointer` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testEscapeAndKeyboardCommands` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testLiveVoiceComposerStatesAndAttribution` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testSettingsAndCompanionVoiceIntegration` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testPetSurfacePresentationAndLayout` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testPetQuickComposerAndTray` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testCompanionQuickComposerLifecycle` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testCompanionBubblePresentationAndLayout` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testChatStatusTextIsExceptionOnly` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testStreamingReplyRendersInTranscript` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testLiveVoiceHidesRunningStatusText` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testLiveVoiceTranscribesInTranscript` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testLiveVoiceTurnKeepsTaskCardHidden` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testCompanionBubbleViews` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testPetVoiceConnectingAndBell` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testPetProjectMenuAndCardReveal` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testCompanionBubblePanelAndHotKey` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testPetHidesOnlyForTheVoiceConversationOnScreen` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testPetVoiceEntryStartsItsOwnConversation` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testComposerPreservesEditorStateAcrossVoiceUpdates` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testProjectTreeScrollRestoration` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testRightSidebarLayoutAndToggling` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `ConversationUITests.testSettingsKeyboardAndFocus` | 待迁移 | 见 `tests/ConversationUITests.swift` | 未验证 |
-| `DictationTests.run` | 待迁移 | 见 `tests/DictationTests.swift` | 未验证 |
-| `DictationTests.deviceRecoveryTests` | 待迁移 | 见 `tests/DictationTests.swift` | 未验证 |
-| `DictationTests.recordedPauseRegression` | 待迁移 | 见 `tests/DictationTests.swift` | 未验证 |
-| `DictationTests.diagnosticLoggingTests` | 待迁移 | 见 `tests/DictationTests.swift` | 未验证 |
-| `DictationTests.localTests` | 待迁移 | 见 `tests/DictationTests.swift` | 未验证 |
-| `ModelTests.run` | `EchoChatTests/ModelTests/*` | 见 `tests/ModelTests.swift` | 未验证 |
-| `ModelTests.sourceRevisionTest` | 待迁移 | 见 `tests/ModelTests.swift` | 未验证 |
-| `ProjectFileBrowserTests.run` | 待迁移 | 见 `tests/ProjectFileBrowserTests.swift` | 未验证 |
-| `ProjectFileBrowserTests.testRefreshCoalescesWhileScanning` | 待迁移 | 见 `tests/ProjectFileBrowserTests.swift` | 未验证 |
-| `ProjectFileBrowserTests.testRefreshCommitsDirectoriesSeparately` | 待迁移 | 见 `tests/ProjectFileBrowserTests.swift` | 未验证 |
-| `SettingsTests.run` | `EchoChatTests/SettingsTests/*` | 见 `tests/SettingsTests.swift` | 未验证 |
-| `VoiceBargeInTests.bargeInTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
-| `VoiceBargeInTests.bargeInGateTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
-| `VoiceBargeInTests.bargeInConverterTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
-| `VoiceBargeInTests.bargeInSuccessTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
-| `VoiceBargeInTests.bargeInRejectionTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
-| `VoiceBargeInTests.bargeInCancellationTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
-| `VoiceBargeInTests.bargeInCompletionAndWatchdogTests` | 待迁移 | 见 `tests/VoiceBargeInTests.swift` | 未验证 |
-| `VoiceLiveTests.main` | 待迁移 | 见 `tests/VoiceLiveTests.swift` | 未验证 |
-| `VoiceLiveTests.run` | 待迁移 | 见 `tests/VoiceLiveTests.swift` | 未验证 |
-| `VoiceSoakTests.main` | 待迁移 | 见 `tests/VoiceSoakTests.swift` | 未验证 |
-| `VoiceSoakTests.run` | 待迁移 | 见 `tests/VoiceSoakTests.swift` | 未验证 |
-| `VoiceTests.main` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.planetTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.configurationChangeTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.snapshotTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.snapshotLifecycleTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.backgroundAudioStartTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.voiceAudioHandoverTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.voiceAudioRestartTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.voiceAudioSwitchTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.captureWatchdogPauseTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.captureWatchdogRestartTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.mutedPlaybackTailProtectionTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.captureDiagnosticsTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.manualModelTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.probeTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.speakerPreviewTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.settingsPageRevisitKeepsSuccessTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.audioConversionTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.protocolTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.settingsTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.lifecycleTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.phase3InvariantsTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `VoiceTests.phase4FaultAndCleanupTests` | 待迁移 | 见 `tests/VoiceTests.swift` | 未验证 |
-| `WorkspaceTests.main` | 待迁移 | 见 `tests/WorkspaceTests.swift` | 未验证 |
-| `WorkspaceTests.quickComposerTests` | 待迁移 | 见 `tests/WorkspaceTests.swift` | 未验证 |
-| `WorkspaceTests.projectAssociationTests` | 待迁移 | 见 `tests/WorkspaceTests.swift` | 未验证 |
-| `WorkspaceTests.sessionCleanupTests` | 待迁移 | 见 `tests/WorkspaceTests.swift` | 未验证 |
-| `WorkspaceTests.streamingPersistenceTests` | 待迁移 | 见 `tests/WorkspaceTests.swift` | 未验证 |
-| `WorkspaceVoiceCommandTests.run` | 待迁移 | 见 `tests/WorkspaceVoiceCommandTests.swift` | 未验证 |
+| 旧入口 | 当前职责与新入口 |
+|---|---|
+| 五个粗 XCTest wrappers | 已删除；Chat/TaskSource/Voice/Workspace Swift Testing，View XCTest |
+| Bridge Probe、Session CLI、AgentVoice production | EchoIntegrationTests，共享真实 loopback HTTP/SSE fixture |
+| 快捷键 CLI | 部件/IME → EchoViewTests，精细 responder/滚动 → EchoAppIntegrationTests，真实输入 → EchoUITests；8 个 UI 与 9 个 hosted 场景已分别整批通过 |
+| 两份 clang ASAN 编排 | EchoCABITests / EchoSanitizers；保留公开 C ABI |
+| packaged 业务/历史断言 | HistoryIntegrationTests；系统验证器只检查产品边界 |
+| Live / Soak / Speech probes | 新 hosted plans 可构建，旧手动入口等待真实环境同条件对照；未执行不能记为通过 |
+| 语音诊断 / 听写追踪 | Echo-Diagnostics，显式参数、私有临时日志、超时和回调摘要 |
+| CoreAudio 即时编译 | EchoCoreAudioProbe；外部采样器只消费预构建工具 |
 
 ## Phase 2 验证
 
@@ -148,7 +41,7 @@
 
 `NativeFastRetry.xcresult` / `FastRestored.xcresult`：20 个 Swift Testing 方法（含参数化场景），全部通过。`FailureProbe.xcresult` 临时反转 `AgentTaskSourceTests.wireTests` 的 history 断言，确认失败精确定位原用例与源码；随后自动恢复并通过完整 Fast。未改生产业务语义。
 
-Model 请求协议、失败种类和配置迁移端点分别参数化；取消、SSE framing、回复、未知存档版本独立运行。旧 Chat/TaskSource XCTest 总入口已删除。后续仍需继续细分 Chat/Settings 的长状态序列。
+Model 请求协议、失败种类和配置迁移端点分别参数化；取消、SSE framing、回复、未知存档版本独立运行。旧 Chat/TaskSource XCTest 总入口已删除。最终收口时进一步拆出历史兼容、缺配置、不可读凭据和保存回滚，`ChatSettingsSeparated.xcresult` 的 16 个 Chat/Model/Settings 方法通过。
 
 ## Phase 3 / Voice + Workspace
 
@@ -166,3 +59,62 @@ Model 请求协议、失败种类和配置迁移端点分别参数化；取消�
 - `NativeCABI.xcresult`：XCTest 驱动公开 C ABI 的 500 次 create/poll/reject/cancel/destroy/free，Address Sanitizer 通过。C 条件失败返回源码行到 XCTest；只对 C/Swift 消费者插桩，不宣称覆盖 Rust 内部所有访存。
 - 原 Session CLI 转为 EchoIntegrationTests；旧 AgentBridgeProbe、三个重复 shell、model Python fixture、Voice 粗包装和全局 cwd helper 退役。session Python fixture 暂供 packaged 系统入口，待 Xcode FixtureServer 建成后删除。
 - 所有 Integration suites 共享串行父 suite；每场景独立临时目录与端口，关闭后检查 Rust 活跃会话归零。真实服务、Speech、Keychain 授权测试未运行。
+
+## Phase 5 / 原生 UI、性能与手动入口
+
+- `NativeUIProjectsVoicePet.xcresult`：5 个真正 XCUITest 通过，覆盖发送/流式/Stop/Retry/退出重启、搜索/设置、项目/预览/解绑、假音频和桌宠独立草稿。macOS UI Automation 经用户系统认证后可用。
+- `NativeHostedFinal.xcresult`：7 个 hosted XCTest 通过；真实 App 默认 prompt、启动隔离、菜单/IME、指针监控、滚动锚点、项目列表键盘滚动、AX 激活。随后补充的设置 responder 与侧栏 Tab/面板几何分别在 `NativeSettingsSidebarRows` / `NativeSidebarGeometry` 通过；真实输入扩展仍在验证。
+- `NativePerformanceRetry.xcresult`：2 个 optimized/ad-hoc XCTest metrics 场景通过（Runtime 精灵加载/帧复制；会话编码）。没有将真实服务波动作为日常阈值。
+- `manual-live-build.log`、`manual-device-build.log`：Live/Soak、Device 测试宿主 DevelopmentDebug build-for-testing 通过。hosted bundle 只导入宿主模块，无重复 production 源和 Rust runtime。真实服务、Speech、Keychain 未执行。
+- 固定 Speech WAV 与旧生成资源字节一致；格式、帧数和 SHA-256 见 `tests/fixtures/speech/README.md`。四秒停顿、相同短语保留。
+- `framework-repros-build.log`：可选 Repros Target 构建通过，5 个场景不依赖 Echo/Rust，不进入 Test Plan。历史视觉原型已删除，三个产品探索入口仅保留调查结论。
+
+## Phase 6 / 系统验证器收口
+
+- `system-fixtures-retry.log`：Swift loopback server 与 CoreAudio 工具、独立 wrapper/module 的 Keychain fixtures 构建通过。
+- `signing-native.log`：Release ad-hoc、无 entitlements、资源篡改负例通过（只修改临时副本）。未进行真实 Keychain 授权测试。
+- `packaged-native.log`：已构建的 Release App 搬至含空格路径，空 cwd 加载 pet/prompt；系统 dylib、普通 AppKit 退出、Rust shell/child 清理通过。证据目录 `System/packaged-liqrn185`。
+- 两个 Python 模型服务均由共享 Swift socket fixture 替代。旧打包 build wrapper、offline signing wrapper、旧 prompt/Swift 环境/音频生成脚本及旧 EchoTests Scheme 已退役。
+- 四个服务/设备旧手动 wrapper 暂保留，仅接收 `--app`；不构建、不写 repo。按用户计划，必须真实同条件对照后才能删除，当前不宣称这部分迁移完成。
+
+## 最终收口复验
+
+- `FastTagged.xcresult`：确认 Xcode 27 原生 tag 筛选实际发现 72 个方法（12 Chat、8 TaskSource、46 Voice、3 Workspace、3 presentation），并排除组件 XCTest。随后 Chat/Settings 新拆出 4 个独立场景；最终 Fast 应发现 76 个方法。
+- `UIEight.xcresult`：8 个 XCUITest 整批通过；完整设置行点击、未保存编辑、侧栏行/分组/悬停、搜索隔离、桌宠焦点与草稿、项目解绑、假音频和重启恢复。
+- `HostedVisibleSidebar.xcresult`：9 个 hosted 方法整批通过。修正 fixture 的初始窗口尺寸，明确侧栏可见；保留完整正反向 Tab 循环，未修改产品焦点逻辑。
+- `manual-live-final-build.log`、`manual-device-final-build.log`、`manual-legacy-final-build.log`：新 Live/Device 宿主与四个保留的旧 probe 全部可构建；未调用真实服务/设备。
+- `final/clean-build.log`：独立源码 checkout（相邻依赖为独立副本），无旧 build/target 的 Offline build-for-testing 通过。
+- `final/cargo-test.log`、`final/cargo-clippy.log`：16 个 Rust 测试通过，clippy --all-targets -D warnings 通过。
+- `final/incremental-evidence.json`：隔离修改本仓库与相邻依赖 Rust 源，两个静态库 hash 均变化；依赖 prompt 在 App/Voice/Integration bundle 同步更新。源码已恢复并重建，未修改用户的相邻仓库。
+- `sampling-complete-result.txt` / `sampling-incomplete-result.txt`：外部采样摘要接受完整记录、拒绝只有开始标记的不完整采样；没有启动真实音频设备。
+
+- `DomainFailureAttributionComplete.xcresult`：Voice snapshot、Workspace quick composer、Presentation column thresholds 三个精确 identifier 均只报告预期的原生 issue（3 fail / 0 pass / 0 skip，无 runner crash），错误指向各自 Swift 源码行；临时注入已由 finally 恢复。
+
+## Phase 7 / 最终验收（2026-09-25）
+
+本节为最终状态；前述分阶段结果保留当时的中间状态。验收源码位于 `final/echo` 的独立 Git checkout，相邻 `final/mini-agent-rs` 为独立副本，首次构建没有旧 `build/target` 或缓存产物。最终源码与工作区一致（验收报告的后续补记除外）。
+
+| 最终证据 | 结果 |
+|---|---|
+| `final/FastFinal.xcresult` | 76 个原生方法通过，0 fail / 0 skip；Chat 16、TaskSource 8、Voice 46、Workspace 3、presentation 3 |
+| `final/OfflineFinal.xcresult` | 149 个方法通过，0 fail / 0 skip；Chat 16、TaskSource 8、Voice 47、Workspace 10、View 30、hosted 9、UI 8、production integration 21 |
+| `final/Sanitizers.xcresult` | 1 个 C ABI 方法、500 次 handle 生命周期通过；能力边界仍是 C/Swift 消费者 ASAN |
+| `final/Performance.xcresult` | 3 个 XCTest metrics 方法通过：Runtime/帧复制、会话编码、假设备下同步语音 admission/cancel；TestPerformance 优化配置 |
+| `final/cargo-test.log` / `final/cargo-clippy.log` | 16 个本仓库 Rust 测试通过；all-targets clippy -D warnings 通过 |
+| `final/release-build.log` / `final/system-fixtures-build.log` | Release 产品与系统 fixture 构建通过 |
+| `final/signing.log` | ad-hoc、无 entitlements、临时副本篡改负例通过 |
+| `final/packaged.log` / `final/System/packaged-q4sj1tx9` | 含空格搬包路径、空 cwd、默认资源、系统 dylib、正常 AppKit 退出、shell/子进程清理通过 |
+| `final/development-debug-build.log` / `final/lldb.log` | DevelopmentDebug 构建通过；LLDB 命中生产 `AppDelegate.applicationDidFinishLaunching` 的 `main.swift:13` |
+| `final/invalid-bootstrap.json` | 不完整 UI 参数及未知测试模式均在 workspace 初始化前以 status 2 退出 |
+| `final/framework-repros-build.log` | 可选 framework Repros Target 构建通过；手动系统状态复现未运行 |
+| `final/cleanliness.json` | Git 与 ignored 清单前后一致；源码 checkout 无 build/target/.build/DerivedData，无残余 fixture/App 进程 |
+
+逐场景 TSV 已与上述结果树核对：153 个唯一原生方法（149 Offline + 1 ASAN + 3 performance）都有 test identifier、fixture 和通过证据。参数化方法的各输入由 xcresult 展开。Fast 是 Offline 的子集，不另计重复入口。
+
+Offline 保留 11 条 AppKit/SwiftUI runtime warning（小窗口 toolbar 约束和视图更新期间发布状态）；没有隐藏或关闭这些诊断，也没有 runner crash。它们不是本次测试失败，迁移没有据此修改产品行为。Fast、ASAN、Performance 没有 runtime warning。
+
+## 手动门槛与保留入口
+
+Live / Soak / Speech / 真实 Keychain 未执行，不计为通过。`manual-signing-identities.json` 已静态确认新旧宿主的 bundle identifier 与开发签名 Team 一致；这不能替代真实授权与服务对照。四个旧 probe 与消费预构建 App 的 wrapper 按门槛保留，只有同条件手动对照完成后才退役。
+
+现保留 8 个 shell（2 个构建/资源 adapter、2 个系统观察/签名验证器、4 个过渡手动 probe wrapper）和 1 个 Python 产品系统验证器。正常 Swift 编译及测试由 Xcode 负责；Cargo 测试继续由 Cargo 负责。原有历史产物仍完整保存在 `preexisting/`，没有删除。
