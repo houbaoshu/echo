@@ -312,7 +312,9 @@ private struct PetSegment<Label: View>: View {
     }
 }
 
-/// A standalone round control beside the pet strip.
+/// A standalone round control beside a pill. It sits directly on the desktop rather than on another
+/// companion surface, so the system's clear glass button style draws the same material as the pills'
+/// background, and brings its own hover, pressed and disabled states.
 private struct PetCircle<Label: View>: View {
     let label: String
     let identifier: String
@@ -322,12 +324,10 @@ private struct PetCircle<Label: View>: View {
     var body: some View {
         Button(action: action) {
             content().font(.system(size: 15, weight: .medium))
-                .frame(width: PetSurfacePresentation.circle, height: PetSurfacePresentation.circle)
-                .contentShape(Circle())
+                .frame(width: PetSurfacePresentation.circle - systemButtonInset,
+                       height: PetSurfacePresentation.circle - systemButtonInset)
         }
-        .buttonStyle(.plain)
-        .background { PetControlBackground(shape: Circle()) }
-        .opacity(enabled ? 1 : 0.4)
+        .buttonStyle(.glass(.clear)).buttonBorderShape(.circle)
         .companionControlActive().disabled(!enabled)
         .help(label).accessibilityLabel(label).accessibilityIdentifier(identifier)
     }

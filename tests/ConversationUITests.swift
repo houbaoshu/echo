@@ -551,9 +551,10 @@ private struct ComposerHeightHost: View {
         // replaces these controls constantly and the loop is stale far more often than not.
         //
         // Stops are identified by the COLUMN they live in, not by class or identifier. The
-        // chat transcript's stop is the key view SwiftUI builds for `.focusable()`, and that
-        // view carries neither the SwiftUI view's accessibility identifier nor any public
-        // type.
+        // chat transcript's stop is the key view SwiftUI builds for `.focusable(interactions:
+        // .activate)`, and that view carries neither the SwiftUI view's accessibility identifier
+        // nor any public type. Like any control, it is a stop only while macOS Keyboard
+        // Navigation is on.
         func area(of view: NSView) -> String {
             for (name, root) in [("sidebar", main.sidebarItem.viewController.view),
                                  ("conversation", main.conversationItem.viewController.view),
@@ -561,7 +562,7 @@ private struct ComposerHeightHost: View {
             where view.isDescendant(of: root) { return name }
             return "window"
         }
-        func tabRing(from start: NSView, limit: Int = 12) -> [(area: String, view: NSView)] {
+        func tabRing(from start: NSView, limit: Int = 24) -> [(area: String, view: NSView)] {
             XCTAssertTrue(window.makeFirstResponder(start), "\(start) must take focus")
             var walked: [(area: String, view: NSView)] = [(area(of: start), start)]
             for _ in 0..<limit {
@@ -586,8 +587,8 @@ private struct ComposerHeightHost: View {
             XCTAssertTrue(ring.contains { $0.view === composer },
                          "\(label): Tab must reach the composer — \(description)")
             // The transcript: a stop in the conversation column that is not the composer.
-            XCTAssertTrue(ring.contains { $0.area == "conversation" && $0.view !== composer },
-                         "\(label): Tab must stop on the conversation itself, not jump the chat — \(description)")
+            XCTAssertTrue(ring.contains { $0.area == "conversation" && $0.view !== composer } == NSApp.isFullKeyboardAccessEnabled,
+                         "\(label): the conversation itself is a Tab stop only with Keyboard Navigation on — \(description)")
             XCTAssertTrue(ring.contains { $0.area == "inspector" } == inspector,
                          "\(label): the inspector is a stop only while it is open — \(description)")
         }

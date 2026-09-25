@@ -169,12 +169,45 @@ import SwiftUI
         source.receive?(.progress(reply))
         try await settle()
         assertTail("Returning by gesture re-arms following")
-        // Focus the transcript via the same Tab loop used by the user.
+        // A click on the chat is not a request to type into it: the transcript takes focus the
+        // way a control does, only through Keyboard Navigation, so the composer keeps the keyboard
+        // whether the click lands on blank space or on a message's selectable text.
         let editor = try XCTUnwrap(findAccessibility("conversation.composer", in: root) as? ComposerTextView)
+        func click(_ point: NSPoint) {
+            let location = scroll.convert(point, to: nil)
+            for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+                window.sendEvent(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: 0,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+            }
+        }
+        func visibleMessage(_ view: NSView) -> NSPoint? {
+            if view.accessibilityIdentifier().hasPrefix("conversation.message.") {
+                let center = scroll.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), from: view)
+                if scroll.bounds.insetBy(dx: 0, dy: 40).contains(center) { return center }
+            }
+            return view.subviews.lazy.compactMap { visibleMessage($0) }.first
+        }
+        let messagePoint = try XCTUnwrap(visibleMessage(scroll), "A message must be on screen to click")
+        for (point, place) in [(NSPoint(x: scroll.bounds.maxX - 40, y: scroll.bounds.midY), "blank space"),
+                               (messagePoint, "message text")] {
+            window.makeFirstResponder(editor)
+            click(point)
+            try await settle()
+            XCTAssertTrue(window.firstResponder === editor,
+                          "Clicking \(place) in the transcript leaves the composer focused, got \(String(describing: window.firstResponder))")
+        }
+        // Reach the transcript through the same Tab loop the user uses. macOS puts it in that loop
+        // only while Keyboard Navigation is on; otherwise ⇧Tab from the composer leaves the column.
         window.makeFirstResponder(editor)
         window.selectPreviousKeyView(nil)
         try await settle()
-        XCTAssertTrue(window.firstResponder !== editor)
+        guard NSApp.isFullKeyboardAccessEnabled else {
+            XCTAssertTrue((window.firstResponder as? NSView)?.isDescendant(of: root) != true,
+                          "Without Keyboard Navigation the transcript is not a Tab stop, got \(String(describing: window.firstResponder))")
+            return
+        }
+        XCTAssertTrue(window.firstResponder !== editor && (window.firstResponder as? NSView)?.isDescendant(of: root) == true,
+                      "With Keyboard Navigation ⇧Tab from the composer reaches the transcript, got \(String(describing: window.firstResponder))")
         func key(_ text: String, code: UInt16) {
             NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                 windowNumber: window.windowNumber, context: nil, characters: text, charactersIgnoringModifiers: text,
@@ -187,6 +220,14 @@ import SwiftUI
         source.receive?(.progress(reply))
         try await settle()
         XCTAssertTrue(scroll.contentView.bounds.minY < 3, "Keyboard navigation disarms following")
+        func position() -> CGFloat { scroll.contentView.bounds.minY }
+        for (text, code, name, down) in [("\u{f72d}", UInt16(121), "Page Down", true), ("\u{f72c}", 116, "Page Up", false)] {
+            let before = position()
+            key(text, code: code)
+            try await settle()
+            XCTAssertTrue(down ? position() > before + 1 : position() < before - 1,
+                          "\(name) scrolls the focused transcript: \(before) -> \(position())")
+        }
         key("\u{f72b}", code: 119) // End
         try await settle()
         assertTail("End returns to the tail")

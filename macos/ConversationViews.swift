@@ -469,7 +469,6 @@ struct ConversationView: View {
     let retry: () -> Void
     @State private var followTail = true
     @State private var userScrolling = false
-    @State private var microphoneHovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The transcript is one of the window's focus stops, so it carries the state a
     /// focused scroll area needs: where it is, and how to move.
@@ -547,31 +546,12 @@ struct ConversationView: View {
                    value.contentHeight > value.visible.height { returnToTail() }
             }
             .scrollPosition($scrollPosition)
-            // The chat itself is a Tab stop, which is what makes the window's focus
-            // ring 侧栏列表 → 会话记录 → 输入框 → 检查器 instead of skipping the
-            // conversation. SwiftUI builds a real key view for `.focusable()` and
-            // AppKit places it geometrically, with no traversal code of Echo's own.
-            .focusable()
-            // Being a Tab stop is all that was wanted from `.focusable()`; the focus
-            // effect came along with it and does not belong on a scroll area. AppKit
-            // itself draws nothing there — a read-only NSTextView in an NSScrollView made
-            // first responder repaints zero pixels, while an NSTextField in the same
-            // window repaints 35k for its ring — yet `.focusable()` leaves the backing
-            // scroll view at focusRingType .default and a plain click paints a ring
-            // around the whole conversation column. This is AppKit's own switch for
-            // that — it sets focusRingType to .none — not a focus
-            // style of Echo's own, and it leaves the Tab stop, the keys below and the
-            // accessibility element untouched.
-            .focusEffectDisabled()
-            // A click on the chat is not a request to type into the chat. `.focusable()`
-            // hands the keyboard to the transcript's key view on mouse-down, and from
-            // then on the composer receives nothing at all: measured, a keystroke after
-            // clicking the transcript never reached the draft. Handing it straight
-            // back is what the mouse meant. Tab is unaffected and still stops here, and a
-            // drag never fires a TapGesture, so selecting text in a message is untouched.
-            .simultaneousGesture(TapGesture().onEnded {
-                workspace?.requestComposerFocus(conversationID: conversationID)
-            })
+            // The chat is focusable the way a control is, not the way a text field is: it
+            // takes focus only through macOS Keyboard Navigation, so a click leaves the
+            // composer's focus alone, and with Keyboard Navigation off Tab passes it by.
+            // SwiftUI builds a real key view for it and AppKit places it geometrically,
+            // with no traversal code of Echo's own.
+            .focusable(interactions: .activate)
             // That key view is NOT inside the scroll view, so scrollPageDown: and
             // friends reach nobody. SwiftUI's own path is the one that works.
             .onKeyPress(keys: [.upArrow, .downArrow, .pageUp, .pageDown, .home, .end]) { transcriptKey($0) }
@@ -821,14 +801,8 @@ struct ConversationView: View {
                     } else {
                         Spacer(minLength: 0)
                         Button(action: startDictation) {
-                            Image(systemName: "mic").frame(width: 28, height: 32)
-                                .background {
-                                    Circle().fill(WorkspaceStyle.primary.opacity(microphoneHovered && presentation.microphoneEnabled ? 0.06 : 0))
-                                        .frame(width: 28, height: 28)
-                                }
-                                .contentShape(Rectangle())
-                        }.buttonStyle(.plain).disabled(!presentation.microphoneEnabled)
-                            .onHover { microphoneHovered = $0 }
+                            Image(systemName: "mic")
+                        }.buttonStyle(.accessoryBar).disabled(!presentation.microphoneEnabled)
                             .help(presentation.microphoneEnabled ? "语音转文字" : "麦克风正在被占用")
                             .accessibilityLabel("语音转文字").accessibilityIdentifier("dictation.start")
                     }

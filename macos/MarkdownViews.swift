@@ -79,7 +79,6 @@ struct AssistantMarkdown: View, Equatable {
 private struct MarkdownCodeBlock: View {
     let text: AttributedString
     @State private var copiedAt: UUID?
-    @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -93,11 +92,7 @@ private struct MarkdownCodeBlock: View {
                 } label: {
                     Image(systemName: copiedAt == nil ? "doc.on.doc" : "checkmark")
                         .font(WorkspaceStyle.caption)
-                        .frame(width: 28, height: 28)
-                        .background(.primary.opacity(isHovered ? 0.09 : 0), in: Circle())
-                        .contentShape(Circle())
-                }.buttonStyle(.plain).foregroundStyle(WorkspaceStyle.secondary)
-                    .onHover { isHovered = $0 }
+                }.buttonStyle(.accessoryBar)
                     .help(copiedAt == nil ? "复制代码" : "已复制")
                     .accessibilityLabel(copiedAt == nil ? "复制代码" : "已复制")
                     .accessibilityIdentifier("conversation.code.copy")
