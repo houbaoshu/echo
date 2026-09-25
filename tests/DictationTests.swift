@@ -18,7 +18,7 @@ import Foundation
 }
 
 extension EchoVoiceScenarios {
-@Suite(.serialized) enum DictationTests {
+@Suite(.serialized, .tags(.fast)) enum DictationTests {
     @Test @MainActor static func recordFinishCancelAndPreview() async throws {
         let audio = FakeAudio(), recognizer = DictationRecognizer(), source = FakeSource()
         var prepareFailure: SettingsError? = SettingsError("Apple 本地语音识别当前不可用")
@@ -268,6 +268,9 @@ extension EchoVoiceScenarios {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("dictation-trace-\(UUID()).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }
         let logger = try DictationDiagnostics(url: url)
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600,
+                "Transcript diagnostics are private to the current user")
         let store = TaskStore(source: FakeSource())
         store.mainDraft = "已有草稿"
         var ordinaryDictation = true
@@ -283,9 +286,10 @@ extension EchoVoiceScenarios {
         trace.callback(result, accepted: false)
         let data = try Data(contentsOf: url)
         let lines = String(decoding: data, as: UTF8.self).split(separator: "\n")
-        let rows = try lines.map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
-        #expect(rows.map { $0["event"] as! String } == ["recognizer.callback", "draft.willSet", "recognizer.callback"])
-        #expect(rows.map { $0["sequence"] as! Int } == [1, 2, 3], "Trace order is preserved")
+        let rows = try lines.map { try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]) }
+        try #require(rows.count == 3)
+        #expect(rows.map { $0["event"] as? String } == ["recognizer.callback", "draft.willSet", "recognizer.callback"])
+        #expect(rows.map { $0["sequence"] as? Int } == [1, 2, 3], "Trace order is preserved")
         #expect(rows[0]["streamFinal"] as? Bool == true && rows[0]["text"] as? String == "第一句\n第二句")
         #expect(rows[1]["before"] as? String == "已有草稿" && rows[1]["proposed"] as? String == "已有草稿\n第一句 第二句")
         #expect(rows[2]["accepted"] as? Bool == false, "Late callbacks remain identifiable")

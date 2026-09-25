@@ -1,3 +1,7 @@
+import AppKit
+import SwiftUI
+
+@MainActor enum FocusRepro {
 // Window focus ring probe — macOS 27.0 / Xcode 27.0
 //
 // Questions this answers, for docs/macos-27-native-ui-audit.md 阶段 2 (the focus model).
@@ -21,27 +25,22 @@
 // focusable SwiftUI ScrollView, an NSTextView composer that is not a field editor, and
 // SwiftUI Buttons around it.
 //
-// Build & run:
-//   project_dir="$PWD"; source scripts/swift-env.sh
-//   swiftc -swift-version 6 -parse-as-library -target arm64-apple-macosx27.0 \
-//       docs/repros/window-focus-ring.swift -o build/focus-probe && build/focus-probe
+// Run with EchoFrameworkRepros, scene argument window-focus-ring.
 //
 // NOTE: run from a terminal the app is an .accessory with no bundle, so it never becomes
 // active and NSApp.keyWindow stays nil. Everything here is measured through explicit
 // makeFirstResponder / nextValidKeyView / tryToPerform rather than through real key
 // events, which is the same shape split-accessory-window-chrome.swift uses.
 
-import AppKit
-import SwiftUI
 
-@MainActor func say(_ s: String) { print(s) }
-@MainActor func head(_ s: String) { print("\n=== \(s) ===") }
+@MainActor static func say(_ s: String) { print(s) }
+@MainActor static func head(_ s: String) { print("\n=== \(s) ===") }
 
-@MainActor func descend(_ view: NSView, into sink: (NSView) -> Void) {
+@MainActor static func descend(_ view: NSView, into sink: (NSView) -> Void) {
     sink(view)
     for child in view.subviews { descend(child, into: sink) }
 }
-@MainActor func collect(_ view: NSView, where match: (NSView) -> Bool) -> [NSView] {
+@MainActor static func collect(_ view: NSView, where match: (NSView) -> Bool) -> [NSView] {
     var found: [NSView] = []
     descend(view) { if match($0) { found.append($0) } }
     return found
@@ -214,7 +213,7 @@ struct ProbeList: View {
 
 // MARK: - [F1] / [F2] the ring
 
-@MainActor func probeRing(_ probe: FocusProbe) {
+@MainActor static func probeRing(_ probe: FocusProbe) {
     head("[F1]+[F2] the window's key view ring")
     say("NSApp.isFullKeyboardAccessEnabled = \(NSApp.isFullKeyboardAccessEnabled)   <- run again with 键盘导航 toggled")
     probe.window.recalculateKeyViewLoop()
@@ -244,7 +243,7 @@ struct ProbeList: View {
 
 // MARK: - [F3] does a focused transcript scroll?
 
-@MainActor func probeScrolling(_ probe: FocusProbe) {
+@MainActor static func probeScrolling(_ probe: FocusProbe) {
     head("[F3] keyboard scrolling with the transcript focused")
     guard let scroll = probe.transcriptScrollView() else { say("  no transcript scroll view"); return }
     // Whatever the ring puts between the sidebar list and the composer is the transcript's
@@ -293,7 +292,7 @@ struct ProbeList: View {
 
 /// Control for [F3]: if a synthetic keyDown cannot even type into the composer, then a
 /// silent .onKeyPress says nothing about .onKeyPress.
-@MainActor func probeSyntheticEvents(_ probe: FocusProbe) {
+@MainActor static func probeSyntheticEvents(_ probe: FocusProbe) {
     head("[F3-control] do synthetic in-process key events reach a first responder at all?")
     guard let editor = collect(probe.conversationHost.view, where: { $0.accessibilityIdentifier() == "probe.composer" }).first as? NSTextView else {
         say("  no composer"); return
@@ -309,7 +308,7 @@ struct ProbeList: View {
     say("  composer draft \"\(before)\" -> \"\(editor.string)\"   <- non-empty change means the mechanism works")
 }
 
-@main struct Probe {
+struct Probe {
     static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -362,3 +361,5 @@ struct ProbeList: View {
 //     the first attempt saw nothing until the scalars were filled in).
 //     => In Echo: `.focusable()` makes the transcript a stop, and `.onKeyPress` + ScrollPosition
 //        gives that stop something to do. Do not reach for the responder chain.
+
+}

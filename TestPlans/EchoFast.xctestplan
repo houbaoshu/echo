@@ -3,7 +3,7 @@
   "configurations": [
     {
       "id": "8a62644e-caf0-4659-b430-6506e477e275",
-      "name": "Offline",
+      "name": "Fast",
       "options": {}
     }
   ],
@@ -34,6 +34,51 @@
         "name": "EchoAgentTaskSourceTests"
       },
       "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E113000000000000000000AA",
+        "name": "EchoVoiceTests"
+      },
+      "parallelizable": false,
+      "selectedTags": {
+        "tags": [
+          "fast"
+        ],
+        "mode": "or",
+        "includeXCTests": false
+      }
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E114000000000000000000AA",
+        "name": "EchoWorkspaceTests"
+      },
+      "parallelizable": false,
+      "selectedTags": {
+        "tags": [
+          "fast"
+        ],
+        "mode": "or",
+        "includeXCTests": false
+      }
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E115000000000000000000AA",
+        "name": "EchoViewTests"
+      },
+      "parallelizable": false,
+      "selectedTags": {
+        "tags": [
+          "fast"
+        ],
+        "mode": "or",
+        "includeXCTests": false
+      }
     }
   ]
 }

@@ -2,14 +2,23 @@ import AppKit
 import AVFoundation
 import Speech
 
-// Opt-in real Speech service check with generated fixtures, never a microphone or model request.
-@main enum AppleSpeechDeviceTests {
+#if ECHO_LEGACY_PROBE
+@main
+#endif
+enum AppleSpeechDeviceTests {
     @MainActor static func main() async {
         _ = NSApplication.shared
-        do {
+        do { try await run(selected: CommandLine.arguments.contains("--paused-only") ? "paused" : nil) }
+        catch { print("FAIL: \(error.localizedDescription)"); exit(1) }
+    }
+    private static func resources() throws -> URL {
+        guard let resources = Bundle.main.resourceURL else { throw SettingsError("Missing Speech fixture resources") }
+        return resources
+    }
+    @MainActor static func run(selected: String? = nil) async throws {
             let fixtures = [("zh-CN", ["今天"]), ("en-US", ["weather"]), ("mixed", ["今天", "weather"]),
                             ("paused", ["第一句话", "第二句话", "第三句话"])]
-            for (language, fragments) in fixtures where !CommandLine.arguments.contains("--paused-only") || language == "paused" {
+            for (language, fragments) in fixtures where selected == nil || selected == language {
                 let locale = try AppleSpeechRecognizer.speechLocale(preferredLanguages: ["zh-CN"], supportedLocales: SFSpeechRecognizer.supportedLocales())
                 let capability = SFSpeechRecognizer(locale: locale)
                 print("Speech \(locale.identifier): onDevice=\(capability?.supportsOnDeviceRecognition == true) available=\(capability?.isAvailable == true)")
@@ -23,7 +32,7 @@ import Speech
                         }
                     }
                 }
-                let url = Bundle.main.resourceURL!.appendingPathComponent("\(language).wav")
+                let url = try Self.resources().appendingPathComponent("\(language).wav")
                 let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatInt16, interleaved: false)
                 guard file.processingFormat.sampleRate == 16000, file.processingFormat.channelCount == 1,
                       let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else {
@@ -76,9 +85,5 @@ import Speech
                 print("PASS \(language) fixture with unchanged zh-CN recognizer: \(finalText)")
             }
             print("PASS: Selected Apple on-device fixtures, including phrase retention across four-second pauses; not an accuracy benchmark")
-        } catch {
-            print("FAIL: \(error.localizedDescription)")
-            exit(1)
-        }
     }
 }

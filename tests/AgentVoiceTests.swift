@@ -11,7 +11,7 @@ extension VoiceTests {
         }
     }
 
-    @Test @MainActor static func agentVoiceTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func agentVoiceTests() async throws {
         _ = NSApplication.shared
         do {
             let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
@@ -84,7 +84,7 @@ extension VoiceTests {
     /// appends the user message before it can fail, so a refused admission that kept the
     /// partial would show the same sentence twice — once as the message, once as speech still
     /// being recognised — and a refusal before any message would show one that was never sent.
-    @Test @MainActor static func agentRefusedFinalTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func agentRefusedFinalTests() async throws {
         _ = NSApplication.shared
         let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
         defer { f.shutdown() }
@@ -114,7 +114,7 @@ extension VoiceTests {
               "an unsubmittable final becomes neither a message nor a leftover partial: \(f.voice.subtitle)")
     }
 
-    @Test @MainActor static func agentVoiceRecoveryTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func agentVoiceRecoveryTests() async throws {
         _ = NSApplication.shared
         let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
         defer { f.shutdown() }
@@ -148,7 +148,7 @@ extension VoiceTests {
 
     /// The streamed reply follows real deltas per model step, keeps the last reply between
     /// turns and never reaches speech before the final reply.
-    @Test @MainActor static func agentReplyStreamTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func agentReplyStreamTests() async throws {
         _ = NSApplication.shared
         let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
         defer { f.shutdown() }
@@ -205,7 +205,7 @@ extension VoiceTests {
 
     /// The muted bubble follows what speech has actually played: subtitles time each character,
     /// playback frames say how far the audio got, and the text is shown on that same timeline.
-    @Test @MainActor static func agentSpokenReplyTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func agentSpokenReplyTests() async throws {
         _ = NSApplication.shared
         let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
         defer { f.shutdown() }
@@ -284,7 +284,7 @@ extension VoiceTests {
     }
 
     /// While Live Voice runs its conversation is in progress; ending the session makes it unseen.
-    @Test @MainActor static func agentVoiceUnseenTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func agentVoiceUnseenTests() async throws {
         _ = NSApplication.shared
         for viewed in [false, true] {
             let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
@@ -331,7 +331,7 @@ extension VoiceTests {
         check(f.workspace.unseenCompletedCount == 0, "an empty Live Voice session creates no unseen item")
     }
 
-    @Test @MainActor static func agentFinalAudioTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func agentFinalAudioTests() async throws {
         _ = NSApplication.shared
         for finalFirst in [false, true] {
             let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)
@@ -393,7 +393,7 @@ extension VoiceTests {
         check(source.commands.count == 2 && source.cancels == 0, "the preserved utterance can start the next round")
     }
 
-    @Test @MainActor static func agentVoiceStartupAndFailureTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func agentVoiceStartupAndFailureTests() async throws {
         _ = NSApplication.shared
         do {
             let source = ScriptedVoiceAgent(), f = AgentVoiceFixture(source: source)

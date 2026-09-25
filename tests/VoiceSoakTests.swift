@@ -11,7 +11,10 @@ enum VoiceSoakOutcome: Sendable {
 // Opt-in idle soak. Holds one ASR socket open on pure silence to reproduce the drop that
 // only appears after a long quiet stretch, with no microphone, no synthesis and no model
 // in the way. Nothing is recorded and nothing is uploaded but zeroed PCM.
-@main struct VoiceSoakTests {
+#if ECHO_LEGACY_PROBE
+@main
+#endif
+struct VoiceSoakTests {
     @MainActor static var utterances = 0
     @MainActor static var outcome: VoiceSoakOutcome?
     @MainActor static var outcomeSeconds: Int64 = 0
@@ -21,16 +24,17 @@ enum VoiceSoakOutcome: Sendable {
             try await run()
         } catch {
             print("FAIL: \(error is SettingsError ? error.localizedDescription : "语音静默浸泡未能启动。")")
-            exit(1)
+            exit(error is VoiceSoakIncomplete ? 2 : 1)
         }
     }
-    @MainActor static func run() async throws {
+    @MainActor static func run(duration: Double? = nil, disconnectAt: Double? = nil) async throws {
+        utterances = 0; outcome = nil; outcomeSeconds = 0
         let arguments = Array(CommandLine.arguments.dropFirst())
-        let limit = max(10, arguments.first.flatMap(Double.init) ?? 120)
+        let limit = max(10, duration ?? arguments.first.flatMap(Double.init) ?? 120)
         // Test-only teardown at a chosen moment. It closes the socket under three live
         // operations, which is the race the reported error comes out of, so the origin
         // lines and the delegate's close and complete lines can be checked deliberately.
-        var cut: Double?
+        var cut: Double? = disconnectAt
         if let flag = arguments.firstIndex(of: "--cut"), flag + 1 < arguments.count {
             cut = Double(arguments[flag + 1])
         }
@@ -51,8 +55,9 @@ enum VoiceSoakOutcome: Sendable {
             input.finish()
         }
         let recognizer = DoubaoRecognizer()
+        var disconnect: Task<Void, Never>?
         if let cut {
-            Task {
+            disconnect = Task {
                 do { try await Task.sleep(for: .seconds(cut)) } catch { return }
                 print("  t=\(Int(cut))s 强制拆链（--cut）"); fflush(nil)
                 recognizer.cancel()
@@ -70,7 +75,7 @@ enum VoiceSoakOutcome: Sendable {
             }
             outcomeSeconds = elapsed()
         }
-        defer { feeder.cancel(); recognition.cancel(); input.finish() }
+        defer { disconnect?.cancel(); recognizer.cancel(); feeder.cancel(); recognition.cancel(); input.finish() }
         var seconds = 0.0
         while seconds < limit, outcome == nil {
             do { try await Task.sleep(for: .seconds(1)) } catch { break }
@@ -96,13 +101,13 @@ enum VoiceSoakOutcome: Sendable {
         for line in spurious { print("  意外的 FAIL：\(line)") }
         guard spurious.isEmpty else {
             print("FAIL: 主动关闭后仍记录了 \(spurious.count) 条 FAIL origin 行。")
-            exit(1)
+            throw SettingsError("语音浸泡未满足连接或拆链验证条件。")
         }
         // A line that simply disappeared would satisfy the check above, so a forced teardown
         // has to show the downgraded event it is supposed to produce.
         if cut != nil, downgraded.isEmpty {
             print("FAIL: --cut 强制拆链没有产生 afterClose=true 事件，降级逻辑未被覆盖。")
-            exit(1)
+            throw SettingsError("语音浸泡未满足连接或拆链验证条件。")
         }
         print("拆链检查：afterClose 降级 \(downgraded.count) 条，FAIL 0 条。")
 
@@ -111,7 +116,7 @@ enum VoiceSoakOutcome: Sendable {
             print("PASS: \(elapsed()) 秒内连接保持在线，未断开（静默中返回 \(utterances) 次识别结果）。")
         case .ended:
             print("ENDED: ASR 在 \(outcomeSeconds) 秒后由服务端正常结束（final 帧），不是异常断开。")
-            exit(2)
+            throw VoiceSoakIncomplete()
         case .dropped(let message):
             // With --cut the drop is the point of the run, not a failure of it.
             guard cut == nil else {
@@ -121,7 +126,9 @@ enum VoiceSoakOutcome: Sendable {
             print("DROP: 连接在 \(outcomeSeconds) 秒后断开。")
             print("  UI 文案：\(message)")
             print("  首因见上方 stderr 中 origin=send / receive / ping 三行，以及 delegate close / complete 两行。")
-            exit(1)
+            throw SettingsError("语音浸泡未满足连接或拆链验证条件。")
         }
     }
 }
+
+struct VoiceSoakIncomplete: Error {}

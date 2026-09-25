@@ -1,22 +1,356 @@
 import XCTest
 
-final class EchoUITests: XCTestCase {
-    @MainActor func testIsolatedAccessoryAppLaunches() throws {
+@MainActor final class EchoUITests: XCTestCase {
+    private var runningApp: XCUIApplication?
+    private var testRoot: URL?
+    private var defaultsSuite: String?
+
+    override func tearDown() async throws {
+        if let app = runningApp {
+            if app.state != .notRunning {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.lifetime = .keepAlways; add(screenshot)
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "Accessibility tree"; tree.lifetime = .keepAlways; add(tree)
+                app.terminate()
+            }
+            runningApp = nil
+        }
+        if let suite = defaultsSuite { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        if let root = testRoot { try FileManager.default.removeItem(at: root) }
+        defaultsSuite = nil; testRoot = nil
+    }
+
+    @MainActor private func withApp(fixture: String? = nil, _ body: (XCUIApplication, URL) throws -> Void) throws {
+        continueAfterFailure = false
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-ui-\(UUID())")
         let suite = "local.chiyan.tests.\(UUID())"
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try suite.write(to: root.appendingPathComponent(".echo-test"), atomically: true, encoding: .utf8)
-        defer {
-            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
-            try? FileManager.default.removeItem(at: root)
-        }
+        testRoot = root; defaultsSuite = suite
         let app = XCUIApplication()
+        runningApp = app
         app.launchEnvironment = ["ECHO_TEST_MODE": "ui", "ECHO_TEST_ROOT": root.path, "ECHO_TEST_SUITE": suite]
+        if let fixture { app.launchEnvironment["ECHO_UI_FIXTURE"] = fixture }
         app.launch()
-        defer { app.terminate() }
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 10))
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        app.activate()
+        try body(app, root)
     }
+
+    @MainActor private func composer(_ app: XCUIApplication) -> XCUIElement {
+        app.textViews["conversation.composer"]
+    }
+    @MainActor private func wait(_ description: String, timeout: TimeInterval = 10, _ condition: @escaping () -> Bool) {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed, description)
+    }
+
+    @MainActor func testSendStreamStopRetryAndRestart() throws {
+        try withApp { app, _ in
+            let editor = composer(app)
+            XCTAssertTrue(editor.waitForExistence(timeout: 5), app.debugDescription)
+            editor.click(); editor.typeText("slow message")
+            app.typeKey(.return, modifierFlags: [])
+            XCTAssertTrue(app.buttons["conversation.stop"].waitForExistence(timeout: 3))
+            XCTAssertTrue(app.staticTexts["Offline"].waitForExistence(timeout: 3))
+            app.typeKey(".", modifierFlags: .command)
+            XCTAssertTrue(app.buttons["conversation.resume"].waitForExistence(timeout: 3))
+            app.buttons["conversation.resume"].click()
+            wait("Retry completes the same user message", timeout: 12) {
+                !app.buttons["conversation.stop"].exists && app.staticTexts["Offline reply: slow message"].exists
+            }
+            app.typeKey("q", modifierFlags: .command)
+            XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
+            app.launch(); app.activate()
+            app.typeKey("k", modifierFlags: .command)
+            let search = app.searchFields["搜索聊天"]
+            XCTAssertTrue(search.waitForExistence(timeout: 3))
+            search.typeText("slow message")
+            app.typeKey(.return, modifierFlags: [])
+            XCTAssertTrue(app.staticTexts["Offline reply: slow message"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["conversation.stop"].exists)
+        }
+    }
+
+    @MainActor func testNewConversationSearchAndSettingsKeyboard() throws {
+        try withApp { app, _ in
+            let editor = composer(app)
+            XCTAssertTrue(editor.waitForExistence(timeout: 5))
+            editor.click(); editor.typeText("first conversation"); app.typeKey(.return, modifierFlags: [])
+            XCTAssertTrue(app.staticTexts["Offline reply: first conversation"].waitForExistence(timeout: 5))
+            app.typeKey(.escape, modifierFlags: [])
+            composer(app).click(); composer(app).typeText("draft retained")
+            XCTAssertEqual(composer(app).value as? String, "draft retained")
+            app.typeKey("n", modifierFlags: .command)
+            wait("New conversation has an empty composer") { self.composer(app).value as? String == "" }
+            app.typeKey("k", modifierFlags: .command)
+            let search = app.searchFields["搜索聊天"]
+            XCTAssertTrue(search.waitForExistence(timeout: 3))
+            search.typeText("first conversation")
+            app.typeKey(.return, modifierFlags: [])
+            wait("Search restores the selected draft") { self.composer(app).value as? String == "draft retained" }
+            app.typeKey(",", modifierFlags: .command)
+            let model = app.textFields["settings.model"]
+            XCTAssertTrue(model.waitForExistence(timeout: 5))
+            model.click(); app.typeKey("a", modifierFlags: .command); model.typeText("ui-edited-model")
+            app.buttons["settings.save"].click()
+            app.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(editor.exists)
+            XCTAssertEqual(editor.value as? String, "draft retained")
+            app.typeKey(",", modifierFlags: .command)
+            XCTAssertTrue(model.waitForExistence(timeout: 3))
+            XCTAssertEqual(model.value as? String, "ui-edited-model")
+        }
+    }
+    func testProjectPickerKeyboardScrollPreviewAndDetach() throws {
+        try withApp(fixture: "projects") { app, _ in
+            let picker = app.buttons["conversation.project"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 5))
+            picker.click()
+            let search = app.textFields["projectPicker.search"]
+            XCTAssertTrue(search.waitForExistence(timeout: 3))
+            for _ in 0..<18 { app.typeKey(.downArrow, modifierFlags: []) }
+            app.typeKey(.return, modifierFlags: [])
+            XCTAssertTrue(picker.waitForExistence(timeout: 3))
+            XCTAssertTrue(picker.label.contains("Project 18"), picker.label)
+            app.typeKey("b", modifierFlags: [.command, .option])
+            let file = app.descendants(matching: .any)["projectFiles.entry.note.txt"].firstMatch
+            XCTAssertTrue(file.waitForExistence(timeout: 5))
+            file.doubleClick()
+            let preview = app.textViews["projectFiles.text"]
+            XCTAssertTrue(preview.waitForExistence(timeout: 5))
+            XCTAssertTrue((preview.value as? String ?? "").contains("Preview fixture 18"))
+            composer(app).click(); composer(app).typeText("kept draft")
+            picker.hover()
+            let detach = app.buttons["conversation.project.detach"]
+            XCTAssertTrue(detach.waitForExistence(timeout: 3))
+            detach.click()
+            XCTAssertTrue(picker.label.contains("选择项目"))
+            app.typeText(" after detach")
+            XCTAssertEqual(composer(app).value as? String, "kept draft after detach")
+        }
+    }
+
+    func testVoiceAndDictationNativeMenuRouting() throws {
+        try withApp { app, _ in
+            let editor = composer(app)
+            XCTAssertTrue(editor.waitForExistence(timeout: 5))
+            editor.click(); editor.typeText("kept draft")
+            app.typeKey("d", modifierFlags: [.control, .shift])
+            XCTAssertTrue(app.buttons["dictation.finish"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["voice.end"].exists)
+            app.typeKey(.escape, modifierFlags: [])
+            XCTAssertTrue(app.buttons["dictation.finish"].exists, "Idle Escape preserves recording")
+            app.typeKey("d", modifierFlags: [.control, .shift])
+            XCTAssertTrue(editor.waitForExistence(timeout: 5))
+            XCTAssertEqual(editor.value as? String, "kept draft")
+            app.typeKey("v", modifierFlags: [.control, .shift])
+            XCTAssertTrue(app.buttons["voice.mute"].waitForExistence(timeout: 5))
+            app.buttons["voice.mute"].click()
+            XCTAssertEqual(app.buttons["voice.mute"].label, "开启麦克风")
+            app.buttons["voice.mute"].click()
+            app.buttons["voice.speaker"].click()
+            app.typeKey(.escape, modifierFlags: [])
+            XCTAssertTrue(app.buttons["voice.mute"].exists, "Idle Escape preserves Live Voice")
+            app.typeKey("n", modifierFlags: .command)
+            app.typeKey("v", modifierFlags: [.control, .shift])
+            wait("End Voice addresses the existing owner after navigation") { !app.buttons["voice.mute"].exists }
+        }
+    }
+
+    func testPetComposerPointerFocusAndIndependentDraft() throws {
+        try withApp { app, _ in
+            let editor = composer(app)
+            XCTAssertTrue(editor.waitForExistence(timeout: 5))
+            editor.click(); editor.typeText("main draft")
+            let pet = app.buttons["赤焰"]
+            XCTAssertTrue(pet.waitForExistence(timeout: 5))
+            pet.hover()
+            let compose = app.buttons["pet.compose"]
+            XCTAssertTrue(compose.waitForExistence(timeout: 5))
+            compose.click()
+            let quick = app.textViews["pet.composer"]
+            XCTAssertTrue(quick.waitForExistence(timeout: 5))
+            quick.click(); quick.typeText("slow pet request")
+            XCTAssertEqual(quick.value as? String, "slow pet request")
+            XCTAssertEqual(editor.value as? String, "main draft")
+            app.typeKey(.escape, modifierFlags: [])
+            wait("Escape closes the pet composer") { !quick.exists }
+            pet.hover(); compose.click()
+            XCTAssertTrue(quick.waitForExistence(timeout: 5))
+            XCTAssertEqual(quick.value as? String, "slow pet request", "Escape preserves the independent pet draft")
+            app.typeKey(.return, modifierFlags: [])
+            XCTAssertEqual(editor.value as? String, "main draft")
+            editor.hover()
+            wait("Leaving collapses the empty composer") { !quick.exists }
+            pet.hover()
+            let bell = app.buttons["pet.activity.expand"]
+            XCTAssertTrue(bell.waitForExistence(timeout: 10))
+            XCTAssertEqual(bell.value as? String, "1 个已完成任务未查看")
+            bell.click()
+            let collapse = app.buttons["pet.activity.collapse"]
+            XCTAssertTrue(collapse.waitForExistence(timeout: 3))
+            XCTAssertFalse(bell.exists)
+            collapse.click()
+            XCTAssertTrue(bell.waitForExistence(timeout: 3))
+            XCTAssertNotEqual(bell.value as? String, "1 个已完成任务未查看")
+            compose.click(); quick.typeText("kept pet draft")
+            editor.click()
+            wait("Focus loss closes the pet composer") { !quick.exists }
+            pet.hover(); compose.click()
+            XCTAssertEqual(quick.value as? String, "kept pet draft")
+            editor.click()
+            app.typeKey("k", modifierFlags: .command)
+            let search = app.searchFields["搜索聊天"]
+            XCTAssertTrue(search.waitForExistence(timeout: 3))
+            search.typeText("slow pet request"); app.typeKey(.return, modifierFlags: [])
+            XCTAssertTrue(app.staticTexts["Offline reply: slow pet request"].waitForExistence(timeout: 5))
+        }
+    }
+
+    func testSidebarRowsArrowTraversalAndFocus() throws {
+        try withApp(fixture: "sidebar") { app, root in
+            let ids = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("fixture.json")))
+            let projectID = try XCTUnwrap(ids["project"])
+            let outline = app.outlines["workspace.sidebar"]
+            XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
+            func label(_ title: String, project: Bool = false) -> XCUIElement {
+                outline.descendants(matching: .any)["conversation.\(project ? projectID : "recent").\(ids[title]!)"].firstMatch
+            }
+            func row(_ title: String, project: Bool = false) -> XCUIElement {
+                outline.descendants(matching: .outlineRow).containing(.any, identifier: label(title, project: project).identifier).firstMatch
+            }
+            func opened(_ title: String) {
+                XCTAssertTrue(app.staticTexts["Offline reply: \(title)"].waitForExistence(timeout: 5))
+            }
+            for title in ["Recent Gamma", "Recent Delta", "Project Alpha"] {
+                for point in [CGVector(dx: 0.03, dy: 0.5), .init(dx: 0.5, dy: 0.5), .init(dx: 0.97, dy: 0.12), .init(dx: 0.97, dy: 0.88)] {
+                    row(title == "Recent Delta" ? "Recent Gamma" : "Recent Delta").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
+                    let target = row(title)
+                    XCTAssertTrue(target.exists, app.debugDescription)
+                    target.coordinate(withNormalizedOffset: point).click()
+                    opened(title)
+                }
+            }
+            row("Project Alpha", project: true).coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
+            XCTAssertTrue(row("Project Alpha", project: true).isSelected)
+            row("Project Alpha").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
+            XCTAssertTrue(row("Project Alpha").isSelected)
+            XCTAssertFalse(row("Project Alpha", project: true).isSelected)
+            row("Recent Delta").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
+            app.typeKey(.downArrow, modifierFlags: [])
+            opened("Recent Gamma")
+            app.typeKey(.upArrow, modifierFlags: [])
+            opened("Recent Delta")
+            app.typeKey(.upArrow, modifierFlags: [])
+            opened("Project Alpha")
+            XCTAssertTrue(row("Project Alpha", project: true).isSelected, "Arrows cross the recent/project boundary")
+            // Exact first-responder identity and the complete cyclic order are
+            // checked by the hosted AppKit case. Here real Tab/Shift-Tab return
+            // keyboard navigation to the selected sidebar row.
+            app.typeKey(.tab, modifierFlags: [])
+            app.typeKey(.tab, modifierFlags: .shift)
+            XCTAssertFalse((composer(app).value as? String ?? "").contains("\t"))
+            app.typeKey(.downArrow, modifierFlags: [])
+            opened("Recent Delta")
+            row("Project Alpha").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 2.3)).click()
+            opened("Recent Delta")
+        }
+    }
+
+    func testSidebarGroupsHoverAndPaletteIsolation() throws {
+        try withApp(fixture: "sidebar") { app, root in
+            let ids = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("fixture.json")))
+            let projectID = try XCTUnwrap(ids["project"])
+            let outline = app.outlines["workspace.sidebar"]
+            XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
+            func label(_ title: String, project: Bool = false) -> XCUIElement {
+                outline.descendants(matching: .any)["conversation.\(project ? projectID : "recent").\(ids[title]!)"].firstMatch
+            }
+            func row(_ title: String, project: Bool = false) -> XCUIElement {
+                outline.descendants(matching: .outlineRow).containing(.any, identifier: label(title, project: project).identifier).firstMatch
+            }
+            func opened(_ title: String) {
+                XCTAssertTrue(app.staticTexts["Offline reply: \(title)"].waitForExistence(timeout: 5))
+            }
+            row("Recent Delta").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
+            opened("Recent Delta")
+            func project() -> XCUIElement {
+                // SwiftUI merges the hover button into this row's AX label,
+                // changing its identifier. The one-project fixture has a stable
+                // source-list row immediately below the Projects header.
+                outline.descendants(matching: .outlineRow).element(boundBy: 1)
+            }
+            XCTAssertTrue(project().debugDescription.contains("Project 00"), project().debugDescription)
+            project().coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
+            XCTAssertFalse(label("Project Alpha", project: true).exists)
+            opened("Recent Delta")
+            project().coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
+            XCTAssertTrue(label("Project Alpha", project: true).waitForExistence(timeout: 3))
+            project().coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).hover()
+            XCTAssertTrue(project().debugDescription.contains("新对话"), project().debugDescription)
+            project().coordinate(withNormalizedOffset: .init(dx: 0.90, dy: 0.5)).click()
+            XCTAssertTrue(app.buttons["conversation.project"].label.contains("Project 00"))
+            let rowCount = outline.descendants(matching: .outlineRow).count
+            app.descendants(matching: .any)["workspace.search.toggle"].firstMatch.click()
+            let search = app.searchFields["搜索聊天"]
+            XCTAssertTrue(search.waitForExistence(timeout: 3)); search.typeText("Recent Gamma")
+            XCTAssertEqual(outline.descendants(matching: .outlineRow).count, rowCount, "Palette filtering leaves the sidebar intact")
+            app.typeKey(.return, modifierFlags: []); opened("Recent Gamma")
+            app.typeKey("k", modifierFlags: .command)
+            search.typeText("no matching conversation")
+            XCTAssertEqual(outline.descendants(matching: .outlineRow).count, rowCount)
+            app.typeKey(.escape, modifierFlags: [])
+            XCTAssertTrue(search.exists)
+            XCTAssertEqual(search.value as? String, "")
+            app.typeKey(.escape, modifierFlags: [])
+            wait("Second Escape closes the empty palette") { !search.exists }
+        }
+    }
+
+    func testSettingsFullRowsArrowsAndUnsavedEdits() throws {
+        try withApp { app, _ in
+            app.typeKey(",", modifierFlags: .command)
+            let sections = app.outlines["settings.sections"]
+            XCTAssertTrue(sections.waitForExistence(timeout: 5), app.debugDescription)
+            let names = ["模型", "语音", "星球", "精灵"]
+            func row(_ name: String) -> XCUIElement {
+                sections.descendants(matching: .outlineRow).containing(.any, identifier: "settings.section.\(name)").firstMatch
+            }
+            for name in names {
+                for point in [CGVector(dx: 0.15, dy: 0.5), .init(dx: 0.95, dy: 0.15), .init(dx: 0.95, dy: 0.85)] {
+                    row(name == "模型" ? "语音" : "模型").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
+                    row(name).coordinate(withNormalizedOffset: point).click()
+                    XCTAssertTrue(row(name).isSelected, "Full row selects \(name)")
+                }
+            }
+            row("模型").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
+            for name in names.dropFirst() {
+                app.typeKey(.downArrow, modifierFlags: [])
+                XCTAssertTrue(row(name).isSelected)
+            }
+            app.typeKey(.upArrow, modifierFlags: [])
+            app.typeKey(.upArrow, modifierFlags: [])
+            XCTAssertTrue(row("语音").isSelected)
+            let speaker = app.textFields["voiceSettings.speaker"]
+            XCTAssertTrue(speaker.waitForExistence(timeout: 3))
+            speaker.click(); app.typeKey("a", modifierFlags: .command); speaker.typeText("saved-speaker")
+            app.typeKey(.return, modifierFlags: [])
+            wait("Return saves the edited voice section") { !app.buttons["voiceSettings.save"].isEnabled }
+            app.typeKey("a", modifierFlags: .command); speaker.typeText("unsaved-speaker")
+            app.typeKey("w", modifierFlags: .command)
+            wait("Closing settings leaves the conversation editable") { !sections.exists }
+            composer(app).click(); app.typeText("conversation stays editable")
+            XCTAssertEqual(composer(app).value as? String, "conversation stays editable")
+            app.typeKey(",", modifierFlags: .command)
+            XCTAssertTrue(speaker.waitForExistence(timeout: 3))
+            XCTAssertEqual(speaker.value as? String, "unsaved-speaker")
+            XCTAssertTrue(row("语音").isSelected)
+            app.typeKey(.escape, modifierFlags: [])
+            wait("Escape closes settings independently") { !sections.exists }
+            XCTAssertTrue(composer(app).exists)
+        }
+    }
+
 }

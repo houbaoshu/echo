@@ -39,11 +39,11 @@ OTHER_CODE_SIGN_FLAGS = --timestamp=none
 ENABLE_HARDENED_RUNTIME = NO
 CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO
 
-// Every test script already compiles these sources with -warnings-as-errors.
+// Keep production and native test targets on the same warning policy.
 SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
 
-// Deliberately NOT set, because swiftc does not apply them today and each one
-// changes what the existing sources mean:
+// Keep the existing source semantics during the migration; these settings
+// introduce separate concurrency/import behavior changes:
 //   SWIFT_DEFAULT_ACTOR_ISOLATION (template default MainActor)
 //   SWIFT_APPROACHABLE_CONCURRENCY
 //   SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY

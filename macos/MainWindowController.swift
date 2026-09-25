@@ -69,7 +69,7 @@ struct MainWindowLayout {
     /// The toolbar's standard toggles carry a nil target, so AppKit sends toggleSidebar: /
     /// toggleInspector: up the responder chain from the first responder. With anything at
     /// all focused that chain reaches this controller first (measured in
-    /// docs/repros/split-accessory-window-chrome.swift [D]), and NSSplitViewController's own
+    /// docs/repros/split-accessory-window-chrome.md [D]), and NSSplitViewController's own
     /// implementation would flip `isCollapsed` behind the window controller's back —
     /// bypassing `layout.sidebarPreferred`, `manualColumn` and `saveLayout()`. So both are
     /// overridden and forwarded, and neither calls super.
@@ -165,7 +165,7 @@ struct MainWindowLayout {
         layout.inspectorWidth = min(380, max(260, defaults.object(forKey: "main.inspectorWidth") as? Double ?? 280))
         // AppKit draws the title in a unified toolbar; Echo used to hide it and repaint it
         // in a custom toolbar item. See P1-4 measurements in
-        // docs/repros/split-accessory-window-chrome.swift [C].
+        // docs/repros/split-accessory-window-chrome.md [C].
         window.title = "新会话"; window.titleVisibility = .visible
         window.titlebarAppearsTransparent = true; window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false; window.minSize = NSSize(width: 720, height: 520)
@@ -225,7 +225,7 @@ struct MainWindowLayout {
         // constrains a restored frame back onto the current screen arrangement, so the
         // hand-rolled defaults key, MainWindowLayout.constrain and the screen-parameter
         // observer are all gone. Naming the slot does not restore it — that is a separate
-        // call (docs/repros/split-accessory-window-chrome.swift [B]). Autosave always
+        // call (docs/repros/split-accessory-window-chrome.md [B]). Autosave always
         // writes to standard defaults, so it is armed only for the app's own suite; tests
         // and the acceptance probe inject their own and get the default centred window.
         if defaults === UserDefaults.standard {
@@ -458,7 +458,7 @@ struct MainWindowLayout {
     }
     /// Required even with nothing to build: NSToolbar creates no items at all — standard
     /// identifiers included — unless the delegate answers this selector. Measured in
-    /// docs/repros/split-accessory-window-chrome.swift [D-delegate].
+    /// docs/repros/split-accessory-window-chrome.md [D-delegate].
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? { nil }
 }

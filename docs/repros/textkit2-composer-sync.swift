@@ -1,3 +1,7 @@
+import AppKit
+import Combine
+
+@MainActor enum TextKitRepro {
 // TextKit 2 composer sync probe — macOS 27.0 / Xcode 27.0
 //
 // Question this answers: can the chat composer (macos/ConversationViews.swift,
@@ -13,23 +17,18 @@
 //
 // FINDINGS: see the RESULTS block at the bottom of this file.
 //
-// Build & run:
-//   source scripts/swift-env.sh
-//   swiftc -swift-version 6 -parse-as-library -target arm64-apple-macosx27.0 \
-//       docs/repros/textkit2-composer-sync.swift -o build/textkit2-probe && build/textkit2-probe
+// Run with EchoFrameworkRepros, scene argument textkit2-composer-sync.
 //
 // -swift-version 6 is deliberate: it also proves whether a @MainActor coordinator
 // can adopt NSTextStorageDelegate, which (unlike NSTextViewDelegate) carries no
 // NS_SWIFT_UI_ACTOR annotation in the macOS 27 SDK.
 
-import AppKit
-import Combine
 
 // MARK: - logging
 
-@MainActor func say(_ s: String) { print(s) }
+@MainActor static func say(_ s: String) { print(s) }
 
-@MainActor func log(_ event: String, _ v: NSTextView?) {
+@MainActor static func log(_ event: String, _ v: NSTextView?) {
     guard let v else { say("      \(event)"); return }
     let mr = v.markedRange()
     let marked = mr.location == NSNotFound ? "none" : "\(mr.location),\(mr.length)"
@@ -38,7 +37,7 @@ import Combine
         + "sel=\(sel.location),\(sel.length) tk2=\(v.textLayoutManager != nil) str=\(v.string.debugDescription)")
 }
 
-func describe(_ mask: NSTextStorageEditActions) -> String {
+static func describe(_ mask: NSTextStorageEditActions) -> String {
     var parts: [String] = []
     if mask.contains(.editedCharacters) { parts.append("chars") }
     if mask.contains(.editedAttributes) { parts.append("attrs") }
@@ -150,7 +149,7 @@ final class ProbeUndoManager: UndoManager, @unchecked Sendable {
 
 // MARK: - construction
 
-@MainActor func makeEditor(textKit2: Bool, fontSize: CGFloat = 14) -> (ProbeTextView, NSScrollView) {
+@MainActor static func makeEditor(textKit2: Bool, fontSize: CGFloat = 14) -> (ProbeTextView, NSScrollView) {
     let editor = ProbeTextView(usingTextLayoutManager: textKit2)
     editor.isRichText = false; editor.allowsUndo = true; editor.drawsBackground = false
     editor.font = .systemFont(ofSize: fontSize); editor.textColor = .labelColor
@@ -167,7 +166,7 @@ final class ProbeUndoManager: UndoManager, @unchecked Sendable {
 /// [A8] Installs both hooks and reports whether AppKit already owns the storage delegate slot.
 /// Order matters: textContentStorage is consulted first, because reading NSTextView.textStorage
 /// on a TextKit 2 view is itself a suspected downgrade trigger.
-@MainActor func attach(_ probe: Probe, to editor: ProbeTextView) -> Bool {
+@MainActor static func attach(_ probe: Probe, to editor: ProbeTextView) -> Bool {
     probe.view = editor
     editor.delegate = probe
     if let storage = editor.textContentStorage?.textStorage {
@@ -183,7 +182,7 @@ final class ProbeUndoManager: UndoManager, @unchecked Sendable {
 
 // MARK: - scenarios
 
-@MainActor func scenarios(label: String, textKit2: Bool, window: NSWindow) {
+@MainActor static func scenarios(label: String, textKit2: Bool, window: NSWindow) {
     say("\n================ \(label) ================")
     let probe = Probe()
     let (editor, scroll) = makeEditor(textKit2: textKit2)
@@ -322,7 +321,7 @@ final class ProbeUndoManager: UndoManager, @unchecked Sendable {
 
 // MARK: - A1 construction defaults
 
-@MainActor func constructionDefaults() {
+@MainActor static func constructionDefaults() {
     say("\n================ [A1] construction defaults ================")
     let plain = ProbeTextView(); plain.trace = false
     say("  ProbeTextView()                         textLayoutManager=\(plain.textLayoutManager != nil) textContentStorage=\(plain.textContentStorage != nil)")
@@ -348,7 +347,7 @@ final class ProbeUndoManager: UndoManager, @unchecked Sendable {
 
 // MARK: - A9 height parity
 
-@MainActor func heights() {
+@MainActor static func heights() {
     say("\n================ [A9] height parity ================")
     let samples: [(String, String)] = [
         ("empty", ""),
@@ -390,7 +389,7 @@ final class ProbeUndoManager: UndoManager, @unchecked Sendable {
 
 // MARK: - main
 
-@main struct TextKit2ComposerSyncProbe {
+struct TextKit2ComposerSyncProbe {
     @MainActor static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -477,3 +476,5 @@ final class ProbeUndoManager: UndoManager, @unchecked Sendable {
 // Swift 6: NSTextStorageDelegate carries no NS_SWIFT_UI_ACTOR annotation (unlike
 // NSTextViewDelegate), so a @MainActor coordinator must adopt it as `nonisolated` and
 // hop with MainActor.assumeIsolated. This file compiles clean under -swift-version 6.
+
+}

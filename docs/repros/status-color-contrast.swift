@@ -1,3 +1,6 @@
+import AppKit
+
+@MainActor enum ContrastRepro {
 // Increase Contrast, system colours, and what a dynamic NSColor provider is handed.
 //
 // Background: `WorkspaceStyle` derives its secondary and tertiary text colours by
@@ -13,16 +16,12 @@
 //        resolved against the appearance being asked about, or against whatever the
 //        current drawing appearance happens to be?
 //
-// Build and run:
-//   SDKROOT=$(xcrun --show-sdk-path) swiftc -swift-version 6 \
-//       -target arm64-apple-macosx27.0 docs/repros/status-color-contrast.swift \
-//       -framework AppKit -o build/status-color-contrast && build/status-color-contrast
+// Run with EchoFrameworkRepros, scene argument status-color-contrast.
 //
 // Measured on macOS 27.0 / Xcode 27.0 (27A266a), 2026-09-20.
 
-import AppKit
 
-let requested: [NSAppearance.Name] = [.aqua, .accessibilityHighContrastAqua,
+static let requested: [NSAppearance.Name] = [.aqua, .accessibilityHighContrastAqua,
                                       .darkAqua, .accessibilityHighContrastDarkAqua]
 
 // [C1] A high-contrast appearance cannot be conjured by name. Increase Contrast is a
@@ -38,7 +37,7 @@ let requested: [NSAppearance.Name] = [.aqua, .accessibilityHighContrastAqua,
 //   requested=NSAppearanceNameAccessibilityAqua       actual=NSAppearanceNameAqua      best=NSAppearanceNameAqua
 //   requested=NSAppearanceNameDarkAqua                actual=NSAppearanceNameDarkAqua  best=NSAppearanceNameDarkAqua
 //   requested=NSAppearanceNameAccessibilityDarkAqua   actual=NSAppearanceNameDarkAqua  best=NSAppearanceNameDarkAqua
-func c1() {
+static func c1() {
     print("[C1] appearance synthesis")
     for name in requested {
         let appearance = NSAppearance(named: name)!
@@ -66,7 +65,7 @@ func c1() {
 //   systemBlue          0.000/0.533/1.000  0.000/0.533/1.000  0.000/0.569/1.000  0.000/0.569/1.000
 //   labelColor          0.000/0.000/0.000  0.000/0.000/0.000  1.000/1.000/1.000  1.000/1.000/1.000   (alpha 0.85 throughout)
 //   controlAccentColor  0.000/0.478/1.000  0.000/0.478/1.000  0.000/0.478/1.000  0.000/0.478/1.000
-func c2() {
+static func c2() {
     print("[C2] system colours across appearances (aqua, hcAqua, dark, hcDark)")
     let colors: [(String, NSColor)] = [("systemOrange", .systemOrange), ("systemGreen", .systemGreen),
                                        ("systemBlue", .systemBlue), ("labelColor", .labelColor),
@@ -97,7 +96,7 @@ func c2() {
 //   dark    system=1.000/0.573/0.188  derived=1.000/0.573/0.188
 //
 // This is what `WorkspaceStyle.statusFill(_:)` relies on.
-func c3() {
+static func c3() {
     print("[C3] nested resolution inside a colour provider")
     let derived = NSColor(name: nil) { _ in NSColor.systemOrange.usingColorSpace(.sRGB)! }
     for name in [NSAppearance.Name.aqua, .darkAqua] {
@@ -112,4 +111,6 @@ func c3() {
     }
 }
 
-c1(); c2(); c3()
+static func run() { c1(); c2(); c3() }
+
+}

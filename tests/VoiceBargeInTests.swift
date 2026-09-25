@@ -44,7 +44,7 @@ extension VoiceTests {
         VoiceFixtureSupport.activityPCM(amplitude: amplitude, samples: samples)
     }
 
-    @Test @MainActor static func bargeInGateTests() {
+    @Test(.tags(.fast)) @MainActor static func bargeInGateTests() {
         _ = NSApplication.shared
         let voice = activityPCM(), silence = Data(repeating: 0, count: 640)
         var gate = VoiceBargeInGate()
@@ -96,7 +96,7 @@ extension VoiceTests {
         check(!oversized.permits("任何候选"), "an incomplete echo reference fails closed")
     }
 
-    @Test @MainActor static func bargeInConverterTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func bargeInConverterTests() async throws {
         _ = NSApplication.shared
         let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800)!
@@ -117,7 +117,7 @@ extension VoiceTests {
               "reset clears resampler history as well as pending bytes at the acoustic boundary")
     }
 
-    @Test @MainActor static func bargeInSuccessTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func bargeInSuccessTests() async throws {
         _ = NSApplication.shared
         for finalFirst in [false, true] {
             let f = BargeInFixture()
@@ -184,7 +184,7 @@ extension VoiceTests {
               "old drain completion cannot resume listening or alter a new run")
     }
 
-    @Test @MainActor static func bargeInRejectionTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func bargeInRejectionTests() async throws {
         _ = NSApplication.shared
         do {
             let f = BargeInFixture() // real 800 ms activity deadline, not the 3 s ASR deadline
@@ -231,7 +231,7 @@ extension VoiceTests {
         }
     }
 
-    @Test @MainActor static func bargeInCancellationTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func bargeInCancellationTests() async throws {
         _ = NSApplication.shared
         for action in ["mute", "stop", "send", "end", "failure", "restart"] {
             let f = BargeInFixture(timeout: .milliseconds(240))
@@ -279,7 +279,7 @@ extension VoiceTests {
         }
     }
 
-    @Test @MainActor static func bargeInCompletionAndWatchdogTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func bargeInCompletionAndWatchdogTests() async throws {
         _ = NSApplication.shared
         do {
             let f = BargeInFixture(timeout: .milliseconds(220))

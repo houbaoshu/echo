@@ -5,10 +5,16 @@ import Combine
 /// Keep this separate from VoiceDiagnostics, whose logs never contain transcripts.
 @MainActor final class DictationDiagnostics {
     static let shared: DictationDiagnostics? = {
-        guard let index = CommandLine.arguments.firstIndex(of: "--dictation-trace"),
-              CommandLine.arguments.indices.contains(index + 1) else { return nil }
+        let url: URL
+        if CommandLine.arguments.contains("--dictation-trace-auto") {
+            url = FileManager.default.temporaryDirectory.appendingPathComponent("echo-dictation-\(UUID()).jsonl")
+        } else if let index = CommandLine.arguments.firstIndex(of: "--dictation-trace"),
+                  CommandLine.arguments.indices.contains(index + 1) {
+            url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+        } else { return nil }
         do {
-            let logger = try DictationDiagnostics(url: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+            let logger = try DictationDiagnostics(url: url)
+            print("Ordinary dictation transcript trace: \(url.path)")
             let executable = Bundle.main.executableURL
             let modified = try? executable?.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
             logger.record("process.start", fields: [
@@ -24,6 +30,7 @@ import Combine
 
     private let output: FileHandle
     private var sequence = 0
+    private var counts: [String: Int] = [:]
     private let started = ProcessInfo.processInfo.systemUptime
 
     init(url: URL) throws {
@@ -39,6 +46,7 @@ import Combine
 
     func record(_ event: String, fields: [String: Any]) {
         sequence += 1
+        counts[event, default: 0] += 1
         var row = fields
         row["event"] = event; row["sequence"] = sequence
         row["time"] = Date().ISO8601Format(.init(includingFractionalSeconds: true))
@@ -49,6 +57,13 @@ import Combine
             try output.write(contentsOf: data)
         } catch {
             FileHandle.standardError.write(Data("Cannot write ordinary ASR trace: \(error.localizedDescription)\n".utf8))
+        }
+    }
+
+    func printSummary() {
+        print("录音轮数：\(counts["recording.start", default: 0])；Apple 原始回调：\(counts["apple.rawCallback", default: 0])；识别回调：\(counts["recognizer.callback", default: 0])")
+        if counts["recognizer.callback", default: 0] == 0 {
+            print("本次没有采集到识别回调，不能用来定位转写覆盖；请保留日志供排查入口／授权。")
         }
     }
 }

@@ -1,3 +1,7 @@
+import AppKit
+import SwiftUI
+
+@MainActor enum ScrollAnchorRepro {
 // macOS 27: defaultScrollAnchor misses the first short-to-overflow transition.
 // Mode 0 uses .initialOffset + .sizeChanges; mode 1 re-arms only at overflow.
 // Measured on 2026-09-20 with a 500pt viewport:
@@ -8,13 +12,7 @@
 // also exercises phased wheel input, history preservation and Home/End.
 //
 // Build/run from the repository root:
-// project_dir="$PWD"; source scripts/swift-env.sh
-// swiftc -swift-version 6 -warnings-as-errors -parse-as-library \
-//   -target arm64-apple-macosx27.0 docs/repros/scroll-anchor-tail.swift \
-//   -o build/scroll-probe && build/scroll-probe
 
-import AppKit
-import SwiftUI
 @MainActor final class Model: ObservableObject { @Published var text = "short" }
 struct Probe: View {
     @ObservedObject var model: Model
@@ -36,7 +34,7 @@ struct Probe: View {
         }
     }
 }
-@main struct Run {
+struct Run {
     @MainActor static func main() {
         let app = NSApplication.shared; app.setActivationPolicy(.accessory)
         Task { @MainActor in
@@ -60,4 +58,6 @@ struct Probe: View {
         }
         app.run()
     }
+}
+
 }

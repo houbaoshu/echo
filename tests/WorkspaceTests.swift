@@ -173,14 +173,14 @@ import Foundation
         fresh.shutdown()
 
         let encoded = try JSONEncoder().encode(workspace.snapshot)
-        var legacy = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        var legacy = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         legacy.removeValue(forKey: "drafts")
         let oldSnapshot = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONSerialization.data(withJSONObject: legacy))
         check(oldSnapshot.drafts == nil && oldSnapshot.conversations.count == 4, "Archives from before draft staging remain readable")
         workspace.shutdown()
     }
 
-    @Test @MainActor static func quickComposerTests() {
+    @Test(.tags(.fast)) @MainActor static func quickComposerTests() {
         func check(_ condition: @autoclosure () -> Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
             #expect(condition(), "\(message)", sourceLocation: sourceLocation)
         }

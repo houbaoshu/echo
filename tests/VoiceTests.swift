@@ -124,7 +124,7 @@ extension EchoVoiceScenarios {
     /// Starting capture flips a Bluetooth headset from A2DP to HFP, so Core Audio reconfigures
     /// the route the call just started on and AVAudioEngine stops itself about a second after
     /// start(). Recovering from that must not weaken the protection against a real device switch.
-    @Test @MainActor static func configurationChangeTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func configurationChangeTests() async throws {
         _ = NSApplication.shared
         let policy = VoiceConfigurationChangePolicy()
         let headset = VoiceAudioRoute(input: 111, output: 105)
@@ -242,7 +242,7 @@ extension EchoVoiceScenarios {
         }
     }
 
-    @Test @MainActor static func snapshotTests() {
+    @Test(.tags(.fast)) @MainActor static func snapshotTests() {
         _ = NSApplication.shared
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
         let run = UUID()
@@ -300,7 +300,7 @@ extension EchoVoiceScenarios {
         check(!state.presentation(modelIsGenerating: false).isActive && state.error?.conversationID == owner.conversationID,
               "a dismissible error retains conversation ownership without retaining a session")
     }
-    @Test @MainActor static func snapshotLifecycleTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func snapshotLifecycleTests() async throws {
         _ = NSApplication.shared
         let source = FakeSource(), audio = FakeAudio(), recognizer = FakeRecognizer(), synth = FakeSynthesizer()
         let store = TaskStore(source: source), voice = VoiceSessionController(audio: audio, recognizer: { recognizer },
@@ -377,7 +377,7 @@ extension EchoVoiceScenarios {
             return false
         }, "observers never see mute paired with listening during the mute transition")
     }
-    @Test @MainActor static func backgroundAudioStartTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func backgroundAudioStartTests() async throws {
         _ = NSApplication.shared
         func phase(_ voice: VoiceSessionController) -> String {
             switch voice.snapshot.session {
@@ -433,7 +433,7 @@ extension EchoVoiceScenarios {
     }
 
     /// VoiceAudio's handover with an injected build, so no audio hardware is touched.
-    @Test @MainActor static func voiceAudioHandoverTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func voiceAudioHandoverTests() async throws {
         _ = NSApplication.shared
         final class Gate: @unchecked Sendable {
             let release = DispatchSemaphore(value: 0)
@@ -485,7 +485,7 @@ extension EchoVoiceScenarios {
 
     /// A recovery restart runs on the setup queue with an injected restart, so no audio hardware
     /// is touched. While the queue owns the engine every main-actor access point must stay off it.
-    @Test @MainActor static func voiceAudioRestartTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func voiceAudioRestartTests() async throws {
         _ = NSApplication.shared
         final class Gate: @unchecked Sendable {
             let release = DispatchSemaphore(value: 0)
@@ -580,7 +580,7 @@ extension EchoVoiceScenarios {
     /// Following a device switch mid-call, with no audio hardware: the route and the engine's
     /// running state are the test's, the player is a record of what was scheduled with each
     /// buffer's callback, and every restart waits on the setup queue until released.
-    @Test @MainActor static func voiceAudioSwitchTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func voiceAudioSwitchTests() async throws {
         _ = NSApplication.shared
         let routeA = VoiceAudioRoute(input: 111, output: 105)
         let routeB = VoiceAudioRoute(input: 111, output: 93)
@@ -930,7 +930,7 @@ extension EchoVoiceScenarios {
         }
     }
 
-    @Test @MainActor static func captureWatchdogPauseTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func captureWatchdogPauseTests() async throws {
         _ = NSApplication.shared
         // Both starting during a reply and pausing before the first PCM packet
         // must keep an intentional capture pause out of the startup timeout.
@@ -976,7 +976,7 @@ extension EchoVoiceScenarios {
     /// A device change while connecting restarted the engine for ~7 s on the main actor, and the
     /// 5 s first-packet watchdog, which had been counting through the restart, ended the call the
     /// moment it recovered. The timeout now covers the microphone only, from recovery onwards.
-    @Test @MainActor static func captureWatchdogRestartTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func captureWatchdogRestartTests() async throws {
         _ = NSApplication.shared
         let armed = ContinuousClock.now, timeout = Duration.milliseconds(100)
         func decide(at offset: Int, restartedAt: Int? = nil, restarting: Bool = false) -> VoiceCaptureWatchdog.Decision {
@@ -1046,7 +1046,7 @@ extension EchoVoiceScenarios {
                   "with no packet after the restart the call ends as a first-packet timeout, after restartedAt + timeout")
         }
     }
-    @Test @MainActor static func mutedPlaybackTailProtectionTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func mutedPlaybackTailProtectionTests() async throws {
         _ = NSApplication.shared
         for unmuteBeforeExpiry in [true, false] {
             let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
@@ -1099,7 +1099,7 @@ extension EchoVoiceScenarios {
             check(store.messages.last?.status == .completed, "tail protection preserves the completed reply")
         }
     }
-    @Test @MainActor static func captureDiagnosticsTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func captureDiagnosticsTests() async throws {
         _ = NSApplication.shared
         let audio = FakeAudio(), recognizer = FakeRecognizer()
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer },
@@ -1121,7 +1121,7 @@ extension EchoVoiceScenarios {
         check(reason.contains("-10875") && reason.contains("FailedInitialization") && !reason.contains(secret),
               "diagnostics keep error codes without arbitrary error payloads")
     }
-    @Test @MainActor static func manualModelTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func manualModelTests() async throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-manual-settings-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1178,7 +1178,7 @@ extension EchoVoiceScenarios {
         settings.save()
         rejects("blank saved model cannot start generation") { _ = try settings.savedModelCredentials() }
     }
-    @Test @MainActor static func probeTests() async {
+    @Test(.tags(.fast)) @MainActor static func probeTests() async {
         _ = NSApplication.shared
         let recognizer = SuspendedRecognizer(), synth = SuspendedSynthesizer(), audio = FakeAudio()
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer }, synthesizer: { synth }, probeTimeout: .milliseconds(100))
@@ -1198,7 +1198,7 @@ extension EchoVoiceScenarios {
         check(!voice.testing && !voice.testSucceeded && recognizer.pending == nil && voice.testResult?.contains("超时") == true,
               "silent service times out and releases resources")
     }
-    @Test @MainActor static func speakerPreviewTests() async {
+    @Test(.tags(.fast)) @MainActor static func speakerPreviewTests() async {
         _ = NSApplication.shared
         let audio = FakeAudio(), recognizer = FakeRecognizer(), synth = FakeSynthesizer()
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer }, synthesizer: { synth })
@@ -1233,7 +1233,7 @@ extension EchoVoiceScenarios {
     /// Leaving the voice page and coming back must not restyle a finished result.
     /// The page cancels its probe on disappear, and a cancel that also cleared the
     /// outcome turned the green success mark grey on the way back.
-    @Test @MainActor static func settingsPageRevisitKeepsSuccessTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func settingsPageRevisitKeepsSuccessTests() async throws {
         _ = NSApplication.shared
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("echo-voice-settings-\(UUID())")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1278,7 +1278,7 @@ extension EchoVoiceScenarios {
         check(voice.testResult == nil && !voice.testSucceeded, "editing the voice form clears the result outright")
     }
 
-    @Test @MainActor static func audioConversionTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func audioConversionTests() async throws {
         _ = NSApplication.shared
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 2, interleaved: false)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 9600)!
@@ -1326,7 +1326,7 @@ extension EchoVoiceScenarios {
         do { for try await _ in slowStream {}; Issue.record("audio overflow was not detected") }
         catch {  }
     }
-    @Test @MainActor static func protocolTests() throws {
+    @Test(.tags(.fast)) @MainActor static func protocolTests() throws {
         _ = NSApplication.shared
         // Independent byte fixtures, including a gzip-compressed ASR server response.
         let json = Data("{\"result\":{\"text\":\"你好\"}}".utf8)
@@ -1365,10 +1365,10 @@ extension EchoVoiceScenarios {
         check(try delta.append("你好🙂") == "好🙂", "Unicode delta")
         check(try delta.append("你好🙂") == "", "final cumulative text not repeated")
         rejects("rewritten text") { _ = try delta.append("改写") }
-        let asr = try JSONSerialization.jsonObject(with: DoubaoRecognizer.configuration()) as! [String: Any]
+        let asr = try #require(JSONSerialization.jsonObject(with: DoubaoRecognizer.configuration()) as? [String: Any])
         check((asr["request"] as? [String: Any])?["end_window_size"] as? Int == 800, "ASR default endpointing")
     }
-    @Test @MainActor static func settingsTests() throws {
+    @Test(.tags(.fast)) @MainActor static func settingsTests() throws {
         _ = NSApplication.shared
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("echo-voice-tests-\(UUID())")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1430,7 +1430,7 @@ extension EchoVoiceScenarios {
         failed.voiceAPIKey = "rollback"; failed.saveVoice()
         check(secrets.values.count == secretCount && failed.snapshot.voiceSecretAccount == nil, "failed disk save rolls back newly stored secret")
     }
-    @Test @MainActor static func playbackDoesNotCreateUserTurn() async throws {
+    @Test(.tags(.fast)) @MainActor static func playbackDoesNotCreateUserTurn() async throws {
         let audio = FakeAudio(), source = FakeSource()
         let store = TaskStore(source: source), synth = FakeSynthesizer()
         var recognizers: [FakeRecognizer] = []
@@ -1487,7 +1487,7 @@ extension EchoVoiceScenarios {
         check(source.histories.count == 2 && store.messages.last?.role == .assistant,
               "the user may repeat the same words in a later genuine turn")
     }
-    @Test @MainActor static func lifecycleTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func lifecycleTests() async throws {
         _ = NSApplication.shared
         let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: FakeSource())
         let actual = TaskStore(source: source)
@@ -1589,7 +1589,7 @@ extension EchoVoiceScenarios {
         check(!raceAudio.capturing && !race.isActive, "hangup during permission cannot restart recording")
         race.shutdown()
     }
-    @Test @MainActor static func phase3InvariantsTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func phase3InvariantsTests() async throws {
         _ = NSApplication.shared
         // 1. ASR/TTS mutual exclusion: no simultaneous upload and playback, upload stops during reply
         do {
@@ -1804,7 +1804,7 @@ extension EchoVoiceScenarios {
         }
     }
 
-    @Test @MainActor static func phase4FaultAndCleanupTests() async throws {
+    @Test(.tags(.fast)) @MainActor static func phase4FaultAndCleanupTests() async throws {
         _ = NSApplication.shared
         // 1. Permission refusal fault injection
         do {

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "configurations": [
+    {
+      "id": "f3fe115a-ea6d-4edf-973e-1ab985c4bc87",
+      "name": "EchoSoak",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "testTimeoutsEnabled": true,
+    "defaultTestExecutionTimeAllowance": 900,
+    "maximumTestExecutionTimeAllowance": 960,
+    "environmentVariableEntries": [
+      {
+        "key": "ECHO_SOAK_SECONDS",
+        "value": "120"
+      }
+    ]
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "130F86779B6F28C656B0525F",
+        "name": "EchoLiveTests"
+      },
+      "parallelizable": false,
+      "selectedTests": [
+        "SoakTests"
+      ]
+    }
+  ]
+}

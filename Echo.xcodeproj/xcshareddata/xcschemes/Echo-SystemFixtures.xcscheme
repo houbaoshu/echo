@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<Scheme LastUpgradeVersion="2700" version="1.7">
+   <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+      <BuildActionEntries>
+         <BuildActionEntry buildForTesting="NO" buildForRunning="YES" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="A5BF6291FCD39EACCE6EB0B3" BuildableName="EchoFixtureServer" BlueprintName="EchoFixtureServer" ReferencedContainer="container:Echo.xcodeproj" />
+         </BuildActionEntry>
+         <BuildActionEntry buildForTesting="NO" buildForRunning="YES" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="7350F7B1647E76A49F24E2D6" BuildableName="EchoCoreAudioProbe" BlueprintName="EchoCoreAudioProbe" ReferencedContainer="container:Echo.xcodeproj" />
+         </BuildActionEntry>
+         <BuildActionEntry buildForTesting="NO" buildForRunning="YES" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="E120000000000000000000AA" BuildableName="KeychainProbe.app" BlueprintName="KeychainProbe" ReferencedContainer="container:Echo.xcodeproj" />
+         </BuildActionEntry>
+         <BuildActionEntry buildForTesting="NO" buildForRunning="YES" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="E121000000000000000000AA" BuildableName="KeychainProbeRebuilt.app" BlueprintName="KeychainProbeRebuilt" ReferencedContainer="container:Echo.xcodeproj" />
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+</Scheme>

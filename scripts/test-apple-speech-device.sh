@@ -1,10 +1,18 @@
 #!/bin/zsh
+# Transitional manual comparison only. Native plan exists; retain this old probe
+# until its real-service/device behavior has been compared on this machine.
 emulate -R zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
-project_dir="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$project_dir"
-# The target generates its audio fixtures before Xcode signs the bundle.
-xcodebuild -project Echo.xcodeproj -target AppleSpeechDeviceProbe -configuration Release \
-    CONFIGURATION_BUILD_DIR="$project_dir/build/apple-speech-device" build
-app_dir="$project_dir/build/apple-speech-device/AppleSpeechCheck.app"
-"$app_dir/Contents/MacOS/AppleSpeechCheck" "$@"
+[[ "${1:-}" == --app && $# -ge 2 ]] || { echo "Usage: $0 --app BUILT_PROBE_APP [probe arguments]" >&2; exit 2 }
+probe="$2/Contents/MacOS/AppleSpeechCheck"
+shift 2
+[[ -x "$probe" ]] || { echo "Missing Xcode-built probe: $probe" >&2; exit 2 }
+python3 - "$probe" "$@" <<'PYTHON'
+import subprocess, sys
+timeout = 180
+try:
+    sys.exit(subprocess.run(sys.argv[1:], timeout=timeout).returncode)
+except subprocess.TimeoutExpired:
+    print('INCOMPLETE: manual probe exceeded its deadline.', flush=True)
+    sys.exit(1)
+PYTHON

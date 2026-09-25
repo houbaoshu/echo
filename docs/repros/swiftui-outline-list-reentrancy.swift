@@ -1,3 +1,7 @@
+import AppKit
+import SwiftUI
+
+@MainActor enum OutlineRepro {
 //Reconfirmed on macOS 27.0 with Xcode 27.0: the reentrancy warning is still reproducible.
 // SwiftUI List: two collapsible groups gaining rows in one update log an AppKit
 // reentrancy warning.
@@ -25,9 +29,7 @@
 //   2. Append a row to BOTH arrays in one update  -> the warning is logged.
 //   3. Append the same two rows in two updates    -> no warning.
 //
-// Run `two-updates` to see step 3 stay clean; that is the whole difference. The root
-// view carries a fixed frame so that control case stays clean: without one the hosting
-// controller resizes, and that resize is itself an update touching both sections.
+// Run with EchoFrameworkRepros, scene argument swiftui-outline-list-reentrancy.
 //
 // Also measured, none of which changes the outcome: `.listStyle(.sidebar)` vs
 // `.inset`; with and without `selection:`; sibling `DisclosureGroup`s instead of
@@ -39,11 +41,8 @@
 //
 // Environment
 //   macOS 27.0 (26A428), Apple Swift 6.4 (swiftlang-6.4.0.34.1)
-//   built against MacOSX26.sdk, -target arm64-apple-macosx26.0
 //
 // Build and run
-//   SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk \
-//     swiftc -swift-version 6 -parse-as-library -target arm64-apple-macosx26.0 \
 //     docs/repros/swiftui-outline-list-reentrancy.swift \
 //     -framework AppKit -framework SwiftUI -o /tmp/outline-reentrancy
 //   /tmp/outline-reentrancy one-update    # logs the warning
@@ -52,8 +51,6 @@
 // This file is a framework regression case for Feedback Assistant. It is not part
 // of Echo's test suites, no script builds it, and it depends on nothing in Echo.
 
-import AppKit
-import SwiftUI
 
 @MainActor private final class Store: ObservableObject {
     struct Row: Identifiable, Hashable {
@@ -84,7 +81,7 @@ private struct Sidebar: View {
     }
 }
 
-@main struct OutlineListReentrancy {
+struct OutlineListReentrancy {
     @MainActor static func main() {
         setvbuf(stdout, nil, _IONBF, 0)
         let app = NSApplication.shared
@@ -125,4 +122,6 @@ private struct Sidebar: View {
         }
         app.run()
     }
+}
+
 }

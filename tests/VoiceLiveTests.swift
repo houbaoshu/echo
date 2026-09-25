@@ -4,7 +4,10 @@ import Foundation
 
 // Opt-in integration check: only synthetic speech and a fresh model conversation are sent.
 // Credentials are read through the production Keychain store and never logged.
-@main struct VoiceLiveTests {
+#if ECHO_LEGACY_PROBE
+@main
+#endif
+struct VoiceLiveTests {
     @MainActor static func main() async {
         _ = NSApplication.shared
         do {
@@ -26,7 +29,7 @@ import Foundation
         guard !pcm.isEmpty else { throw SettingsError("合成未返回音频。") }
         return pcm
     }
-    @MainActor static func run() async throws {
+    @MainActor static func run(play: Bool = CommandLine.arguments.contains("--play")) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
         _ = try settings.savedModelCredentials()
         let credentials = try settings.savedVoiceCredentials()
@@ -90,12 +93,12 @@ import Foundation
 
         print("4/4 TTS: synthesizing the final Agent reply once…")
         let response = try await synthesize(reply, configuration: credentials.configuration, key: credentials.key)
-        if CommandLine.arguments.contains("--play") {
+        if play {
             let audio = VoiceAudio()
             defer { audio.stop() }
             _ = try audio.start(capture: false)
             try await audio.play(response); try await audio.drain()
         }
-        print("PASS: TTS → PCM conversion → ASR → saved model → TTS\(CommandLine.arguments.contains("--play") ? " → playback" : "") (\(response.count) reply PCM bytes; no microphone or saved conversations used).")
+        print("PASS: TTS → PCM conversion → ASR → saved model → TTS\(play ? " → playback" : "") (\(response.count) reply PCM bytes; no microphone or saved conversations used).")
     }
 }

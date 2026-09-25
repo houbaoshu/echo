@@ -17,6 +17,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     installMenus()
                     let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: TestBootstrap.Secrets())
                     settings.setQuickComposerHotKey(false)
+                    if settings.draft.model.isEmpty {
+                        settings.selectProvider(.ollama)
+                        settings.draft.model = "offline-fixture"
+                        settings.save()
+                    }
+                    settings.voiceAPIKey = "offline-fixture"
+                    settings.saveVoice()
                     let pets = PetCatalog(settings: settings,
                         builtinRoot: Bundle.main.resourceURL?.appendingPathComponent("pets"),
                         importedRoot: root.appendingPathComponent("pets"))
@@ -28,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         recognizer: { TestBootstrap.Recognizer() }, permission: { true })
                     let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("workspace.json")),
                         dictation: dictation, voice: voice, sourceFactory: { TestBootstrap.Source() })
+                    try TestBootstrap.seed(workspace: workspace, root: root)
                     let planets = PlanetStore(settings: settings, root: Bundle.main.resourceURL?.appendingPathComponent("planets"), voice: voice)
                     companion = CompanionController(petStore: store, workspace: workspace, settings: settings,
                         pets: pets, planets: planets, defaults: defaults)
@@ -59,6 +67,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if CommandLine.arguments.contains("--diagnose-voice") {
+            let log = FileManager.default.temporaryDirectory.appendingPathComponent("echo-voice-diagnostic-\(UUID()).log")
+            print("Voice diagnostic log: \(log.path)"); fflush(nil)
+            let descriptor = open(log.path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
+            guard descriptor >= 0 else { exit(2) }
+            dup2(descriptor, STDOUT_FILENO); dup2(descriptor, STDERR_FILENO); close(descriptor)
+            Task { @MainActor in
+                do { try await Task.sleep(for: .seconds(180)) } catch { return }
+                print("[诊断结果] FAIL 总耗时超过 180 秒；未完成的阶段未验证。"); fflush(nil)
+                exit(1)
+            }
             Task { @MainActor in
                 let passed = await VoiceDiagnosticProbe.run()
                 exit(passed ? 0 : 1)
@@ -185,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        DictationDiagnostics.shared?.printSummary()
         pets?.stop()
         companion?.shutdown()
         companion = nil

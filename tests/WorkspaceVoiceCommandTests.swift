@@ -68,7 +68,7 @@ import Foundation
     func remove(_ account: String) throws { values[account] = nil }
 }
 
-@MainActor @Suite(.serialized) enum WorkspaceVoiceCommandTests {
+@MainActor @Suite(.serialized, .tags(.fast)) enum WorkspaceVoiceCommandTests {
     static func tick() async { try? await Task.sleep(for: .milliseconds(25)) }
     @Test static func routesVoiceCommands() async {
         func check(_ condition: @autoclosure () -> Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {

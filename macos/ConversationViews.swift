@@ -123,7 +123,7 @@ extension NSFont {
 /// No text control lives here, and none may. An accessory's contents are ordered after
 /// the column body in the window's key view loop, which would put the chat composer
 /// between this column's header and this column's list; measured, with no app code in it,
-/// in docs/repros/split-accessory-window-chrome.swift [E]. The magnifier is a button, and
+/// in docs/repros/split-accessory-window-chrome.md [E]. The magnifier is a button, and
 /// buttons do not join the loop, so the header cannot disturb it. Search itself opens in a
 /// floating panel of its own (SearchPalette.swift), so it is not in this window at all.
 ///
@@ -367,7 +367,7 @@ struct WorkspaceSidebar: View {
 /// Clicking a SwiftUI List changes selection without taking keyboard focus. Bind
 /// FocusState directly to the List: `.focusable()` would insert a proxy that cannot
 /// drive its rows. Reverified on macOS 27, 2026-09-20; see the standalone
-/// docs/repros/stage5-native-search-focus.swift probe (mode 4).
+/// docs/repros/stage5-native-search-focus.md probe (mode 4).
 @MainActor final class SidebarListFocus: ObservableObject {
     @Published private(set) var request = 0
     func take() {
@@ -575,7 +575,7 @@ struct ConversationView: View {
             // window repaints 35k for its ring — yet `.focusable()` leaves the backing
             // scroll view at focusRingType .default and a plain click paints a ring
             // around the whole conversation column (measured, 32k pixels spanning the
-            // column, in docs/repros/transcript-click-focus.swift [C2]). This is AppKit's
+            // column, in docs/repros/transcript-click-focus.md [C2]). This is AppKit's
             // own switch for that — it sets focusRingType to .none ([C3]) — not a focus
             // style of Echo's own, and it leaves the Tab stop, the keys below and the
             // accessibility element untouched.

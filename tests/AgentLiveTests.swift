@@ -3,7 +3,10 @@ import Foundation
 
 /// Opt-in real service acceptance. Uses saved credentials only in memory and
 /// synthetic conversations with disposable projects, never the user's history.
-@main @MainActor struct AgentLiveTests {
+#if ECHO_LEGACY_PROBE
+@main
+#endif
+@MainActor struct AgentLiveTests {
     static func wait(_ store: TaskStore, directoryPause: Bool = false) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(180))
         while store.isGenerating && !(directoryPause && store.needsDirectory) {
@@ -23,7 +26,7 @@ import Foundation
             exit(1)
         }
     }
-    static func run() async throws {
+    static func run(protocols: [ModelAPIProtocol] = ModelAPIProtocol.allCases) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
         let (saved, key) = try settings.savedModelCredentials()
         guard let resources = Bundle.main.resourceURL else { throw SettingsError("缺少打包资源。") }
@@ -31,7 +34,7 @@ import Foundation
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         print("Disposable live projects: \(root.path)"); fflush(nil)
         var failures = 0
-        for api in ModelAPIProtocol.allCases {
+        for api in protocols {
             var config = saved; config.apiProtocol = api
             print("START: \(api.title) tool capability, direct answer, read/edit/verify"); fflush(nil)
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
