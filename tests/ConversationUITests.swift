@@ -679,6 +679,8 @@ private struct ComposerHeightHost: View {
                 try await refresh()
                 XCTAssertTrue(store.mainDraft == expected, "Each recording appends to the complete existing draft")
                 XCTAssertTrue(editor.string == expected, "Native composer retains every previous recording")
+                XCTAssertTrue(editor.selectedRange() == NSRange(location: expected.utf16.count, length: 0),
+                             "The caret follows the appended transcript instead of returning to the prior selection")
             }
             for cancel in [false, true] {
                 dictation.start(conversation: conversation)
@@ -926,8 +928,10 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(node("dictation.finish")?.isAccessibilityEnabled?() == false, "Finalizing cannot finish twice")
         try await snapshot("finalizing")
         recognizer.finish(); try await refresh()
-        XCTAssertTrue(original.isEditable && original.selectedRange() == selection && window.firstResponder === original)
+        XCTAssertTrue(original.isEditable && window.firstResponder === original)
         XCTAssertTrue(store.mainDraft.hasPrefix(draft + "\n") && source.histories.count == 1)
+        XCTAssertTrue(original.selectedRange() == NSRange(location: store.mainDraft.utf16.count, length: 0),
+                     "A finished recording leaves the caret after the transcript, not at the earlier selection")
         let appended = store.mainDraft
         original.undoManager?.undo()
         XCTAssertTrue(store.mainDraft == draft, "Final transcript append is independently undoable")

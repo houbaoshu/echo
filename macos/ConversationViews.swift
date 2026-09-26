@@ -1101,12 +1101,16 @@ struct NativeComposer: NSViewRepresentable {
             context.coordinator.pendingAppend += String(text.dropFirst(original.count))
         } else if editor.string != text, !editor.hasMarkedText(), !isSuspended,
                   context.coordinator.pendingAppend.isEmpty {
-            let selection = editor.selectedRanges
-            // Dictation appends through native editing so prior undo actions survive.
+            // Dictation appends through native editing so prior undo actions survive. Typing it
+            // at a caret placed at the end leaves the caret after the transcript; inserting at
+            // another range would keep the pre-recording selection instead. The break keeps the
+            // transcript its own undo step rather than merging it into earlier typing there.
             if wasSuspended, text.hasPrefix(editor.string) {
                 let suffix = String(text.dropFirst(editor.string.count))
-                editor.insertText(suffix, replacementRange: NSRange(location: editor.string.utf16.count, length: 0))
-                editor.selectedRanges = selection
+                let end = NSRange(location: editor.string.utf16.count, length: 0)
+                editor.breakUndoCoalescing()
+                editor.setSelectedRange(end)
+                editor.insertText(suffix, replacementRange: end)
             } else {
                 editor.string = text
             }
