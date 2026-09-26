@@ -32,6 +32,30 @@ import Combine
         return view
     }
     func columnWidth(_ item: NSSplitViewItem) -> CGFloat { column(item).frame.width }
+    /// A side column toggle animates the column to its width, and until the animation ends
+    /// the column's frame is somewhere in between. The animation group's completion is
+    /// AppKit's own signal that every column has its final frame.
+    private var togglesInFlight = 0
+    private var afterToggles: [() -> Void] = []
+    override func toggleSidebar(_ sender: Any?) { animateToggle { super.toggleSidebar(sender) } }
+    override func toggleInspector(_ sender: Any?) { animateToggle { super.toggleInspector(sender) } }
+    private func animateToggle(_ toggle: () -> Void) {
+        togglesInFlight += 1
+        NSAnimationContext.runAnimationGroup({ _ in toggle() }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.togglesInFlight -= 1
+                guard self.togglesInFlight == 0 else { return }
+                let work = self.afterToggles
+                self.afterToggles = []
+                work.forEach { $0() }
+            }
+        })
+    }
+    /// Runs `work` now, or once the column toggles still animating have finished.
+    func whenColumnsSettle(_ work: @escaping () -> Void) {
+        if togglesInFlight == 0 { work() } else { afterToggles.append(work) }
+    }
 }
 
 /// Hosts SwiftUI in a split view item accessory — the system's own place for a column's
@@ -198,8 +222,12 @@ import Combine
             DispatchQueue.main.async { [weak self] in self?.refreshTitle() }
         }
         previewObservation = workspace.fileBrowser.$isPreviewExpanded.removeDuplicates().sink { [weak self] _ in
-            // Published delivers before the stored value changes.
-            DispatchQueue.main.async { [weak self] in self?.applyPreviewExpansion() }
+            // Published delivers before the stored value changes. Expansion measures the side
+            // columns and collapsing it sets them back, so neither may run on a column that
+            // is still animating open or closed.
+            DispatchQueue.main.async { [weak self] in
+                self?.splitController.whenColumnsSettle { [weak self] in self?.applyPreviewExpansion() }
+            }
         }
         paletteController = SearchPaletteController(workspace: workspace, presentation: searchPalette,
                                                     hostWindow: { [weak self] in self?.window })

@@ -2746,9 +2746,20 @@ private struct ComposerHeightHost: View {
         let conversation = workspace.selected!
         conversation.store.mainDraft = "保留输入草稿"
         XCTAssertTrue(workspace.associateProject(projectID, conversationID: conversation.id))
-        try await Task.sleep(for: .milliseconds(200))
-        main.window?.contentView?.layoutSubtreeIfNeeded()
-        XCTAssertTrue(findAccessibility("projectFiles.entry.README.md", in: main.inspectorItem.viewController.view) != nil)
+        /// Project files are listed and read off the main actor and reach the inspector on a
+        /// later SwiftUI update, so wait for what should appear rather than for a set time.
+        func waitUntil(_ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
+            let clock = ContinuousClock(), deadline = clock.now + .seconds(10)
+            while true {
+                main.window?.contentView?.layoutSubtreeIfNeeded()
+                if condition() { return }
+                guard clock.now < deadline else { throw SettingsError("Timed out waiting: \(label())") }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        try await waitUntil("the project tree lists README.md") {
+            findAccessibility("projectFiles.entry.README.md", in: main.inspectorItem.viewController.view) != nil
+        }
         XCTAssertTrue(workspace.projects.contains { $0.id == projectID })
         guard let content = main.window?.contentView,
               let picker = findAccessibility("conversation.project", in: content) else {
@@ -2895,12 +2906,23 @@ private struct ComposerHeightHost: View {
         conversation.store.mainDraft = Array(repeating: "多行草稿", count: 8).joined(separator: "\n")
         try await Task.sleep(for: .milliseconds(120)); content.layoutSubtreeIfNeeded()
         assertPlacement()
+        /// Opening a file sets the preview to loading, reads and decodes the file off the main
+        /// actor, and publishes the result on a later turn; SwiftUI mounts the matching view
+        /// after that. A file written just before also wakes the project watcher, whose
+        /// refresh re-reads the open file and supersedes the read already in flight.
+        func openPreview(_ path: String, until shown: () -> Bool) async throws {
+            workspace.fileBrowser.openFile(path)
+            try await waitUntil("the \(path) preview, state: \(workspace.fileBrowser.state.preview)") {
+                workspace.fileBrowser.state.preview != .loading && shown()
+            }
+        }
         let longText = "# Project preview\n\n只读文本\n" + (0..<200).map {
             "Line \($0): " + String(repeating: "wide code content ", count: 20)
         }.joined(separator: "\n")
         try Data(longText.utf8).write(to: root.appendingPathComponent("wide.swift"))
-        workspace.fileBrowser.openFile("wide.swift")
-        try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
+        try await openPreview("wide.swift") {
+            (findAccessibility("projectFiles.text", in: inspector) as? NSTextView)?.string == longText
+        }
         guard let preview = findAccessibility("projectFiles.text", in: main.inspectorItem.viewController.view) as? NSTextView else {
             throw SettingsError("Native read-only text preview missing")
         }
@@ -3003,8 +3025,7 @@ private struct ComposerHeightHost: View {
         ```
         """
         try Data(markdownPreview.utf8).write(to: root.appendingPathComponent("README.md"))
-        workspace.fileBrowser.openFile("README.md")
-        try await settlePreviewLayout()
+        try await openPreview("README.md") { findAccessibility("conversation.code.copy", in: inspector) != nil }
         func assertMarkdownPreview() {
             XCTAssertTrue(findAccessibility("projectFiles.text", in: inspector) == nil, "Markdown is rendered, not shown in the source text view")
             XCTAssertTrue(findAccessibility("conversation.code.copy", in: inspector) != nil, "File preview reuses the Markdown code block component")
@@ -3039,15 +3060,14 @@ private struct ComposerHeightHost: View {
         try await togglePreview()
         assertMarkdownPreview()
         try Data(markdownPreview.utf8).write(to: root.appendingPathComponent("guide.MARKDOWN"))
-        workspace.fileBrowser.openFile("guide.MARKDOWN")
-        try await settlePreviewLayout()
+        try await openPreview("guide.MARKDOWN") { findAccessibility("conversation.code.copy", in: inspector) != nil }
         assertMarkdownPreview()
-        workspace.fileBrowser.openFile("folder/child.txt")
-        try await settlePreviewLayout()
+        try await openPreview("folder/child.txt") {
+            (findAccessibility("projectFiles.text", in: inspector) as? NSTextView)?.string == "child"
+        }
         XCTAssertTrue((findAccessibility("projectFiles.text", in: inspector) as? NSTextView)?.string == "child",
                      "Switching from Markdown to unknown text restores the plain-text preview")
-        workspace.fileBrowser.openFile("README.md")
-        try await settlePreviewLayout()
+        try await openPreview("README.md") { findAccessibility("conversation.code.copy", in: inspector) != nil }
         assertMarkdownPreview()
         for (name, width, height) in [("small.png", 40, 20), ("large.png", 2048, 1024)] {
             let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
@@ -3058,8 +3078,10 @@ private struct ComposerHeightHost: View {
                 for x in 0..<width { bitmap.bitmapData![y * bitmap.bytesPerRow + x * 3] = 255 }
             }
             try bitmap.representation(using: .png, properties: [:])!.write(to: root.appendingPathComponent(name))
-            workspace.fileBrowser.openFile(name)
-            try await settlePreviewLayout()
+            try await openPreview(name) {
+                (findAccessibility("projectFiles.image", in: inspector) as? NSImageView)?.image?.size
+                    == NSSize(width: width, height: height)
+            }
             func assertImagePreview() {
                 guard let view = findAccessibility("projectFiles.image", in: inspector) as? NSImageView else {
                     XCTFail("Image preview must appear"); return
@@ -3103,18 +3125,16 @@ private struct ComposerHeightHost: View {
             assertImagePreview()
         }
         try Data("broken".utf8).write(to: root.appendingPathComponent("broken.png"))
-        workspace.fileBrowser.openFile("broken.png")
-        try await settlePreviewLayout()
-        XCTAssertTrue(findAccessibility("projectFiles.image", in: inspector) == nil)
+        try await openPreview("broken.png") { findAccessibility("projectFiles.image", in: inspector) == nil }
         guard case .information(let imageError) = workspace.fileBrowser.state.preview else {
             throw SettingsError("Broken images must show an unavailable state")
         }
         XCTAssertTrue(imageError.contains("无法预览图片"))
-        workspace.fileBrowser.openFile("folder/child.txt")
-        try await settlePreviewLayout()
+        try await openPreview("folder/child.txt") {
+            (findAccessibility("projectFiles.text", in: inspector) as? NSTextView)?.string == "child"
+        }
         XCTAssertTrue((findAccessibility("projectFiles.text", in: inspector) as? NSTextView)?.string == "child")
-        workspace.fileBrowser.openFile("README.md")
-        try await settlePreviewLayout()
+        try await openPreview("README.md") { findAccessibility("conversation.code.copy", in: inspector) != nil }
         assertMarkdownPreview()
         // Native glass does not support cacheDisplay snapshots. Render the same
         // inspector content in a plain hosting surface for a reviewable artifact.
@@ -3148,7 +3168,7 @@ private struct ComposerHeightHost: View {
         try await Task.sleep(for: .milliseconds(50))
         main.toggleInspector()
         try await Task.sleep(for: .milliseconds(150))
-        XCTAssertTrue(workspace.fileBrowser.state.preview == .text("updated"))
+        try await waitUntil("the updated README.md preview") { workspace.fileBrowser.state.preview == .text("updated") }
         // AppKit collapses a column only while the person drags the window narrower; a
         // programmatic resize stops at the columns' own minimum widths instead. Opening a
         // column that does not fit widens the window rather than closing the other one.
@@ -3351,6 +3371,75 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(abs(sidebar - 263) < 1 && abs(inspector - 291) < 1,
                      "The normal widths come back, not the expansion's: got \(sidebar) / \(inspector)")
         XCTAssertTrue(main.splitController.columnWidth(main.conversationItem) >= 440, "The conversation has its room")
+    }
+
+    /// Expanded reading measures the side columns going in and sets them back coming out.
+    /// A column toggled open a moment ago is still animating toward its width, and a width
+    /// taken from partway there puts the inspector below its minimum when the preview
+    /// collapses, so AppKit closes it again. Expand and collapse straight after the toggle.
+    func testPreviewRoundTripWhileColumnOpens() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-preview-animating-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("notes".utf8).write(to: root.appendingPathComponent("notes.txt"))
+        let voice = VoiceSessionController(), dictation = DictationController()
+        let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
+        defer { workspace.shutdown(); voice.shutdown() }
+        XCTAssertTrue(workspace.associateProject(workspace.addProject(url: root), conversationID: workspace.selected!.id))
+        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults())
+        defer { main.shutdown() }
+        main.present()
+        let split = main.splitController
+        func waitUntil(_ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
+            let clock = ContinuousClock(), deadline = clock.now + .seconds(5)
+            while true {
+                main.window?.contentView?.layoutSubtreeIfNeeded()
+                if condition() { return }
+                guard clock.now < deadline else { throw SettingsError("Timed out waiting: \(label())") }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        func describe() -> String {
+            [main.sidebarItem, main.conversationItem, main.inspectorItem].map {
+                $0.isCollapsed ? "collapsed" : "\(split.columnWidth($0))"
+            }.joined(separator: " / ")
+        }
+        func normalLayout() -> Bool {
+            !main.sidebarItem.isCollapsed && !main.conversationItem.isCollapsed && !main.inspectorItem.isCollapsed
+                && abs(split.columnWidth(main.sidebarItem) - 263) < 1 && abs(split.columnWidth(main.inspectorItem) - 291) < 1
+        }
+        // Set up without the toggles' animation, at widths off every clamp.
+        main.sidebarItem.isCollapsed = false; main.inspectorItem.isCollapsed = false
+        try await waitUntil("both side columns open") {
+            split.columnWidth(main.sidebarItem) >= 220 && split.columnWidth(main.inspectorItem) >= 260
+        }
+        split.splitView.setPosition(split.column(main.sidebarItem).frame.minX + 263, ofDividerAt: 0)
+        split.splitView.layoutSubtreeIfNeeded()
+        split.splitView.setPosition(split.column(main.conversationItem).frame.maxX
+                                    + split.columnWidth(main.inspectorItem) - 291, ofDividerAt: 1)
+        split.splitView.layoutSubtreeIfNeeded()
+        workspace.fileBrowser.openFile("notes.txt")
+        try await waitUntil("the file is open at the normal widths, got \(describe())") {
+            workspace.fileBrowser.state.showingFile && normalLayout()
+        }
+        for (name, item, toggle) in [("inspector", main.inspectorItem!, main.toggleInspector),
+                                     ("sidebar", main.sidebarItem!, main.toggleSidebar)] {
+            item.isCollapsed = true
+            split.splitView.layoutSubtreeIfNeeded()
+            // Expand while the column is still opening, and collapse once it has opened:
+            // the collapse sets back whatever width the expansion measured.
+            var opened = false
+            NSAnimationContext.runAnimationGroup({ _ in toggle(nil) }, completionHandler: { opened = true })
+            XCTAssertTrue(!item.isCollapsed, "The \(name) toggle opens it")
+            workspace.fileBrowser.togglePreviewExpansion()
+            try await waitUntil("the \(name) opens with the preview expanded, got \(describe())") {
+                opened && main.conversationItem.isCollapsed
+            }
+            workspace.fileBrowser.togglePreviewExpansion()
+            try await waitUntil("the columns are back after opening the \(name), got \(describe())") {
+                !workspace.fileBrowser.isPreviewExpanded && normalLayout()
+            }
+        }
     }
 
 
