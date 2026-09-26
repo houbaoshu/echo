@@ -1101,16 +1101,9 @@ struct NativeComposer: NSViewRepresentable {
             context.coordinator.pendingAppend += String(text.dropFirst(original.count))
         } else if editor.string != text, !editor.hasMarkedText(), !isSuspended,
                   context.coordinator.pendingAppend.isEmpty {
-            // Dictation appends through native editing so prior undo actions survive. Typing it
-            // at a caret placed at the end leaves the caret after the transcript; inserting at
-            // another range would keep the pre-recording selection instead. The break keeps the
-            // transcript its own undo step rather than merging it into earlier typing there.
+            // Dictation appends through native editing so prior undo actions survive.
             if wasSuspended, text.hasPrefix(editor.string) {
-                let suffix = String(text.dropFirst(editor.string.count))
-                let end = NSRange(location: editor.string.utf16.count, length: 0)
-                editor.breakUndoCoalescing()
-                editor.setSelectedRange(end)
-                editor.insertText(suffix, replacementRange: end)
+                context.coordinator.appendAtEnd(String(text.dropFirst(editor.string.count)), to: editor)
             } else {
                 editor.string = text
             }
@@ -1184,12 +1177,22 @@ struct NativeComposer: NSViewRepresentable {
             defer { parent.diagnostics?.record("editor.pendingAppend.after", diagnosticState(editor)) }
             let suffix = pendingAppend
             pendingAppend = ""
-            let selection = editor.selectedRanges
-            editor.insertText(suffix, replacementRange: NSRange(location: editor.string.utf16.count, length: 0))
-            editor.selectedRanges = selection
+            appendAtEnd(suffix, to: editor)
             // The document observer normally covers this, but a suspended editor swallows
             // `insertText`, and the transcript must not be lost with it.
             parent.text = editor.string
+        }
+        /// Types a dictation transcript at the end of the draft, leaving the caret after it;
+        /// inserting at a range away from the caret would keep the earlier selection instead.
+        /// Typing coalesces with adjacent typing, so both breaks keep the transcript its own
+        /// undo step: the first from earlier typing or IME confirmation at the end, the second
+        /// from typing or Backspace that follows it.
+        func appendAtEnd(_ suffix: String, to editor: NSTextView) {
+            let end = NSRange(location: editor.string.utf16.count, length: 0)
+            editor.breakUndoCoalescing()
+            editor.setSelectedRange(end)
+            editor.insertText(suffix, replacementRange: end)
+            editor.breakUndoCoalescing()
         }
     }
 }

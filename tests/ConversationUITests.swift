@@ -722,6 +722,11 @@ private struct ComposerHeightHost: View {
         try await refresh()
         XCTAssertTrue(editor.string == "输入法草稿你" + appended && store.mainDraft == editor.string,
                      "IME confirmation retains every recording exactly once")
+        XCTAssertTrue(editor.selectedRange() == NSRange(location: editor.string.utf16.count, length: 0),
+                     "The caret follows the deferred transcripts, as after an ordinary append")
+        editor.undoManager?.undo()
+        XCTAssertTrue(editor.string == "输入法草稿你" && store.mainDraft == editor.string,
+                     "Deferred transcripts undo as their own step, apart from the IME confirmation")
         XCTAssertTrue(source.histories.isEmpty && !voice.isActive, "Ordinary ASR only edits the draft")
     }
 
@@ -933,6 +938,12 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(original.selectedRange() == NSRange(location: store.mainDraft.utf16.count, length: 0),
                      "A finished recording leaves the caret after the transcript, not at the earlier selection")
         let appended = store.mainDraft
+        original.deleteBackward(nil)
+        original.insertText(" wo", replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(store.mainDraft == String(appended.dropLast()) + " wo" && store.mainDraft == original.string)
+        original.undoManager?.undo()
+        XCTAssertTrue(store.mainDraft == appended && store.mainDraft == original.string,
+                     "Backspace and typing right after the transcript undo first, without taking the transcript")
         original.undoManager?.undo()
         XCTAssertTrue(store.mainDraft == draft, "Final transcript append is independently undoable")
         XCTAssertTrue(store.mainDraft == original.string, "Undo keeps the draft store and the editor in step")
