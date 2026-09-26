@@ -213,6 +213,8 @@ import XCTest
         try withApp(fixture: "sidebar") { app, root in
             let ids = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("fixture.json")))
             let projectID = try XCTUnwrap(ids["project"])
+            // A first launch shows the conversation on its own.
+            app.typeKey("b", modifierFlags: .command)
             let outline = app.outlines["workspace.sidebar"]
             XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
             func label(_ title: String, project: Bool = false) -> XCUIElement {
@@ -263,6 +265,8 @@ import XCTest
         try withApp(fixture: "sidebar") { app, root in
             let ids = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("fixture.json")))
             let projectID = try XCTUnwrap(ids["project"])
+            // A first launch shows the conversation on its own.
+            app.typeKey("b", modifierFlags: .command)
             let outline = app.outlines["workspace.sidebar"]
             XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
             func label(_ title: String, project: Bool = false) -> XCUIElement {

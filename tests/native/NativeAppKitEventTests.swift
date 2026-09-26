@@ -109,6 +109,8 @@ import SwiftUI
         let store = TaskStore(source: source)
         let workspace = WorkspaceStore(initialStore: store)
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults())
+        // A first launch shows the conversation on its own; ⇧Tab below needs the chat list to leave to.
+        main.sidebarItem.isCollapsed = false
         let window = main.window!
         defer { main.shutdown(); workspace.shutdown() }
         store.send("滚动验证")
@@ -750,6 +752,8 @@ import SwiftUI
         workspace.select(try XCTUnwrap(ids["最近丁"]))
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults())
         defer { main.shutdown() }
+        // A first launch shows the conversation on its own; this scenario is about the chat list.
+        main.sidebarItem.isCollapsed = false
         let window = main.window!
         let sidebar = main.sidebarItem.viewController.view
         // The column's header is its own top-aligned accessory, so the search field is a

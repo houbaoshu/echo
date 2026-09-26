@@ -2,48 +2,8 @@ import AppKit
 import SwiftUI
 import Combine
 
-struct MainWindowLayout {
-    static let sidebarMinimum: CGFloat = 220
-    static let inspectorMinimum: CGFloat = 260
-    static let conversationMinimum: CGFloat = 440
-    // Collapse before the conversation reaches its hard minimum, including the
-    // default two-column layout whose hard minimum is below the window's 720pt floor.
-    static let conversationComfortable: CGFloat = 560
-    static let dividerThickness: CGFloat = 1
-    var sidebarPreferred = true
-    var inspectorPreferred = false
-    var sidebarWidth: CGFloat = 250
-    var inspectorWidth: CGFloat = 280
-    // A manual request overrides automatic thresholds only until the next window resize.
-    enum Column { case sidebar, inspector }
-    func visibleColumns(width: CGFloat, manual: Column? = nil) -> (sidebar: Bool, inspector: Bool) {
-        var left = sidebarPreferred
-        var right = inspectorPreferred
-        let conversation = manual == nil ? Self.conversationComfortable : Self.conversationMinimum
-        func requiredWidth() -> CGFloat {
-            conversation + (left ? Self.sidebarMinimum + Self.dividerThickness : 0)
-                + (right ? Self.inspectorMinimum + Self.dividerThickness : 0)
-        }
-        // Match AppKit's order: keep project files longer than the chat list.
-        // An explicit request for the list instead asks the inspector to give way.
-        if manual == .sidebar {
-            if requiredWidth() > width { right = false }
-            if requiredWidth() > width { left = false }
-        } else {
-            if requiredWidth() > width { left = false }
-            if requiredWidth() > width { right = false }
-        }
-        return (left, right)
-    }
-}
-
 @MainActor class WorkspaceWindow: NSWindow {
-    var prepareWidth: ((CGFloat) -> Void)?
     var onEscape: (() -> Bool)?
-    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
-        if abs(frameRect.width - frame.width) > 0.5 { prepareWidth?(frameRect.width) }
-        super.setFrame(frameRect, display: flag)
-    }
     override func cancelOperation(_ sender: Any?) {
         if let onEscape, onEscape() { return }
         super.cancelOperation(sender)
@@ -64,26 +24,14 @@ struct MainWindowLayout {
 }
 
 @MainActor final class MainSplitController: NSSplitViewController {
-    var resized: (() -> Void)?
-    /// The toolbar's standard toggles carry a nil target, so AppKit sends toggleSidebar: /
-    /// toggleInspector: up the responder chain from the first responder. With anything at
-    /// all focused that chain reaches this controller first, and NSSplitViewController's own
-    /// implementation would flip `isCollapsed` behind the window controller's back —
-    /// bypassing `layout.sidebarPreferred`, `manualColumn` and `saveLayout()`. So both are
-    /// overridden and forwarded, and neither calls super.
-    weak var owner: MainWindowController?
-    override func toggleSidebar(_ sender: Any?) { owner?.toggleSidebar(sender) }
-    override func toggleInspector(_ sender: Any?) { owner?.toggleInspector(sender) }
-    func columnWidth(_ item: NSSplitViewItem) -> CGFloat {
-        // Sidebar and inspector content are wrapped in a system glass container.
+    /// The split view's own subview for the item: sidebar and inspector content are
+    /// wrapped in a system glass container.
+    func column(_ item: NSSplitViewItem) -> NSView {
         var view = item.viewController.view
         while let parent = view.superview, parent !== splitView { view = parent }
-        return view.frame.width
+        return view
     }
-    override func splitViewDidResizeSubviews(_ notification: Notification) {
-        super.splitViewDidResizeSubviews(notification)
-        resized?()
-    }
+    func columnWidth(_ item: NSSplitViewItem) -> CGFloat { column(item).frame.width }
 }
 
 /// Hosts SwiftUI in a split view item accessory — the system's own place for a column's
@@ -130,12 +78,11 @@ struct MainWindowLayout {
     private(set) var sidebarItem: NSSplitViewItem!
     private(set) var inspectorItem: NSSplitViewItem!
     private(set) var conversationItem: NSSplitViewItem!
-    private(set) var layout = MainWindowLayout()
     private let defaults: UserDefaults
-    private var applyingLayout = false
-    private var ready = false
     private var observation: AnyCancellable?
     private var previewObservation: AnyCancellable?
+    private var inspectorObservation: NSKeyValueObservation?
+    private var widthsBeforeExpansion: (sidebar: CGFloat?, inspector: CGFloat?) = (nil, nil)
     /// Chat search is a command palette in a floating window of its own, not a field in
     /// the column. ⌘K and the column header's magnifier both drive it through here.
     let searchPalette = SearchPalettePresentation()
@@ -143,7 +90,6 @@ struct MainWindowLayout {
     /// The workspace sidebar's chat list, so closing the search field can hand the
     /// keyboard straight back to it instead of dropping focus on the window.
     let sidebarListFocus = SidebarListFocus()
-    private var manualColumn: MainWindowLayout.Column?
 
     init(workspace: WorkspaceStore, defaults: UserDefaults = .standard, windowOverride: WorkspaceWindow? = nil,
          settings: SettingsStore? = nil, pets: PetCatalog? = nil, planets: PlanetStore? = nil) {
@@ -157,10 +103,11 @@ struct MainWindowLayout {
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         super.init(window: window)
-        layout.sidebarPreferred = defaults.object(forKey: "main.sidebarVisible") as? Bool ?? true
-        layout.inspectorPreferred = defaults.object(forKey: "main.inspectorVisible") as? Bool ?? false
-        layout.sidebarWidth = min(340, max(220, defaults.object(forKey: "main.sidebarWidth") as? Double ?? 250))
-        layout.inspectorWidth = min(380, max(260, defaults.object(forKey: "main.inspectorWidth") as? Double ?? 280))
+        // Keys of the hand-rolled frame and column persistence that NSWindow and NSSplitView
+        // autosave replaced.
+        for key in ["main.frame", "main.sidebarVisible", "main.inspectorVisible", "main.sidebarWidth", "main.inspectorWidth"] {
+            defaults.removeObject(forKey: key)
+        }
         // AppKit draws the title in a unified toolbar; Echo used to hide it and repaint it
         // in a custom toolbar item.
         window.title = "新会话"; window.titleVisibility = .visible
@@ -179,7 +126,7 @@ struct MainWindowLayout {
         // inspector, its own titlebar region so the content's scroll pocket stops at the divider,
         // and a hairline divider. The content view must stay transparent for that to show.
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHost)
-        sidebarItem.minimumThickness = MainWindowLayout.sidebarMinimum; sidebarItem.maximumThickness = 340
+        sidebarItem.minimumThickness = 220; sidebarItem.maximumThickness = 340
         sidebarItem.canCollapse = true; sidebarItem.canCollapseFromWindowResize = true
         sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         sidebarItem.holdingPriority = .init(260)
@@ -193,24 +140,24 @@ struct MainWindowLayout {
         sidebarItem.addBottomAlignedAccessoryViewController(
             SidebarAccessoryController(rootView: SettingsEntryButton { [weak self] in self?.showSettings() }))
         let content = NSSplitViewItem(viewController: conversationHost)
-        content.minimumThickness = MainWindowLayout.conversationMinimum; content.holdingPriority = .init(249)
+        content.minimumThickness = 440; content.holdingPriority = .init(249)
         content.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         conversationItem = content
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspectorHost)
-        inspectorItem.minimumThickness = MainWindowLayout.inspectorMinimum; inspectorItem.maximumThickness = 380
+        inspectorItem.minimumThickness = 260; inspectorItem.maximumThickness = 380
         inspectorItem.canCollapse = true; inspectorItem.canCollapseFromWindowResize = true
         inspectorItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         inspectorItem.holdingPriority = .init(260)
-        inspectorItem.isCollapsed = !layout.inspectorPreferred
+        // The first launch's layout, the conversation on its own. Split view autosave
+        // replaces it once there is one.
+        sidebarItem.isCollapsed = true; inspectorItem.isCollapsed = true
         splitController.splitView.dividerStyle = .thin
-        splitController.owner = self
         splitController.addSplitViewItem(sidebarItem); splitController.addSplitViewItem(content); splitController.addSplitViewItem(inspectorItem)
         rootController.view = NSView()
         rootController.addChild(splitController)
         rootController.view.addSubview(splitController.view)
         pin(splitController.view, to: rootController.view)
         window.contentViewController = rootController
-        window.prepareWidth = { [weak self] width in self?.prepareResize(width) }
         window.onEscape = { [weak self] in self?.handleEscape() ?? false }
         workspace.onRevealVoice = { [weak self] _ in self?.showWorkspace() }
         let toolbar = NSToolbar(identifier: "chiyan.main")
@@ -218,32 +165,44 @@ struct MainWindowLayout {
         window.toolbar = toolbar
         window.center()
         window.setContentSize(windowOverride?.frame.size ?? NSSize(width: 1280, height: 820))
-        // NSWindow owns frame persistence: it saves on every move and resize, and it
-        // constrains a restored frame back onto the current screen arrangement, so the
-        // hand-rolled defaults key, MainWindowLayout.constrain and the screen-parameter
-        // observer are all gone. Naming the slot does not restore it — that is a separate
-        // call. Autosave always
-        // writes to standard defaults, so it is armed only for the app's own suite; tests
-        // and the acceptance probe inject their own and get the default centred window.
+        // NSWindow and NSSplitView own layout persistence: the window saves its frame on
+        // every move and resize and constrains a restored frame back onto the current
+        // screen arrangement; the split view saves each column's width, whether it is
+        // collapsed, and whether a window resize collapsed it, which is what lets AppKit
+        // bring that column back when the window widens again, even after a relaunch.
+        // Naming a slot does not restore the window frame — that is a separate call. Both
+        // always write to standard defaults, so they are armed only for the app's own
+        // suite; tests and the acceptance probe inject their own and get the default
+        // centred window and first-launch columns.
         if defaults === UserDefaults.standard {
             window.setFrameAutosaveName("main")
             window.setFrameUsingName("main")
         }
         splitController.splitView.layoutSubtreeIfNeeded()
-        applyLayout()
-        splitController.resized = { [weak self] in self?.dividerChanged() }
+        // Before the split view's autosave, whose restore can expand the inspector.
+        inspectorObservation = inspectorItem.observe(\.isCollapsed, options: [.prior, .old]) { [weak self] _, change in
+            let (prior, wasCollapsed) = (change.isPrior, change.oldValue)
+            MainActor.assumeIsolated { self?.inspectorCollapseChanging(prior: prior, wasCollapsed: wasCollapsed) }
+        }
+        if defaults === UserDefaults.standard {
+            // Set only once the window has its size: restoring into an unsized split view
+            // does not bring the sidebar back at its saved width.
+            splitController.splitView.autosaveName = "main"
+        }
+        // Expanded reading is not restored, but the collapsed conversation column it leaves
+        // behind in the autosave would be.
+        conversationItem.isCollapsed = false
         observation = workspace.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.refreshTitle() }
         }
         previewObservation = workspace.fileBrowser.$isPreviewExpanded.removeDuplicates().sink { [weak self] _ in
             // Published delivers before the stored value changes.
-            DispatchQueue.main.async { [weak self] in self?.applyLayout() }
+            DispatchQueue.main.async { [weak self] in self?.applyPreviewExpansion() }
         }
         paletteController = SearchPaletteController(workspace: workspace, presentation: searchPalette,
                                                     hostWindow: { [weak self] in self?.window })
         refreshTitle()
         window.minSize = NSSize(width: 720, height: 520)
-        ready = true
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -308,26 +267,20 @@ struct MainWindowLayout {
         workspace.isMainWindowVisible = true
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-        applyLayout()
     }
     @objc func hideMainWindow() {
         searchPalette.isOpen = false
         workspace.isMainWindowVisible = false
         workspace.selected?.store.hideMainWindow()
-        window?.orderOut(nil); workspace.flush(); saveLayout()
+        window?.orderOut(nil); workspace.flush()
     }
-    /// Also the chain's last stop for the toolbar's standard item: with NOTHING focused,
-    /// NSWindow forwards toggleSidebar: but NOT toggleInspector:, so without an
-    /// implementation here AppKit would draw the inspector item disabled.
-    @objc func toggleSidebar(_ sender: Any? = nil) {
-        layout.sidebarPreferred = sidebarItem.isCollapsed
-        manualColumn = .sidebar; applyLayout(); saveLayout()
-    }
-    @objc func toggleInspector(_ sender: Any? = nil) {
-        workspace.fileBrowser.collapsePreview()
-        layout.inspectorPreferred = inspectorItem.isCollapsed
-        manualColumn = .inspector; applyLayout(); saveLayout()
-    }
+    /// The chain's last stop for the toolbar's standard items and the Window menu: with
+    /// anything focused, the chain reaches the split view controller first and its own
+    /// toggles answer; with NOTHING focused, NSWindow forwards toggleSidebar: but NOT
+    /// toggleInspector:, so without an implementation here AppKit would draw the
+    /// inspector item disabled.
+    @objc func toggleSidebar(_ sender: Any? = nil) { splitController.toggleSidebar(sender) }
+    @objc func toggleInspector(_ sender: Any? = nil) { splitController.toggleInspector(sender) }
     /// ⌘K. The palette is its own floating window, so it neither needs the sidebar to be
     /// open nor touches the window's layout — pressing it must not change what the person
     /// will see the next time they launch Echo.
@@ -335,80 +288,54 @@ struct MainWindowLayout {
         showWorkspace()
         searchPalette.isOpen = true
     }
-    private func setVisibility(sidebar: Bool, inspector: Bool) {
-        if !sidebar && !sidebarItem.isCollapsed { sidebarItem.isCollapsed = true }
-        if !inspector && !inspectorItem.isCollapsed { inspectorItem.isCollapsed = true }
-        if sidebar && sidebarItem.isCollapsed { sidebarItem.isCollapsed = false }
-        if inspector && inspectorItem.isCollapsed {
-            inspectorItem.isCollapsed = false
+    /// The inspector's content follows the column however it opens or closes: a toggle,
+    /// AppKit bringing it back as the window widens, or the split view's autosave at launch.
+    private func inspectorCollapseChanging(prior: Bool, wasCollapsed: Bool?) {
+        if prior {
+            // Expanded reading has to end while the conversation column can still come
+            // back beside the preview, not after the preview's column has gone.
+            if wasCollapsed == false && workspace.fileBrowser.isPreviewExpanded {
+                workspace.fileBrowser.collapsePreview()
+                applyPreviewExpansion()
+            }
+        } else if wasCollapsed == true && !inspectorItem.isCollapsed {
             workspace.fileBrowser.select(project: workspace.selectedID.flatMap { workspace.project(for: $0) })
             workspace.fileBrowser.refresh()
         }
     }
-    private func prepareResize(_ width: CGFloat) {
-        // AppKit only auto-collapses during live resize. Pre-collapse for frame
-        // restoration and setContentSize too, or the split's fittingSize clamps them.
-        guard !applyingLayout else { return }
-        applyingLayout = true; defer { applyingLayout = false }
-        let visible = visibleColumns(width: width)
-        setVisibility(sidebar: visible.sidebar, inspector: visible.inspector)
-    }
-    private func visibleColumns(width: CGFloat, manual: MainWindowLayout.Column? = nil) -> (sidebar: Bool, inspector: Bool) {
-        if workspace.fileBrowser.isPreviewExpanded { return (layout.sidebarPreferred, true) }
-        return layout.visibleColumns(width: width, manual: manual)
-    }
-    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        prepareResize(frameSize.width)
-        return frameSize
-    }
-    private func applyLayout() {
-        guard !applyingLayout, let window else { return }
-        applyingLayout = true; defer { applyingLayout = false }
-        let width = window.contentView?.bounds.width ?? window.frame.width
-        let expanded = workspace.fileBrowser.isPreviewExpanded
-        // Keep both hosting controllers mounted so preview scroll/selection and chat state survive.
-        if expanded {
+    /// Expanded reading: the preview takes the conversation's column as well, and only the
+    /// preview — the inspector holds less firmly than the sidebar while it lasts, so the
+    /// sidebar keeps its width. Both hosting controllers stay mounted so preview
+    /// scroll/selection and chat state survive. The split view neither remembers the side
+    /// columns' widths from before nor gives the conversation its room back without taking
+    /// the sidebar's, so both widths are kept here to put back.
+    private func applyPreviewExpansion() {
+        if workspace.fileBrowser.isPreviewExpanded {
+            guard !conversationItem.isCollapsed else { return }
+            widthsBeforeExpansion = (sidebarItem.isCollapsed ? nil : splitController.columnWidth(sidebarItem),
+                                     inspectorItem.isCollapsed ? nil : splitController.columnWidth(inspectorItem))
             inspectorItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
+            inspectorItem.holdingPriority = .init(250)
             conversationItem.isCollapsed = true
         } else {
+            guard conversationItem.isCollapsed else { return }
             conversationItem.isCollapsed = false
             inspectorItem.maximumThickness = 380
+            inspectorItem.holdingPriority = .init(260)
+            // Placed from the columns' own frames: on macOS 27 the thin divider takes no
+            // width of its own, whatever dividerThickness reports.
+            let splitView = splitController.splitView
+            if let width = widthsBeforeExpansion.sidebar, !sidebarItem.isCollapsed {
+                splitView.layoutSubtreeIfNeeded()
+                splitView.setPosition(splitController.column(sidebarItem).frame.minX + width, ofDividerAt: 0)
+            }
+            if let width = widthsBeforeExpansion.inspector, !inspectorItem.isCollapsed {
+                splitView.layoutSubtreeIfNeeded()
+                let divider = splitController.column(conversationItem).frame.maxX
+                splitView.setPosition(divider + splitController.columnWidth(inspectorItem) - width, ofDividerAt: 1)
+            }
+            widthsBeforeExpansion = (nil, nil)
         }
-        let visible = visibleColumns(width: width, manual: manualColumn)
-        setVisibility(sidebar: visible.sidebar, inspector: visible.inspector)
-        rootController.view.layoutSubtreeIfNeeded()
-        splitController.splitView.layoutSubtreeIfNeeded()
-        let available = splitController.splitView.bounds.width
-        let divider = MainWindowLayout.dividerThickness
-        let conversationMinimum = MainWindowLayout.conversationMinimum
-        if visible.sidebar {
-            let maxWidth = expanded ? available - MainWindowLayout.inspectorMinimum - divider
-                : available - conversationMinimum - divider - (visible.inspector ? layout.inspectorWidth + divider : 0)
-            splitController.splitView.setPosition(min(layout.sidebarWidth, max(MainWindowLayout.sidebarMinimum, maxWidth)), ofDividerAt: 0)
-        }
-        if visible.inspector && !expanded {
-            let maxWidth = available - conversationMinimum - divider - (visible.sidebar ? layout.sidebarWidth + divider : 0)
-            splitController.splitView.setPosition(available - min(layout.inspectorWidth, max(MainWindowLayout.inspectorMinimum, maxWidth)) - divider, ofDividerAt: 1)
-        }
-        window.toolbar?.validateVisibleItems()
-    }
-    private func dividerChanged() {
-        guard !applyingLayout, !workspace.fileBrowser.isPreviewExpanded,
-              !conversationItem.isCollapsed, window?.inLiveResize != true else { return }
-        if !sidebarItem.isCollapsed {
-            layout.sidebarWidth = min(340, max(220, splitController.columnWidth(sidebarItem)))
-        }
-        if !inspectorItem.isCollapsed {
-            layout.inspectorWidth = min(380, max(260, splitController.columnWidth(inspectorItem)))
-        }
-        saveLayout()
-    }
-    private func saveLayout() {
-        guard ready else { return }
-        defaults.set(layout.sidebarPreferred, forKey: "main.sidebarVisible")
-        defaults.set(layout.inspectorPreferred, forKey: "main.inspectorVisible")
-        defaults.set(layout.sidebarWidth, forKey: "main.sidebarWidth")
-        defaults.set(layout.inspectorWidth, forKey: "main.inspectorWidth")
     }
     private func refreshTitle() {
         window?.title = workspace.selected?.title ?? "新会话"
@@ -416,14 +343,16 @@ struct MainWindowLayout {
     func windowShouldClose(_ sender: NSWindow) -> Bool { hideMainWindow(); return false }
     func windowDidMiniaturize(_ notification: Notification) { workspace.isMainWindowVisible = false; workspace.flush() }
     func windowDidDeminiaturize(_ notification: Notification) { workspace.isMainWindowVisible = true }
-    func windowDidResize(_ notification: Notification) {
-        guard !applyingLayout else { return }
-        manualColumn = nil; applyLayout(); saveLayout()
+    /// Expanded reading is not restored, so the split view's autosave has to keep the
+    /// columns the next launch comes back to rather than the expansion's. The autosave is
+    /// written a main-queue turn later, which `applicationWillTerminate` no longer has.
+    func prepareForTermination() {
+        workspace.fileBrowser.collapsePreview(); applyPreviewExpansion()
     }
     func shutdown() {
         searchPalette.isOpen = false
-        workspace.flush(); saveLayout()
-        observation = nil; previewObservation = nil
+        workspace.flush()
+        observation = nil; previewObservation = nil; inspectorObservation = nil
         settingsController?.close()
         window?.orderOut(nil)
     }
@@ -435,8 +364,8 @@ struct MainWindowLayout {
     ///
     /// They are here because without them a collapsed sidebar is a dead end: the settings
     /// gear rides in that column's footer accessory and disappears with it, Echo is an
-    /// LSUIElement app with no Dock tile to fall back on, and `visibleColumns` collapses
-    /// columns on its own when the window gets narrow. ⌘B / ⌥⌘B stay as they were.
+    /// LSUIElement app with no Dock tile to fall back on, and AppKit collapses the sidebar
+    /// on its own when the window gets narrow. ⌘B / ⌥⌘B stay as they were.
     ///
     /// Their labels and tooltips are AppKit's, in whatever language the system is running;
     /// Echo does not localize the bundle and must not rewrite the tooltip, which the system

@@ -326,12 +326,24 @@ private struct ComposerHeightHost: View {
         let suite = "chrome-\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
+        // What an earlier Echo left behind; P1-5 below checks it has been cleared.
+        defaults.set("{{30, 1}, {1410, 869}}", forKey: "main.frame")
+        defaults.set(false, forKey: "main.sidebarVisible"); defaults.set(true, forKey: "main.inspectorVisible")
+        defaults.set(339, forKey: "main.sidebarWidth"); defaults.set(311, forKey: "main.inspectorWidth")
         let main = MainWindowController(workspace: workspace, defaults: defaults)
         defer { main.shutdown() }
         guard let window = main.window else { throw SettingsError("No window") }
         main.present()
         try await Task.sleep(for: .milliseconds(300))
         window.contentView?.layoutSubtreeIfNeeded()
+
+        // With nothing autosaved, the first launch shows the conversation on its own.
+        XCTAssertTrue(main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed && !main.conversationItem.isCollapsed,
+                     "A first launch collapses both side columns and shows the conversation")
+        main.toggleSidebar()
+        try await Task.sleep(for: .milliseconds(600))
+        window.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertTrue(!main.sidebarItem.isCollapsed, "⌘B opens the column for the rest of this test")
 
         // --- P1-1 / P1-2: the column's header and footer are accessories ---
         let header = main.sidebarItem.topAlignedAccessoryViewControllers
@@ -391,8 +403,6 @@ private struct ComposerHeightHost: View {
         main.toggleSidebar()
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertTrue(main.sidebarItem.isCollapsed, "The column starts this check collapsed")
-        XCTAssertTrue(defaults.object(forKey: "main.sidebarVisible") as? Bool == false,
-                     "...and that is what was saved")
         main.focusSearch()
         try await Task.sleep(for: .milliseconds(500))
         window.contentView?.layoutSubtreeIfNeeded()
@@ -403,8 +413,6 @@ private struct ComposerHeightHost: View {
         }
         XCTAssertTrue(collapsedOffset <= 1,
                      "A collapsed column does not move the palette: off by \(collapsedOffset)pt")
-        XCTAssertTrue(defaults.object(forKey: "main.sidebarVisible") as? Bool == false,
-                     "⌘K does not write a layout the person did not ask for")
         main.searchPalette.isOpen = false
         try await Task.sleep(for: .milliseconds(300))
         main.toggleSidebar()
@@ -437,8 +445,9 @@ private struct ComposerHeightHost: View {
 
         // A collapsed column takes its footer with it. That is the accepted cost of putting
         // the gear in the sidebar: ⌘, and the Echo menu are the entries that always work.
+        // The split view's own toggle animates the collapse, so this waits it out.
         main.toggleSidebar()
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: .milliseconds(600))
         window.contentView?.layoutSubtreeIfNeeded()
         XCTAssertTrue(main.sidebarItem.isCollapsed, "⌘B collapses the column")
         XCTAssertTrue(footer[0].view.isHiddenOrHasHiddenAncestor,
@@ -461,10 +470,10 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(!identifiers.contains { $0.rawValue == "chiyan.title" }, "No hand-drawn title item")
 
         // Both items carry a nil target, so AppKit sends their selector up the responder
-        // chain from the key window's first responder. Each has to arrive at THIS
-        // controller — the only place that owns layout.sidebarPreferred, manualColumn and
-        // saveLayout() — from every focus state, including none at all, where NSWindow
-        // forwards toggleSidebar: but not toggleInspector:.
+        // chain from the key window's first responder. Each has to be answered from every
+        // focus state: the split view controller's own toggles when anything is focused,
+        // and this controller's forwarding when nothing is, where NSWindow forwards
+        // toggleSidebar: but not toggleInspector:.
         let toggleSidebarSelector = #selector(MainWindowController.toggleSidebar(_:))
         let toggleInspectorSelector = #selector(MainWindowController.toggleInspector(_:))
         // Each state is re-established immediately before the selector is sent, and the
@@ -481,7 +490,7 @@ private struct ComposerHeightHost: View {
                 XCTAssertTrue((window.firstResponder ?? window).tryToPerform(selector, with: nil),
                              "\(label): the \(name) toggle must be answered by somebody")
                 XCTAssertTrue(collapsed() != before,
-                             "\(label): the \(name) toggle must reach the window controller, not stop at the split view")
+                             "\(label): the \(name) toggle must collapse or expand the column")
                 restore()
                 XCTAssertTrue(collapsed() == before,
                              "\(label): the \(name) column is put back for the next check")
@@ -623,13 +632,12 @@ private struct ComposerHeightHost: View {
         main.toggleInspector()
         try await Task.sleep(for: .milliseconds(400))
 
-        // --- P1-5: NSWindow owns the frame ---
-        XCTAssertTrue(defaults.string(forKey: "main.frame") == nil,
-                     "The hand-rolled frame key is gone")
-        XCTAssertTrue(window.frameAutosaveName.isEmpty,
+        // --- P1-5: NSWindow owns the frame, NSSplitView the columns ---
+        XCTAssertTrue(["main.frame", "main.sidebarVisible", "main.inspectorVisible", "main.sidebarWidth",
+                       "main.inspectorWidth"].allSatisfy { defaults.object(forKey: $0) == nil },
+                     "The hand-rolled layout keys an earlier Echo saved are cleared")
+        XCTAssertTrue(window.frameAutosaveName.isEmpty && main.splitController.splitView.autosaveName == nil,
                      "Autosave writes to standard defaults, so an injected suite must not arm it")
-        XCTAssertTrue(defaults.object(forKey: "main.sidebarWidth") != nil,
-                     "The remaining layout keys are still this controller's to save")
 
     }
 
@@ -2707,9 +2715,12 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(main.sidebarItem != nil, "Sidebar item exists")
         XCTAssertTrue(main.inspectorItem != nil, "Inspector item exists")
 
-        // 2. Right sidebar is collapsed by default
+        // 2. A first launch shows the conversation on its own
         XCTAssertTrue(main.inspectorItem.isCollapsed, "Right sidebar must be collapsed by default")
-        XCTAssertTrue(!main.sidebarItem.isCollapsed, "Left sidebar is visible by default")
+        XCTAssertTrue(main.sidebarItem.isCollapsed, "Left sidebar is collapsed by default")
+        XCTAssertTrue(!main.conversationItem.isCollapsed, "The conversation is visible by default")
+        // The rest of this test lays the project files out beside the chat list.
+        main.sidebarItem.isCollapsed = false
 
         // 3. Toggle expands right sidebar
         main.present()
@@ -2920,7 +2931,8 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(scroll.contentView.bounds.origin == scrollOrigin && preview.selectedRange() == NSRange(location: 100, length: 12))
         try await togglePreview()
         XCTAssertTrue(!workspace.fileBrowser.isPreviewExpanded && !main.conversationItem.isCollapsed)
-        XCTAssertTrue(abs(main.splitController.columnWidth(main.inspectorItem) - normalWidth) < 2, "Original column width restored")
+        XCTAssertTrue(abs(main.splitController.columnWidth(main.inspectorItem) - normalWidth) < 1,
+                     "Original column width restored: \(normalWidth) → \(main.splitController.columnWidth(main.inspectorItem))")
         XCTAssertTrue(scroll.contentView.bounds.origin == scrollOrigin && preview.selectedRange() == NSRange(location: 100, length: 12))
         XCTAssertTrue(editor(in: content) === composer && composer.selectedRange() == NSRange(location: 2, length: 3))
         XCTAssertTrue(conversation.store.mainDraft == savedDraft && workspace.fileBrowser.state.selectedPath == "wide.swift")
@@ -3096,29 +3108,32 @@ private struct ComposerHeightHost: View {
         // 4. Toggle collapses right sidebar again
         main.toggleInspector()
         XCTAssertTrue(main.inspectorItem.isCollapsed, "Right sidebar collapses when toggled again")
+        // A second toggle in the same run loop turn is undone when the first one's
+        // animation finishes; a person's two presses never arrive that close together.
+        try await Task.sleep(for: .milliseconds(50))
         main.toggleInspector()
         try await Task.sleep(for: .milliseconds(150))
         XCTAssertTrue(workspace.fileBrowser.state.preview == .text("updated"))
-        window.setContentSize(NSSize(width: 900, height: 650))
-        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
-        try await Task.sleep(for: .milliseconds(120)); content.layoutSubtreeIfNeeded()
-        XCTAssertTrue(main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed,
-                     "At 900pt the chat list collapses before project files, matching AppKit")
-        window.setContentSize(NSSize(width: 760, height: 650))
-        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
-        try await Task.sleep(for: .milliseconds(120)); content.layoutSubtreeIfNeeded()
-        XCTAssertTrue(main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed,
-                     "At 760pt automatic collapse leaves a comfortable conversation")
-        XCTAssertTrue(abs(window.frame.width - 760) < 1, "Split minimum widths must not clamp programmatic resize")
-        main.toggleSidebar()
-        XCTAssertTrue(!main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed,
-                     "An explicit sidebar request uses the hard minimum at 760pt")
+        // AppKit collapses a column only while the person drags the window narrower; a
+        // programmatic resize stops at the columns' own minimum widths instead. Opening a
+        // column that does not fit widens the window rather than closing the other one.
+        XCTAssertTrue(main.sidebarItem.canCollapseFromWindowResize && main.inspectorItem.canCollapseFromWindowResize,
+                     "Both columns give way to a narrowing window")
         main.toggleInspector()
-        XCTAssertTrue(main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed,
-                     "An explicit inspector request makes the sidebar give way")
-        main.toggleSidebar()
-        XCTAssertTrue(!main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed,
-                     "An explicit sidebar request makes the inspector give way")
+        // The toggle animates; until it finishes, the column still holds its minimum width.
+        try await Task.sleep(for: .milliseconds(600)); content.layoutSubtreeIfNeeded()
+        window.setContentSize(NSSize(width: 760, height: 650))
+        try await Task.sleep(for: .milliseconds(300)); content.layoutSubtreeIfNeeded()
+        XCTAssertTrue(!main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed && abs(window.frame.width - 760) < 1,
+                     "The chat list and the conversation fit at 760pt, got \(window.frame.width)")
+        main.toggleInspector()
+        try await Task.sleep(for: .milliseconds(500)); content.layoutSubtreeIfNeeded()
+        XCTAssertTrue(!main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed,
+                     "Opening project files at a narrow width keeps the chat list open")
+        XCTAssertTrue(window.frame.width >= 920,
+                     "...and AppKit widens the window to fit all three columns, got \(window.frame.width)")
+        XCTAssertTrue(main.splitController.columnWidth(main.conversationItem) >= 440,
+                     "The conversation keeps its minimum width, got \(main.splitController.columnWidth(main.conversationItem))")
         assertPlacement()
         XCTAssertTrue(workspace.sendMainMessage(conversationID: conversation.id))
         workspace.stop(conversationID: conversation.id)
@@ -3141,16 +3156,13 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(another.id != conversation.id)
 
         window.setContentSize(NSSize(width: 1280, height: 820))
-        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
         try await settlePreviewLayout()
         try await togglePreview()
         window.setContentSize(NSSize(width: 760, height: 650))
-        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
         try await settlePreviewLayout()
         XCTAssertTrue(main.conversationItem.isCollapsed && !main.inspectorItem.isCollapsed && !main.sidebarItem.isCollapsed,
                      "Expanded reading keeps the sidebar and preview visible when resizing")
         window.setContentSize(NSSize(width: 1280, height: 820))
-        main.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: window))
         try await settlePreviewLayout()
         let sameProject = workspace.newConversation(projectID: projectID)
         XCTAssertTrue(sameProject.id != conversation.id && !workspace.fileBrowser.isPreviewExpanded,

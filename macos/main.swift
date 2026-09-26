@@ -194,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let workspace = companion?.workspace ?? acceptanceWorkspace else { return .terminateNow }
+        companion?.mainController?.prepareForTermination()
         Task { @MainActor in
             await workspace.prepareForTermination()
             if acceptanceWorkspace != nil { print("PASS: AppKit termination acknowledged Rust cleanup and saved history"); fflush(nil) }

@@ -3,24 +3,6 @@ import SwiftUI
 import Testing
 
 @MainActor @Suite(.serialized, .tags(.fast)) enum PresentationRules {
-    @Test static func testAutomaticColumnThresholds() {
-        var layout = MainWindowLayout()
-        #expect(layout.visibleColumns(width: 781) == (true, false))
-        #expect(layout.visibleColumns(width: 780) == (false, false), "Default two-column layout collapses before the 720pt floor")
-        layout.inspectorPreferred = true
-        #expect(layout.visibleColumns(width: 1042) == (true, true))
-        #expect(layout.visibleColumns(width: 1041) == (false, true))
-        #expect(layout.visibleColumns(width: 821) == (false, true))
-        #expect(layout.visibleColumns(width: 820) == (false, false))
-        #expect(layout.visibleColumns(width: 760, manual: .sidebar) == (true, false))
-        #expect(layout.visibleColumns(width: 760, manual: .inspector) == (false, true))
-        #expect(layout.visibleColumns(width: 922, manual: .sidebar) == (true, true))
-        layout.sidebarWidth = 340; layout.inspectorWidth = 380
-        #expect(layout.visibleColumns(width: 1042) == (true, true), "Saved divider widths do not change collapse thresholds")
-        layout.sidebarPreferred = false; layout.inspectorPreferred = false
-        #expect(layout.visibleColumns(width: 1280) == (false, false), "Resize does not reopen explicitly hidden columns")
-    }
-
     @Test static func testPetSurfacePresentationAndLayout() throws {
         typealias Surface = PetSurfacePresentation
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
