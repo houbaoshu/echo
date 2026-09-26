@@ -1,0 +1,17 @@
+# 探针专用：把 mini-agent-rs 的生产 LocalConversationExecutor 以最小 C ABI 暴露给 Swift 探针。
+# 只读依赖 mini-agent-rs，不修改它，也不属于 Echo 的 Cargo workspace。
+[package]
+name = "echo-probe-exec"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+mini-agent-rs = { path = "../../../mini-agent-rs", default-features = false, features = ["conversation"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread"] }
