@@ -17,8 +17,7 @@ struct ConversationProjectPicker: View {
                 Button { isPresented.toggle() } label: { label }
                     .buttonStyle(.plain).focused($focused)
                     .popover(isPresented: $isPresented,
-                             attachmentAnchor: .rect(.rect(CGRect(x: 0, y: 0, width: 320, height: 28))),
-                             arrowEdge: .bottom) {
+                             attachmentAnchor: .rect(.rect(CGRect(x: 0, y: 0, width: 320, height: 28)))) {
                         ProjectSelectionPanel(workspace: workspace,
                             selectedProjectID: workspace.conversation(id: conversationID)?.projectID,
                             select: { id in

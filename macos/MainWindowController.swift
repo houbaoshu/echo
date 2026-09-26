@@ -163,8 +163,10 @@ import Combine
         let toolbar = NSToolbar(identifier: "chiyan.main")
         toolbar.delegate = self; toolbar.displayMode = .iconOnly; toolbar.allowsUserCustomization = false
         window.toolbar = toolbar
-        window.center()
+        // Sized before centring: the content view controller has just shrunk the window to
+        // its minimum, and growing it afterwards keeps the top-left, pushing it off screen.
         window.setContentSize(windowOverride?.frame.size ?? NSSize(width: 1280, height: 820))
+        window.center()
         // NSWindow and NSSplitView own layout persistence: the window saves its frame on
         // every move and resize and constrains a restored frame back onto the current
         // screen arrangement; the split view saves each column's width, whether it is

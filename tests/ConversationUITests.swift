@@ -2845,8 +2845,15 @@ private struct ComposerHeightHost: View {
             guard let panel = NSApp.windows.first(where: {
                 $0.isVisible && $0.contentView.map { findAccessibility("projectPicker.search", in: $0) != nil } == true
             }) else { throw SettingsError("Project panel did not open") }
-            XCTAssertTrue(panel.frame.minY >= (picker.accessibilityFrame?() ?? .zero).maxY - 20,
-                         "Project panel opens above the composer control")
+            // AppKit picks the side with room; above and below are both the system's call.
+            let anchor = picker.accessibilityFrame?() ?? .zero, frame = panel.frame
+            let above = frame.minY >= anchor.maxY - 2, below = frame.maxY <= anchor.minY + 2
+            XCTAssertTrue(above || below, "Project panel leaves its control uncovered: \(frame) vs \(anchor)")
+            XCTAssertTrue((above ? frame.minY <= anchor.maxY + 20 : frame.maxY >= anchor.minY - 20)
+                          && frame.maxX > anchor.minX && frame.minX < anchor.maxX,
+                         "Project panel is anchored to its control: \(frame) vs \(anchor)")
+            let visible = (panel.screen ?? window.screen)?.visibleFrame ?? .zero
+            XCTAssertTrue(visible.contains(frame), "Project panel is on screen: \(frame) in \(visible)")
             return panel
         }
         func key(_ window: NSWindow, code: UInt16, characters: String) {
@@ -3259,6 +3266,7 @@ private struct ComposerHeightHost: View {
         }
 
         // First launch: lay out all three columns, then expand the preview.
+        var savedFrame = NSRect.zero
         do {
             let voice = VoiceSessionController(), dictation = DictationController()
             let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
@@ -3267,6 +3275,16 @@ private struct ComposerHeightHost: View {
             let main = MainWindowController(workspace: workspace, defaults: standard)
             XCTAssertTrue(main.splitController.splitView.autosaveName == "main" && main.window?.frameAutosaveName == "main",
                          "Standard defaults arm AppKit's autosave")
+            let window = try XCTUnwrap(main.window)
+            let visible = try XCTUnwrap(window.screen ?? NSScreen.main).visibleFrame
+            XCTAssertTrue(abs(window.frame.midX - visible.midX) < 1,
+                         "With no saved frame the window is centred at its final size: \(window.frame) in \(visible)")
+            if visible.width >= window.frame.width && visible.height >= window.frame.height {
+                XCTAssertTrue(visible.contains(window.frame), "The first window is on screen: \(window.frame) in \(visible)")
+            }
+            // Off centre, so the relaunch can tell a restored frame from a fresh centring.
+            window.setFrameOrigin(NSPoint(x: visible.minX + 17, y: visible.minY + 23))
+            savedFrame = window.frame
             main.present()
             XCTAssertTrue(main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed, "With no autosave yet, a first launch")
             // Set up without the toggles' animation, which a cold first run can outlast.
@@ -3322,6 +3340,8 @@ private struct ComposerHeightHost: View {
         try await waitUntil(main, "the relaunched window is laid out") {
             main.window?.isVisible == true && main.splitController.columnWidth(main.conversationItem) > 0
         }
+        XCTAssertTrue(main.window?.frame == savedFrame,
+                     "The saved frame wins over first-launch centring: \(String(describing: main.window?.frame)) vs \(savedFrame)")
         XCTAssertTrue(!workspace.fileBrowser.isPreviewExpanded, "Expanded reading is not restored")
         XCTAssertTrue(!main.conversationItem.isCollapsed, "The conversation is visible after relaunch")
         XCTAssertTrue(!main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed,
