@@ -2900,8 +2900,19 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(!preview.isEditable && preview.isSelectable && preview.string.contains("只读文本"))
         XCTAssertTrue(preview.enclosingScrollView?.hasHorizontalScroller == true && preview.enclosingScrollView?.hasVerticalScroller == true)
         XCTAssertTrue(preview.frame.height > 0 && preview.frame.width > 0, "Text preview has a laid-out document")
+        // Widths off every clamp: left to itself, AppKit puts the side columns back at the
+        // sidebar's minimum and the inspector's maximum, which a layout already sitting on
+        // those values could not tell apart from a restore.
+        let splitView = main.splitController.splitView
+        splitView.setPosition(main.splitController.column(main.sidebarItem).frame.minX + 263, ofDividerAt: 0)
+        splitView.layoutSubtreeIfNeeded()
+        splitView.setPosition(main.splitController.column(main.conversationItem).frame.maxX
+                              + main.splitController.columnWidth(main.inspectorItem) - 291, ofDividerAt: 1)
+        splitView.layoutSubtreeIfNeeded()
         let normalWidth = main.splitController.columnWidth(main.inspectorItem)
         let sidebarWidth = main.splitController.columnWidth(main.sidebarItem)
+        XCTAssertTrue(abs(sidebarWidth - 263) < 1 && abs(normalWidth - 291) < 1,
+                     "The columns start between their clamps, got \(sidebarWidth) / \(normalWidth)")
         let windowFrame = window.frame
         let savedDraft = conversation.store.mainDraft
         composer.setSelectedRange(NSRange(location: 2, length: 3))
@@ -2931,11 +2942,28 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(scroll.contentView.bounds.origin == scrollOrigin && preview.selectedRange() == NSRange(location: 100, length: 12))
         try await togglePreview()
         XCTAssertTrue(!workspace.fileBrowser.isPreviewExpanded && !main.conversationItem.isCollapsed)
-        XCTAssertTrue(abs(main.splitController.columnWidth(main.inspectorItem) - normalWidth) < 1,
-                     "Original column width restored: \(normalWidth) → \(main.splitController.columnWidth(main.inspectorItem))")
+        func assertColumnsRestored(_ label: String) {
+            let sidebar = main.splitController.columnWidth(main.sidebarItem)
+            let inspector = main.splitController.columnWidth(main.inspectorItem)
+            XCTAssertTrue(!main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed && !main.conversationItem.isCollapsed,
+                         "\(label): all three columns are back")
+            XCTAssertTrue(abs(sidebar - sidebarWidth) < 1 && abs(inspector - normalWidth) < 1,
+                         "\(label): original column widths restored: \(sidebarWidth) / \(normalWidth) → \(sidebar) / \(inspector)")
+        }
+        assertColumnsRestored("First collapse")
         XCTAssertTrue(scroll.contentView.bounds.origin == scrollOrigin && preview.selectedRange() == NSRange(location: 100, length: 12))
         XCTAssertTrue(editor(in: content) === composer && composer.selectedRange() == NSRange(location: 2, length: 3))
         XCTAssertTrue(conversation.store.mainDraft == savedDraft && workspace.fileBrowser.state.selectedPath == "wide.swift")
+        // Repeated round trips must not drift: each one starts from the last one's restore.
+        for round in 2...4 {
+            try await togglePreview()
+            XCTAssertTrue(workspace.fileBrowser.isPreviewExpanded && main.conversationItem.isCollapsed, "Round \(round) expands")
+            XCTAssertTrue(abs(main.splitController.columnWidth(main.sidebarItem) - sidebarWidth) < 2,
+                         "Round \(round): the sidebar keeps its width while expanded")
+            try await togglePreview()
+            XCTAssertTrue(!workspace.fileBrowser.isPreviewExpanded, "Round \(round) collapses")
+            assertColumnsRestored("Round \(round)")
+        }
         try await togglePreview()
         workspace.fileBrowser.returnToDirectory()
         try await settlePreviewLayout()
@@ -3182,6 +3210,127 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(ProjectPickerOption.filtered(projects: workspace.projects, query: "echo-project-ui") == [.project(projectID), .add])
         XCTAssertTrue(ProjectPickerOption.filtered(projects: workspace.projects, query: "unmatched query") == [.add])
 
+    }
+
+    /// Quitting with the preview expanded must leave the split view's autosave holding the
+    /// person's columns, not the expansion's. This is the one test that arms AppKit's real
+    /// autosave: MainWindowController arms it only for standard defaults, and always under
+    /// the name "main". This bundle is not hosted in Echo.app, so standard defaults here
+    /// are the test runner's domain, never Echo's; whatever autosave had there is put back.
+    func testQuittingWithExpandedPreviewRestoresNormalColumns() async throws {
+        let standard = UserDefaults.standard
+        guard Bundle.main.bundleIdentifier != "local.chiyan.desktop-pet" else {
+            throw SettingsError("Standard defaults here are Echo's own; this test must not write them")
+        }
+        let splitKey = "NSSplitView Subview Frames main", frameKey = "NSWindow Frame main"
+        let keysBefore = Set(standard.dictionaryRepresentation().keys)
+        let previous = [splitKey, frameKey].map { standard.object(forKey: $0) }
+        standard.removeObject(forKey: splitKey); standard.removeObject(forKey: frameKey)
+        defer {
+            for key in Set(standard.dictionaryRepresentation().keys).subtracting(keysBefore) { standard.removeObject(forKey: key) }
+            for (key, value) in zip([splitKey, frameKey], previous) { standard.set(value, forKey: key) }
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-preview-quit-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data((0..<80).map { "Line \($0)" }.joined(separator: "\n").utf8).write(to: root.appendingPathComponent("notes.txt"))
+        /// What the autosave records per column. AppKit's own format: one
+        /// "x, y, width, height, collapsed, …" string per column.
+        func saved() -> [(collapsed: Bool, width: CGFloat)] {
+            (standard.array(forKey: splitKey) as? [String] ?? []).map {
+                let fields = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                return (fields.count > 4 && fields[4] == "YES", fields.count > 2 ? CGFloat(Double(fields[2]) ?? -1) : -1)
+            }
+        }
+        func describeSaved() -> String { saved().map { $0.collapsed ? "collapsed(\($0.width))" : "\($0.width)" }.joined(separator: " / ") }
+        func savedNormalLayout() -> Bool {
+            let columns = saved()
+            return columns.count == 3 && columns.allSatisfy { !$0.collapsed }
+                && abs(columns[0].width - 263) < 1 && abs(columns[2].width - 291) < 1
+        }
+        func waitUntil(_ main: MainWindowController, _ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
+            let clock = ContinuousClock(), deadline = clock.now + .seconds(5)
+            while true {
+                main.window?.contentView?.layoutSubtreeIfNeeded()
+                if condition() { return }
+                guard clock.now < deadline else { throw SettingsError("Timed out waiting: \(label())") }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+        }
+
+        // First launch: lay out all three columns, then expand the preview.
+        do {
+            let voice = VoiceSessionController(), dictation = DictationController()
+            let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
+            defer { workspace.shutdown(); voice.shutdown() }
+            XCTAssertTrue(workspace.associateProject(workspace.addProject(url: root), conversationID: workspace.selected!.id))
+            let main = MainWindowController(workspace: workspace, defaults: standard)
+            XCTAssertTrue(main.splitController.splitView.autosaveName == "main" && main.window?.frameAutosaveName == "main",
+                         "Standard defaults arm AppKit's autosave")
+            main.present()
+            XCTAssertTrue(main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed, "With no autosave yet, a first launch")
+            // Set up without the toggles' animation, which a cold first run can outlast.
+            main.sidebarItem.isCollapsed = false; main.inspectorItem.isCollapsed = false
+            try await waitUntil(main, "both side columns open") {
+                main.splitController.columnWidth(main.sidebarItem) >= 220 && main.splitController.columnWidth(main.inspectorItem) >= 260
+            }
+            // Widths off every clamp, so drift to a minimum or maximum cannot pass for a restore.
+            let splitView = main.splitController.splitView
+            splitView.setPosition(main.splitController.column(main.sidebarItem).frame.minX + 263, ofDividerAt: 0)
+            splitView.layoutSubtreeIfNeeded()
+            splitView.setPosition(main.splitController.column(main.conversationItem).frame.maxX
+                                  + main.splitController.columnWidth(main.inspectorItem) - 291, ofDividerAt: 1)
+            splitView.layoutSubtreeIfNeeded()
+            workspace.fileBrowser.openFile("notes.txt")
+            try await waitUntil(main, "the normal layout is on screen and saved, saved \(describeSaved())") {
+                workspace.fileBrowser.state.showingFile && savedNormalLayout()
+                    && abs(main.splitController.columnWidth(main.sidebarItem) - 263) < 1
+                    && abs(main.splitController.columnWidth(main.inspectorItem) - 291) < 1
+            }
+            workspace.fileBrowser.togglePreviewExpansion()
+            try await waitUntil(main, "the expansion is on screen and saved, saved \(describeSaved())") {
+                main.conversationItem.isCollapsed && saved().map(\.collapsed) == [false, true, false]
+            }
+            XCTAssertTrue(workspace.fileBrowser.isPreviewExpanded && main.splitController.columnWidth(main.inspectorItem) > 291 + 400,
+                         "The preview is expanded")
+            XCTAssertTrue(saved()[2].width > 291 + 400,
+                         "The expansion reached the autosave, so a quit without preparation would restore it: \(describeSaved())")
+
+            // Quit the way AppDelegate does: prepare the window, then wait for the reply to
+            // applicationShouldTerminate, which AppKit does in the modal panel run loop mode,
+            // then shut down as applicationWillTerminate does.
+            func waitForTerminationReply() {
+                let deadline = Date().addingTimeInterval(0.5)
+                while Date() < deadline { _ = RunLoop.main.run(mode: .modalPanel, before: Date().addingTimeInterval(0.05)) }
+            }
+            main.prepareForTermination()
+            waitForTerminationReply()
+            main.shutdown()
+            // The process would exit here, and with it this window's autosave.
+            main.splitController.splitView.autosaveName = nil; main.window?.setFrameAutosaveName("")
+        }
+        XCTAssertTrue(savedNormalLayout(), "Termination leaves the normal columns in the autosave: \(describeSaved())")
+
+        // Relaunch: a fresh workspace and window read back what the first one left.
+        let voice = VoiceSessionController(), dictation = DictationController()
+        let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
+        defer { workspace.shutdown(); voice.shutdown() }
+        let main = MainWindowController(workspace: workspace, defaults: standard)
+        // Disarmed before the defaults are put back, or its next deferred write lands after them.
+        defer { main.shutdown(); main.splitController.splitView.autosaveName = nil; main.window?.setFrameAutosaveName("") }
+        main.present()
+        try await waitUntil(main, "the relaunched window is laid out") {
+            main.window?.isVisible == true && main.splitController.columnWidth(main.conversationItem) > 0
+        }
+        XCTAssertTrue(!workspace.fileBrowser.isPreviewExpanded, "Expanded reading is not restored")
+        XCTAssertTrue(!main.conversationItem.isCollapsed, "The conversation is visible after relaunch")
+        XCTAssertTrue(!main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed,
+                     "Both side columns come back open, as the autosave recorded them")
+        let sidebar = main.splitController.columnWidth(main.sidebarItem)
+        let inspector = main.splitController.columnWidth(main.inspectorItem)
+        XCTAssertTrue(abs(sidebar - 263) < 1 && abs(inspector - 291) < 1,
+                     "The normal widths come back, not the expansion's: got \(sidebar) / \(inspector)")
+        XCTAssertTrue(main.splitController.columnWidth(main.conversationItem) >= 440, "The conversation has its room")
     }
 
 
