@@ -223,6 +223,15 @@ import SwiftUI
         try await settle()
         XCTAssertTrue(scroll.contentView.bounds.minY < 3, "Keyboard navigation disarms following")
         func position() -> CGFloat { scroll.contentView.bounds.minY }
+        // Arrows move exactly a line each way, from the top as from mid-history.
+        let line = WorkspaceStyle.bodySize * 3
+        for (text, code, name, delta) in [("\u{f701}", UInt16(125), "↓ at the top", line), ("\u{f701}", 125, "↓", line),
+                                          ("\u{f700}", 126, "↑", -line)] {
+            let before = position()
+            key(text, code: code)
+            try await settle()
+            XCTAssertEqual(position(), before + delta, accuracy: 1, "\(name) scrolls the focused transcript a line: \(before) -> \(position())")
+        }
         for (text, code, name, down) in [("\u{f72d}", UInt16(121), "Page Down", true), ("\u{f72c}", 116, "Page Up", false)] {
             let before = position()
             key(text, code: code)
@@ -1068,5 +1077,77 @@ import SwiftUI
             return nil
         }
         return visit(root)
+    }
+}
+
+/// A scroll view under a real toolbar, moved the way the transcript's arrow keys move it.
+@MainActor @Observable private final class InsetScrollModel {
+    var position = ScrollPosition()
+    var geometry = ConversationView.TranscriptGeometry()
+}
+private struct InsetScrollView: View {
+    @Bindable var model: InsetScrollModel
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) { ForEach(0..<100) { Text("第 \($0) 行").frame(height: 30) } }.frame(maxWidth: .infinity)
+        }
+        .onScrollGeometryChange(for: ConversationView.TranscriptGeometry.self) { .init($0) } action: { model.geometry = $1 }
+        .scrollPosition($model.position)
+        .frame(width: 500, height: 600)
+    }
+}
+
+extension NativeAppKitEventTests {
+    /// ↑/↓ and Page Up/Down in the transcript scroll to `TranscriptGeometry.target(by:)`. The
+    /// toolbar insets the scroll view, and `scrollTo(y:)` measures from below that inset while
+    /// `visibleRect` measures from above it; reading one as the other left ↓ at the top doing
+    /// nothing and ↓ mid-history moving up. The transcript only takes those keys with Keyboard
+    /// Navigation on, so the same arithmetic is driven here through a real scroll view.
+    func testTranscriptKeyScrollClearsToolbarInset() async throws {
+        let model = InsetScrollModel()
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 500, height: 600),
+                              styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
+        window.toolbar = NSToolbar(identifier: "inset")
+        window.contentViewController = NSHostingController(rootView: InsetScrollView(model: model))
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        func settle() async throws {
+            try await Task.sleep(for: .milliseconds(200))
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        func findScroll(_ view: NSView) -> NSScrollView? {
+            if let scroll = view as? NSScrollView { return scroll }
+            return view.subviews.lazy.compactMap { findScroll($0) }.first
+        }
+        try await settle()
+        let scroll = try XCTUnwrap(findScroll(window.contentView!))
+        let document = try XCTUnwrap(scroll.documentView)
+        XCTAssertTrue(scroll.contentInsets.top > 20, "The toolbar must inset the scroll view: \(scroll.contentInsets)")
+        func position() -> CGFloat { scroll.contentView.bounds.minY }
+        let top = -scroll.contentInsets.top
+        let bottom = document.bounds.height - scroll.contentView.bounds.height
+        XCTAssertEqual(position(), top, accuracy: 1, "Starts at the top")
+        func press(_ name: String, _ delta: CGFloat, expect: CGFloat) async throws {
+            let before = position()
+            // As `scrollTranscript(by:)`: a move to the bottom goes by the edge.
+            let target = model.geometry.target(by: delta)
+            if target >= model.geometry.maxOffset - 1 { model.position.scrollTo(edge: .bottom) }
+            else { model.position.scrollTo(y: target) }
+            try await settle()
+            XCTAssertEqual(position(), expect, accuracy: 1, "\(name): \(before) -> \(position()), expected \(expect)")
+        }
+        let line = WorkspaceStyle.bodySize * 3
+        let page = max(40, model.geometry.visible.height - 40)
+        try await press("↓ at the top", line, expect: top + line)
+        try await press("↓ mid-history", line, expect: top + 2 * line)
+        try await press("↑ mid-history", -line, expect: top + line)
+        try await press("↑ past the top", -2 * line, expect: top)
+        try await press("Page Down", page, expect: top + page)
+        try await press("Page Up", -page, expect: top)
+        model.position.scrollTo(edge: .bottom)
+        try await settle()
+        XCTAssertEqual(position(), bottom, accuracy: 1, "Reaches the bottom")
+        try await press("↓ past the bottom", line, expect: bottom)
+        try await press("↑ from the bottom", -line, expect: bottom - line)
     }
 }

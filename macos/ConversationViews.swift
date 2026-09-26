@@ -483,9 +483,23 @@ struct ConversationView: View {
     private static let planetSize: CGFloat = 110
     /// What the transcript's key handling needs to know about the scroll area. Read from a
     /// second geometry observer so the tail-following one above stays exactly as it was.
-    private struct TranscriptGeometry: Equatable {
+    struct TranscriptGeometry: Equatable {
         var visible: CGRect = .zero
         var contentHeight: CGFloat = 0
+        /// Where the scroll view is, and how far it can go, in the coordinates
+        /// `ScrollPosition.scrollTo(y:)` takes. Those start at the top of the content with
+        /// the toolbar's inset already cleared, while `visibleRect` and `contentOffset`
+        /// start above it, under the toolbar: mixing the two misses by the inset.
+        var offset: CGFloat = 0
+        var maxOffset: CGFloat = 0
+        init() {}
+        init(_ geometry: ScrollGeometry) {
+            visible = geometry.visibleRect
+            contentHeight = geometry.contentSize.height
+            offset = geometry.contentOffset.y + geometry.contentInsets.top
+            maxOffset = max(0, geometry.contentSize.height - geometry.containerSize.height)
+        }
+        func target(by delta: CGFloat) -> CGFloat { min(max(0, offset + delta), maxOffset) }
     }
     var body: some View {
         // Grouped once, rather than filtering every tool for each realized row.
@@ -535,7 +549,7 @@ struct ConversationView: View {
                 if userScrolling { followTail = nearBottom }
             }
             .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
-                TranscriptGeometry(visible: geometry.visibleRect, contentHeight: geometry.contentSize.height)
+                TranscriptGeometry(geometry)
             } action: { previous, value in
                 transcriptGeometry = value
                 // macOS 27 misses the first growth from fitting content to overflow;
@@ -645,10 +659,9 @@ struct ConversationView: View {
         return .handled
     }
     private func scrollTranscript(by delta: CGFloat) {
-        let maxOffset = max(0, transcriptGeometry.contentHeight - transcriptGeometry.visible.height)
-        let target = min(max(0, transcriptGeometry.visible.minY + delta), maxOffset)
+        let target = transcriptGeometry.target(by: delta)
         // A keyboard move to the bottom re-arms the native anchor too.
-        if target >= maxOffset - 1 { returnToTail() }
+        if target >= transcriptGeometry.maxOffset - 1 { returnToTail() }
         else {
             followTail = false
             scrollPosition.scrollTo(y: target)
