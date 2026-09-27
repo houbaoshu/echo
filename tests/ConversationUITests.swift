@@ -84,6 +84,47 @@ import SwiftUI
     }
 }
 
+/// Drives the Agent tool UI with the batches the core sends around one tool call:
+/// a proposal that waits for a project folder, then the command running in it.
+@MainActor private final class ToolAgent: AgentSessionSource {
+    private var receive: ((AgentBatch) -> Void)?
+    private var sessionID = ""
+    private var generation = ""
+    private var receipts: [AgentInputReceipt] = []
+    private var entries: [AgentDisplayEntry] = []
+    private var revision: UInt64 = 0
+    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {}
+    func cancel() {}
+    func open(sessionID: String, generation: String, restore: AgentRestore,
+              receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws {
+        self.sessionID = sessionID; self.generation = generation; self.receive = receive
+    }
+    func control(_ command: AgentCommand) throws {
+        guard case .sendMessage(let input) = command else { return }
+        receipts.append(.init(client_message_id: input.client_message_id, message_id: 1, turn_id: 1))
+        entries.append(.init(type: .message, message_id: 1, turn_id: 1, role: .user, text: input.text))
+        emit([.init(type: .turn_started)], checkpoint: true)
+    }
+    func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
+    /// Text beside a tool call, and the call waiting for a folder.
+    func propose(_ command: String) {
+        entries.append(.init(type: .message, message_id: 2, turn_id: 1, role: .assistant, text: "我先检查文件。", final_reply: false))
+        entries.append(.init(type: .tool, message_id: 2, turn_id: 1, call_id: "call-1", command: command))
+        emit([.init(type: .assistant, message_id: 2, content: "我先检查文件。", final_reply: false),
+              .init(type: .directory_required)], checkpoint: true)
+    }
+    func run(in directory: String) {
+        emit([.init(type: .tool_started, call: .init(id: "call-1"), directory: directory)])
+    }
+    private func emit(_ kinds: [AgentEvent.Kind], checkpoint: Bool = false) {
+        if checkpoint { revision += 1 }
+        receive?(AgentBatch(session_id: sessionID, generation: generation, turn_id: 1, kind: .init(type: .update),
+            events: kinds.map { AgentEvent(version: 1, session_id: sessionID, turn_id: 1, kind: $0) },
+            checkpoint: checkpoint ? AgentCheckpoint(id: .init(generation: generation, revision: revision), history: "{}",
+                                                     input_receipts: receipts, projection: entries) : nil))
+    }
+}
+
 @MainActor private final class ComposerAudio: VoiceAudioHandling {
     var onFailure: ((String, VoiceAudioFailure) -> Void)?
     var inputOutputLatency: TimeInterval { 0 }
@@ -1762,6 +1803,85 @@ private struct ComposerHeightHost: View {
         let agentBroken = try await texts(of: brokenTask)
         XCTAssertTrue(agentBroken.contains { $0.contains("已中断 · 可继续跟进") },
                      "An interrupted Agent task keeps its status row: \(agentBroken)")
+    }
+
+    /// The Agent tool UI as the core drives it today: text beside a call stays in the chat,
+    /// the call waits for a folder with the three ways out, runs, and restores in each of
+    /// its terminal states; an unfinished Agent turn offers 继续处理 and a finished one does not.
+    func testAgentToolCardsDirectoryRowAndContinue() async throws {
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let dictation = DictationController()
+        defer { voice.shutdown(); dictation.shutdown() }
+        func texts(of store: TaskStore, workspace: WorkspaceStore? = nil) async throws -> [String] {
+            let view = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice, dictation: dictation,
+                startDictation: {}, startVoice: {}, conversationID: workspace?.selected?.id ?? UUID(),
+                send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
+            view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
+            let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            window.contentView = view
+            view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+            view.layoutSubtreeIfNeeded()
+            defer { window.orderOut(nil) }
+            return accessibilityText(in: view)
+        }
+
+        let agent = ToolAgent(), store = TaskStore(source: agent)
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
+        defer { workspace.shutdown() }
+        // 关联项目 lists available projects and is disabled without one.
+        _ = workspace.addProject(url: FileManager.default.temporaryDirectory)
+        store.send("看看项目")
+        agent.propose("printf probe")
+        XCTAssertTrue(store.needsDirectory && store.tools.map(\.state) == ["待执行"])
+        let waiting = try await texts(of: store, workspace: workspace)
+        XCTAssertTrue(waiting.contains { $0.contains("我先检查文件。") }, "Text beside the call stays in the chat: \(waiting)")
+        XCTAssertTrue(waiting.contains { $0.contains("待执行 · printf probe") }, "The pending call shows its command: \(waiting)")
+        XCTAssertTrue(waiting.contains { $0.contains("等待选择项目文件夹") }, "The task row says why it waits: \(waiting)")
+        for control in ["执行命令需要项目文件夹", "选择文件夹…", "取消执行"] {
+            XCTAssertTrue(waiting.contains { $0.contains(control) }, "The folder row offers \(control): \(waiting)")
+        }
+        // The 关联项目 menu is enabled only with an available project. Its title is not reachable
+        // through this accessibility walk (reading accessibilityTitle on SwiftUI nodes aborts the
+        // test process), so only its enabling condition is pinned here.
+        XCTAssertTrue(workspace.projects.contains { $0.isAvailable })
+        agent.run(in: "/tmp/probe-project")
+        XCTAssertTrue(store.tools.first?.state == "执行中" && store.tools.first?.directory == "/tmp/probe-project")
+        let running = try await texts(of: store, workspace: workspace)
+        XCTAssertTrue(running.contains { $0.contains("执行中 · printf probe") }, "The call shows it is running: \(running)")
+        XCTAssertTrue(running.contains { $0.contains("正在运行命令 · printf probe") }, "The task row names the step: \(running)")
+
+        let user = ConversationMessage(role: .user, content: "跑命令"), reply = ConversationMessage(role: .assistant, content: "做完了")
+        func record(_ call: String, _ result: String?, _ state: String) -> AgentToolRecord {
+            AgentToolRecord(callID: call, entryID: 2, turnID: 1, afterMessageID: user.id, command: "cmd-\(call)", result: result, state: state)
+        }
+        let finished = TaskStore(snapshot: .init(
+            task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已完成", status: .completed),
+            messages: [user, reply], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
+            tools: [
+                record("done", #"{"stdout":"out","stderr":"err","exit_code":2,"timed_out":true,"stdout_truncated":true,"stderr_truncated":false}"#, "执行结束"),
+                record("skipped", #"{"status":"not_executed","detail":"Superseded by follow-up instructions."}"#, "未执行"),
+                record("cut", #"{"status":"unknown","detail":"Cancelled during execution; inspect workspace for effects."}"#, "执行结果未知"),
+                record("lost", nil, "执行中"),
+            ]), source: ComposerAgent())
+        defer { finished.shutdown() }
+        XCTAssertEqual(finished.tools.map(\.state), ["执行结束", "未执行", "执行结果未知", "执行结果未知"],
+                       "A call restored without a result is unknown, whatever it was doing")
+        let restored = try await texts(of: finished)
+        for label in ["执行结束 · cmd-done", "未执行 · cmd-skipped", "执行结果未知 · cmd-cut", "执行结果未知 · cmd-lost"] {
+            XCTAssertTrue(restored.contains { $0.contains(label) }, "Restored tool card \(label): \(restored)")
+        }
+        XCTAssertTrue(!restored.contains { $0.contains("继续处理") }, "A completed Agent turn offers no continue: \(restored)")
+
+        let unfinished = TaskStore(snapshot: .init(
+            task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已中断 · 可继续跟进", status: .interrupted),
+            messages: [user], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
+            tools: []), source: ComposerAgent())
+        defer { unfinished.shutdown() }
+        XCTAssertTrue(unfinished.canRetry)
+        let interrupted = try await texts(of: unfinished)
+        XCTAssertTrue(interrupted.contains { $0.contains("继续处理") }, "An unfinished Agent turn offers 继续处理: \(interrupted)")
     }
 
     /// The chat shows the reply while the model writes it. An Agent session's messages come

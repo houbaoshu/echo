@@ -128,6 +128,20 @@ final class LoopbackModelServer: @unchecked Sendable {
         let items = body[responses ? "input" : "messages"] as? [[String: Any]] ?? []
         let text = items.last(where: { $0["role"] as? String == "user" })?["content"] as? String ?? ""
         let results = items.filter { $0["role"] as? String == "tool" || $0["type"] as? String == "function_call_output" }
+        // Failure modes key on any user message: later requests carry the core's feedback as the last one.
+        let conversation = items.filter { $0["role"] as? String == "user" }.compactMap { $0["content"] as? String }.joined(separator: "\n")
+        let secret = "secret-provider-body"
+        if conversation.contains("http-500") || conversation.contains("context-length") {
+            let context = conversation.contains("context-length")
+            let body = try json(["error": context ? ["code": "context_length_exceeded", "message": secret] : ["message": secret]])
+            _ = write(fd, "HTTP/1.1 \(context ? "400 Bad Request" : "500 Internal Server Error")\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body)
+            return
+        }
+        if conversation.contains("stream-error") {
+            guard write(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n") else { return }
+            _ = event(fd, responses ? ["type": "error", "message": secret] : ["error": ["message": secret]])
+            return
+        }
         if text.contains("slow-model") { Thread.sleep(forTimeInterval: 0.5) }
         var command: Any?
         if text.contains("tool"), results.isEmpty {
@@ -167,10 +181,14 @@ final class LoopbackModelServer: @unchecked Sendable {
         var reply = "最终回复：" + (results.isEmpty ? text : "已读取真实工具结果")
         if text.contains("markdown-stream"), command == nil { reply = "## 结果\n\n- **第一项**通过\n- 运行 `swift test`\n- 第三项\n- 第四项完成" }
         if text.contains("skip") { command = nil }
+        // Invalid model output, every time: no text and no call, or a call to a tool that does not exist.
+        var toolName = "bash"
+        if conversation.contains("empty-reply") { command = nil; reply = "" }
+        if conversation.contains("invalid-tool") { command = "printf invalid"; toolName = "python" }
         let arguments = try command.map { try json(["command": $0]) }
         let value: [String: Any]
         if responses {
-            var output: [[String: Any]] = arguments.map { [["type": "function_call", "call_id": "call-1", "name": "bash", "arguments": $0]] }
+            var output: [[String: Any]] = arguments.map { [["type": "function_call", "call_id": "call-1", "name": toolName, "arguments": $0]] }
                 ?? [["type": "message", "role": "assistant", "content": [["type": "output_text", "text": reply]]]]
             if text.contains("acceptance-rwv"), command != nil {
                 output.insert(["type": "reasoning", "id": "rs-acceptance-\(results.count)", "summary": [], "encrypted_content": "acceptance-opaque-reasoning"], at: 0)
@@ -178,7 +196,7 @@ final class LoopbackModelServer: @unchecked Sendable {
             value = ["id": "resp-test", "status": "completed", "output": output]
         } else {
             var message: [String: Any] = ["role": "assistant", "content": command != nil ? "我先检查文件。" : reply]
-            if let arguments { message["tool_calls"] = [["id": "call-1", "type": "function", "function": ["name": "bash", "arguments": arguments]]] }
+            if let arguments { message["tool_calls"] = [["id": "call-1", "type": "function", "function": ["name": toolName, "arguments": arguments]]] }
             value = ["choices": [["message": message, "finish_reason": command != nil ? "tool_calls" : "stop"]]]
         }
         if body["stream"] as? Bool != true {
@@ -210,7 +228,7 @@ final class LoopbackModelServer: @unchecked Sendable {
                 guard emit(["choices": [["index": 0, "delta": ["content": piece], "finish_reason": NSNull()]]]) else { return }
             }
             if let arguments {
-                guard emit(["choices": [["index": 0, "delta": ["tool_calls": [["index": 0, "id": "call-1", "type": "function", "function": ["name": "bash", "arguments": String(arguments.prefix(5))]]]], "finish_reason": NSNull()]]]) else { return }
+                guard emit(["choices": [["index": 0, "delta": ["tool_calls": [["index": 0, "id": "call-1", "type": "function", "function": ["name": toolName, "arguments": String(arguments.prefix(5))]]]], "finish_reason": NSNull()]]]) else { return }
                 guard emit(["choices": [["index": 0, "delta": ["tool_calls": [["index": 0, "function": ["arguments": String(arguments.dropFirst(5))]]]], "finish_reason": NSNull()]]]) else { return }
             }
             _ = emit(["choices": [["index": 0, "delta": [:], "finish_reason": command != nil ? "tool_calls" : "stop"]]])

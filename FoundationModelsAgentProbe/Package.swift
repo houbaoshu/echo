@@ -35,6 +35,17 @@ let package = Package(
             dependencies: ["AgentProbe"],
             swiftSettings: [.enableUpcomingFeature("NonisolatedNonsendingByDefault")]
         ),
+        // Phase 0 S0：与 Echo.xcconfig 相同的并发设置——Swift 6、warnings-as-errors、
+        // 不启用 NonisolatedNonsendingByDefault（Echo 明确禁止单独开启并发相关的 upcoming feature）。
+        .target(
+            name: "EchoSettingsCheck",
+            swiftSettings: [.unsafeFlags(["-warnings-as-errors"])]
+        ),
+        .testTarget(
+            name: "EchoSettingsCheckTests",
+            dependencies: ["EchoSettingsCheck"],
+            swiftSettings: [.unsafeFlags(["-warnings-as-errors"])]
+        ),
         .testTarget(
             name: "AgentProbeTests",
             dependencies: ["AgentProbe"],

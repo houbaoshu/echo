@@ -3,25 +3,94 @@ import Foundation
 import Testing
 
 extension EchoIntegrationScenarios {
-  @Suite(.serialized) @MainActor struct AgentSessionTests {
+  /// Chat scenarios every Agent engine must pass. They observe only `TaskStore`,
+  /// `WorkspaceStore`, the loopback server and files on disk, never an engine's wire
+  /// types, so the native Foundation Models engine runs the same functions in Phase 1.
+  /// Tool scenarios stay in `AgentSessionTests` until Phase 2 parameterizes them.
+  @MainActor enum ChatScenarios {
     static func wait(_ label: String, _ condition: () -> Bool) async throws {
-      let deadline = Date().addingTimeInterval(8)
-      while !condition() {
-        try #require(Date() < deadline, "Timed out: \(label)")
-        try await Task.sleep(for: .milliseconds(10))
-      }
+      try await AgentSessionTests.wait(label, condition)
     }
-    static func testReopenAfterInvalidSettings(temp: URL, port: String) async throws {
+    static func assistantReply(_ state: TaskStore.Snapshot) -> Bool {
+      state.messages.contains { $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// A direct answer completes with one reply; a completed turn offers no continue,
+    /// whether a Stop is written over it, races it, or its save fails.
+    static func directAnswerAndStopRules(_ f: SessionFixture) async throws {
+      let workspace = f.workspace
+      let factory = { f.source() }
+      let chat = try #require(workspace.selected)
+      #expect(chat.store.send("hello"))
+      try await wait("direct answer") { !chat.store.isGenerating }
+      #expect(chat.store.task?.status == .completed && chat.store.tools.isEmpty && !chat.store.needsDirectory)
+      #expect(chat.store.messages.filter { $0.role == .assistant }.count == 1)
+      #expect(chat.store.messages.last?.content == "最终回复：hello")
+      #expect(chat.store.responseMessage == chat.store.messages.last && chat.store.task?.summary == "已完成")
+      #expect(!workspace.canAssociateProject(conversationID: chat.id))
+
+      var stoppedAfterCompletion = chat.store.snapshot
+      stoppedAfterCompletion.task?.status = .stopped
+      let lateStop = TaskStore(snapshot: stoppedAfterCompletion, source: factory())
+      defer { lateStop.shutdown() }
+      #expect(!lateStop.canRetry && !lateStop.retry(), "A Stop that lands after the turn completed offers no continue")
+      lateStop.shutdown()
+
+      let completedSaveFailure = workspace.newConversation()
+      completedSaveFailure.store.checkpoint = { state in
+        if assistantReply(state) { throw CocoaError(.fileWriteNoPermission) }
+      }
+      completedSaveFailure.store.send("hello")
+      try await wait("completed save failure") { !completedSaveFailure.store.isGenerating }
+      #expect(completedSaveFailure.store.task?.status == .failed && !completedSaveFailure.store.canRetry,
+              "A save failure after a completed turn does not offer a continue")
+      #expect(completedSaveFailure.store.notice?.contains("保存失败") == true)
+
+      // Stop admitted while the completed reply is being applied: the real race path.
+      let raced = workspace.newConversation()
+      let raceStop = raced.store.$messages.sink { [store = raced.store] messages in
+        MainActor.assumeIsolated {
+          if store.isGenerating, messages.contains(where: { $0.role == .assistant && !$0.content.isEmpty }) {
+            store.stopTask()
+          }
+        }
+      }
+      raced.store.send("hello race")
+      try await wait("stop after completion") { !raced.store.isGenerating }
+      raceStop.cancel()
+      #expect(raced.store.task?.status == .stopped && raced.store.task?.summary == "已停止"
+              && !raced.store.canRetry && !raced.store.retry(),
+              "A Stop racing a completed turn neither offers nor sends a continue")
+    }
+
+    /// Stop before any reply arrives, then continue: the same user message is answered once.
+    static func stopBeforeReply(_ f: SessionFixture) async throws {
+      let earlyStop = f.workspace.newConversation()
+      earlyStop.store.send("hello before reply")
+      earlyStop.store.stopTask()
+      #expect(earlyStop.store.task?.status == .stopping && !earlyStop.store.canSubmit)
+      try await wait("stop before reply") { !earlyStop.store.isGenerating }
+      #expect(earlyStop.store.task?.status == .stopped && earlyStop.store.canRetry)
+      #expect(earlyStop.store.retry())
+      try await wait("continue unanswered user") { !earlyStop.store.isGenerating }
+      #expect(earlyStop.store.task?.status == .completed)
+      #expect(earlyStop.store.messages.filter { $0.role == .user }.count == 1)
+      #expect(earlyStop.store.messages.last?.content == "最终回复：hello before reply")
+    }
+
+    /// Settings saved without a model fail the next send with a notice, keep the conversation,
+    /// recover after valid settings, and never block termination.
+    static func reopenAfterInvalidSettings(_ f: SessionFixture) async throws {
+      let temp = f.root
       let settings = SettingsStore(
         url: temp.appendingPathComponent("reopen-settings.json"), secrets: NativeMemorySecrets())
       settings.selectProvider(.ollama)
-      settings.draft = ModelConfiguration(baseURL: "http://127.0.0.1:\(port)", model: "fixture")
+      settings.draft = ModelConfiguration(baseURL: f.server.baseURL, model: "fixture", apiProtocol: f.protocolName == .responses ? .responses : .chatCompletions)
       settings.save()
       #expect(settings.notice == nil)
       let workspace = WorkspaceStore(
-        persistence: WorkspacePersistence(
-          url: temp.appendingPathComponent("reopen/workspace.json")),
-        sourceFactory: { AgentTaskSource(settings: settings, resources: EchoTestResources.root) })
+        persistence: WorkspacePersistence(url: temp.appendingPathComponent("reopen/workspace.json")),
+        sourceFactory: { f.engine.settingsSource(settings) })
       defer { workspace.shutdown() }
       let chat = try #require(workspace.selected)
       #expect(chat.store.send("hello before settings change"))
@@ -30,20 +99,18 @@ extension EchoIntegrationScenarios {
       let originalMessages = chat.store.messages
 
       // Repeat after recovery so termination is tested directly from the
-      // failed-open state, with no successful reopen masking a stale bridge.
+      // failed-open state, with no successful reopen masking a stale session.
       for attempt in 1...2 {
         settings.draft.model = ""
         settings.save()
-        #expect(
-          settings.notice == nil && settings.snapshot.model.model.isEmpty,
-          "Saving an empty Model ID must remain a legal settings operation")
+        #expect(settings.notice == nil && settings.snapshot.model.model.isEmpty,
+                "Saving an empty Model ID must remain a legal settings operation")
         #expect(chat.store.send("hello after invalid settings \(attempt)"))
         try await wait("failed reopen leaves stopping") { !chat.store.isGenerating }
         #expect(chat.store.task?.status == .failed && chat.store.canSubmit)
         #expect(chat.store.notice == "请先在设置中配置并保存默认模型。")
-        #expect(
-          Array(chat.store.messages.prefix(originalMessages.count)) == originalMessages,
-          "Failed reopen must preserve the completed conversation")
+        #expect(Array(chat.store.messages.prefix(originalMessages.count)) == originalMessages,
+                "Failed reopen must preserve the completed conversation")
         if attempt == 1 {
           settings.draft.model = "fixture"
           settings.save()
@@ -62,19 +129,25 @@ extension EchoIntegrationScenarios {
       try await wait("termination after failed reopen") { terminated }
       await termination.value
     }
-    static func testHistoryReadRecovery(temp: URL, factory: @escaping () -> AgentTaskSource)
-      async throws
-    {
+
+    /// A missing or corrupt history sidecar blocks sending and retrying, is never replaced by
+    /// saving, and unblocks once restored. `seed` is "hello" for chat, "tool" once the engine
+    /// executes commands; `modelContext` checks an engine's own history bytes.
+    static func historyReadRecovery(
+      _ f: SessionFixture, seed: String,
+      modelContext: (_ recovered: TaskStore, _ expected: TaskStore.Snapshot) -> Void = { _, _ in }
+    ) async throws {
+      let temp = f.root
+      let factory = { f.source() }
       for failure in ["missing", "corrupt"] {
-        let persistence = WorkspacePersistence(
-          url: temp.appendingPathComponent("history-\(failure)/workspace.json"))
+        let persistence = WorkspacePersistence(url: temp.appendingPathComponent("history-\(seed)-\(failure)/workspace.json"))
         let workspace = WorkspaceStore(persistence: persistence, sourceFactory: factory)
         defer { workspace.shutdown() }
         let projectID = workspace.addProject(url: temp)
         let chat = workspace.newConversation(projectID: projectID)
-        #expect(chat.store.send("tool"))
+        #expect(chat.store.send(seed))
         try await wait("seed history for \(failure)") { !chat.store.isGenerating }
-        #expect(chat.store.task?.status == .completed && !chat.store.tools.isEmpty)
+        #expect(chat.store.task?.status == .completed && chat.store.tools.isEmpty == (seed != "tool"))
         let expected = chat.store.snapshot
         workspace.shutdown()
         let historyURL = persistence.sessionURL(chat.id)
@@ -97,13 +170,11 @@ extension EchoIntegrationScenarios {
           unreadable.flush()
           unreadable.shutdown()
           let saved = try #require(persistence.load().0?.conversations.first { $0.id == chat.id })
-          #expect(
-            saved.state.agentStored == true,
-            "Unreadable history must retain its external reference after saving: \(failure)")
+          #expect(saved.state.agentStored == true,
+                  "Unreadable history must retain its external reference after saving: \(failure)")
           if failure == "missing" {
-            #expect(
-              !FileManager.default.fileExists(atPath: historyURL.path),
-              "Saving must not recreate a missing history with empty state")
+            #expect(!FileManager.default.fileExists(atPath: historyURL.path),
+                    "Saving must not recreate a missing history with empty state")
           } else {
             let retained = try Data(contentsOf: historyURL)
             #expect(retained == corrupt, "Saving must not overwrite unreadable history")
@@ -114,48 +185,221 @@ extension EchoIntegrationScenarios {
         let restored = WorkspaceStore(persistence: persistence, sourceFactory: factory)
         defer { restored.shutdown() }
         let recovered = (try #require(restored.conversation(id: chat.id))).store
-        #expect(
-          recovered.agentLoadError == nil && recovered.canSubmit,
-          "Restoring a valid history file must unblock the session after restart: \(failure)")
-        #expect(
-          recovered.messages == expected.messages && recovered.tools == expected.tools
-            && recovered.snapshot.agentHistory == expected.agentHistory,
-          "Restoring history must retain messages, tools, and model context")
+        #expect(recovered.agentLoadError == nil && recovered.canSubmit,
+                "Restoring a valid history file must unblock the session after restart: \(failure)")
+        #expect(recovered.messages == expected.messages && recovered.tools == expected.tools,
+                "Restoring history must retain messages and tools")
+        modelContext(recovered, expected)
         #expect(recovered.send("hello after history recovery"))
         try await wait("continue after \(failure) history recovery") { !recovered.isGenerating }
         #expect(recovered.task?.status == .completed)
-        #expect(recovered.messages.last?.content == "最终回复：已读取真实工具结果")
+        #expect(recovered.messages.last?.content
+                == (seed == "tool" ? "最终回复：已读取真实工具结果" : "最终回复：hello after history recovery"))
         #expect(Array(recovered.messages.prefix(expected.messages.count)) == expected.messages)
         restored.shutdown()
       }
     }
-    static func testInitialSaveFailureKeepsDraft(
-      temp: URL, factory: @escaping () -> AgentTaskSource
-    ) throws {
-      let persistence = WorkspacePersistence(
-        url: temp.appendingPathComponent("initial-save-failure/workspace.json"))
-      let workspace = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+
+    /// The first save of a new conversation fails: the send is rejected and the draft survives a restart.
+    static func initialSaveFailureKeepsDraft(_ f: SessionFixture) async throws {
+      let persistence = WorkspacePersistence(url: f.root.appendingPathComponent("initial-save-failure/workspace.json"))
+      let workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
       defer { workspace.shutdown() }
       let chat = try #require(workspace.selected)
       chat.store.mainDraft = "prompt to keep"
       chat.store.checkpoint = { _ in throw CocoaError(.fileWriteNoPermission) }
-
-      #expect(
-        !workspace.sendMainMessage(conversationID: chat.id),
-        "A failed initial Agent checkpoint must reject the send")
-      #expect(
-        chat.store.mainDraft == "prompt to keep"
-          && chat.store.task?.status == .failed
-          && chat.store.notice?.contains("保存失败") == true,
-        "A rejected send must leave the draft available for recovery")
+      #expect(!workspace.sendMainMessage(conversationID: chat.id), "A failed initial Agent checkpoint must reject the send")
+      #expect(chat.store.mainDraft == "prompt to keep" && chat.store.task?.status == .failed
+              && chat.store.notice?.contains("保存失败") == true,
+              "A rejected send must leave the draft available for recovery")
       workspace.shutdown()
-      let restored = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+      let restored = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
       defer { restored.shutdown() }
-      #expect(
-        restored.conversation(id: chat.id)?.store.mainDraft == "prompt to keep",
-        "The draft must survive reopening after an initial Agent save failure")
+      #expect(restored.conversation(id: chat.id)?.store.mainDraft == "prompt to keep",
+              "The draft must survive reopening after an initial Agent save failure")
       restored.shutdown()
     }
+
+    /// Missing or corrupt sidecars never fall back to an incomplete visible chat.
+    static func missingSidecarBlocksSend(_ f: SessionFixture) async throws {
+      let chat = try #require(f.workspace.selected)
+      try #require(chat.store.send("hello"))
+      try await wait("seed saved history") { !chat.store.isGenerating }
+      f.workspace.flush()
+      try FileManager.default.moveItem(at: f.persistence.sessionURL(chat.id), to: f.root.appendingPathComponent("preserved-chat.json"))
+      let unreadable = WorkspaceStore(persistence: f.persistence, sourceFactory: { f.source() })
+      defer { unreadable.shutdown() }
+      #expect(unreadable.conversation(id: chat.id)?.store.agentLoadError != nil)
+      #expect(unreadable.conversation(id: chat.id)?.store.send("must not execute") == false)
+      unreadable.shutdown()
+    }
+
+    /// Provider failures end the turn as failed, with a continue offered and without any of
+    /// the provider's response body reaching the screen. Returns each case's summary so an
+    /// engine can pin its own wording.
+    @discardableResult
+    static func modelErrorsAreSanitized(_ f: SessionFixture) async throws -> [String: String] {
+      var summaries: [String: String] = [:]
+      for mode in ["http-500", "context-length", "stream-error"] {
+        let chat = f.workspace.newConversation()
+        #expect(chat.store.send("\(mode) please"))
+        try await wait("model error \(mode)") { !chat.store.isGenerating }
+        let summary = chat.store.task?.summary ?? ""
+        summaries[mode] = summary
+        #expect(chat.store.task?.status == .failed, "\(mode): \(summary)")
+        #expect(!summary.isEmpty && !summary.contains("secret-provider-body"), "\(mode) leaked: \(summary)")
+        #expect(!(chat.store.notice ?? "").contains("secret-provider-body"))
+        #expect(chat.store.messages.allSatisfy { !$0.content.contains("secret-provider-body") })
+        #expect(chat.store.canRetry, "\(mode): a failed model call can be continued")
+      }
+      return summaries
+    }
+  }
+
+  @Suite(.serialized) @MainActor struct AgentSessionTests {
+    static func wait(_ label: String, _ condition: () -> Bool) async throws {
+      let deadline = Date().addingTimeInterval(8)
+      while !condition() {
+        try #require(Date() < deadline, "Timed out: \(label)")
+        try await Task.sleep(for: .milliseconds(10))
+      }
+    }
+
+    // MARK: Chat scenarios on the Rust engine
+
+    @Test(arguments: [AgentModel.ProtocolName.chat_completions, .responses])
+    static func directAnswerAndStopRules(api: AgentModel.ProtocolName) async throws {
+      try await withSession(.rust) { f in f.protocolName = api; try await ChatScenarios.directAnswerAndStopRules(f) }
+    }
+    @Test static func stopBeforeReply() async throws {
+      try await withSession(.rust) { f in try await ChatScenarios.stopBeforeReply(f) }
+    }
+    @Test static func invalidSettingsCanReopen() async throws {
+      try await withSession(.rust) { f in try await ChatScenarios.reopenAfterInvalidSettings(f) }
+    }
+    @Test(arguments: ["hello", "tool"])
+    static func historyReadRecovery(seed: String) async throws {
+      try await withSession(.rust) { f in
+        try await ChatScenarios.historyReadRecovery(f, seed: seed) { recovered, expected in
+          #expect(recovered.snapshot.agentHistory == expected.agentHistory, "The v1 model context is restored byte for byte")
+        }
+      }
+    }
+    @Test static func initialSaveFailurePreservesDraft() async throws {
+      try await withSession(.rust) { f in try await ChatScenarios.initialSaveFailureKeepsDraft(f) }
+    }
+    @Test static func missingSidecarBlocksSend() async throws {
+      try await withSession(.rust) { f in try await ChatScenarios.missingSidecarBlocksSend(f) }
+    }
+    /// Current wording from `mini-agent-rs` (`lib.rs` Error, `models.rs`, `models/stream.rs`).
+    @Test(arguments: [AgentModel.ProtocolName.chat_completions, .responses])
+    static func modelErrorsAreSanitized(api: AgentModel.ProtocolName) async throws {
+      try await withSession(.rust) { f in
+        f.protocolName = api
+        let summaries = try await ChatScenarios.modelErrorsAreSanitized(f)
+        #expect(summaries["http-500"] == "model API returned HTTP 500 Internal Server Error")
+        #expect(summaries["context-length"]
+                == "model protocol error: context length exceeded; history is retained, inspect it or start a new conversation")
+        #expect(summaries["stream-error"] == (api == .responses
+                ? "model protocol error: invalid or incomplete Responses response"
+                : "model protocol error: model stream reported an error"))
+      }
+    }
+
+    // MARK: Rust-only characterization
+
+    /// Restore rules that depend on the v1 core: an unreceipted pending input becomes an
+    /// interrupted turn that `continue` answers; a legacy text chat continues only when it
+    /// ends with a user message.
+    @Test static func rustPendingInputAndLegacyContinueRules() async throws {
+      try await withSession(.rust) { f in
+        let workspace = f.workspace
+        let factory = { f.source() }
+        let chat = try #require(workspace.selected)
+        #expect(chat.store.send("hello"))
+        try await wait("direct answer") { !chat.store.isGenerating }
+
+        var pendingAfterCompletion = chat.store.snapshot
+        let followUp = ConversationMessage(role: .user, content: "hello pending")
+        pendingAfterCompletion.messages.append(followUp)
+        pendingAfterCompletion.pendingInputs = [AgentInput(client_message_id: followUp.id.uuidString, text: followUp.content)]
+        pendingAfterCompletion.task?.status = .failed
+        let pendingContinue = TaskStore(snapshot: pendingAfterCompletion, source: factory())
+        defer { pendingContinue.shutdown() }
+        pendingContinue.sessionID = chat.id
+        #expect(pendingContinue.canRetry && pendingContinue.retry())
+        try await wait("pending input continues") { !pendingContinue.isGenerating }
+        #expect(pendingContinue.task?.status == .completed && pendingContinue.messages.last?.content == "最终回复：hello pending",
+                "\(pendingContinue.task?.summary ?? "missing task")")
+        pendingContinue.shutdown()
+
+        @MainActor func legacyStore(_ messages: [ConversationMessage]) -> TaskStore {
+          TaskStore(snapshot: .init(task: .init(id: UUID(), runID: UUID(), title: "old", summary: "", status: .stopped),
+                                    messages: messages, mainDraft: "", followUpDraft: "", activityDismissed: false,
+                                    activitiesCollapsed: false),
+                    source: factory())
+        }
+        let legacyReplied = legacyStore([.init(role: .user, content: "old user"), .init(role: .assistant, content: "old partial", status: .stopped)])
+        #expect(!legacyReplied.canRetry && !legacyReplied.retry(),
+                "A legacy conversation ending in a reply offers no continue the core would reject")
+        legacyReplied.shutdown()
+        let legacyUnanswered = legacyStore([.init(role: .user, content: "old unanswered")])
+        #expect(legacyUnanswered.canRetry && legacyUnanswered.retry())
+        try await wait("legacy continue") { !legacyUnanswered.isGenerating }
+        #expect(legacyUnanswered.task?.status == .completed, "\(legacyUnanswered.task?.summary ?? "missing task")")
+        legacyUnanswered.shutdown()
+      }
+    }
+
+    /// Current behaviour for invalid model output: each empty reply or call to an unknown
+    /// tool is answered with not_executed feedback and retried; the third in a row fails the
+    /// turn. The empty-reply feedback is a user message, so today it shows as a user bubble
+    /// (§4 #9 of the migration plan changes only that).
+    @Test(arguments: [AgentModel.ProtocolName.chat_completions, .responses])
+    static func rustInvalidModelOutputGetsFeedback(api: AgentModel.ProtocolName) async throws {
+      try await withSession(.rust) { f in
+        f.protocolName = api
+        let empty = f.workspace.newConversation()
+        #expect(empty.store.send("empty-reply please"))
+        try await wait("empty replies") { !empty.store.isGenerating }
+        #expect(empty.store.task?.status == .failed && empty.store.task?.summary == "模型连续返回无效工具格式，已停止。")
+        let feedback = empty.store.messages.filter { $0.role == .user && $0.content.contains("not_executed") }
+        #expect(feedback.count == 3, "\(empty.store.messages.map(\.content))")
+        #expect(feedback.allSatisfy { $0.content.contains("Reply directly or call exactly one bash tool with valid arguments.") })
+        #expect(empty.store.canRetry)
+
+        let project = f.root.appendingPathComponent("invalid-tool-project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let invalid = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
+        #expect(invalid.store.send("invalid-tool please"))
+        try await wait("invalid tool calls") { !invalid.store.isGenerating }
+        #expect(invalid.store.task?.status == .failed && invalid.store.task?.summary == "模型连续返回无效工具格式，已停止。")
+        #expect(invalid.store.tools.count == 3 && invalid.store.tools.allSatisfy { $0.state == "未执行" && $0.command == "printf invalid" })
+        #expect(invalid.store.messages.filter { $0.role == .user }.count == 1, "Tool feedback is a tool result, not a message")
+        #expect(!FileManager.default.fileExists(atPath: project.appendingPathComponent("trace").path))
+      }
+    }
+
+    /// Text the model writes beside a tool call is an assistant message of its own, not the
+    /// reply: the tool record follows it and the final reply comes after the result.
+    @Test static func textBesideToolCallIsNotTheReply() async throws {
+      try await withSession(.rust) { f in
+        let project = f.root.appendingPathComponent("project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let chat = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
+        #expect(chat.store.send("tool"))
+        try await wait("tool turn") { !chat.store.isGenerating }
+        #expect(chat.store.task?.status == .completed)
+        let assistants = chat.store.messages.filter { $0.role == .assistant }
+        #expect(assistants.map(\.content) == ["我先检查文件。", "最终回复：已读取真实工具结果"])
+        let beside = try #require(assistants.first)
+        #expect(chat.store.tools.count == 1 && chat.store.tools.first?.afterMessageID == beside.id)
+        #expect(chat.store.responseMessage == chat.store.messages.last && chat.store.responseMessage?.id != beside.id)
+      }
+    }
+
+    // MARK: Connection test (Rust tester; the native tester joins in Phase 1)
+
     @Test static func connectionCapabilities() async throws {
       try await withSession { f in
         let temp = f.root
@@ -191,108 +435,8 @@ extension EchoIntegrationScenarios {
           "Connection probe executed a command")
       }
     }
-    @Test static func completionStopAndPendingRestore() async throws {
-      try await withSession { f in
-        let workspace = f.workspace
-        let factory = { f.source() }
-        let chat = try #require(workspace.selected)
-        #expect(chat.store.send("hello"))
-        try await wait("direct answer") { !chat.store.isGenerating }
-        #expect(
-          chat.store.task?.status == .completed && chat.store.tools.isEmpty
-            && !chat.store.needsDirectory)
-        #expect(chat.store.messages.filter { $0.role == .assistant }.count == 1)
-        #expect(
-          chat.store.responseMessage == chat.store.messages.last
-            && chat.store.task?.summary == "已完成")
-        #expect(!workspace.canAssociateProject(conversationID: chat.id))
+    // MARK: Tool scenarios (parameterized over engines in Phase 2)
 
-        var stoppedAfterCompletion = chat.store.snapshot
-        stoppedAfterCompletion.task?.status = .stopped
-        let lateStop = TaskStore(snapshot: stoppedAfterCompletion, source: factory())
-        defer { lateStop.shutdown() }
-        #expect(
-          !lateStop.canRetry && !lateStop.retry(),
-          "A Stop that lands after the core completed the turn offers no continue")
-        lateStop.shutdown()
-        let completedSaveFailure = workspace.newConversation()
-        completedSaveFailure.store.checkpoint = { state in
-          if state.agentProjection?.contains(where: { $0.final_reply == true }) == true {
-            throw CocoaError(.fileWriteNoPermission)
-          }
-        }
-        completedSaveFailure.store.send("hello")
-        try await wait("completed save failure") { !completedSaveFailure.store.isGenerating }
-        #expect(
-          completedSaveFailure.store.task?.status == .failed
-            && !completedSaveFailure.store.canRetry,
-          "A save failure after a completed turn does not offer a continue the core would reject")
-
-        // Stop admitted while the completed turn's batch is being applied: the real race path.
-        let raced = workspace.newConversation()
-        let raceStop = raced.store.$messages.sink { [store = raced.store] messages in
-          MainActor.assumeIsolated {
-            if store.isGenerating,
-              messages.contains(where: { $0.role == .assistant && $0.coreID != nil })
-            {
-              store.stopTask()
-            }
-          }
-        }
-        raced.store.send("hello race")
-        try await wait("stop after completion") { !raced.store.isGenerating }
-        raceStop.cancel()
-        #expect(
-          raced.store.task?.status == .stopped && raced.store.task?.summary == "已停止"
-            && !raced.store.canRetry && !raced.store.retry(),
-          "A Stop racing a completed turn neither offers nor sends a continue")
-
-        // Continue stays available, and is accepted by the core, whenever restore adds an interrupted turn.
-        var pendingAfterCompletion = chat.store.snapshot
-        let followUp = ConversationMessage(role: .user, content: "hello pending")
-        pendingAfterCompletion.messages.append(followUp)
-        pendingAfterCompletion.pendingInputs = [
-          AgentInput(client_message_id: followUp.id.uuidString, text: followUp.content)
-        ]
-        pendingAfterCompletion.task?.status = .failed
-        let pendingContinue = TaskStore(snapshot: pendingAfterCompletion, source: factory())
-        defer { pendingContinue.shutdown() }
-        pendingContinue.sessionID = chat.id
-        #expect(pendingContinue.canRetry && pendingContinue.retry())
-        try await wait("pending input continues") { !pendingContinue.isGenerating }
-        #expect(
-          pendingContinue.task?.status == .completed
-            && pendingContinue.messages.last?.content == "最终回复：hello pending",
-          "\(pendingContinue.task?.summary ?? "missing task")")
-        pendingContinue.shutdown()
-
-        // Legacy import receipts every visible message, including a stopped partial reply.
-        @MainActor func legacyStore(_ messages: [ConversationMessage]) -> TaskStore {
-          TaskStore(
-            snapshot: .init(
-              task: .init(id: UUID(), runID: UUID(), title: "old", summary: "", status: .stopped),
-              messages: messages, mainDraft: "", followUpDraft: "", activityDismissed: false,
-              activitiesCollapsed: false),
-            source: factory())
-        }
-        let legacyReplied = legacyStore([
-          .init(role: .user, content: "old user"),
-          .init(role: .assistant, content: "old partial", status: .stopped),
-        ])
-        #expect(
-          !legacyReplied.canRetry && !legacyReplied.retry(),
-          "A legacy conversation ending in a reply offers no continue the core would reject")
-        legacyReplied.shutdown()
-        let legacyUnanswered = legacyStore([.init(role: .user, content: "old unanswered")])
-        #expect(legacyUnanswered.canRetry && legacyUnanswered.retry())
-        try await wait("legacy continue") { !legacyUnanswered.isGenerating }
-        #expect(
-          legacyUnanswered.task?.status == .completed,
-          "\(legacyUnanswered.task?.summary ?? "missing task")")
-        legacyUnanswered.shutdown()
-
-      }
-    }
     @Test static func bindingSaveFailure() async throws {
       try await withSession { f in
         let temp = f.root
@@ -594,28 +738,6 @@ extension EchoIntegrationScenarios {
 
       }
     }
-    @Test static func missingSidecarBlocksSend() async throws {
-      try await withSession { f in
-        let temp = f.root
-        let workspace = f.workspace
-        let persistence = f.persistence
-        let factory = { f.source() }
-        let chat = try #require(workspace.selected)
-        try #require(chat.store.send("hello"))
-        try await wait("seed saved history") { !chat.store.isGenerating }
-        // Missing/corrupt sidecars never fall back to incomplete visible chat.
-        workspace.flush()
-        try FileManager.default.moveItem(
-          at: persistence.sessionURL(chat.id),
-          to: temp.appendingPathComponent("preserved-chat.json"))
-        let unreadable = WorkspaceStore(persistence: persistence, sourceFactory: factory)
-        defer { unreadable.shutdown() }
-        #expect(unreadable.conversation(id: chat.id)?.store.agentLoadError != nil)
-        #expect(unreadable.conversation(id: chat.id)?.store.send("must not execute") == false)
-        unreadable.shutdown()
-
-      }
-    }
     @Test static func legacyMigration() async throws {
       try await withSession { f in
         let temp = f.root
@@ -651,35 +773,6 @@ extension EchoIntegrationScenarios {
         #expect(migrated.store.messages.allSatisfy { $0.coreID != nil })
         legacy.shutdown()
 
-      }
-    }
-    @Test static func stopBeforeReady() async throws {
-      try await withSession { f in
-        let workspace = f.workspace
-        let earlyStop = workspace.newConversation()
-        earlyStop.store.send("hello before ready")
-        earlyStop.store.stopTask()
-        try await wait("stop before ready") { !earlyStop.store.isGenerating }
-        #expect(earlyStop.store.retry())
-        try await wait("continue unacknowledged user") { !earlyStop.store.isGenerating }
-        #expect(earlyStop.store.task?.status == .completed)
-        #expect(earlyStop.store.messages.filter { $0.role == .user }.count == 1)
-
-      }
-    }
-    @Test static func invalidSettingsCanReopen() async throws {
-      try await withSession { f in
-        try await testReopenAfterInvalidSettings(temp: f.root, port: String(f.server.port))
-      }
-    }
-    @Test static func historyReadRecovery() async throws {
-      try await withSession { f in
-        try await testHistoryReadRecovery(temp: f.root, factory: { f.source() })
-      }
-    }
-    @Test static func initialSaveFailurePreservesDraft() async throws {
-      try await withSession { f in
-        try testInitialSaveFailureKeepsDraft(temp: f.root, factory: { f.source() })
       }
     }
   }

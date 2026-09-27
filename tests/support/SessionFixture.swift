@@ -12,22 +12,41 @@ import EchoAgentBridge
     }
 }
 
+/// The Agent engine a scenario runs against. Scenarios observe only `TaskStore`,
+/// `WorkspaceStore` and files on disk, so each engine supplies its own sources.
+/// Phase 0 has only the Rust engine; the native Foundation Models engine joins in Phase 1.
+@MainActor struct AgentEngine: CustomStringConvertible {
+    let description: String
+    /// A source for the loopback model server, speaking the fixture's current protocol.
+    let fixtureSource: (SessionFixture) -> any TaskSource
+    /// A source that reads the model configuration from saved settings.
+    let settingsSource: (SettingsStore) -> any TaskSource
+
+    static let rust = AgentEngine(
+        description: "rust",
+        fixtureSource: { fixture in
+            AgentTaskSource(model: AgentModel(base_url: fixture.server.baseURL, model: "fixture", protocol: fixture.protocolName),
+                            resources: EchoTestResources.root)
+        },
+        settingsSource: { AgentTaskSource(settings: $0, resources: EchoTestResources.root) })
+}
+
 @MainActor final class SessionFixture {
     let root: URL
     let server: LoopbackModelServer
     let persistence: WorkspacePersistence
+    let engine: AgentEngine
     var protocolName = AgentModel.ProtocolName.chat_completions
     lazy var workspace = WorkspaceStore(persistence: persistence, sourceFactory: { [unowned self] in self.source() })
-    init() throws {
+    init(engine: AgentEngine = .rust) throws {
+        self.engine = engine
         root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-session-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
         do { server = try LoopbackModelServer() }
         catch { try? FileManager.default.removeItem(at: root); throw error }
     }
-    func source() -> AgentTaskSource {
-        AgentTaskSource(model: AgentModel(base_url: server.baseURL, model: "fixture", protocol: protocolName), resources: EchoTestResources.root)
-    }
+    func source() -> any TaskSource { engine.fixtureSource(self) }
     func close() async throws {
         workspace.shutdown()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -38,8 +57,8 @@ import EchoAgentBridge
     }
 }
 
-@MainActor func withSession(_ body: (SessionFixture) async throws -> Void) async throws {
-    let fixture = try SessionFixture()
+@MainActor func withSession(_ engine: AgentEngine = .rust, _ body: (SessionFixture) async throws -> Void) async throws {
+    let fixture = try SessionFixture(engine: engine)
     do { try await body(fixture) }
     catch {
         do { try await fixture.close() } catch { Issue.record(error) }

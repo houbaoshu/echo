@@ -103,3 +103,30 @@ ARK_WIRE_LOG=/path/wire.jsonl swift run fm-agent-probe responses 20 smoke
   - `.preserveTranscript` + 应用层补写生产同款 `{"status":"unknown","detail":"Cancelled during execution; inspect workspace for effects."}`：
     请求 item 结构与 mini-agent-rs 生产历史一致。只用公开 API（`session.transcript.append`）。
   - 三种情况下后续“刚才的构建结果怎么样？”模型都能继续；后两种里模型直接重跑了构建并把新结果当作“刚才”的结果——这是模型在该历史下的行为。
+
+## Phase 0 SDK spikes（2026-09-28）
+
+`swift test` 现为 35 个测试（`Tests/AgentProbeTests/Phase0SpikeTests.swift` 与 `Tests/EchoSettingsCheckTests`），
+连续 5 次全绿。脚本模型见 `Sources/AgentProbe/Phase0Support.swift`（分块流式、同一生成混合文本与 tool call、复用 call id、
+metadata / 签名、中途失败）。结论均来自本机 macOS 27.0 SDK 的实际运行；每条后面是对 Echo harness 设计的影响。
+
+| # | 实测行为 | 对设计的影响 |
+|---|---|---|
+| S0 | harness 形态（自定义 executor、`@Generable` 工具自解码、DynamicProfile + hooks、`@MainActor` 协调者、每次 respond 新建 session、`@concurrent` 消费 `streamResponse`）在 Echo 的并发设置下（Swift 6、warnings-as-errors、**不开** `NonisolatedNonsendingByDefault`）零警告编译运行；profile 在 `@MainActor` 中构造，executor / hooks / tool 仍全部在主线程之外 | 不阻断 Phase 1；无需单独模块 |
+| S1 | 顺序：`onPrompt`（每次 respond **仅一次**）→ `historyTransform`（**每次生成前**）→ executor → `onToolCall` → Tool.call → `onToolOutput` → 下一次 `historyTransform`。单个调用时 `onToolCall` 紧邻其 Tool.call；工具运行时 `session.transcript` 已含 `toolCalls` | 执行前落盘可挂在工具内部（此时 toolCalls 已在 transcript） |
+| S1 | 注入排队输入：`onPrompt` 太早（循环中不再触发）；`historyTransform` 追加的 prompt 对下一次生成可见且位于 toolOutput 之后，但**不写回** `session.transcript`（只影响请求视图） | 原生注入不能直接当持久化机制；采用"分段 respond" |
+| S1 | 分段 respond：工具执行后抛让步错误 → `.preserveTranscript` 留下 `[prompt, toolCalls]` → harness 追加真实 toolOutput 与排队输入、以新 session 继续 → 模型看到 `…toolCalls, toolOutput, prompt` | steering 按现状语义实现的机制已验证 |
+| S2 | `streamResponse` **实时**：注册工具与否、`toolCallingMode .disallowed` 与否都一样；每块在下一块到达时出现（压住最新一块，约一个间隔），最后一块在生成结束时冲出；跨 tool loop 持续（文本、toolCalls、下一步文本都在同一个流里） | 实时显示可以直接用框架流；**不应**让适配器攒到 `response.completed` 才发事件，那会让界面在每步结束前看不到文字 |
+| S2b | 同一次生成"文本 + tool call" → 两个条目：`response` 在前、`toolCalls` 在后 | "文本伴随工具调用"= toolCalls 之前的 response，投影为非 final 消息 |
+| S2 | 非流式 `respond` 期间 `session.transcript` 不逐块更新，生成完成才出现完整 response | 不能靠轮询 transcript 做实时显示 |
+| S2 | **取消正在消费 `streamResponse` 的任务：消费方不会收到错误，流正常结束**；executor 收到取消；半截文本作为普通 `response` 写入，`onResponse` 照常触发 | harness 必须自己记录 Stop，不能用"流正常结束 / onResponse"判定回复完整；Stop 后按 harness 状态截掉该条目 |
+| S3 | `respond(to: "")` 可用，executor 收到文本为空的 prompt；`respond(to:metadata:)` 的 metadata 同时出现在 prompt 条目与请求上 | "继续处理"可用带 `echo.continue` 标记的空 prompt，由适配器在线格式中省略 |
+| S4 | `.preserveTranscript` 残留：executor 抛错 → 无半截文本；取消 → 留半截 response；未知工具 → 留悬空 toolCalls；参数非 JSON → 什么都不留；文本 + 抛错工具 → 留 response + toolCalls。`.revertTranscript` → 连 prompt 一起回滚 | 规范化规则：补悬空调用的结果；Stop 时去掉被中断生成的半截 response；格式错误恢复两种形态都要处理 |
+| S5 | 同一次生成的多个调用**并发执行**；`onToolCall` 与 Tool.call 在并发调用间交错不确定。不同生成复用同一 call id 时，写回与配对正确 | bash 串行化必须在工具内部做；运行中调用只能按参数匹配 `onToolCall`；投影按（条目, call）定位 |
+| S6 | `Transcript` JSON 带 `"type":"FoundationModels.Transcript","version":"1.1"`；prompt / response metadata、reasoning id 与 `signature`、toolOutput 往返无损；已提交 golden JSON | 持久化可直接用 `Transcript` JSON；golden 测试作为 SDK 编码变化的护栏 |
+| S7 | 从 `@MainActor` 或 `@concurrent` 调用 `respond`，executor / hooks / tool 都在主线程之外 | 主线程占用风险低；UI 投影仍需显式回主线程 |
+| S8 | 计数包装器在第 N+1 次生成前抛错：`respond` 原样抛出该错误（不包装），之前的 toolCalls / toolOutput 全部保留 | 30 次上限按此实现，文案映射到现状 |
+| S9 | 工具挂起在外部 continuation 上时取消 `respond`：约 1–4 ms 内 `ToolCallError(CancellationError)`，session 不再 responding | 目录请求 / 租约等待的取消语义可行 |
+| S10 | executor 收到的 instructions 文本就是 profile 的文本，工具 schema 不混入；工具定义在 `toolDefinitions` / `enabledToolDefinitions` | 适配器无需过滤 instructions |
+
+未覆盖：真实 provider 的流式时延（本节只用脚本模型）；Echo Live Voice 本身只在最终回复完成后播报（`VoiceSessionController.handleAgent` → `speakFinal`），与 FM 是否流式无关。

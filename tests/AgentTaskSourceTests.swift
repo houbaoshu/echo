@@ -210,6 +210,55 @@ import Testing
         #expect(released && store.task?.status == .failed)
         store.shutdown()
     }
+    /// The user-visible end of a turn that did not complete: status, summary, one failure
+    /// notification, and a continue on offer.
+    @Test(arguments: [
+        (AgentOutcome.Status.step_limit, nil as String?, "已达到本轮 30 次模型请求限制。"),
+        (.format_error_limit, nil, "模型连续返回无效工具格式，已停止。"),
+        (.failed, "model API returned HTTP 502 Bad Gateway", "model API returned HTTP 502 Bad Gateway"),
+        (.completed, nil, "Agent 未返回最终回复，请继续处理。"),
+    ])
+    static func terminalOutcomes(status: AgentOutcome.Status, error: String?, summary: String) throws {
+        let store = TaskStore(source: source())
+        var failures: [String] = []
+        let observation = store.lifecycle.sink { if case .reply(_, .failed(let text)) = $0 { failures.append(text) } }
+        store.send("run")
+        let bridge = try #require(AgentBridge.latest)
+        bridge.deliver(.init(type: .ready))
+        let (receipt, entry) = user(bridge.inputs[0], message: 2, turn: 1)
+        bridge.deliver(.init(type: .command_result, result: .init(status: .applied, input_receipt: receipt)),
+                       checkpoint: bridge.checkpoint(1, receipts: [receipt], entries: [entry]),
+                       events: [bridge.event(.turn_started, turn: 1)])
+        bridge.deliver(.init(type: .update), checkpoint: bridge.checkpoint(2, receipts: [receipt], entries: [entry]),
+                       events: [bridge.event(.finished, turn: 1, outcome: .init(status: status, error: error))])
+        #expect(store.task?.status == .failed && store.task?.summary == summary, "\(store.task?.summary ?? "nil")")
+        #expect(failures == [summary])
+        #expect(store.canRetry && !store.isGenerating)
+        #expect(store.messages.map(\.content) == ["run"], "No reply is invented for a failed turn")
+        withExtendedLifetime(observation) {}
+        store.shutdown()
+    }
+
+    /// A typed follow-up the core refuses while a turn runs: the message is already in the
+    /// chat (voice depends on that), the draft stays for another try, and the notice explains.
+    @Test static func rejectedFollowUpKeepsDraft() throws {
+        let store = TaskStore(source: source())
+        store.send("first")
+        let bridge = try #require(AgentBridge.latest)
+        bridge.deliver(.init(type: .ready))
+        #expect(store.isGenerating)
+        bridge.queueFull = true
+        store.mainDraft = "follow up"
+        store.sendMainMessage()
+        #expect(store.mainDraft == "follow up", "A refused send keeps its draft")
+        #expect(store.messages.map(\.content) == ["first", "follow up"])
+        #expect(store.notice == "arbitrary localized message")
+        #expect(store.task?.status == .stopping, "A refused admission fails the running turn after cleanup")
+        bridge.deliver(.init(type: .cancelled))
+        #expect(store.task?.status == .failed && store.mainDraft == "follow up")
+        store.shutdown()
+    }
+
     @Test static func controlBackpressure() async throws {
         let source = source()
         try source.open(sessionID: "s", generation: "g", restore: AgentRestore(),
