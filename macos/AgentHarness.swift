@@ -140,7 +140,8 @@ enum AgentInstructions {
     /// Calls are keyed "entry index:call ID": providers reuse call IDs across generations.
     /// Read-only calls Foundation Models dispatched whose output is not in yet.
     private var dispatched: Set<String> = []
-    /// Each call by the identity its arguments carry (spike S11); tools are not told their call.
+    /// Each call by the identity its arguments carry (S11 in docs/foundation-models-findings.md);
+    /// tools are not told their call.
     private var callKeys: [GenerationID: String] = [:]
     /// bash calls whose command started this turn, and where.
     private var started: Set<String> = []
@@ -388,8 +389,8 @@ enum AgentInstructions {
 
     /// After a Stop only the cut-off reply goes: finished tool calls and their results stay, and
     /// calls left without a result are marked as not run. A final reply that completed before the
-    /// Stop took effect keeps the turn completed (Phase 0 S2: a cancelled stream ends normally, so
-    /// the ledger, not the stream, says what finished).
+    /// Stop took effect keeps the turn completed (S2 in docs/foundation-models-findings.md: a
+    /// cancelled stream ends normally, so the ledger, not the stream, says what finished).
     private func finishStopped(_ entries: [Transcript.Entry], base: Int, ledger: GenerationLedger) {
         var kept = Self.trimmingUnfinished(entries, base: base, ledger: ledger)
         if let reply = ledger.finalReply {

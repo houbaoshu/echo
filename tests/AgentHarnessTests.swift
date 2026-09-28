@@ -234,7 +234,8 @@ import Testing
             }
         }
         #expect(chat.store.send("hello"))
-        // Stream snapshots trail by one event (Phase 0 S2), so "partial " itself may not show yet.
+        // Stream snapshots trail by one event (S2 in docs/foundation-models-findings.md), so
+        // "partial " itself may not show yet.
         try await Self.wait("partial streamed") { gate.arrivals == 1 }
         chat.store.stopTask()
         #expect(chat.store.task?.status == .stopping && !chat.store.canSubmit && !chat.store.send("while stopping"))
@@ -504,6 +505,26 @@ import Testing
         #expect(json.contains(#""version":"1.1""#) && !json.contains(#""engine""#))
     }
 
+    /// A sidecar whose transcript the macOS 27.0 SDK wrote on 2026-09-28. If the SDK changes the
+    /// encoding, saved conversations stop opening, and this fails first.
+    @Test func aTranscriptSavedByTheFirstSDKStillDecodes() throws {
+        let state = try JSONDecoder().decode(NativeAgentState.self, from: Data(Self.savedState.utf8))
+        #expect(state.entries.map(Self.kind) == ["prompt", "reasoning", "toolCalls", "toolOutput", "response"])
+        guard case .prompt(let prompt) = state.entries[0], case .reasoning(let reasoning) = state.entries[1],
+              case .toolCalls(let calls) = state.entries[2], case .toolOutput(let output) = state.entries[3],
+              case .response(let response) = state.entries[4] else { Issue.record("shape"); return }
+        #expect(AgentHarness.text(prompt.segments) == "go" && prompt.metadata["echo.kind"] != nil)
+        #expect(reasoning.id == "rs_1" && reasoning.signature == Data([1, 2, 3]))
+        #expect(calls.first?.id == "call-1" && calls.first?.toolName == "echo")
+        #expect(output.id == "call-1" && AgentHarness.text(output.segments) == "echo:a")
+        #expect(response.id == "msg_1" && AgentHarness.text(response.segments) == "done" && response.metadata["provider.item"] != nil)
+        #expect(state.turns == [.init(start: 0, outcome: .completed)] && state.replies["msg_1"] != nil)
+    }
+
+    static let savedState = #"""
+    {"pendingInputs":[],"replies":{"msg_1":"3F2504E0-4F89-11D3-9A0C-0305E82C3301"},"turns":[{"outcome":"completed","start":0}],"transcript":{"transcript":{"entries":[{"contents":[{"id":"BDEB42AA-7A5A-484A-AF27-25FE31F4FAB2","text":"go","type":"text"}],"contextOptions":{},"id":"FE93B8BE-C462-42DB-AEA7-F91155DA6FAB","metadata":{"echo.kind":"user"},"options":{},"role":"user"},{"id":"rs_1","reasoning":{"contents":[{"id":"04A34014-98C1-4161-ADA0-AFD5CC4E285E","text":"thinking","type":"text"}],"signature":"AQID"},"role":"reasoning"},{"id":"fc_1","role":"response","toolCalls":[{"arguments":"{\"note\": \"a\"}","id":"call-1","name":"echo"}]},{"contents":[{"id":"3C1BC845-2304-42B5-A869-44576984CD15","text":"echo:a","type":"text"}],"id":"call-1","role":"tool","toolCallID":"call-1","toolName":"echo"},{"contents":[{"id":"85FB4199-2D6D-4222-A866-B4098EB30E4F","text":"done","type":"text"}],"id":"msg_1","metadata":{"provider.item":"msg_1"},"role":"response"}]},"type":"FoundationModels.Transcript","version":"1.1"}}
+    """#
+
     nonisolated static func kind(_ entry: Transcript.Entry) -> String {
         switch entry {
         case .instructions: "instructions"
@@ -758,6 +779,33 @@ import Testing
         #expect(Set(chat.store.tools.map(\.result)) == [#"{"stdout":"first"}"#, AgentToolResult.cancelledDuring])
         #expect(chat.native.entries.compactMap { if case .toolOutput(let o) = $0 { AgentHarness.text(o.segments) } else { nil } }
                 .contains(#"{"stdout":"first"}"#), "The finished result is kept in the model context")
+    }
+
+    /// Providers reuse call IDs across generations (S5 in docs/foundation-models-findings.md): a
+    /// Stop during the second generation's `call-1` must not hand it the first generation's result.
+    @Test func aCallIDReusedByTheNextGenerationIsItsOwnCall() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runner = AgentHarnessTests.FakeRunner { _, _, index in
+            if index == 0 { return .completed(#"{"stdout":"first"}"#) }
+            while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
+            return .cancelled
+        }
+        let chat = Chat({ _, emit, index in
+            switch index {
+            case 0: await emit.call("bash", #"{"command":"first"}"#)
+            case 1: await emit.call("bash", #"{"command":"second"}"#)
+            default: try await emit.text("must not run")
+            }
+        }, project: root, runner: runner)
+        #expect(chat.store.send("run"))
+        try await Self.wait("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == "执行中" } }
+        chat.store.stopTask()
+        try await chat.idle()
+        #expect(chat.store.tools.map(\.command) == ["first", "second"])
+        #expect(chat.store.tools.map(\.result) == [#"{"stdout":"first"}"#, AgentToolResult.cancelledDuring])
+        #expect(chat.native.entries.compactMap { if case .toolOutput(let o) = $0 { AgentHarness.text(o.segments) } else { nil } }
+                == [#"{"stdout":"first"}"#, AgentToolResult.cancelledDuring], "Each call keeps its own result in the model context")
     }
 
     @Test func stopDuringACommandMarksOnlyThatCallUnknown() async throws {
