@@ -6,8 +6,8 @@
 extern "C" {
 #endif
 /* One shell command per handle, run by mini-agent-exec's LocalExecutor
- * (/bin/bash --noprofile --norc -c, inherited environment, stdin null, per-stream
- * output limit, timeout, and every descendant killed when the command ends).
+ * (/bin/zsh -f -c: no user startup files, inherited environment, stdin null,
+ * per-stream output limit, timeout, and every descendant killed when the command ends).
  *
  * request: {"version":1,"command":string,"directory":canonical absolute path,
  *           "timeout_ms"?:integer (default 30000),"max_output_bytes"?:integer (default 65536)}

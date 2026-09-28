@@ -105,7 +105,7 @@ enum AgentInstructions {
             parts.append("When a question depends on the files of the conversation's project, inspect them with list_files and read_file. Paths are relative to the project folder; use . for its root. If no folder is selected yet, the person is asked to choose one when you call a tool.")
         }
         if tools.contains("bash") {
-            parts.append("When a task needs local inspection or changes, use the bash tool, one call at a time. A command runs in a fresh shell in the conversation's selected working directory. Shell state does not persist, but filesystem changes do. The directory is an initial working location, not an access boundary.")
+            parts.append("When a task needs local inspection or changes, use the bash tool, one call at a time. A command runs in a fresh zsh process (/bin/zsh, no startup files) in the conversation's selected working directory. Use zsh syntax: quote glob patterns meant for other programs, since an unmatched glob is an error, and unquoted parameters are not split into words. Shell state does not persist, but filesystem changes do. The directory is an initial working location, not an access boundary.")
         }
         parts.append("You may explain what you are doing alongside a tool call. Finish the turn with a useful text reply and no tool call.")
         parts.append("Use the actual tool results to decide what to do next. Do not claim that an action happened when its result says it was not executed. When a result is unknown or interrupted, inspect the current state before relying on it.")

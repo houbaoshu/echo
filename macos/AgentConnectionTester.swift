@@ -52,7 +52,7 @@ struct NativeConnectionTester: ConnectionTesting {
     struct ProbeTool: Tool {
         enum Outcome: Error, Equatable { case called, invalid }
         let name = "bash"
-        let description = "Execute a command in a fresh bash process"
+        let description = BashTool.toolDescription
         @Generable struct Input {
             var command: String
         }

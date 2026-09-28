@@ -1,4 +1,4 @@
-//! Process execution for Echo's native Agent engine. Each handle runs one bash command with
+//! Process execution for Echo's native Agent engine. Each handle runs one zsh command with
 //! `mini-agent-exec`'s local executor and reports once, after cleanup, through a C callback.
 //! See `include/echo_exec.h`.
 use mini_agent_exec::{
@@ -66,7 +66,9 @@ fn error_out(error: *mut *mut c_char, message: &str) {
 
 async fn run(request: Request, cancellation: CancellationSignal) -> Value {
     let executor = LocalExecutor::new(LocalExecutorConfig {
-        shell: "/bin/bash".into(),
+        shell: "/bin/zsh".into(),
+        // No user startup files (~/.zshenv and the rest), as bash's --noprofile --norc.
+        shell_args: vec!["-f".into()],
         timeout: Duration::from_millis(request.timeout_ms.unwrap_or(30_000)),
         max_output_bytes: request.max_output_bytes.unwrap_or(64 * 1024),
         ..Default::default()

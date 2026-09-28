@@ -984,6 +984,9 @@ import Testing
     @Test func instructionsDescribeTheShell() {
         let text = AgentInstructions.text(tools: ["list_files", "read_file", "bash"])
         #expect(text.contains("use the bash tool") && text.contains("not an access boundary"))
+        #expect(text.contains("fresh zsh process (/bin/zsh, no startup files)"))
+        #expect(BashTool.toolDescription == "Execute a command in a fresh zsh process")
+        #expect(NativeConnectionTester.ProbeTool().description == BashTool.toolDescription, "the probe offers the real tool's shape")
     }
 }
 

@@ -218,10 +218,11 @@ protocol AgentBashAccess: Sendable {
     func run(call: GenerationID?, command: String?) async throws -> String
 }
 
-/// The shell tool, named, described and shaped exactly as mini-agent-rs's `bash`.
+/// The shell tool, named and shaped exactly as mini-agent-rs's `bash`; commands run in zsh.
 struct BashTool: Tool {
     let name = "bash"
-    let description = "Execute a command in a fresh bash process"
+    static let toolDescription = "Execute a command in a fresh zsh process"
+    let description = toolDescription
     let access: any AgentBashAccess
 
     @Generable
