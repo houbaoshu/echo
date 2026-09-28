@@ -338,6 +338,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "echo-exec"
+version = "0.1.0"
+dependencies = [
+ "mini-agent-rs",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "echo-runtime"
 version = "0.1.0"
 dependencies = [

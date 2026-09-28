@@ -3,11 +3,11 @@ import Testing
 
 extension EchoIntegrationScenarios {
   @Suite(.serialized) @MainActor struct HistoryIntegrationTests {
-    @Test(arguments: [AgentModel.ProtocolName.chat_completions, .responses])
-    static func executedToolsCheckpointReceiptsAndProtocolSwitch(api: AgentModel.ProtocolName)
+    @Test(arguments: ["rust", "native"], [AgentModel.ProtocolName.chat_completions, .responses])
+    static func executedToolsCheckpointReceiptsAndProtocolSwitch(engine: String, api: AgentModel.ProtocolName)
       async throws
     {
-      try await withSession { f in
+      try await withSession(.named(engine)) { f in
         f.protocolName = api
         let project = f.root.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -31,17 +31,21 @@ extension EchoIntegrationScenarios {
         }
         #expect(work.store.task?.status == .completed && work.store.tools.count == 3)
         f.workspace.flush()
-        let bytes = try Data(contentsOf: f.persistence.sessionURL(work.id))
+        let bytes = try Data(contentsOf: f.persistence.sessionURL(work.id, engine: work.store.engine))
         let state = try JSONDecoder().decode(TaskStore.Snapshot.self, from: bytes)
-        let history = try verify(state, sessionID: work.id.uuidString)
-        let reasoning = history.compactMap { $0["value"] as? [String: Any] }
-          .flatMap { $0["response_items"] as? [[String: Any]] ?? [] }
-          .filter { $0["type"] as? String == "reasoning" }
-        #expect(reasoning.count == (api == .responses ? 3 : 0))
-        #expect(
-          reasoning.allSatisfy {
-            $0["encrypted_content"] as? String == "acceptance-opaque-reasoning"
-          })
+        if engine == "native" {
+          try verifyNative(state, api: api)
+        } else {
+          let history = try verify(state, sessionID: work.id.uuidString)
+          let reasoning = history.compactMap { $0["value"] as? [String: Any] }
+            .flatMap { $0["response_items"] as? [[String: Any]] ?? [] }
+            .filter { $0["type"] as? String == "reasoning" }
+          #expect(reasoning.count == (api == .responses ? 3 : 0))
+          #expect(
+            reasoning.allSatisfy {
+              $0["encrypted_content"] as? String == "acceptance-opaque-reasoning"
+            })
+        }
         let restored = WorkspaceStore(persistence: f.persistence, sourceFactory: { f.source() })
         defer { restored.shutdown() }
         let conversation = try #require(restored.conversation(id: work.id))
@@ -50,6 +54,29 @@ extension EchoIntegrationScenarios {
         #expect(conversation.store.tools == state.tools)
         #expect(restored.conversations.allSatisfy { !$0.store.isGenerating })
       }
+    }
+
+    /// The native sidecar: every executed command's real output is in the transcript and on its
+    /// record, Responses reasoning keeps its opaque signature, and nothing is left pending.
+    private static func verifyNative(_ state: TaskStore.Snapshot, api: AgentModel.ProtocolName) throws {
+      let native = try #require(state.native)
+      #expect(native.pendingInputs.isEmpty && native.turns.allSatisfy { $0.outcome == .completed })
+      let outputs = native.entries.compactMap { entry -> String? in
+        if case .toolOutput(let output) = entry { AgentHarness.text(output.segments) } else { nil }
+      }
+      let stdout = try outputs.map { try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])["stdout"] as? String }
+      #expect(stdout == ["before\n", "", "after\n"])
+      #expect(outputs.allSatisfy { $0.hasPrefix(#"{"stdout":"#) }, "The model saw the Rust engine's exact output format")
+      #expect(state.tools?.map(\.result) == outputs.map(Optional.some))
+      let signatures = native.entries.compactMap { entry -> Data? in
+        if case .reasoning(let reasoning) = entry { reasoning.signature } else { nil }
+      }
+      #expect(signatures.count == (api == .responses ? 3 : 0))
+      #expect(signatures.allSatisfy { $0 == Data("acceptance-opaque-reasoning".utf8) })
+      let prompts = Set(native.entries.compactMap { entry -> String? in
+        if case .prompt(let prompt) = entry { try? prompt.metadata[AgentPromptKey.message]?.value(String.self) } else { nil }
+      })
+      #expect(prompts == Set(state.messages.filter { $0.role == .user }.map(\.id.uuidString)))
     }
 
     /// Assertions formerly owned by the packaged-app Python validator.

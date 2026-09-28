@@ -41,6 +41,7 @@ enum AgentToolResult {
     static let superseded = status("not_executed", "Superseded by follow-up instructions.")
     static let directoryDeclined = status("not_executed", "Directory selection cancelled.")
     static let cancelledBefore = status("not_executed", "Cancelled before execution.")
+    static let cancelledDuring = status("unknown", "Cancelled during execution; inspect workspace for effects.")
     static let unknownAfterInterruption = status("unknown", "Execution result unknown after interruption; inspect the workspace before acting.")
     static func failed(_ detail: String) -> String { status("failed", detail) }
     static func object(_ value: [String: Any]) -> String {
@@ -207,3 +208,31 @@ struct ReadFileTool: Tool {
         return AgentToolResult.object(["content": content, "start_line": startLine, "truncated": truncated])
     }
 }
+
+/// Runs bash calls for the conversation: folder, directory lease, save, then the command.
+protocol AgentBashAccess: Sendable {
+    /// `call` is the arguments' identity, which names the call (Phase 2 spike S11). `command` is
+    /// nil when the call carries none; it still takes its place in the batch's order.
+    func run(call: GenerationID?, command: String?) async throws -> String
+}
+
+/// The shell tool, named, described and shaped exactly as mini-agent-rs's `bash`.
+struct BashTool: Tool {
+    let name = "bash"
+    let description = "Execute a command in a fresh bash process"
+    let access: any AgentBashAccess
+
+    @Generable
+    struct Input {
+        var command: String
+    }
+
+    var parameters: GenerationSchema { Input.generationSchema }
+
+    @concurrent func call(arguments: GeneratedContent) async throws -> String {
+        let command = (try? Input(arguments))?.command
+        let usable = command.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        return try await access.run(call: arguments.id, command: usable)
+    }
+}
+

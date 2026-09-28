@@ -130,3 +130,7 @@ metadata / 签名、中途失败）。结论均来自本机 macOS 27.0 SDK 的�
 | S10 | executor 收到的 instructions 文本就是 profile 的文本，工具 schema 不混入；工具定义在 `toolDefinitions` / `enabledToolDefinitions` | 适配器无需过滤 instructions |
 
 未覆盖：真实 provider 的流式时延（本节只用脚本模型）；Echo Live Voice 本身只在最终回复完成后播报（`VoiceSessionController.handleAgent` → `speakFinal`），与 FM 是否流式无关。
+
+## Phase 2 SDK spike
+
+- **S11 call identity** (`Tests/AgentProbeTests/Phase2SpikeTests.swift`): `Tool.call` gets no call ID, but the `GeneratedContent` it receives carries a `GenerationID` equal to the one `onToolCall` sees in `call.arguments.id`, and to the arguments of the call in the transcript. The identity follows the provider's call ID: two calls with identical arguments in one batch get distinct identities, and a later generation that reuses a call ID gets an equal one (batches never overlap, so this is unambiguous). `GenerationID`'s value is not public; it is `Hashable`. **Impact:** the harness maps `arguments.id` → call ID in `onToolCall`, so each bash call is identified as itself, not by argument equality (plan §10 constraint 2).

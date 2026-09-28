@@ -715,6 +715,7 @@ struct WorkspaceSnapshot: Codable {
         flush()
         stores.forEach { $0.shutdown() }
         await AgentBridge.waitForShutdown()
+        await ExecutionService.waitForShutdown()
     }
     private func scheduleSave() {
         guard !shuttingDown else { return }

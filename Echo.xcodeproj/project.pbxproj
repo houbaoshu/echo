@@ -363,6 +363,18 @@
 			isa = PBXBuildFile;
 			fileRef = 655F5CFF89FFBD3E8F8740CB;
 		};
+		837321AFF82528C3A8EAB2F5 = {
+			isa = PBXBuildFile;
+			fileRef = 7EC0845D8753AC831E0E60BC;
+		};
+		F68549B4E6629AA6F02A9CDC = {
+			isa = PBXBuildFile;
+			fileRef = 1724D95EA440B9705DD87F8B;
+		};
+		42A09C85E1FC8EB7417A9E22 = {
+			isa = PBXBuildFile;
+			fileRef = 1724D95EA440B9705DD87F8B;
+		};
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -865,6 +877,18 @@
 			sourceTree = "<group>";
 			lastKnownFileType = sourcecode.swift;
 		};
+		7EC0845D8753AC831E0E60BC = {
+			isa = PBXFileReference;
+			path = tests/ExecBridgeMemory.c;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.c.c;
+		};
+		1724D95EA440B9705DD87F8B = {
+			isa = PBXFileReference;
+			path = macos/ExecutionService.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1049,6 +1073,7 @@
 				E90000000000000000000006,
 				E90000000000000000000007,
 				804A0B2C452FA2B53B548DFB,
+				7EC0845D8753AC831E0E60BC,
 			);
 			sourceTree = "<group>";
 		};
@@ -1150,6 +1175,7 @@
 				E11100000000000000000F01,
 				E11000000000000000000F02,
 				E11000000000000000000F03,
+				1724D95EA440B9705DD87F8B,
 				CF0CDA52A4EF0DA66805FDBB,
 				3526F0A888174738325FD582,
 				EA68E8426039B5A782DA9770,
@@ -1890,6 +1916,7 @@
 		E110000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				F68549B4E6629AA6F02A9CDC,
 				0BB27615F70BEF3BF486FD84,
 				26BC95D8A7B3E4F129E9AD9F,
 				82EA4910FA0A21C0579F3E29,
@@ -1909,6 +1936,7 @@
 		E111000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				42A09C85E1FC8EB7417A9E22,
 				C58144D7E90E1F5E87E8A3FC,
 				BF3839A481C8EB21C796E06B,
 				139A43442A7A20467E021EAD,
@@ -2037,6 +2065,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				837321AFF82528C3A8EAB2F5,
 				6817F4D9EBEF250F3A26ED4F,
 				F26EAD91B663BB2BCD833522,
 				20CC54B4487082597103767B,
@@ -3185,7 +3214,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};
@@ -3198,7 +3227,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};
@@ -3211,7 +3240,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};
@@ -3224,7 +3253,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};
@@ -3237,7 +3266,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};

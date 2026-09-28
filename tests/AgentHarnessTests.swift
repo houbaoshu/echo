@@ -2,6 +2,7 @@ import Combine
 import EchoAgentBridge
 import Foundation
 import FoundationModels
+import Synchronization
 import Testing
 
 /// The native Agent engine driven through `TaskStore`, the surface the UI and Live Voice use,
@@ -23,14 +24,21 @@ import Testing
         var saved: [TaskStore.Snapshot] = []
         var saveFailure: ((TaskStore.Snapshot) -> Bool)?
         var events: [String] = []
+        /// Directory lease requests and releases, in order.
+        var leases: [String] = []
+        let runner: FakeRunner
         private var observation: AnyCancellable?
-        init(_ step: @escaping ScriptedAgentModel.Step, project: URL? = nil, snapshot: TaskStore.Snapshot? = nil) {
+        init(_ step: @escaping ScriptedAgentModel.Step, project: URL? = nil, snapshot: TaskStore.Snapshot? = nil,
+             runner: FakeRunner = FakeRunner()) {
             let model = ScriptedAgentModel(step: step)
             self.model = model
             self.project = project
-            let harness = AgentHarness(resolveModel: { model.factory })
+            self.runner = runner
+            let harness = AgentHarness(resolveModel: { model.factory }, runner: runner)
             store = snapshot.map { TaskStore(snapshot: $0, source: harness) } ?? TaskStore(source: harness)
             store.projectDirectory = { [unowned self] in self.project }
+            store.acquireDirectory = { [unowned self] path, ready in self.leases.append("acquire \(path)"); ready() }
+            store.releaseDirectory = { [unowned self] in self.leases.append("release") }
             store.checkpoint = { [unowned self] state in
                 if self.saveFailure?(state) == true { throw CocoaError(.fileWriteNoPermission) }
                 self.saved.append(state)
@@ -52,6 +60,27 @@ import Testing
         var native: NativeAgentState { store.snapshot.native! }
         var assistantTexts: [String] { store.messages.filter { $0.role == .assistant }.map(\.content) }
         var userTexts: [String] { store.messages.filter { $0.role == .user }.map(\.content) }
+    }
+
+    /// Stands in for the Rust core. `script` gets the command, its directory and its index.
+    final class FakeRunner: CommandRunning, Sendable {
+        typealias Script = @Sendable (_ command: String, _ directory: String, _ index: Int) async -> CommandOutcome
+        struct Run: Sendable { var command: String; var directory: String }
+        private let script: Script
+        private let state = Mutex((runs: [Run](), running: 0, maxRunning: 0))
+        init(_ script: @escaping Script = { _, _, index in .completed(#"{"stdout":"run \#(index)"}"#) }) { self.script = script }
+        var runs: [Run] { state.withLock { $0.runs } }
+        var maxRunning: Int { state.withLock { $0.maxRunning } }
+        func run(command: String, directory: String) async -> CommandOutcome {
+            let index = state.withLock { state -> Int in
+                state.runs.append(Run(command: command, directory: directory))
+                state.running += 1; state.maxRunning = max(state.maxRunning, state.running)
+                return state.runs.count - 1
+            }
+            let outcome = await script(command, directory, index)
+            state.withLock { $0.running -= 1 }
+            return outcome
+        }
     }
 
     static func project() throws -> URL {
@@ -116,6 +145,8 @@ import Testing
         #expect(chat.events.last?.hasPrefix("completed:final:") == true)
         #expect(chat.saved.contains { state in state.native!.entries.contains { if case .toolOutput = $0 { true } else { false } }
                 && state.task?.status == .running }, "The tool result was saved before the next model request")
+        #expect(chat.runner.runs.isEmpty && chat.leases == ["release"], "Reading takes no lease and runs no command")
+        #expect(!ExecutionService.coreStarted, "Nothing in this bundle starts the Rust execution core")
     }
 
     // MARK: Failures
@@ -643,3 +674,272 @@ import Testing
         try await AgentHarnessTests.wait("second reply") { !draft.store.isGenerating }
     }
 }
+
+/// bash on the native engine, with a fake runner in place of the Rust core.
+@MainActor @Suite(.serialized, .tags(.fast)) struct NativeBashTests {
+    typealias Chat = AgentHarnessTests.Chat
+    static func wait(_ label: String, _ condition: () -> Bool) async throws { try await AgentHarnessTests.wait(label, condition) }
+    static func canonical(_ url: URL) -> String { ExecutionService.canonicalPath(url.path)! }
+
+    @Test func aCommandRunsAfterItsFolderLeaseAndSave() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let seen = Mutex<(saved: String?, shown: String?)>((nil, nil))
+        var chat: Chat!
+        let output = #"{"stdout":"built","stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}"#
+        let runner = AgentHarnessTests.FakeRunner { _, _, _ in
+            let state = await MainActor.run { (chat.saved.last?.tools?.first?.state, chat.store.tools.first?.state) }
+            seen.withLock { $0 = state }
+            return .completed(output)
+        }
+        chat = Chat({ request, emit, index in
+            if index == 0 { await emit.call("bash", #"{"command":"make"}"#) } else { try await emit.text("done \(request.toolOutputs.joined())") }
+        }, project: root, runner: runner)
+        #expect(chat.store.send("build"))
+        try await chat.idle()
+        let directory = Self.canonical(root)
+        #expect(runner.runs.map(\.command) == ["make"] && runner.runs.first?.directory == directory)
+        #expect(directory.hasPrefix("/private/"), "The core gets the resolved path, not URL's /var alias")
+        #expect(seen.withLock { $0.saved } == "待执行", "The call was saved before its command started")
+        #expect(seen.withLock { $0.shown } == "执行中")
+        #expect(chat.leases == ["acquire \(directory)", "release"], "The lease is taken before the command and released with the turn")
+        let record = try #require(chat.store.tools.first)
+        #expect(record.tool == nil && record.command == "make" && record.state == "执行结束" && record.directory == directory)
+        #expect(record.result == output && chat.model.requests.last?.toolOutputs == [output], "The model sees the core's output byte for byte")
+        #expect(chat.store.task?.status == .completed)
+    }
+
+    /// Plan §10 constraint 2: calls with identical arguments are told apart by their identity,
+    /// run one at a time, and each record gets the output of its own run.
+    @Test func identicalCallsRunOneAtATimeAsThemselves() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let running = Mutex<[Int: [String]]>([:])
+        var chat: Chat!
+        let runner = AgentHarnessTests.FakeRunner { _, _, index in
+            let ids = await MainActor.run { chat.store.tools.filter { $0.state == "执行中" }.map(\.callID) }
+            running.withLock { $0[index] = ids }
+            try? await Task.sleep(for: .milliseconds(40))
+            return .completed(#"{"run":\#(index)}"#)
+        }
+        chat = Chat({ _, emit, index in
+            if index == 0 {
+                await emit.calls([("bash", #"{"command":"same"}"#, "call-a"), ("bash", #"{"command":"same"}"#, "call-b")])
+            } else { try await emit.text("done") }
+        }, project: root, runner: runner)
+        #expect(chat.store.send("twice"))
+        try await chat.idle()
+        #expect(runner.runs.count == 2 && runner.maxRunning == 1, "Serial, never concurrent")
+        let byRun = running.withLock { $0 }
+        #expect(byRun[0]?.count == 1 && byRun[1]?.count == 1 && byRun[0] != byRun[1], "Each run is exactly one call: \(byRun)")
+        for (index, ids) in byRun {
+            let record = try #require(chat.store.tools.first { $0.callID == ids.first })
+            #expect(record.result == #"{"run":\#(index)}"#, "call \(record.callID) got its own output")
+        }
+        #expect(chat.store.tools.map(\.state) == ["执行结束", "执行结束"])
+    }
+
+    /// Constraint 1 with a batch: a Stop during the second command keeps the first one's real
+    /// output, although Foundation Models had not written the batch's results yet.
+    @Test func stopKeepsTheFinishedCommandOfABatch() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runner = AgentHarnessTests.FakeRunner { _, _, index in
+            if index == 0 { return .completed(#"{"stdout":"first"}"#) }
+            while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
+            return .cancelled
+        }
+        let chat = Chat({ _, emit, index in
+            if index == 0 {
+                await emit.calls([("bash", #"{"command":"same"}"#, "call-a"), ("bash", #"{"command":"same"}"#, "call-b")])
+            } else { try await emit.text("continued") }
+        }, project: root, runner: runner)
+        #expect(chat.store.send("run"))
+        try await Self.wait("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == "执行中" } }
+        #expect(chat.store.tools.contains { $0.result == #"{"stdout":"first"}"# && $0.state == "执行结束" },
+                "A finished command shows its result before the batch is written")
+        chat.store.stopTask()
+        try await chat.idle()
+        #expect(Set(chat.store.tools.map(\.result)) == [#"{"stdout":"first"}"#, AgentToolResult.cancelledDuring])
+        #expect(chat.native.entries.compactMap { if case .toolOutput(let o) = $0 { AgentHarness.text(o.segments) } else { nil } }
+                .contains(#"{"stdout":"first"}"#), "The finished result is kept in the model context")
+    }
+
+    @Test func stopDuringACommandMarksOnlyThatCallUnknown() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cleaned = Mutex(false)
+        let runner = AgentHarnessTests.FakeRunner { _, _, _ in
+            while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
+            try? await Task.sleep(for: .milliseconds(100))   // the process tree is being killed
+            cleaned.withLock { $0 = true }
+            return .cancelled
+        }
+        let chat = Chat({ _, emit, index in
+            if index == 0 {
+                await emit.calls([("bash", #"{"command":"same"}"#, "call-a"), ("bash", #"{"command":"same"}"#, "call-b")])
+            } else { try await emit.text("continued") }
+        }, project: root, runner: runner)
+        #expect(chat.store.send("run"))
+        try await Self.wait("command starts") { chat.store.tools.contains { $0.state == "执行中" } }
+        let runningID = try #require(chat.store.tools.first { $0.state == "执行中" }?.callID)
+        chat.store.stopTask()
+        #expect(chat.store.task?.status == .stopping && !chat.store.canSubmit)
+        try await chat.idle()
+        #expect(cleaned.withLock { $0 }, "Stop ends only after the command's cleanup")
+        #expect(runner.runs.count == 1, "The second identical call never started")
+        let running = try #require(chat.store.tools.first { $0.callID == runningID })
+        let other = try #require(chat.store.tools.first { $0.callID != runningID })
+        #expect(running.state == "执行结果未知" && running.result == AgentToolResult.cancelledDuring)
+        #expect(other.state == "未执行" && other.result == AgentToolResult.cancelledBefore)
+        #expect(chat.store.task?.status == .stopped && chat.store.canRetry && chat.leases.last == "release")
+    }
+
+    @Test func inputWhileACommandWaitsForItsProjectSupersedesIt() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let chat = Chat({ request, emit, index in
+            if index == 0 { await emit.call("bash", #"{"command":"make"}"#) }
+            else { try await emit.text("after \(request.userTexts.joined(separator: "+"))") }
+        }, project: root)
+        let scheduler = AgentDirectoryScheduler(), owner = UUID(), other = UUID()
+        scheduler.acquire(Self.canonical(root), owner: other, ready: {})
+        chat.store.acquireDirectory = { scheduler.acquire($0, owner: owner, ready: $1) }
+        chat.store.cancelDirectoryWait = { scheduler.cancelWait(owner) }
+        chat.store.releaseDirectory = { scheduler.release(owner) }
+        #expect(chat.store.send("make"))
+        try await Self.wait("queued behind another conversation") { chat.store.waitingForProject }
+        #expect(chat.store.task?.summary == "等待项目空闲…" && chat.store.tools.first?.state == "待执行")
+        #expect(chat.store.send("never mind"))
+        try await chat.idle()
+        #expect(!chat.store.waitingForProject && chat.runner.runs.isEmpty)
+        #expect(chat.store.tools.first?.state == "未执行" && chat.store.tools.first?.result == AgentToolResult.superseded)
+        #expect(chat.assistantTexts.last == "after make+never mind")
+        scheduler.release(other)
+    }
+
+    @Test func aFailedSaveKeepsTheCommandFromRunning() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let chat = Chat({ _, emit, index in
+            if index == 0 { await emit.call("bash", #"{"command":"make"}"#) } else { try await emit.text("must not run") }
+        }, project: root)
+        chat.saveFailure = { !($0.tools ?? []).isEmpty }
+        #expect(chat.store.send("make"))
+        try await chat.idle()
+        #expect(chat.runner.runs.isEmpty && chat.model.requests.count == 1)
+        #expect(chat.store.task?.status == .failed && chat.store.notice?.contains("保存失败") == true)
+        #expect(chat.store.tools.first?.state == "未执行")
+    }
+
+    @Test func aMovedFolderAsksWhereToRun() async throws {
+        let root = try AgentHarnessTests.project(), elsewhere = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: elsewhere) }
+        let runner = AgentHarnessTests.FakeRunner { _, _, index in
+            index == 0 ? .failed(code: "invalid_directory", message: "working directory changed") : .completed(#"{"stdout":"ok"}"#)
+        }
+        let chat = Chat({ _, emit, index in
+            if index == 0 { await emit.call("bash", #"{"command":"make"}"#) } else { try await emit.text("done") }
+        }, project: root, runner: runner)
+        #expect(chat.store.send("make"))
+        try await Self.wait("asks for a folder") { chat.store.needsDirectory }
+        #expect(chat.store.tools.first?.state == "待执行", "Nothing ran in the moved folder")
+        chat.project = elsewhere
+        chat.store.provideDirectory(elsewhere)
+        try await chat.idle()
+        #expect(runner.runs.map(\.directory) == [Self.canonical(root), Self.canonical(elsewhere)])
+        #expect(chat.store.tools.first?.result == #"{"stdout":"ok"}"# && chat.store.task?.status == .completed)
+    }
+
+    /// A batch runs in the order the model wrote it, although Foundation Models starts its calls
+    /// concurrently; a call without a usable command keeps its place and holds nothing up.
+    @Test func aBatchRunsInTheOrderTheModelWroteIt() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for attempt in 0..<10 {
+            let runner = AgentHarnessTests.FakeRunner { command, _, _ in
+                // Later calls finish faster, which would reorder any first-come scheme.
+                try? await Task.sleep(for: .milliseconds(["mkdir", "write", "build", "test"].firstIndex(of: command).map { 8 - 2 * $0 } ?? 1))
+                return .completed(#"{"stdout":"\#(command)"}"#)
+            }
+            let chat = Chat({ _, emit, index in
+                if index == 0 {
+                    await emit.calls(["mkdir", "write", "build", "test"].map { ("bash", #"{"command":"\#($0)"}"#, "call-\($0)") })
+                } else { try await emit.text("done") }
+            }, project: root, runner: runner)
+            #expect(chat.store.send("steps"))
+            try await chat.idle()
+            #expect(runner.runs.map(\.command) == ["mkdir", "write", "build", "test"], "attempt \(attempt): \(runner.runs.map(\.command))")
+            #expect(runner.maxRunning == 1)
+        }
+
+        let runner = AgentHarnessTests.FakeRunner()
+        let chat = Chat({ _, emit, index in
+            if index == 0 {
+                await emit.calls([("bash", #"{"command":"first"}"#, "c1"), ("bash", #"{"command":""}"#, "c2"), ("bash", #"{"command":"third"}"#, "c3")])
+            } else { try await emit.text("done") }
+        }, project: root, runner: runner)
+        #expect(chat.store.send("with a blank call"))
+        try await chat.idle()
+        #expect(runner.runs.map(\.command) == ["first", "third"])
+        #expect(chat.store.tools.first { $0.callID == "c2" }?.state == "未执行" && chat.store.task?.status == .completed)
+    }
+
+    /// A failed save stops the whole turn: no call later in the same batch runs either.
+    @Test func aFailedSaveStopsTheRestOfTheBatch() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for attempt in 0..<5 {
+            let chat = Chat({ _, emit, index in
+                if index == 0 {
+                    await emit.calls([("bash", #"{"command":"one"}"#, "c1"), ("bash", #"{"command":"two"}"#, "c2")])
+                } else { try await emit.text("must not run") }
+            }, project: root)
+            var failed = false
+            // Only the first save before a command fails; a later one would succeed.
+            chat.saveFailure = { state in
+                guard !failed, !(state.tools ?? []).isEmpty else { return false }
+                failed = true; return true
+            }
+            #expect(chat.store.send("two commands"))
+            try await chat.idle()
+            #expect(chat.runner.runs.isEmpty, "attempt \(attempt) ran \(chat.runner.runs.map(\.command))")
+            #expect(chat.store.task?.status == .failed && chat.store.tools.allSatisfy { $0.state == "未执行" })
+            #expect(chat.model.requests.count == 1)
+        }
+    }
+
+    /// A save made while a batch runs records the commands that already finished, so a crash
+    /// then does not turn a finished command into an unknown one.
+    @Test func savesDuringABatchKeepFinishedResults() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var chat: Chat!
+        let runner = AgentHarnessTests.FakeRunner { _, _, index in .completed(#"{"stdout":"run \#(index)"}"#) }
+        chat = Chat({ _, emit, index in
+            if index == 0 {
+                await emit.calls([("bash", #"{"command":"one"}"#, "c1"), ("bash", #"{"command":"two"}"#, "c2")])
+            } else { try await emit.text("done") }
+        }, project: root, runner: runner)
+        #expect(chat.store.send("two commands"))
+        try await chat.idle()
+        // The save just before the second command started.
+        let beforeSecond = try #require(chat.saved.last { state in
+            state.task?.status == .running && state.tools?.contains { $0.callID == "c1" && $0.result != nil } == true
+                && state.tools?.contains { $0.callID == "c2" && $0.result == nil } == true
+        })
+        let outputs = beforeSecond.native!.entries.compactMap { entry -> String? in
+            if case .toolOutput(let output) = entry { AgentHarness.text(output.segments) } else { nil }
+        }
+        #expect(outputs == [#"{"stdout":"run 0"}"#], "The finished command's result is in the saved model context")
+        let restored = Chat({ _, emit, _ in try await emit.text("x") }, project: root, snapshot: beforeSecond)
+        #expect(restored.store.tools.map(\.state) == ["执行结束", "执行结果未知"])
+        #expect(restored.store.tools.first?.result == #"{"stdout":"run 0"}"#)
+    }
+
+    @Test func instructionsDescribeTheShell() {
+        let text = AgentInstructions.text(tools: ["list_files", "read_file", "bash"])
+        #expect(text.contains("use the bash tool") && text.contains("not an access boundary"))
+    }
+}
+

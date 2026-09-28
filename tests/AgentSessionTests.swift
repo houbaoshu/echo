@@ -456,8 +456,8 @@ extension EchoIntegrationScenarios {
 
     /// Text the model writes beside a tool call is an assistant message of its own, not the
     /// reply: the tool record follows it and the final reply comes after the result.
-    @Test static func textBesideToolCallIsNotTheReply() async throws {
-      try await withSession(.rust) { f in
+    @Test(arguments: ["rust", "native"]) static func textBesideToolCallIsNotTheReply(engine: String) async throws {
+      try await withSession(.named(engine)) { f in
         let project = f.root.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let chat = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
@@ -469,6 +469,34 @@ extension EchoIntegrationScenarios {
         let beside = try #require(assistants.first)
         #expect(chat.store.tools.count == 1 && chat.store.tools.first?.afterMessageID == beside.id)
         #expect(chat.store.responseMessage == chat.store.messages.last && chat.store.responseMessage?.id != beside.id)
+      }
+    }
+
+    /// The native engine's side of plan §4 #9: invalid output still fails on the third in a row
+    /// with the same wording, but the feedback is model-only, never a user bubble; calls to an
+    /// unknown tool are answered as not run, as before.
+    @Test(arguments: [AgentModel.ProtocolName.chat_completions, .responses])
+    static func nativeInvalidModelOutputGetsHiddenFeedback(api: AgentModel.ProtocolName) async throws {
+      try await withSession(.native) { f in
+        f.protocolName = api
+        let empty = f.workspace.newConversation()
+        #expect(empty.store.send("empty-reply please"))
+        try await wait("empty replies") { !empty.store.isGenerating }
+        #expect(empty.store.task?.status == .failed && empty.store.task?.summary == "模型连续返回无效工具格式，已停止。")
+        #expect(empty.store.messages.filter { $0.role == .user }.map(\.content) == ["empty-reply please"])
+        #expect(f.server.requests.last.map { String(decoding: $0, as: UTF8.self).contains("not_executed") } == true,
+                "The feedback reaches the model")
+        #expect(empty.store.canRetry)
+
+        let project = f.root.appendingPathComponent("invalid-tool-project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let invalid = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
+        #expect(invalid.store.send("invalid-tool please"))
+        try await wait("invalid tool calls") { !invalid.store.isGenerating }
+        #expect(invalid.store.task?.status == .failed && invalid.store.task?.summary == "模型连续返回无效工具格式，已停止。")
+        #expect(invalid.store.tools.count == 3 && invalid.store.tools.allSatisfy { $0.state == "未执行" && $0.tool == "python" })
+        #expect(invalid.store.messages.filter { $0.role == .user }.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: project.appendingPathComponent("trace").path))
       }
     }
 
@@ -510,10 +538,10 @@ extension EchoIntegrationScenarios {
           "Connection probe executed a command")
       }
     }
-    // MARK: Tool scenarios (parameterized over engines in Phase 2)
+    // MARK: Tool scenarios, on both engines
 
-    @Test static func bindingSaveFailure() async throws {
-      try await withSession { f in
+    @Test(arguments: ["rust", "native"]) static func bindingSaveFailure(engine: String) async throws {
+      try await withSession(.named(engine)) { f in
         let temp = f.root
 
         let factory = { f.source() }
@@ -545,8 +573,8 @@ extension EchoIntegrationScenarios {
 
       }
     }
-    @Test static func directoryQueueSteeringStopRetry() async throws {
-      try await withSession { f in
+    @Test(arguments: ["rust", "native"]) static func directoryQueueSteeringStopRetry(engine: String) async throws {
+      try await withSession(.named(engine)) { f in
         let temp = f.root
         let workspace = f.workspace
         let persistence = f.persistence
@@ -603,10 +631,10 @@ extension EchoIntegrationScenarios {
         workspace.fileBrowser.returnToDirectory()
 
         let modelSteer = workspace.newConversation(projectID: projectID)
+        let requestsBefore = f.server.requests.count
         modelSteer.store.send("slow-model tool")
-        try await wait("model budget persisted") {
-          (modelSteer.store.snapshot.savedCheckpoint?.revision ?? 0) >= 3
-        }
+        // The fixture records a request before it answers slowly: the model request is under way.
+        try await wait("model request started") { f.server.requests.count > requestsBefore }
         try await Task.sleep(for: .milliseconds(100))
         modelSteer.store.send("skip old model call")
         try await wait("model steering") { !modelSteer.store.isGenerating }
@@ -636,8 +664,8 @@ extension EchoIntegrationScenarios {
 
       }
     }
-    @Test static func responsesToolsAndAtomicHistory() async throws {
-      try await withSession { f in
+    @Test(arguments: ["rust", "native"]) static func responsesToolsAndAtomicHistory(engine: String) async throws {
+      try await withSession(.named(engine)) { f in
         let temp = f.root
         let workspace = f.workspace
         let persistence = f.persistence
@@ -701,8 +729,8 @@ extension EchoIntegrationScenarios {
         recovered.shutdown()
       }
     }
-    @Test static func checkpointSaveGates() async throws {
-      try await withSession { f in
+    @Test(arguments: ["rust", "native"]) static func checkpointSaveGates(engine: String) async throws {
+      try await withSession(.named(engine)) { f in
         let temp = f.root
         let workspace = f.workspace
         let project = temp.appendingPathComponent("project")
@@ -733,14 +761,13 @@ extension EchoIntegrationScenarios {
         #expect(resultFailure.store.tools.first?.result?.contains("stdout") == true)
         #expect(resultFailure.store.responseMessage == nil)
         #expect(
-          resultFailure.store.snapshot.agentProjection?.contains(where: { $0.final_reply == true })
-            == false,
+          !f.server.requests.contains { String(decoding: $0, as: UTF8.self).contains("stdout") },
           "An unsaved result must never reach the next model request")
 
       }
     }
-    @Test static func leasesCleanupAndCrashRecovery() async throws {
-      try await withSession { f in
+    @Test(arguments: ["rust", "native"]) static func leasesCleanupAndCrashRecovery(engine: String) async throws {
+      try await withSession(.named(engine)) { f in
         let temp = f.root
         let workspace = f.workspace
 

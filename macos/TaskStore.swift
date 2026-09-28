@@ -525,7 +525,7 @@ enum AgentEngineKind: String, Codable, Sendable { case rust, native }
             cancelDirectoryWait?()
             agent.close(afterCleanup: releaseDirectory ?? {})
         } else if let harness {
-            harness.close(afterCleanup: {})
+            harness.close(afterCleanup: releaseDirectory ?? {})
         } else { source?.cancel() }
         onUserAction = nil; onVisibilityChange = nil
     }
@@ -868,6 +868,16 @@ extension TaskStore: AgentHarnessHost {
         if value { task?.summary = "等待选择项目文件夹" }
     }
     func harnessProjectDirectory() -> URL? { projectDirectory?() }
+    func harnessAcquireLease(_ path: String, ready: @escaping () -> Void) {
+        if let acquireDirectory { acquireDirectory(path, ready) } else { ready() }
+    }
+    func harnessCancelLeaseWait() { cancelDirectoryWait?() }
+    func harnessWaitingForProject(_ waiting: Bool) {
+        guard !retired else { return }
+        let value = waiting && task?.status == .running
+        if waitingForProject != value { waitingForProject = value }
+        if value { task?.summary = "等待项目空闲…" }
+    }
     func harnessSave() throws {
         guard !retired else { throw CancellationError() }
         do { try checkpoint?(snapshot) }
@@ -905,6 +915,8 @@ extension TaskStore: AgentHarnessHost {
             replyStream.abandon()
             task?.status = .failed; task?.summary = storageFailure; event = .reply(runID, .failed(storageFailure))
         }
+        // The turn's directory leases end with it, before anyone is told.
+        releaseDirectory?()
         // The ending joins the saved conversation before anyone is told.
         do { try checkpoint?(snapshot) }
         catch {

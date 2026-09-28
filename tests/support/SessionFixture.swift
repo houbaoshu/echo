@@ -30,17 +30,32 @@ import EchoAgentBridge
         },
         settingsSource: { AgentTaskSource(settings: $0, resources: EchoTestResources.root) })
 
+    /// Resolves the fixture's protocol at each turn, as settings are read at each turn.
     static let native = AgentEngine(
         description: "native",
         fixtureSource: { fixture in
-            let endpoint = AgentEndpoint(baseURL: fixture.server.baseURL, model: "fixture", apiKey: nil,
-                                         apiProtocol: fixture.protocolName == .responses ? .responses : .chatCompletions)
-            return AgentHarness(resolveModel: {
-                let transport = AgentTransport.make(for: endpoint)
-                return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: ledger, budget: budget) }
-            })
+            AgentEngine.nativeSource(baseURL: fixture.server.baseURL) { [unowned fixture] in fixture.protocolName }
         },
         settingsSource: { AgentHarness(settings: $0) })
+
+    static func named(_ name: String) -> AgentEngine { name == "native" ? native : rust }
+
+    /// A source for a fixed loopback server and protocol, for fixtures that are not a `SessionFixture`.
+    static func source(_ name: String, server: LoopbackModelServer, protocol apiProtocol: AgentModel.ProtocolName) -> any TaskSource {
+        guard name == "native" else {
+            return AgentTaskSource(model: AgentModel(base_url: server.baseURL, model: "fixture", protocol: apiProtocol),
+                                   resources: EchoTestResources.root)
+        }
+        return nativeSource(baseURL: server.baseURL) { apiProtocol }
+    }
+    static func nativeSource(baseURL: String, protocol current: @escaping @MainActor () -> AgentModel.ProtocolName) -> AgentHarness {
+        AgentHarness(resolveModel: {
+            let endpoint = AgentEndpoint(baseURL: baseURL, model: "fixture", apiKey: nil,
+                                         apiProtocol: current() == .responses ? .responses : .chatCompletions)
+            let transport = AgentTransport.make(for: endpoint)
+            return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: ledger, budget: budget) }
+        })
+    }
 }
 
 @MainActor final class SessionFixture {

@@ -137,28 +137,3 @@ import Foundation
         callbacks.forEach { $0() }
     }
 }
-
-/// FIFO arbitration on canonical paths. Ownership lasts through the whole turn.
-@MainActor final class AgentDirectoryScheduler {
-    private var owners: [String: UUID] = [:]
-    private var waiting: [(UUID, String, () -> Void)] = []
-    func acquire(_ path: String, owner: UUID, ready: @escaping () -> Void) {
-        let path = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
-        cancelWait(owner)
-        if owners[path] == nil || owners[path] == owner {
-            owners[path] = owner; ready()
-        } else { waiting.append((owner, path, ready)) }
-    }
-    func cancelWait(_ owner: UUID) { waiting.removeAll { $0.0 == owner } }
-    func release(_ owner: UUID) {
-        cancelWait(owner)
-        let paths = owners.filter { $0.value == owner }.map(\.key)
-        for path in paths {
-            owners[path] = nil
-            if let index = waiting.firstIndex(where: { $0.1 == path }) {
-                let next = waiting.remove(at: index)
-                owners[path] = next.0; next.2()
-            }
-        }
-    }
-}

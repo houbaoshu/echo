@@ -11,15 +11,13 @@ extension EchoIntegrationScenarios {
       }
     }
     @Test(
-      arguments: ["chat_completions", "responses"], ["tool", "model", "directory", "queue", "stop"])
-    static func voiceRouting(apiProtocol: String, scenario: String) async throws {
-      try await withSession { session in
+      arguments: ["rust:chat_completions", "rust:responses", "native:chat_completions", "native:responses"],
+      ["tool", "model", "directory", "queue", "stop"])
+    static func voiceRouting(engineProtocol: String, scenario: String) async throws {
+      let (engine, apiProtocol) = (String(engineProtocol.split(separator: ":")[0]), String(engineProtocol.split(separator: ":")[1]))
+      try await withSession(.named(engine)) { session in
         let makeSource = {
-          AgentTaskSource(
-            model: AgentModel(
-              base_url: session.server.baseURL, model: "fixture",
-              protocol: AgentModel.ProtocolName(rawValue: apiProtocol)!),
-            resources: EchoTestResources.root)
+          AgentEngine.source(engine, server: session.server, protocol: AgentModel.ProtocolName(rawValue: apiProtocol)!)
         }
         let f = AgentVoiceFixture(source: makeSource())
         f.sourceFactory = makeSource
@@ -47,8 +45,9 @@ extension EchoIntegrationScenarios {
         let run = f.store.task!.runID
         switch scenario {
         case "model":
-          try await waitForAgentVoice("model budget persisted") {
-            (f.store.snapshot.savedCheckpoint?.revision ?? 0) >= 3
+          // The fixture records a request before it answers slowly.
+          try await waitForAgentVoice("model request started") {
+            session.server.requests.contains { String(decoding: $0, as: UTF8.self).contains("slow-model") }
           }
           try await Task.sleep(for: .milliseconds(120))
         case "directory":
@@ -75,15 +74,15 @@ extension EchoIntegrationScenarios {
           #expect(
             f.store.task?.status == .stopping && !f.store.canSubmit
               && f.voice.snapshot.recognition == .off(.stopping),
-            "voice Stop gates the real Rust cleanup")
+            "voice Stop gates the real command cleanup")
           try await waitForAgentVoice("voice Stop acknowledged") {
             !f.store.isGenerating && f.voice.snapshot.recognition == .listening
           }
           #expect(
             f.store.task?.status == .stopped && f.synths.isEmpty,
             "cancelled tools never produce spoken finals")
-          let trace = try String(
-            contentsOf: project.appendingPathComponent("trace"), encoding: .utf8)
+          // A Stop can land before the command wrote its first line; either way it never finishes.
+          let trace = (try? String(contentsOf: project.appendingPathComponent("trace"), encoding: .utf8)) ?? ""
           #expect(!trace.contains("forbidden"), "voice Stop cleans up the command process group")
         } else {
           f.speak("skip old proposal; keep existing execution results", start: 300)
@@ -124,15 +123,11 @@ extension EchoIntegrationScenarios {
         }
       }
     }
-    @Test(arguments: ["chat_completions", "responses"])
-    static func streamedMarkdown(apiProtocol: String) async throws {
-      try await withSession { session in
+    @Test(arguments: ["rust", "native"], ["chat_completions", "responses"])
+    static func streamedMarkdown(engine: String, apiProtocol: String) async throws {
+      try await withSession(.named(engine)) { session in
         let makeSource = {
-          AgentTaskSource(
-            model: AgentModel(
-              base_url: session.server.baseURL, model: "fixture",
-              protocol: AgentModel.ProtocolName(rawValue: apiProtocol)!),
-            resources: EchoTestResources.root)
+          AgentEngine.source(engine, server: session.server, protocol: AgentModel.ProtocolName(rawValue: apiProtocol)!)
         }
         let f = AgentVoiceFixture(source: makeSource())
         f.sourceFactory = makeSource
@@ -155,6 +150,7 @@ extension EchoIntegrationScenarios {
           seen.filter { $0 != final }.count >= 2 && seen.allSatisfy { final.hasPrefix($0) },
           "real SSE deltas grow the reply before the turn completes (\(apiProtocol): \(seen.count) updates)"
         )
+        // Rust checkpoints carry revisions; the native engine saves no model output while it streams.
         #expect(revisions.count == 1, "streamed text never advances checkpoints (\(apiProtocol))")
         #expect(
           f.store.replyStream.text == final && f.store.task?.status == .completed,

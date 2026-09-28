@@ -8,10 +8,10 @@ MACOSX_DEPLOYMENT_TARGET = 27.0
 SWIFT_VERSION = 6
 PRODUCT_NAME = $(TARGET_NAME)
 
-// EchoRuntime and EchoAgentBridge are declared by the two module.modulemap files.
-SWIFT_INCLUDE_PATHS = $(PROJECT_DIR)/runtime/include $(PROJECT_DIR)/agent-bridge/include
+// EchoRuntime, EchoAgentBridge and EchoExecBridge are declared by their module.modulemap files.
+SWIFT_INCLUDE_PATHS = $(PROJECT_DIR)/runtime/include $(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include
 ECHO_CARGO_TARGET_DIR = $(OBJROOT)/EchoCargo
-OTHER_LDFLAGS = "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_runtime.a" "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_agent.a"
+OTHER_LDFLAGS = "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_runtime.a" "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_agent.a" "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_exec.a"
 
 // macos/Info.plist is complete and hand-maintained; Xcode must not synthesize
 // keys on top of it. INFOPLIST_FILE itself is per target.
