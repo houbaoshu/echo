@@ -206,23 +206,30 @@ struct ModelSettingsView: View {
     }
 }
 
-/// The offline model: whether it is usable, bringing in an exported model folder, and where it is.
+/// The offline model: which one is imported, bringing in an exported model folder, and where it is.
 /// The path is one click away rather than always on screen.
 struct LocalModelSection: View {
     @ObservedObject var settings: SettingsStore
     @State private var importing = false
-    private var status: String {
-        switch settings.localModel {
-        case .ready(let url): LocalModelLocation.displayName(in: url).map { "已就绪 · \($0)" } ?? "已就绪"
-        case .missing: "未安装"
-        case .invalid(let reason): "不完整：\(reason)"
-        }
+    /// The imported model's name from its metadata, or nil when there is no usable one.
+    private var modelName: String? {
+        guard case .ready(let url) = settings.localModel else { return nil }
+        return LocalModelLocation.displayName(in: url) ?? url.lastPathComponent
     }
     var body: some View {
         Section {
             Toggle("仅使用本地模型", isOn: Binding(get: { settings.snapshot.localModelOnly }, set: { settings.setLocalModelOnly($0) }))
                 .toggleStyle(.switch).accessibilityIdentifier("settings.localModel.only")
-            LabeledContent("状态") { Text(status).accessibilityIdentifier("settings.localModel.status") }
+            // Only one model can be imported for now, so the menu lists exactly what is
+            // there and choosing is a no-op; it is a picker so the row reads like the others.
+            let title = modelName ?? "未导入"
+            Picker("模型", selection: .constant(title)) {
+                Text(title).tag(title)
+            }.disabled(modelName == nil).accessibilityIdentifier("settings.localModel.model")
+            if case .invalid(let reason) = settings.localModel {
+                Text("模型不完整：\(reason)").font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                    .textSelection(.enabled).accessibilityIdentifier("settings.localModel.problem")
+            }
             HStack(spacing: 12) {
                 Button("导入模型…") { importing = true }.disabled(settings.importingLocalModel)
                     .accessibilityIdentifier("settings.localModel.import")
