@@ -186,6 +186,34 @@ import Testing
         #expect(messages.map { $0["content"] as? String } == ["system text", "earlier"], "The continue prompt is never sent")
     }
 
+    /// Arguments imported from Rust history go back to the provider exactly as the model wrote
+    /// them, even when they are not JSON.
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
+    func importedArgumentsReplayVerbatim(api: ModelAPIProtocol) async throws {
+        let call = Transcript.ToolCall(id: "call_old", metadata: [AgentCallArguments.rawKey: "ls -la"], toolName: "bash",
+                                       arguments: try GeneratedContent(json: "{}"))
+        let history: [Transcript.Entry] = [
+            .prompt(.init(segments: [.text(.init(content: "earlier"))])),
+            .toolCalls(.init(id: "calls-old", [call])),
+            .toolOutput(.init(id: "call_old", toolName: "bash", segments: [.text(.init(content: #"{"status":"not_executed"}"#))])),
+        ]
+        let reply = api == .chatCompletions
+            ? Reply.sse([Self.chatChunk(["content": "ok"]), Self.chatChunk([:], finish: "stop")])
+            : Reply.sse([["type": "response.completed", "response": ["status": "completed",
+                "output": [["type": "message", "content": [["type": "output_text", "text": "ok"]]]]]]])
+        let run = await Self.run(api, history: history, replies: [reply])
+        #expect(try run.result.get() == "ok")
+        let body = try #require(Self.bodies.last)
+        if api == .chatCompletions {
+            let messages = try #require(body["messages"] as? [[String: Any]])
+            let sent = (messages.first { $0["tool_calls"] != nil }?["tool_calls"] as? [[String: Any]])?.first?["function"] as? [String: Any]
+            #expect(sent?["arguments"] as? String == "ls -la")
+        } else {
+            let input = try #require(body["input"] as? [[String: Any]])
+            #expect(input.first { $0["type"] as? String == "function_call" }?["arguments"] as? String == "ls -la")
+        }
+    }
+
     @Test func chatFailuresNeverShowTheProviderBody() async throws {
         let secret = "secret-provider-body sk-live"
         let cases: [(Reply, String)] = [

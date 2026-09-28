@@ -181,14 +181,14 @@ struct ModelSettingsView: View {
                 }
             }
             Section {
-                Toggle("实验：新会话使用 Foundation Models Agent",
+                Toggle("使用 Foundation Models Agent",
                        isOn: Binding(get: { settings.snapshot.nativeAgent }, set: { settings.setNativeAgent($0) }))
                     .toggleStyle(.switch)
-                    .accessibilityLabel("实验：新会话使用 Foundation Models Agent")
+                    .accessibilityLabel("使用 Foundation Models Agent")
                     .accessibilityIdentifier("settings.nativeAgent")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("只影响之后首次发送的会话，已有会话保持原来的 Agent；测试连接也按此开关验证。")
+                    Text("旧引擎的会话会在下一次发送或继续处理时一次性迁移。关闭后新会话使用旧引擎，已迁移的会话不回退；测试连接也按此开关验证。")
                         .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
                     if let notice = settings.agentEngineNotice {
                         Label(notice, systemImage: "exclamationmark.triangle").font(WorkspaceStyle.caption)

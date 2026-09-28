@@ -656,6 +656,59 @@ import Testing
         store.shutdown()
     }
 
+    /// Both sidecars on disk: a native sidecar marked as a migration snapshot wins only over the
+    /// exact Rust history it came from; a Rust history that changed since (or appeared after a
+    /// legacy conversation's migration) wins and the snapshot is set aside; an unmarked native
+    /// history and a Rust one block the conversation with both kept.
+    @Test func bothSidecarsResolveWithoutLosingHistory() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("echo-both-sidecars-\(UUID())")
+        defer { try? fm.removeItem(at: root) }
+        let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
+        let rust = TaskStore.Snapshot(task: nil, messages: [.init(role: .user, content: "rust history")], mainDraft: "",
+                                      followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
+                                      agentHistory: Data("{}".utf8), tools: [], agentStored: true)
+        let manifestEntry = { (id: UUID) in
+            WorkspaceSnapshot.Conversation(id: id, projectID: nil, title: "t", manuallyNamed: false, lastUsed: Date(),
+                                           state: TaskStore.Snapshot(task: nil, messages: [], mainDraft: "", followUpDraft: "",
+                                                                     activityDismissed: false, activitiesCollapsed: false, agentStored: true))
+        }
+        func write(_ id: UUID, marker: (Data) -> String?) throws {
+            try fm.createDirectory(at: persistence.sessionsDirectory, withIntermediateDirectories: true)
+            try fm.createDirectory(at: persistence.nativeSessionsDirectory, withIntermediateDirectories: true)
+            let rustData = try JSONEncoder().encode(rust)
+            try rustData.write(to: persistence.sessionURL(id))
+            var native = TaskStore.Snapshot(task: nil, messages: [.init(role: .user, content: "native snapshot")], mainDraft: "",
+                                            followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
+                                            tools: [], engine: .native, native: NativeAgentState())
+            native.migratedFrom = marker(rustData)
+            try JSONEncoder().encode(native).write(to: persistence.nativeSessionURL(id))
+        }
+
+        let unchanged = UUID()
+        try write(unchanged) { _ in persistence.migrationSource(unchanged) }
+        let finished = persistence.restoreSession(manifestEntry(unchanged))
+        #expect(finished.engine == .native && finished.messages.first?.content == "native snapshot")
+        #expect(!fm.fileExists(atPath: persistence.sessionURL(unchanged).path) && fm.fileExists(atPath: persistence.rustBackupURL(unchanged).path))
+
+        for (label, marker) in [("changed since", "0000"), ("legacy", "legacy")] {
+            let id = UUID()
+            try write(id) { _ in marker }
+            let snapshotBytes = try Data(contentsOf: persistence.nativeSessionURL(id))
+            let restored = persistence.restoreSession(manifestEntry(id))
+            #expect(restored.engine != .native && restored.messages.first?.content == "rust history" && restored.loadError == nil, "\(label)")
+            #expect(!fm.fileExists(atPath: persistence.nativeSessionURL(id).path)
+                    && (try? Data(contentsOf: persistence.staleNativeURL(id))) == snapshotBytes, "\(label): set aside, not deleted")
+            #expect(fm.fileExists(atPath: persistence.sessionURL(id).path), "\(label): the Rust history stays in place")
+        }
+
+        let conflict = UUID()
+        try write(conflict) { _ in nil }
+        let blocked = persistence.restoreSession(manifestEntry(conflict))
+        #expect(blocked.loadError?.contains("两份") == true && blocked.engine == .native)
+        #expect(fm.fileExists(atPath: persistence.sessionURL(conflict).path) && fm.fileExists(atPath: persistence.nativeSessionURL(conflict).path))
+    }
+
     @Test func aDraftTakesTheEngineChosenAtItsFirstSend() async throws {
         var native = false
         let model = ScriptedAgentModel { _, emit, _ in try await emit.text("ok") }

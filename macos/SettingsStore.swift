@@ -138,9 +138,9 @@ struct SettingsSnapshot: Codable {
     var voiceSecretAccount: String?
     /// ⌥ Space opens the pet's quick composer from anywhere.
     var quickComposerHotKey = true
-    /// Experimental: conversations sent to for the first time use the native Foundation Models engine.
-    /// Builds that do not know it drop it on their next save, which turns it off.
-    var nativeAgent = false
+    /// The native Foundation Models engine, on unless turned off: new conversations use it, and a
+    /// Rust-engine conversation moves to it at its next send. Off keeps new ones on the Rust engine.
+    var nativeAgent = true
 
     var model: ModelConfiguration { settings(for: activeProvider).model }
     var secretAccount: String? { settings(for: activeProvider).secretAccount }
@@ -162,7 +162,7 @@ struct SettingsSnapshot: Codable {
         voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
         voiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .voiceSecretAccount)
         quickComposerHotKey = try values.decodeIfPresent(Bool.self, forKey: .quickComposerHotKey) ?? true
-        nativeAgent = try values.decodeIfPresent(Bool.self, forKey: .nativeAgent) ?? false
+        nativeAgent = try values.decodeIfPresent(Bool.self, forKey: .nativeAgent) ?? true
         if version == 1 {
             let legacy = try decoder.container(keyedBy: LegacyKeys.self)
             let model = try legacy.decode(ModelConfiguration.self, forKey: .model)
@@ -379,7 +379,7 @@ protocol ConnectionTesting: Sendable {
         catch { hotKeyNotice = error is SettingsError ? error.localizedDescription : "快捷键设置保存失败，请检查目录写入权限。" }
     }
     @Published var agentEngineNotice: String?
-    /// The experiment applies to conversations sent to for the first time; existing ones keep their engine.
+    /// Applies from each conversation's next send; a conversation already moved stays native.
     func setNativeAgent(_ enabled: Bool) {
         guard enabled != snapshot.nativeAgent else { return }
         agentEngineNotice = nil

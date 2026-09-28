@@ -183,9 +183,9 @@ import Testing
         #expect(!secrets.values.values.contains("blocked-secret"))
 
     }
-    /// The native-engine experiment is off unless saved, survives a reload, and picks which
+    /// The native engine is on unless turned off, the choice survives a reload, and it picks which
     /// engine's connection test runs.
-    @Test @MainActor static func nativeAgentExperimentSelectsTheConnectionTest() async throws {
+    @Test @MainActor static func nativeAgentSettingSelectsTheConnectionTest() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("native-agent-settings-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -193,15 +193,16 @@ import Testing
         try Data(#"{"version":2,"activeProvider":"ollama","providers":{"ollama":{"model":{"baseURL":"http://localhost:11434/v1","model":"m"}}},"selectedPetID":"builtin:chiyan"}"#.utf8).write(to: url)
         let rust = RecordingTester(), native = RecordingTester()
         let settings = SettingsStore(url: url, secrets: ProviderSecrets(), tester: rust, nativeTester: native)
-        #expect(!settings.snapshot.nativeAgent, "Settings saved before the experiment leave it off")
+        #expect(settings.snapshot.nativeAgent, "Settings saved before the setting existed use the native engine")
         settings.testConnection()
         try await waitUntil { !settings.testing }
-        settings.setNativeAgent(true)
-        #expect(settings.snapshot.nativeAgent && settings.agentEngineNotice == nil)
+        #expect(rust.count == 0 && native.count == 1, "The connection test checks the native engine by default")
+        settings.setNativeAgent(false)
+        #expect(!settings.snapshot.nativeAgent && settings.agentEngineNotice == nil)
         settings.testConnection()
         try await waitUntil { !settings.testing }
         #expect(rust.count == 1 && native.count == 1)
-        #expect(SettingsStore(url: url, secrets: ProviderSecrets()).snapshot.nativeAgent, "The choice is saved")
+        #expect(!SettingsStore(url: url, secrets: ProviderSecrets()).snapshot.nativeAgent, "Turning it off is saved")
     }
     @MainActor private static func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))

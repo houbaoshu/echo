@@ -481,7 +481,7 @@ enum AgentInstructions {
         // A command shows as running only once it starts; the read tools run at once.
         if call.toolName != "bash" {
             dispatched.insert(key)
-            if !stopRequested { host?.harnessStatus(AgentToolRecord.summary(tool: call.toolName, arguments: call.arguments)) }
+            if !stopRequested { host?.harnessStatus(AgentToolRecord.summary(call)) }
         }
         project()
     }
@@ -693,7 +693,7 @@ enum AgentInstructions {
                     let key = "\(turnIndex):\(index):\(call.id)"
                     var record = knownTools[key] ?? AgentToolRecord(
                         callID: call.id, entryID: UInt64(index), turnID: UInt64(turnIndex), afterMessageID: anchor,
-                        command: AgentToolRecord.display(tool: call.toolName, arguments: call.arguments))
+                        command: AgentToolRecord.display(call))
                     record.tool = call.toolName == "bash" ? nil : call.toolName
                     record.afterMessageID = anchor; record.result = nil
                     let callKey = "\(index):\(call.id)"
@@ -912,23 +912,25 @@ private struct AgentProfile: LanguageModelSession.DynamicProfile {
 
 extension AgentToolRecord {
     /// What a card shows for a call: the command for bash, the path for the read tools.
-    static func display(tool: String, arguments: GeneratedContent) -> String {
-        let object = (try? JSONSerialization.jsonObject(with: Data(arguments.jsonString.utf8))) as? [String: Any]
-        switch tool {
-        case "bash": return object?["command"] as? String ?? arguments.jsonString
+    /// Arguments as the model wrote them, so a call it got wrong shows what it actually sent.
+    static func display(_ call: Transcript.ToolCall) -> String {
+        let text = AgentCallArguments.text(call)
+        let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+        switch call.toolName {
+        case "bash": return object?["command"] as? String ?? text
         case "list_files", "read_file":
-            let path = object?["path"] as? String ?? arguments.jsonString
+            let path = object?["path"] as? String ?? text
             if let line = object?["start_line"] as? Int, line > 1 { return "\(path):\(line)" }
             return path
-        default: return arguments.jsonString
+        default: return text
         }
     }
-    static func summary(tool: String, arguments: GeneratedContent) -> String {
-        switch tool {
-        case "bash": TaskStore.toolSummary(display(tool: tool, arguments: arguments))
-        case "list_files": "正在列出文件 · \(display(tool: tool, arguments: arguments).prefix(60))"
-        case "read_file": "正在读取文件 · \(display(tool: tool, arguments: arguments).prefix(60))"
-        default: "正在调用工具 · \(tool)"
+    static func summary(_ call: Transcript.ToolCall) -> String {
+        switch call.toolName {
+        case "bash": TaskStore.toolSummary(display(call))
+        case "list_files": "正在列出文件 · \(display(call).prefix(60))"
+        case "read_file": "正在读取文件 · \(display(call).prefix(60))"
+        default: "正在调用工具 · \(call.toolName)"
         }
     }
     static func state(forResult result: String) -> String {

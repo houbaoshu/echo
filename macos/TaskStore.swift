@@ -243,6 +243,10 @@ enum AgentEngineKind: String, Codable, Sendable { case rust, native }
         /// A hint in the manifest; the native sidecar's existence is what decides the engine.
         var engine: AgentEngineKind? = nil
         var native: NativeAgentState? = nil
+        /// Set only on the native sidecar a migration writes, until the Rust sidecar is retired:
+        /// the SHA-256 of the Rust sidecar it was converted from ("legacy" for a conversation
+        /// that had none). It tells a leftover migration snapshot from a native history.
+        var migratedFrom: String? = nil
     }
     var snapshot: Snapshot {
         Snapshot(task: task, messages: messages, mainDraft: mainDraft, followUpDraft: followUpDraft,
@@ -811,6 +815,39 @@ enum AgentEngineKind: String, Codable, Sendable { case rust, native }
     }
 
     // MARK: - Native engine
+
+    /// Hands an idle Rust-engine conversation to the native engine, converting its history once.
+    /// Messages keep their identity; tool cards keep their folder. The returned closure puts the
+    /// conversation back while nothing has been saved yet.
+    func migrate(to next: AgentHarness) throws(AgentHistoryImport.Failure) -> () -> Void {
+        guard let agent, !isGenerating, !retired, agentLoadError == nil else {
+            throw AgentHistoryImport.Failure(reason: "会话正在运行或不可用")
+        }
+        let native = try AgentHistoryImport.native(.init(
+            history: agentHistory, messages: messages, requestMessages: requestMessages,
+            receipts: inputReceipts, pendingInputs: pendingInputs))
+        let previous = (source: source, messages: messages, tools: tools, history: agentHistory, continuable: historyContinuable,
+                        receipts: inputReceipts, pending: pendingInputs, projection: agentProjection,
+                        checkpoint: savedCheckpoint, delivered: deliveredReplies)
+        agent.close(afterCleanup: {})
+        source = next
+        next.host = self
+        next.restore(native)
+        for index in tools.indices where index < previous.tools.count && tools[index].callID == previous.tools[index].callID {
+            tools[index].directory = previous.tools[index].directory
+        }
+        agentHistory = nil; historyContinuable = true; inputReceipts = []; pendingInputs = []
+        agentProjection = []; savedCheckpoint = nil; deliveredReplies = []; agentTurnID = nil; pendingOperation = nil
+        return { [weak self] in
+            guard let self, !self.isGenerating else { return }
+            self.source = previous.source
+            self.messages = previous.messages; self.tools = previous.tools
+            self.agentHistory = previous.history; self.historyContinuable = previous.continuable
+            self.inputReceipts = previous.receipts; self.pendingInputs = previous.pending
+            self.agentProjection = previous.projection; self.savedCheckpoint = previous.checkpoint
+            self.deliveredReplies = previous.delivered
+        }
+    }
 
     private func beginNative(text: String?) -> Bool {
         guard let harness, !harness.isRunning else { return false }

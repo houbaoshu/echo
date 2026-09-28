@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CryptoKit
 
 struct WorkspaceProject: Identifiable, Codable, Equatable {
     var id = UUID()
@@ -46,7 +47,9 @@ struct WorkspaceSnapshot: Codable {
 @MainActor final class WorkspacePersistence {
     let url: URL
     var backupURL: URL { url.appendingPathExtension("backup") }
-    init(url: URL) { self.url = url }
+    /// Retiring and removing sidecars during a migration; tests make these fail.
+    let files: FileManager
+    init(url: URL, files: FileManager = .default) { self.url = url; self.files = files }
     static var defaultURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("local.chiyan.desktop-pet/workspace.json")
@@ -84,8 +87,34 @@ struct WorkspaceSnapshot: Codable {
         try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: target, options: .atomic)
     }
+    /// Where a migrated conversation's Rust history is kept. Not a sidecar name, so a build that
+    /// knows only the Rust engine finds no history and blocks instead of continuing a stale one.
+    func rustBackupURL(_ id: UUID) -> URL {
+        sessionsDirectory.appendingPathComponent("\(id.uuidString).v1-migrated.json")
+    }
+    /// Retires the Rust sidecar of a conversation whose native sidecar is written.
+    func retireRustSession(_ id: UUID) throws {
+        guard files.fileExists(atPath: sessionURL(id).path) else { return }
+        if files.fileExists(atPath: rustBackupURL(id).path) { try files.removeItem(at: rustBackupURL(id)) }
+        try files.moveItem(at: sessionURL(id), to: rustBackupURL(id))
+    }
+    /// Where a native sidecar goes when a newer Rust history supersedes it; kept, never loaded.
+    func staleNativeURL(_ id: UUID) -> URL {
+        nativeSessionsDirectory.appendingPathComponent("\(id.uuidString).v2-stale.json")
+    }
+    /// What a migration records of the Rust sidecar it converts: its exact bytes, or "legacy".
+    func migrationSource(_ id: UUID) -> String {
+        guard let data = try? Data(contentsOf: sessionURL(id)) else { return "legacy" }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    /// Whether no native sidecar is left for `id` afterwards.
+    func removeNativeSession(_ id: UUID) -> Bool {
+        let target = nativeSessionURL(id)
+        guard files.fileExists(atPath: target.path) else { return true }
+        return (try? files.removeItem(at: target)) != nil
+    }
     func removeSession(_ id: UUID) throws {
-        for target in [sessionURL(id), nativeSessionURL(id)] {
+        for target in [sessionURL(id), nativeSessionURL(id), rustBackupURL(id), staleNativeURL(id)] {
             do { try FileManager.default.removeItem(at: target) }
             catch CocoaError.fileNoSuchFile {}
         }
@@ -121,22 +150,44 @@ struct WorkspaceSnapshot: Codable {
     }
     /// The engine follows the sidecar that exists: a build that knows only the Rust engine may
     /// have rewritten the manifest without its `engine` hint, or with a load error of its own.
+    /// When both exist, a migration did not finish retiring the Rust one. A native sidecar that is
+    /// still the migration's snapshot wins only over the exact Rust history it was made from;
+    /// if that history changed since — a Rust-engine build kept writing it — the Rust history
+    /// wins and the snapshot is set aside. A native sidecar with history of its own never
+    /// silently replaces a Rust one, nor the reverse.
     func restoreSession(_ saved: WorkspaceSnapshot.Conversation) -> TaskStore.Snapshot {
         let unreadable = "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。"
         let native = nativeSessionURL(saved.id)
-        if FileManager.default.fileExists(atPath: native.path) || saved.state.engine == .native {
+        var supersededSnapshot = false
+        if files.fileExists(atPath: native.path) || saved.state.engine == .native {
             do {
                 var state = try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: native))
                 guard state.native != nil else { throw CocoaError(.fileReadCorruptFile) }
                 state.engine = .native; state.loadError = nil
-                return state
+                guard files.fileExists(atPath: sessionURL(saved.id).path) else { return state }
+                switch state.migratedFrom {
+                case migrationSource(saved.id)?:
+                    // Stopped between writing this snapshot and retiring its unchanged source.
+                    try? retireRustSession(saved.id)
+                    return state
+                case nil:
+                    var blocked = saved.state
+                    blocked.engine = .native; blocked.agentStored = true
+                    blocked.loadError = "这个会话同时存在两份 Agent 历史，已禁止执行。请保留需要的一份后重新打开应用。"
+                    return blocked
+                default:
+                    // The Rust history grew after the snapshot: it is the conversation.
+                    if files.fileExists(atPath: staleNativeURL(saved.id).path) { try? files.removeItem(at: staleNativeURL(saved.id)) }
+                    try? files.moveItem(at: native, to: staleNativeURL(saved.id))
+                    supersededSnapshot = true
+                }
             } catch {
                 var state = saved.state
                 state.engine = .native; state.agentStored = true; state.loadError = unreadable
                 return state
             }
         }
-        guard saved.state.agentStored == true else { return saved.state }
+        guard saved.state.agentStored == true || supersededSnapshot else { return saved.state }
         do { return try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: sessionURL(saved.id))) }
         catch {
             var state = saved.state
@@ -344,6 +395,36 @@ struct WorkspaceSnapshot: Codable {
     // Commands capture their target at the surface that issued them. Selection and
     // desktop activity are navigation state, never an implicit command destination.
     private var preferredEngine: AgentEngineKind? { nativeSourceFactory != nil && prefersNative() ? .native : nil }
+    /// With the native engine preferred, a Rust-engine conversation moves to it once, at its next
+    /// send or continue: convert, write the native sidecar, retire the Rust one, save the
+    /// manifest. Until the native sidecar and the retirement are both done, nothing changes.
+    private func migrateIfPreferred(_ conversation: WorkspaceConversation) -> Bool {
+        guard preferredEngine == .native, conversation.store.engine == .rust, !conversation.store.isGenerating,
+              conversation.store.agentLoadError == nil, let harness = nativeSourceFactory?() as? AgentHarness else { return true }
+        guard !saveBlocked else { conversation.store.notice = Self.saveBlockedNotice; return false }
+        let undo: () -> Void
+        do { undo = try conversation.store.migrate(to: harness) }
+        catch { conversation.store.notice = error.localizedDescription; return false }
+        guard let persistence else { return true }
+        // The snapshot records its source, so a later launch can tell whether the Rust history
+        // changed before the migration finished (see `restoreSession`).
+        var snapshot = conversation.store.snapshot
+        snapshot.migratedFrom = persistence.migrationSource(conversation.id)
+        do {
+            try persistence.saveSession(snapshot, id: conversation.id)
+            try persistence.retireRustSession(conversation.id)
+        } catch {
+            // Nothing runs natively while the Rust sidecar is in place: a Rust-engine build could
+            // still write it. A snapshot that cannot be removed stays marked as one.
+            _ = persistence.removeNativeSession(conversation.id)
+            undo()
+            conversation.store.notice = "会话迁移失败，已保留原历史：\(error.localizedDescription)"
+            return false
+        }
+        persistedAgentIDs.insert(conversation.id)
+        flush()
+        return true
+    }
     private func makeSource(_ engine: AgentEngineKind?) -> (any TaskSource)? {
         if engine == .native, let nativeSourceFactory { return nativeSourceFactory() }
         return sourceFactory()
@@ -371,6 +452,7 @@ struct WorkspaceSnapshot: Codable {
            target.store.engine != preferred {
             target.store.adoptSource(makeSource(preferred))
         }
+        guard migrateIfPreferred(target) else { return false }
         if voice.conversationID == conversationID {
             guard voice.canSubmit else { return false }
             voice.prepareForSubmission()
@@ -425,7 +507,8 @@ struct WorkspaceSnapshot: Codable {
         else { target.store.stopTask() }
     }
     @discardableResult func retry(conversationID: UUID) -> Bool {
-        guard !shuttingDown, let target = conversation(id: conversationID), target.store.canRetry else { return false }
+        guard !shuttingDown, let target = conversation(id: conversationID), target.store.canRetry,
+              migrateIfPreferred(target), target.store.canRetry else { return false }
         if voice.conversationID == conversationID {
             guard voice.canSubmit else { return false }
             voice.prepareForSubmission()

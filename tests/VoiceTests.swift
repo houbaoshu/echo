@@ -1142,7 +1142,7 @@ extension EchoVoiceScenarios {
         let unusedCache = Data("obsolete cache, intentionally invalid".utf8)
         try unusedCache.write(to: cacheURL)
         let tester = PendingModelTester(), secrets = FakeSecrets()
-        let settings = SettingsStore(url: url, secrets: secrets, tester: tester)
+        let settings = SettingsStore(url: url, secrets: secrets, tester: tester, nativeTester: tester)
         check(settings.draft.model == "saved-model" && settings.voiceDraft.speaker == "saved-voice" && settings.notice == nil,
               "old dropdown settings retain selected IDs and ignore obsolete lists/cache")
         settings.draft.model = "  typed-model  "; settings.apiKey = "test-key"
@@ -1155,7 +1155,7 @@ extension EchoVoiceScenarios {
         let requestBeforeTest = await tester.request
         check(requestBeforeTest == nil && settings.draft.model == "typed-model" && !settings.isDirty,
               "manual save trims ID without making a validation request")
-        let restored = SettingsStore(url: url, secrets: secrets, tester: tester)
+        let restored = SettingsStore(url: url, secrets: secrets, tester: tester, nativeTester: tester)
         check(restored.draft.model == "typed-model" && restored.voiceDraft.speaker == "saved-voice",
               "direct IDs persist across restart")
         let encoded = try String(contentsOf: url, encoding: .utf8)

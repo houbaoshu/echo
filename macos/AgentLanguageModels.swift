@@ -62,6 +62,16 @@ struct AgentModelError: Error, LocalizedError, Equatable {
     }
 }
 
+/// A call's arguments as the model wrote them. History imported from the Rust engine keeps them
+/// verbatim in the call's metadata: Rust stored and replayed whatever text a model produced,
+/// including arguments that are not JSON, and the model should see its own call again.
+enum AgentCallArguments {
+    static let rawKey = "echo.rawArguments"
+    static func text(_ call: Transcript.ToolCall) -> String {
+        (try? call.metadata[rawKey]?.value(String.self)) ?? call.arguments.jsonString
+    }
+}
+
 /// The only prompt metadata the adapters act on: a prompt that exists to let `respond` continue
 /// an interrupted turn. It is never sent, so the model sees the history exactly as it was.
 enum AgentPromptMarker {
@@ -359,7 +369,7 @@ enum ResponsesWire {
                 input.append(item)
             case .toolCalls(let calls):
                 for call in calls {
-                    input.append(["type": "function_call", "call_id": call.id, "name": call.toolName, "arguments": call.arguments.jsonString])
+                    input.append(["type": "function_call", "call_id": call.id, "name": call.toolName, "arguments": AgentCallArguments.text(call)])
                 }
             case .toolOutput(let output):
                 input.append(["type": "function_call_output", "call_id": output.id, "output": segmentText(output.segments)])
@@ -520,7 +530,7 @@ enum ChatWire {
                 var message: [String: Any] = ["role": "assistant", "content": pendingText.map { $0 as Any } ?? NSNull()]
                 pendingText = nil
                 message["tool_calls"] = calls.map {
-                    ["id": $0.id, "type": "function", "function": ["name": $0.toolName, "arguments": $0.arguments.jsonString]] as [String: Any]
+                    ["id": $0.id, "type": "function", "function": ["name": $0.toolName, "arguments": AgentCallArguments.text($0)]] as [String: Any]
                 }
                 messages.append(message)
             case .toolOutput(let output):

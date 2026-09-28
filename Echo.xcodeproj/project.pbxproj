@@ -375,6 +375,18 @@
 			isa = PBXBuildFile;
 			fileRef = 1724D95EA440B9705DD87F8B;
 		};
+		955E078386857E835DC7753C = {
+			isa = PBXBuildFile;
+			fileRef = 66A204B6F23FC886D5B6A26E;
+		};
+		D38392FEAE98B043BBA01F32 = {
+			isa = PBXBuildFile;
+			fileRef = 66A204B6F23FC886D5B6A26E;
+		};
+		8C071A07D4920D3005E92D5B = {
+			isa = PBXBuildFile;
+			fileRef = F176FBF2A45D7EF5167F1F6B;
+		};
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -889,6 +901,18 @@
 			sourceTree = "<group>";
 			lastKnownFileType = sourcecode.swift;
 		};
+		66A204B6F23FC886D5B6A26E = {
+			isa = PBXFileReference;
+			path = macos/AgentHistoryImport.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		F176FBF2A45D7EF5167F1F6B = {
+			isa = PBXFileReference;
+			path = tests/AgentHistoryImportTests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -1164,6 +1188,7 @@
 				E11400000000000000000F00,
 				E11400000000000000000F01,
 				E11400000000000000000F02,
+				F176FBF2A45D7EF5167F1F6B,
 				0A943A0226E44527A68563F2,
 				474D9F2D95791491A7B3D4E6,
 				E11300000000000000000F00,
@@ -1175,6 +1200,7 @@
 				E11100000000000000000F01,
 				E11000000000000000000F02,
 				E11000000000000000000F03,
+				66A204B6F23FC886D5B6A26E,
 				1724D95EA440B9705DD87F8B,
 				CF0CDA52A4EF0DA66805FDBB,
 				3526F0A888174738325FD582,
@@ -1916,6 +1942,7 @@
 		E110000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				955E078386857E835DC7753C,
 				F68549B4E6629AA6F02A9CDC,
 				0BB27615F70BEF3BF486FD84,
 				26BC95D8A7B3E4F129E9AD9F,
@@ -1936,6 +1963,7 @@
 		E111000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				D38392FEAE98B043BBA01F32,
 				42A09C85E1FC8EB7417A9E22,
 				C58144D7E90E1F5E87E8A3FC,
 				BF3839A481C8EB21C796E06B,
@@ -1987,6 +2015,7 @@
 		E114000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				8C071A07D4920D3005E92D5B,
 				3B42CB39447CC127369519D4,
 				DDBEF3D5359192AC5896BA28,
 				F1DA05F3182E450B41CD433D,
