@@ -1839,7 +1839,7 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(waiting.contains { $0.contains("我先检查文件。") }, "Text beside the call stays in the chat: \(waiting)")
         XCTAssertTrue(waiting.contains { $0.contains("待执行 · printf probe") }, "The pending call shows its command: \(waiting)")
         XCTAssertTrue(waiting.contains { $0.contains("等待选择项目文件夹") }, "The task row says why it waits: \(waiting)")
-        for control in ["执行命令需要项目文件夹", "选择文件夹…", "取消执行"] {
+        for control in ["需要项目文件夹才能继续", "选择文件夹…", "取消执行"] {
             XCTAssertTrue(waiting.contains { $0.contains(control) }, "The folder row offers \(control): \(waiting)")
         }
         // The 关联项目 menu is enabled only with an available project. Its title is not reachable
@@ -1882,6 +1882,61 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(unfinished.canRetry)
         let interrupted = try await texts(of: unfinished)
         XCTAssertTrue(interrupted.contains { $0.contains("继续处理") }, "An unfinished Agent turn offers 继续处理: \(interrupted)")
+    }
+
+    /// The native engine's read-only tools in the same UI: text beside the call stays in the
+    /// chat, the call names what it reads, the folder row asks for a project, and declining
+    /// leaves the call not run while the turn still ends with a reply.
+    func testNativeReadToolCardsAndFolderRow() async throws {
+        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let dictation = DictationController()
+        defer { voice.shutdown(); dictation.shutdown() }
+        let model = ScriptedAgentModel { _, emit, index in
+            if index == 0 {
+                try await emit.text("我先看看目录。")
+                await emit.call("list_files", #"{"path":"."}"#)
+            } else {
+                try await emit.text("目录没有列出")
+            }
+        }
+        let store = TaskStore(source: AgentHarness(resolveModel: { model.factory }))
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
+        defer { workspace.shutdown() }
+        func texts() async throws -> [String] {
+            let view = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice, dictation: dictation,
+                startDictation: {}, startVoice: {}, conversationID: workspace.selected?.id ?? UUID(),
+                send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
+            view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
+            let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            window.contentView = view
+            view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+            view.layoutSubtreeIfNeeded()
+            defer { window.orderOut(nil) }
+            return accessibilityText(in: view)
+        }
+        func wait(_ condition: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while !condition() {
+                guard Date() < deadline else { XCTFail("Timed out"); return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        XCTAssertTrue(store.usesAgent && store.send("看看目录"))
+        try await wait { store.needsDirectory }
+        let waiting = try await texts()
+        XCTAssertTrue(waiting.contains { $0.contains("我先看看目录。") }, "Text beside the call stays in the chat: \(waiting)")
+        XCTAssertTrue(waiting.contains { $0.contains("执行中 · 列出 .") }, "The call says what it reads: \(waiting)")
+        XCTAssertTrue(waiting.contains { $0.contains("等待选择项目文件夹") }, "The task row says why it waits: \(waiting)")
+        for control in ["需要项目文件夹才能继续", "选择文件夹…", "取消执行"] {
+            XCTAssertTrue(waiting.contains { $0.contains(control) }, "The folder row offers \(control): \(waiting)")
+        }
+        workspace.provideDirectory(nil, conversationID: try XCTUnwrap(workspace.selected?.id))
+        try await wait { !store.isGenerating }
+        let done = try await texts()
+        XCTAssertTrue(done.contains { $0.contains("未执行 · 列出 .") }, "Declining leaves the call not run: \(done)")
+        XCTAssertTrue(done.contains { $0.contains("目录没有列出") } && !done.contains { $0.contains("需要项目文件夹才能继续") }, "\(done)")
     }
 
     /// The chat shows the reply while the model writes it. An Agent session's messages come

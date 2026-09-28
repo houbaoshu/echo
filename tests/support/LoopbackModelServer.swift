@@ -185,7 +185,11 @@ final class LoopbackModelServer: @unchecked Sendable {
         var toolName = "bash"
         if conversation.contains("empty-reply") { command = nil; reply = "" }
         if conversation.contains("invalid-tool") { command = "printf invalid"; toolName = "python" }
-        let arguments = try command.map { try json(["command": $0]) }
+        var arguments = try command.map { try json(["command": $0]) }
+        // The native engine's read-only project tools.
+        if results.isEmpty, text.contains("list-files") { toolName = "list_files"; arguments = try json(["path": "."]) }
+        if results.isEmpty, text.contains("read-file") { toolName = "read_file"; arguments = try json(["path": "src/note.txt"]) }
+        let calling = arguments != nil
         let value: [String: Any]
         if responses {
             var output: [[String: Any]] = arguments.map { [["type": "function_call", "call_id": "call-1", "name": toolName, "arguments": $0]] }
@@ -195,9 +199,9 @@ final class LoopbackModelServer: @unchecked Sendable {
             }
             value = ["id": "resp-test", "status": "completed", "output": output]
         } else {
-            var message: [String: Any] = ["role": "assistant", "content": command != nil ? "我先检查文件。" : reply]
+            var message: [String: Any] = ["role": "assistant", "content": calling ? "我先检查文件。" : reply]
             if let arguments { message["tool_calls"] = [["id": "call-1", "type": "function", "function": ["name": toolName, "arguments": arguments]]] }
-            value = ["choices": [["message": message, "finish_reason": command != nil ? "tool_calls" : "stop"]]]
+            value = ["choices": [["message": message, "finish_reason": calling ? "tool_calls" : "stop"]]]
         }
         if body["stream"] as? Bool != true {
             let response = try json(value)
@@ -224,14 +228,14 @@ final class LoopbackModelServer: @unchecked Sendable {
             }
             _ = emit(["type": "response.completed", "response": value])
         } else {
-            for piece in pieces(command != nil ? "我先检查文件。" : reply) {
+            for piece in pieces(calling ? "我先检查文件。" : reply) {
                 guard emit(["choices": [["index": 0, "delta": ["content": piece], "finish_reason": NSNull()]]]) else { return }
             }
             if let arguments {
                 guard emit(["choices": [["index": 0, "delta": ["tool_calls": [["index": 0, "id": "call-1", "type": "function", "function": ["name": toolName, "arguments": String(arguments.prefix(5))]]]], "finish_reason": NSNull()]]]) else { return }
                 guard emit(["choices": [["index": 0, "delta": ["tool_calls": [["index": 0, "function": ["arguments": String(arguments.dropFirst(5))]]]], "finish_reason": NSNull()]]]) else { return }
             }
-            _ = emit(["choices": [["index": 0, "delta": [:], "finish_reason": command != nil ? "tool_calls" : "stop"]]])
+            _ = emit(["choices": [["index": 0, "delta": [:], "finish_reason": calling ? "tool_calls" : "stop"]]])
             _ = write(fd, "data: [DONE]\n\n")
         }
     }

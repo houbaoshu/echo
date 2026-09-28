@@ -183,5 +183,38 @@ import Testing
         #expect(!secrets.values.values.contains("blocked-secret"))
 
     }
+    /// The native-engine experiment is off unless saved, survives a reload, and picks which
+    /// engine's connection test runs.
+    @Test @MainActor static func nativeAgentExperimentSelectsTheConnectionTest() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("native-agent-settings-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("settings.json")
+        try Data(#"{"version":2,"activeProvider":"ollama","providers":{"ollama":{"model":{"baseURL":"http://localhost:11434/v1","model":"m"}}},"selectedPetID":"builtin:chiyan"}"#.utf8).write(to: url)
+        let rust = RecordingTester(), native = RecordingTester()
+        let settings = SettingsStore(url: url, secrets: ProviderSecrets(), tester: rust, nativeTester: native)
+        #expect(!settings.snapshot.nativeAgent, "Settings saved before the experiment leave it off")
+        settings.testConnection()
+        try await waitUntil { !settings.testing }
+        settings.setNativeAgent(true)
+        #expect(settings.snapshot.nativeAgent && settings.agentEngineNotice == nil)
+        settings.testConnection()
+        try await waitUntil { !settings.testing }
+        #expect(rust.count == 1 && native.count == 1)
+        #expect(SettingsStore(url: url, secrets: ProviderSecrets()).snapshot.nativeAgent, "The choice is saved")
+    }
+    @MainActor private static func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !condition() {
+            try #require(ContinuousClock.now < deadline)
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+    private final class RecordingTester: ConnectionTesting, @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        var count: Int { lock.withLock { calls } }
+        func test(configuration: ModelConfiguration, key: String) async throws { lock.withLock { calls += 1 } }
+    }
     private static func tryValue<T>(_ body: () throws -> T) throws -> T { try body() }
 }

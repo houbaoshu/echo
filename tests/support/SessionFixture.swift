@@ -14,7 +14,7 @@ import EchoAgentBridge
 
 /// The Agent engine a scenario runs against. Scenarios observe only `TaskStore`,
 /// `WorkspaceStore` and files on disk, so each engine supplies its own sources.
-/// Phase 0 has only the Rust engine; the native Foundation Models engine joins in Phase 1.
+/// The native engine talks to the same loopback server through Echo's own adapters.
 @MainActor struct AgentEngine: CustomStringConvertible {
     let description: String
     /// A source for the loopback model server, speaking the fixture's current protocol.
@@ -29,6 +29,18 @@ import EchoAgentBridge
                             resources: EchoTestResources.root)
         },
         settingsSource: { AgentTaskSource(settings: $0, resources: EchoTestResources.root) })
+
+    static let native = AgentEngine(
+        description: "native",
+        fixtureSource: { fixture in
+            let endpoint = AgentEndpoint(baseURL: fixture.server.baseURL, model: "fixture", apiKey: nil,
+                                         apiProtocol: fixture.protocolName == .responses ? .responses : .chatCompletions)
+            return AgentHarness(resolveModel: {
+                let transport = AgentTransport.make(for: endpoint)
+                return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: ledger, budget: budget) }
+            })
+        },
+        settingsSource: { AgentHarness(settings: $0) })
 }
 
 @MainActor final class SessionFixture {

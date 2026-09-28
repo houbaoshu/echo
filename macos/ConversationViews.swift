@@ -613,7 +613,7 @@ struct ConversationView: View {
                 }
                 if store.needsDirectory, let workspace {
                     HStack {
-                        Text("执行命令需要项目文件夹").font(WorkspaceStyle.caption)
+                        Text("需要项目文件夹才能继续").font(WorkspaceStyle.caption)
                         Menu("关联项目") {
                             ForEach(workspace.projects.filter(\.isAvailable)) { project in
                                 Button(project.name) { workspace.provideDirectory(URL(fileURLWithPath: project.path), conversationID: conversationID) }
@@ -893,6 +893,13 @@ struct AgentToolView: View {
                         if let stderr = json["stderr"] as? String, !stderr.isEmpty {
                             Text(stderr).font(.system(.caption, design: .monospaced)).foregroundStyle(WorkspaceStyle.warning).textSelection(.enabled)
                         }
+                        if let files = json["files"] as? [String] {
+                            Text(files.isEmpty ? "（空文件夹）" : files.joined(separator: "\n"))
+                                .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        }
+                        if let content = json["content"] as? String, !content.isEmpty {
+                            Text(content).font(.system(.caption, design: .monospaced)).lineLimit(40).textSelection(.enabled)
+                        }
                         if let detail = json["detail"] as? String ?? json["message"] as? String {
                             Text(detail).font(.caption).textSelection(.enabled)
                         }
@@ -902,12 +909,30 @@ struct AgentToolView: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
         } label: {
-            Label("\(tool.state) · \(tool.command.prefix(90))", systemImage: "terminal")
+            Label("\(tool.state) · \(action)\(tool.command.prefix(90))", systemImage: icon)
                 .font(.caption).lineLimit(2)
         }.padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
+    /// Bash cards show the command alone, as they always have; other tools say what they did.
+    private var action: String {
+        switch tool.tool {
+        case nil: ""
+        case "list_files": "列出 "
+        case "read_file": "读取 "
+        case let name?: "\(name) "
+        }
+    }
+    private var icon: String {
+        switch tool.tool {
+        case nil: "terminal"
+        case "list_files": "folder"
+        case "read_file": "doc.text"
+        default: "wrench.and.screwdriver"
+        }
+    }
     private func resultSummary(_ json: [String: Any]) -> String {
         var parts = [tool.state]
+        if json["truncated"] as? Bool == true { parts.append("已截断") }
         if let code = json["exit_code"] as? Int { parts.append("退出码 \(code)") }
         if json["timed_out"] as? Bool == true { parts.append("超时") }
         if json["stdout_truncated"] as? Bool == true { parts.append("stdout 已截断") }

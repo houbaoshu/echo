@@ -215,22 +215,9 @@ enum ProjectFileIO {
     }
     private struct ReadError: Error { let message: String }
     private static func descriptor(root: String, path: String, directory: Bool) throws -> Int32 {
-        let parts = path.split(separator: "/").map(String.init)
-        guard !path.hasPrefix("/"), !parts.contains(".."), !parts.contains(".") else {
-            throw ReadError(message: "路径不属于当前项目。")
-        }
-        var fd = Darwin.open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else { throw ReadError(message: errorMessage(errno)) }
-        for (index, part) in parts.enumerated() {
-            let flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK
-                | (index < parts.count - 1 || directory ? O_DIRECTORY : 0)
-            let next = openat(fd, part, flags)
-            let code = errno
-            close(fd)
-            guard next >= 0 else { throw ReadError(message: errorMessage(code)) }
-            fd = next
-        }
-        return fd
+        do { return try ProjectPath.open(root: root, path: path, directory: directory) }
+        catch .outsideProject { throw ReadError(message: "路径不属于当前项目。") }
+        catch .system(let code) { throw ReadError(message: errorMessage(code)) }
     }
     static func directory(root: String, path: String) -> ProjectDirectoryState {
         do {

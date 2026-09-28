@@ -451,3 +451,57 @@ extension VoiceTests {
         }
     }
 }
+
+extension VoiceTests {
+    /// The Live Voice contract on the native engine, with the real harness and a scripted model:
+    /// speech while the Agent works steers the same run, only the final reply is spoken and
+    /// exactly once, Stop pauses submission until cleanup, and Continue appends nothing.
+    @Test(.tags(.fast)) @MainActor static func nativeAgentVoiceTests() async throws {
+        _ = NSApplication.shared
+        let gate = ScriptGate(), stopGate = ScriptGate()
+        let model = ScriptedAgentModel { request, emit, index in
+            switch index {
+            case 0:
+                try await gate.wait()
+                try await emit.text("先说一句中间话")
+            case 1: try await emit.text("最终回复：\(request.userTexts.joined(separator: "，"))")
+            case 2: try await stopGate.wait()   // held until Stop cancels it
+            default: try await emit.text("继续后的回复")
+            }
+        }
+        let f = AgentVoiceFixture(source: AgentHarness(resolveModel: { model.factory }))
+        defer { f.shutdown() }
+        var completions: [String] = []
+        let subscription = f.store.lifecycle.sink { if case .reply(_, .completed(let text)) = $0 { completions.append(text) } }
+        defer { subscription.cancel() }
+        await f.start()
+        #expect(f.store.usesAgent)
+        f.speak("开始检查")
+        let run = try #require(f.store.task?.runID)
+        try await waitForAgentVoice("model request") { gate.arrivals == 1 }
+        #expect(f.voice.snapshot.recognition == .listening, "Recognition stays open during the model request")
+        f.speak("补充一", start: 300)
+        #expect(f.store.task?.runID == run && f.store.messages.last?.steering == "待处理", "Speech steers the same run")
+        gate.open()
+        try await waitForAgentVoice("final reply") { !f.store.isGenerating }
+        await tick()
+        #expect(completions == ["最终回复：开始检查，补充一"] && f.store.responseMessage?.content == completions.first)
+        #expect(f.synths.count == 1 && f.synths.first?.chunks == ["最终回复：开始检查，补充一"],
+                "Only the final reply is spoken, once; the text before the steering is not")
+        #expect(f.store.messages.filter { $0.role == .assistant }.map(\.content) == ["先说一句中间话", "最终回复：开始检查，补充一"])
+
+        // The reply is still being spoken; the next run starts from the composer, as text does during a call.
+        #expect(f.workspace.send("再查一次", conversationID: f.conversation.id))
+        try await waitForAgentVoice("second run") { f.store.isGenerating && stopGate.arrivals == 1 }
+        f.workspace.stop(conversationID: f.conversation.id)
+        #expect(f.store.task?.status == .stopping && !f.store.canSubmit)
+        #expect(!f.workspace.send("停止期间", conversationID: f.conversation.id), "Nothing starts during cleanup")
+        try await waitForAgentVoice("stopped") { f.store.task?.status == .stopped }
+        await tick()
+        #expect(f.voice.isActive && f.store.canSubmit && f.synths.count == 1, "A stopped turn is not spoken and the call goes on")
+        let users = f.store.messages.filter { $0.role == .user }.count
+        #expect(f.workspace.retry(conversationID: f.conversation.id))
+        try await waitForAgentVoice("continued") { !f.store.isGenerating }
+        #expect(f.store.messages.filter { $0.role == .user }.count == users && f.store.responseMessage?.content == "继续后的回复")
+    }
+}

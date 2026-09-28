@@ -160,11 +160,17 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var entryID: UInt64
     var turnID: UInt64
     var afterMessageID: UUID?
+    /// For bash, the command; for other tools, what the card shows of the call.
     var command: String
     var result: String?
     var state = "待执行"
     var directory: String?
+    /// The tool's name; nil for bash, the only tool before the native engine.
+    var tool: String?
 }
+
+/// Which Agent engine drives a conversation. A conversation keeps its engine for life.
+enum AgentEngineKind: String, Codable, Sendable { case rust, native }
 
 @MainActor final class TaskStore: ObservableObject {
     let lifecycle = PassthroughSubject<TaskLifecycleEvent, Never>()
@@ -206,9 +212,12 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var cancelDirectoryWait: (() -> Void)?
     var releaseDirectory: (() -> Void)?
     var agentLoadError: String?
-    var usesAgent: Bool { source is any AgentSessionSource }
+    var usesAgent: Bool { source is any AgentSessionSource || source is AgentHarness }
     private var agent: (any AgentSessionSource)? { source as? any AgentSessionSource }
-    private let source: (any TaskSource)?
+    /// The native engine, when this conversation uses it.
+    private var harness: AgentHarness? { source as? AgentHarness }
+    var engine: AgentEngineKind? { harness != nil ? .native : agent != nil ? .rust : nil }
+    private var source: (any TaskSource)?
     private var retired = false
     private var responseMessageID: UUID?
     private var activeRequestMessages: [ConversationMessage] = []
@@ -231,14 +240,18 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         var agentProjection: [AgentDisplayEntry]? = nil
         var savedCheckpoint: AgentCheckpointID? = nil
         var deliveredReplies: Set<UInt64>? = nil
+        /// A hint in the manifest; the native sidecar's existence is what decides the engine.
+        var engine: AgentEngineKind? = nil
+        var native: NativeAgentState? = nil
     }
     var snapshot: Snapshot {
         Snapshot(task: task, messages: messages, mainDraft: mainDraft, followUpDraft: followUpDraft,
                  activityDismissed: activityDismissed, activitiesCollapsed: activitiesCollapsed,
                  agentHistory: agentHistory, tools: usesAgent ? tools : nil, agentStored: agentStored, loadError: agentLoadError,
-                 inputReceipts: usesAgent ? inputReceipts : nil, pendingInputs: usesAgent ? pendingInputs : nil,
-                 agentProjection: usesAgent ? agentProjection : nil, savedCheckpoint: savedCheckpoint,
-                 deliveredReplies: usesAgent ? deliveredReplies : nil)
+                 inputReceipts: agent != nil ? inputReceipts : nil, pendingInputs: agent != nil ? pendingInputs : nil,
+                 agentProjection: agent != nil ? agentProjection : nil, savedCheckpoint: savedCheckpoint,
+                 deliveredReplies: agent != nil ? deliveredReplies : nil,
+                 engine: engine, native: harness?.persistentState)
     }
     convenience init(snapshot: Snapshot, source: (any TaskSource)?) {
         self.init(source: source)
@@ -259,31 +272,36 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         savedCheckpoint = snapshot.savedCheckpoint
         deliveredReplies = snapshot.deliveredReplies ?? []
         if usesAgent, task?.status == .completed { task?.summary = "已完成" }
+        // The native engine rebuilds messages and tools from its transcript, closing calls left without a result.
+        harness?.restore(snapshot.native)
         for index in tools.indices where tools[index].result == nil { tools[index].state = "执行结果未知" }
         for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
-        // Only legacy messages lack completion metadata. Remove the old canned
-        // source's output before any history is sent to a real model.
-        let canned = [
-            "已检查现有素材，保留当前宠物的动画帧", "已检查现有素材，保留赤焰的动画帧",
-            "正在核对悬停、方向拖动和窗口跟随效果", "正在整理演示结果与交互摘要",
-            "演示任务已停止，后续进展已取消。你可以继续跟进。",
-            "演示已完成。动画素材保持不变，可以继续跟进或再演示一次。"
-        ]
-        messages.removeAll { message in
-            guard message.legacyWithoutCompletion else { return false }
-            if message.role == .user {
-                return ["用当前宠物素材，演示桌宠的动画与交互。", "用现有赤焰素材，演示桌宠的动画与交互。"].contains(message.content)
+        // Only legacy messages lack completion metadata. Remove the old canned source's output
+        // before any history is sent to a real model. The native engine rebuilt its messages from
+        // its transcript above and never held demo output, so it skips this.
+        if harness == nil {
+            let canned = [
+                "已检查现有素材，保留当前宠物的动画帧", "已检查现有素材，保留赤焰的动画帧",
+                "正在核对悬停、方向拖动和窗口跟随效果", "正在整理演示结果与交互摘要",
+                "演示任务已停止，后续进展已取消。你可以继续跟进。",
+                "演示已完成。动画素材保持不变，可以继续跟进或再演示一次。"
+            ]
+            messages.removeAll { message in
+                guard message.legacyWithoutCompletion else { return false }
+                if message.role == .user {
+                    return ["用当前宠物素材，演示桌宠的动画与交互。", "用现有赤焰素材，演示桌宠的动画与交互。"].contains(message.content)
+                }
+                return canned.contains(message.content) || message.content.hasPrefix("我会用本地演示数据展示任务进展。\n")
+                    || message.content.hasPrefix("已收到跟进：")
+                    || (message.content.hasPrefix("演示完成：已将「") && message.content.hasSuffix("」加入本地跟进记录。"))
             }
-            return canned.contains(message.content) || message.content.hasPrefix("我会用本地演示数据展示任务进展。\n")
-                || message.content.hasPrefix("已收到跟进：")
-                || (message.content.hasPrefix("演示完成：已将「") && message.content.hasSuffix("」加入本地跟进记录。"))
-        }
-        if messages != snapshot.messages {
-            if messages.isEmpty { task = nil }
-            else {
-                task?.title = String((messages.first(where: { $0.role == .user })?.content ?? "新会话").prefix(80))
-                task?.status = .interrupted
-                task?.summary = "历史演示已清理，可继续会话。"
+            if messages != snapshot.messages {
+                if messages.isEmpty { task = nil }
+                else {
+                    task?.title = String((messages.first(where: { $0.role == .user })?.content ?? "新会话").prefix(80))
+                    task?.status = .interrupted
+                    task?.summary = "历史演示已清理，可继续会话。"
+                }
             }
         }
         // Older requests created no assistant message until their first text arrived.
@@ -315,11 +333,27 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         activitiesCollapsed = snapshot.activitiesCollapsed
     }
 
-    init(source: (any TaskSource)? = nil) { self.source = source }
+    init(source: (any TaskSource)? = nil) {
+        self.source = source
+        harness?.host = self
+    }
+    /// A conversation that has never been used takes the engine chosen when it is first sent to.
+    var isPristine: Bool {
+        messages.isEmpty && tools.isEmpty && task == nil && agentLoadError == nil && !retired
+    }
+    func adoptSource(_ next: (any TaskSource)?) {
+        guard isPristine else { return }
+        source?.cancel()
+        source = next
+        harness?.host = self
+    }
     var activityCount: Int { task == nil || activityDismissed ? 0 : 1 }
     var isActivityVisible: Bool { activityCount > 0 && !activitiesCollapsed }
 
     var canRetry: Bool {
+        if let harness {
+            return !retired && agentLoadError == nil && [.failed, .stopped, .interrupted].contains(task?.status) && harness.continuable
+        }
         if usesAgent {
             return !retired && agentLoadError == nil && [.failed, .stopped, .interrupted].contains(task?.status) && agentContinuable
         }
@@ -339,7 +373,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         return last.role == .user
     }
     /// A short, single-line step for the pet card and voice status.
-    static func toolSummary(_ command: String) -> String {
+    nonisolated static func toolSummary(_ command: String) -> String {
         let line = command.split(whereSeparator: \.isNewline).first.map(String.init) ?? command
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         let preview = trimmed.count > 60 ? String(trimmed.prefix(60)) + "…" : trimmed
@@ -422,6 +456,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     @discardableResult func retry() -> Bool {
         guard !retired, canRetry else { return false }
+        if harness != nil { return beginNative(text: nil) }
         if usesAgent { return beginAgent(text: nil) }
         source?.cancel()
         task?.runID = UUID(); task?.status = .running; task?.summary = "正在等待模型回复…"
@@ -446,7 +481,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             guard task?.status != .stopping else { return }
             task?.status = .stopping; task?.summary = "正在停止…"
             pendingOperation = nil; needsDirectory = false; waitingForProject = false
-            cancelDirectoryWait?(); agent?.cancel(); return
+            cancelDirectoryWait?(); agent?.cancel(); harness?.stop(); return
         }
         // Close the event gate before cancellation, including synchronous callbacks.
         task?.status = .stopped; task?.summary = "已停止 · 可继续跟进"
@@ -489,6 +524,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         if let agent {
             cancelDirectoryWait?()
             agent.close(afterCleanup: releaseDirectory ?? {})
+        } else if let harness {
+            harness.close(afterCleanup: {})
         } else { source?.cancel() }
         onUserAction = nil; onVisibilityChange = nil
     }
@@ -502,6 +539,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     private func sendAgent(_ text: String) -> Bool {
         guard canSubmit, !text.isEmpty else { return false }
+        if harness != nil { return isGenerating ? steerNative(text) : beginNative(text: text) }
         if isGenerating {
             let input = appendInput(text)
             pendingOperation = nil; cancelDirectoryWait?(); waitingForProject = false; needsDirectory = false
@@ -570,7 +608,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             notice = storageFailure; pendingOperation = nil; cancelDirectoryWait?()
             task?.summary = storageFailure!
             if let checkpointID { try? agent?.control(.checkpointFailed(checkpointID)) }
-            if isGenerating { task?.status = .stopping; agent?.cancel() }
+            if isGenerating { task?.status = .stopping; agent?.cancel(); harness?.stop() }
             else { task?.status = .failed }
             return false
         }
@@ -591,6 +629,10 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
 
     func provideDirectory(_ url: URL?) {
         guard needsDirectory, task?.status == .running else { return }
+        if let harness {
+            needsDirectory = false; task?.summary = url == nil ? "正在取消未执行的调用…" : "正在准备工具…"
+            harness.provideDirectory(url); return
+        }
         do {
             try agent?.control(.provideDirectory(url?.path))
             needsDirectory = false; task?.summary = url == nil ? "正在取消未执行的调用…" : "正在准备工具…"
@@ -766,5 +808,110 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         messages = projectedMessages + unresolved
         tools = projectedTools
         importingLegacy = false
+    }
+
+    // MARK: - Native engine
+
+    private func beginNative(text: String?) -> Bool {
+        guard let harness, !harness.isRunning else { return false }
+        storageFailure = nil; notice = nil; responseMessageID = nil
+        if task == nil { task = .init(id: UUID(), runID: UUID(), title: String((text ?? "继续处理").prefix(80)), summary: "", status: .running) }
+        task?.runID = UUID(); task?.status = .running; task?.summary = "正在请求模型…"
+        if let text {
+            let message = ConversationMessage(role: .user, content: text)
+            messages.append(message)
+            harness.enqueue(messageID: message.id, text: text)
+        }
+        activityDismissed = false; onUserAction?(); lifecycle.send(.started(task!.runID))
+        // The input is saved before any model request can see it.
+        guard saveAgent() else { task?.status = .failed; return false }
+        harness.begin()
+        return true
+    }
+
+    /// Input sent while a turn runs goes before the turn's next model request.
+    private func steerNative(_ text: String) -> Bool {
+        guard let harness else { return false }
+        var message = ConversationMessage(role: .user, content: text)
+        message.steering = "待处理"; messages.append(message)
+        harness.enqueue(messageID: message.id, text: text)
+        needsDirectory = false; waitingForProject = false
+        onUserAction?()
+        return saveAgent()
+    }
+}
+
+extension TaskStore: AgentHarnessHost {
+    var harnessMessages: [ConversationMessage] { messages }
+    var harnessTools: [AgentToolRecord] { tools }
+    func harnessProject(messages: [ConversationMessage], tools: [AgentToolRecord]) {
+        guard !retired else { return }
+        if self.messages != messages { self.messages = messages }
+        if self.tools != tools { self.tools = tools }
+    }
+    func harnessStream(operation: UInt64, text: String, toolCall: Bool, final: Bool) {
+        guard !retired else { return }
+        if final {
+            if toolCall { replyStream.withdraw(operation) } else { replyStream.complete(operationID: operation, text: text) }
+        } else if task?.status == .running {
+            replyStream.receive(operationID: operation, text: text, toolCall: toolCall)
+        }
+    }
+    func harnessStatus(_ summary: String) {
+        guard !retired, task?.status == .running else { return }
+        task?.summary = summary
+    }
+    func harnessNeedsDirectory(_ needed: Bool) {
+        guard !retired else { return }
+        let value = needed && task?.status == .running
+        if needsDirectory != value { needsDirectory = value }
+        if value { task?.summary = "等待选择项目文件夹" }
+    }
+    func harnessProjectDirectory() -> URL? { projectDirectory?() }
+    func harnessSave() throws {
+        guard !retired else { throw CancellationError() }
+        do { try checkpoint?(snapshot) }
+        catch {
+            let failure = "会话保存失败，已停止后续执行：\(error.localizedDescription)"
+            storageFailure = failure; notice = failure
+            if task?.status == .running { task?.summary = failure }
+            throw SettingsError(failure)
+        }
+    }
+    func harnessFinish(_ ending: AgentTurnEnding) {
+        guard !retired, isGenerating, let runID = task?.runID else { return }
+        needsDirectory = false; waitingForProject = false
+        for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
+        let stoppedSummary = harness?.continuable == true ? "已停止 · 可继续处理" : "已停止"
+        var event: TaskLifecycleEvent
+        switch ending {
+        case .completed(let reply, let text):
+            responseMessageID = reply
+            if task?.status == .stopping {
+                // A Stop admitted while the reply was applied lands on a completed turn.
+                task?.status = .stopped; task?.summary = stoppedSummary; event = .stopped(runID)
+            } else {
+                task?.status = .completed; task?.summary = "已完成"; event = .reply(runID, .completed(text))
+            }
+        case .stopped(let reply):
+            if let reply { responseMessageID = reply } else { replyStream.abandon() }
+            task?.status = .stopped; task?.summary = stoppedSummary; event = .stopped(runID)
+        case .failed(let error, let showNotice):
+            replyStream.abandon()
+            if showNotice { notice = error }
+            task?.status = .failed; task?.summary = error; event = .reply(runID, .failed(error))
+        }
+        if let storageFailure {
+            replyStream.abandon()
+            task?.status = .failed; task?.summary = storageFailure; event = .reply(runID, .failed(storageFailure))
+        }
+        // The ending joins the saved conversation before anyone is told.
+        do { try checkpoint?(snapshot) }
+        catch {
+            let failure = "会话保存失败，已停止后续执行：\(error.localizedDescription)"
+            storageFailure = failure; notice = failure
+            task?.status = .failed; task?.summary = failure; event = .reply(runID, .failed(failure))
+        }
+        lifecycle.send(event)
     }
 }

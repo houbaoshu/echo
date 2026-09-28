@@ -94,7 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.pets = pets
             let store = try pets.loadInitial()
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: WorkspacePersistence.defaultURL),
-                                           sourceFactory: { AgentTaskSource(settings: settings) })
+                                           sourceFactory: { AgentTaskSource(settings: settings) },
+                                           nativeSourceFactory: { AgentHarness(settings: settings) },
+                                           prefersNative: { settings.snapshot.nativeAgent })
             // Live Voice's planet. It loads its sprite only while a call is running, so the app
             // starts with nothing decoded beyond the pet itself.
             let planets = PlanetStore(settings: settings,

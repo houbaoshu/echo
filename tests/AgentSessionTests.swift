@@ -1,4 +1,5 @@
 import Combine
+import EchoAgentBridge
 import Foundation
 import Testing
 
@@ -150,7 +151,7 @@ extension EchoIntegrationScenarios {
         #expect(chat.store.task?.status == .completed && chat.store.tools.isEmpty == (seed != "tool"))
         let expected = chat.store.snapshot
         workspace.shutdown()
-        let historyURL = persistence.sessionURL(chat.id)
+        let historyURL = persistence.sessionURL(chat.id, engine: chat.store.engine)
         let original = try Data(contentsOf: historyURL)
         let corrupt = Data("{invalid history".utf8)
         if failure == "missing" {
@@ -226,7 +227,8 @@ extension EchoIntegrationScenarios {
       try #require(chat.store.send("hello"))
       try await wait("seed saved history") { !chat.store.isGenerating }
       f.workspace.flush()
-      try FileManager.default.moveItem(at: f.persistence.sessionURL(chat.id), to: f.root.appendingPathComponent("preserved-chat.json"))
+      try FileManager.default.moveItem(at: f.persistence.sessionURL(chat.id, engine: chat.store.engine),
+                                       to: f.root.appendingPathComponent("preserved-chat.json"))
       let unreadable = WorkspaceStore(persistence: f.persistence, sourceFactory: { f.source() })
       defer { unreadable.shutdown() }
       #expect(unreadable.conversation(id: chat.id)?.store.agentLoadError != nil)
@@ -303,6 +305,78 @@ extension EchoIntegrationScenarios {
         #expect(summaries["stream-error"] == (api == .responses
                 ? "model protocol error: invalid or incomplete Responses response"
                 : "model protocol error: model stream reported an error"))
+      }
+    }
+
+    // MARK: Chat scenarios on the native engine (Phase 1)
+
+    @Test(arguments: [AgentModel.ProtocolName.chat_completions, .responses])
+    static func nativeDirectAnswerAndStopRules(api: AgentModel.ProtocolName) async throws {
+      try await withSession(.native) { f in f.protocolName = api; try await ChatScenarios.directAnswerAndStopRules(f) }
+    }
+    @Test static func nativeStopBeforeReply() async throws {
+      try await withSession(.native) { f in try await ChatScenarios.stopBeforeReply(f) }
+    }
+    @Test static func nativeInvalidSettingsCanReopen() async throws {
+      try await withSession(.native) { f in try await ChatScenarios.reopenAfterInvalidSettings(f) }
+    }
+    @Test static func nativeHistoryReadRecovery() async throws {
+      try await withSession(.native) { f in
+        try await ChatScenarios.historyReadRecovery(f, seed: "hello") { recovered, expected in
+          let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+          #expect(try! encoder.encode(recovered.snapshot.native) == (try! encoder.encode(expected.native)),
+                  "The transcript is restored as saved")
+        }
+      }
+    }
+    @Test static func nativeInitialSaveFailurePreservesDraft() async throws {
+      try await withSession(.native) { f in try await ChatScenarios.initialSaveFailureKeepsDraft(f) }
+    }
+    @Test static func nativeMissingSidecarBlocksSend() async throws {
+      try await withSession(.native) { f in try await ChatScenarios.missingSidecarBlocksSend(f) }
+    }
+    /// The native adapters keep the Rust engine's wording.
+    @Test(arguments: [AgentModel.ProtocolName.chat_completions, .responses])
+    static func nativeModelErrorsAreSanitized(api: AgentModel.ProtocolName) async throws {
+      try await withSession(.native) { f in
+        f.protocolName = api
+        let summaries = try await ChatScenarios.modelErrorsAreSanitized(f)
+        #expect(summaries["http-500"] == "model API returned HTTP 500 Internal Server Error")
+        #expect(summaries["context-length"]
+                == "model protocol error: context length exceeded; history is retained, inspect it or start a new conversation")
+        #expect(summaries["stream-error"] == (api == .responses
+                ? "model protocol error: invalid or incomplete Responses response"
+                : "model protocol error: model stream reported an error"))
+      }
+    }
+    /// Read-only project tools over both wire protocols, streamed and not: the call, its record,
+    /// its real result in the next request, and the reply after it. No Rust session is created.
+    @Test(arguments: [AgentModel.ProtocolName.chat_completions, .responses])
+    static func nativeReadToolsRoundTrip(api: AgentModel.ProtocolName) async throws {
+      try await withSession(.native) { f in
+        f.protocolName = api
+        let project = f.root.appendingPathComponent("read-project")
+        try FileManager.default.createDirectory(at: project.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try Data("fixture text\n".utf8).write(to: project.appendingPathComponent("src/note.txt"))
+        let chat = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
+        #expect(chat.store.send("list-files please"))
+        try await wait("list files") { !chat.store.isGenerating }
+        #expect(chat.store.task?.status == .completed, "\(chat.store.task?.summary ?? "")")
+        #expect(chat.store.tools.map(\.tool) == ["list_files"] && chat.store.tools.first?.state == "执行结束")
+        #expect(chat.store.tools.first?.result == #"{"files":["src/"],"truncated":false}"#)
+        #expect(chat.store.messages.last?.content == "最终回复：已读取真实工具结果")
+        let resultRequest = try #require(f.server.requests.last.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        let items = resultRequest[api == .responses ? "input" : "messages"] as? [[String: Any]] ?? []
+        #expect(items.contains { ($0["output"] as? String ?? $0["content"] as? String) == #"{"files":["src/"],"truncated":false}"# },
+                "The real result reaches the model")
+
+        // The fixture calls a tool only before any result is in the conversation.
+        let reader = f.workspace.newConversation(projectID: chat.projectID)
+        #expect(reader.store.send("read-file please"))
+        try await wait("read file") { !reader.store.isGenerating }
+        #expect(reader.store.tools.last?.tool == "read_file" && reader.store.tools.last?.command == "src/note.txt")
+        #expect(reader.store.tools.last?.result == #"{"content":"fixture text","start_line":1,"truncated":false}"#)
+        #expect(echo_agent_active_sessions() == 0, "Read-only tools never start the Rust core")
       }
     }
 
@@ -398,13 +472,14 @@ extension EchoIntegrationScenarios {
       }
     }
 
-    // MARK: Connection test (Rust tester; the native tester joins in Phase 1)
+    // MARK: Connection test, per engine
 
-    @Test static func connectionCapabilities() async throws {
+    @Test(arguments: ["rust", "native"]) static func connectionCapabilities(engine: String) async throws {
       try await withSession { f in
         let temp = f.root
         let port = String(f.server.port)
-        let tester = ModelConnectionTester(resources: EchoTestResources.root)
+        let tester: any ConnectionTesting = engine == "native" ? NativeConnectionTester()
+          : ModelConnectionTester(resources: EchoTestResources.root)
         let forbidden = temp.appendingPathComponent("probe-must-not-execute")
         for api in ModelAPIProtocol.allCases {
           var config = ModelConfiguration(

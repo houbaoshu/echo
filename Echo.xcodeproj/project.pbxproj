@@ -307,6 +307,62 @@
 			isa = PBXBuildFile;
 			fileRef = C2F9514D5D67A08DAB8E67DE;
 		};
+		534B7D287D089271F8634C32 = {
+			isa = PBXBuildFile;
+			fileRef = CF3DABC0D10122CBD030B84D;
+		};
+		65CEEA0E5FE927DC8D6B4C8F = {
+			isa = PBXBuildFile;
+			fileRef = CF3DABC0D10122CBD030B84D;
+		};
+		82EA4910FA0A21C0579F3E29 = {
+			isa = PBXBuildFile;
+			fileRef = EA68E8426039B5A782DA9770;
+		};
+		139A43442A7A20467E021EAD = {
+			isa = PBXBuildFile;
+			fileRef = EA68E8426039B5A782DA9770;
+		};
+		26BC95D8A7B3E4F129E9AD9F = {
+			isa = PBXBuildFile;
+			fileRef = 3526F0A888174738325FD582;
+		};
+		BF3839A481C8EB21C796E06B = {
+			isa = PBXBuildFile;
+			fileRef = 3526F0A888174738325FD582;
+		};
+		0BB27615F70BEF3BF486FD84 = {
+			isa = PBXBuildFile;
+			fileRef = CF0CDA52A4EF0DA66805FDBB;
+		};
+		C58144D7E90E1F5E87E8A3FC = {
+			isa = PBXBuildFile;
+			fileRef = CF0CDA52A4EF0DA66805FDBB;
+		};
+		F1DA05F3182E450B41CD433D = {
+			isa = PBXBuildFile;
+			fileRef = 655F5CFF89FFBD3E8F8740CB;
+		};
+		C622A7EBBE746BA108EA86AA = {
+			isa = PBXBuildFile;
+			fileRef = 655F5CFF89FFBD3E8F8740CB;
+		};
+		DDBEF3D5359192AC5896BA28 = {
+			isa = PBXBuildFile;
+			fileRef = 474D9F2D95791491A7B3D4E6;
+		};
+		3B42CB39447CC127369519D4 = {
+			isa = PBXBuildFile;
+			fileRef = 0A943A0226E44527A68563F2;
+		};
+		95CCEB857B3C1FC166E82D2E = {
+			isa = PBXBuildFile;
+			fileRef = 655F5CFF89FFBD3E8F8740CB;
+		};
+		4BC45D0F3EB64F8C20E7ACCA = {
+			isa = PBXBuildFile;
+			fileRef = 655F5CFF89FFBD3E8F8740CB;
+		};
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -767,6 +823,48 @@
 			sourceTree = "<group>";
 			lastKnownFileType = sourcecode.swift;
 		};
+		CF3DABC0D10122CBD030B84D = {
+			isa = PBXFileReference;
+			path = macos/AgentHarness.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		EA68E8426039B5A782DA9770 = {
+			isa = PBXFileReference;
+			path = macos/AgentTools.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		3526F0A888174738325FD582 = {
+			isa = PBXFileReference;
+			path = macos/AgentLanguageModels.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		CF0CDA52A4EF0DA66805FDBB = {
+			isa = PBXFileReference;
+			path = macos/ProjectPathAccess.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		655F5CFF89FFBD3E8F8740CB = {
+			isa = PBXFileReference;
+			path = tests/support/ScriptedAgentModel.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		474D9F2D95791491A7B3D4E6 = {
+			isa = PBXFileReference;
+			path = tests/AgentModelTests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
+		0A943A0226E44527A68563F2 = {
+			isa = PBXFileReference;
+			path = tests/AgentHarnessTests.swift;
+			sourceTree = "<group>";
+			lastKnownFileType = sourcecode.swift;
+		};
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -983,6 +1081,7 @@
 				89D5CB17C33E07630F4519C6,
 				6BF4D83C4FDB9149833754EA,
 				C2F9514D5D67A08DAB8E67DE,
+				655F5CFF89FFBD3E8F8740CB,
 			);
 			sourceTree = "<group>";
 		};
@@ -1040,6 +1139,8 @@
 				E11400000000000000000F00,
 				E11400000000000000000F01,
 				E11400000000000000000F02,
+				0A943A0226E44527A68563F2,
+				474D9F2D95791491A7B3D4E6,
 				E11300000000000000000F00,
 				E11300000000000000000F01,
 				E11300000000000000000F02,
@@ -1049,6 +1150,10 @@
 				E11100000000000000000F01,
 				E11000000000000000000F02,
 				E11000000000000000000F03,
+				CF0CDA52A4EF0DA66805FDBB,
+				3526F0A888174738325FD582,
+				EA68E8426039B5A782DA9770,
+				CF3DABC0D10122CBD030B84D,
 				E11000000000000000000F05,
 				E11000000000000000000F06,
 				E11000000000000000000F07,
@@ -1785,6 +1890,10 @@
 		E110000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				0BB27615F70BEF3BF486FD84,
+				26BC95D8A7B3E4F129E9AD9F,
+				82EA4910FA0A21C0579F3E29,
+				534B7D287D089271F8634C32,
 				E11000000000000000000B00,
 				E11000000000000000000B01,
 				E11000000000000000000B02,
@@ -1800,6 +1909,10 @@
 		E111000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				C58144D7E90E1F5E87E8A3FC,
+				BF3839A481C8EB21C796E06B,
+				139A43442A7A20467E021EAD,
+				65CEEA0E5FE927DC8D6B4C8F,
 				E11100000000000000000B00,
 				E11100000000000000000B01,
 				E11100000000000000000B02,
@@ -1814,6 +1927,7 @@
 		E112000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				C622A7EBBE746BA108EA86AA,
 				E11200000000000000000B00,
 				94832A520768771E7285B39A,
 				775CBE322F97683D29D5475B,
@@ -1830,6 +1944,7 @@
 		E113000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				4BC45D0F3EB64F8C20E7ACCA,
 				E11300000000000000000B00,
 				E11300000000000000000B01,
 				E11300000000000000000B02,
@@ -1844,6 +1959,9 @@
 		E114000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				3B42CB39447CC127369519D4,
+				DDBEF3D5359192AC5896BA28,
+				F1DA05F3182E450B41CD433D,
 				E11400000000000000000B00,
 				E11400000000000000000B01,
 				E11400000000000000000B02,
@@ -1854,6 +1972,7 @@
 		E115000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				95CCEB857B3C1FC166E82D2E,
 				E11500000000000000000B00,
 				EE2B5A483F67D04C0F2A9F6A,
 				95F085AA10CDF3FF04E568AF,
