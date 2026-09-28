@@ -102,7 +102,7 @@ enum VoiceCaptureWatchdog {
     private var taskObservation: AnyCancellable?
     private var handledFinalRunID: UUID?
     private var submissionHadAudio = false
-    // The legacy TaskSource adapter has no steering API. Production sessions use AgentSessionSource.
+    // The plain TaskSource adapter has no steering API. Production sessions use the Agent.
     private var usesAgent: Bool { store?.usesAgent == true }
     private var dictationObservation: AnyCancellable?
     private var startup: Task<Void, Never>?

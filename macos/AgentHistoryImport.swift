@@ -6,6 +6,18 @@ import FoundationModels
 // when it restores one (`conversation.rs` `from_history`, `restore.rs`). Pure Swift: importing
 // never needs the Rust core.
 
+/// Input as the Rust engine recorded it: a user message's stable ID and text.
+struct AgentInput: Codable, Equatable {
+    var client_message_id: String
+    var text: String
+}
+/// Which history entry and turn the Rust engine gave an input.
+struct AgentInputReceipt: Codable, Equatable {
+    var client_message_id: String
+    var message_id: UInt64
+    var turn_id: UInt64
+}
+
 enum AgentHistoryImport {
     struct Failure: Error, LocalizedError, Equatable {
         let reason: String
@@ -22,6 +34,23 @@ enum AgentHistoryImport {
         var requestMessages: [ConversationMessage]
         var receipts: [AgentInputReceipt]
         var pendingInputs: [AgentInput]
+    }
+
+    /// A conversation as the Rust engine saved it — v1 history, or the visible messages of one it
+    /// never ran — after the cleanup `TaskStore` applies when it restores one (old demo output).
+    @MainActor static func native(importing saved: TaskStore.Snapshot) throws(Failure) -> NativeAgentState {
+        let cleaned = TaskStore(snapshot: saved, source: nil)
+        let pending = saved.pendingInputs ?? saved.messages.filter { $0.role == .user && $0.coreID == nil }.map {
+            AgentInput(client_message_id: $0.id.uuidString, text: $0.content)
+        }
+        return try native(.init(history: saved.agentHistory, messages: cleaned.messages, requestMessages: cleaned.requestMessages,
+                                receipts: saved.inputReceipts ?? [], pendingInputs: pending))
+    }
+
+    /// Whether a restored conversation holds history the engine has not imported yet.
+    static func needsImport(_ saved: TaskStore.Snapshot) -> Bool {
+        saved.native == nil && saved.loadError == nil
+            && (saved.agentHistory != nil || saved.agentStored == true || !saved.messages.isEmpty)
     }
 
     static func native(_ source: Source) throws(Failure) -> NativeAgentState {

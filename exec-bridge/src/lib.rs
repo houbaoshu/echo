@@ -1,12 +1,8 @@
 //! Process execution for Echo's native Agent engine. Each handle runs one bash command with
-//! Mini Agent's production `LocalConversationExecutor` (the configuration `agent-bridge` uses)
-//! and reports once, after cleanup, through a C callback. See `include/echo_exec.h`.
-use mini_agent::{
-    conversation::runner::{
-        CancellationSignal, ConversationExecutor, ExecutionOutcome, LocalConversationExecutor,
-        LocalExecutorConfig,
-    },
-    types::Action,
+//! `mini-agent-exec`'s local executor and reports once, after cleanup, through a C callback.
+//! See `include/echo_exec.h`.
+use mini_agent_exec::{
+    Action, CancellationSignal, ExecutionErrorCode, ExecutionOutcome, LocalExecutor, LocalExecutorConfig,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -69,7 +65,7 @@ fn error_out(error: *mut *mut c_char, message: &str) {
 }
 
 async fn run(request: Request, cancellation: CancellationSignal) -> Value {
-    let executor = LocalConversationExecutor::new(LocalExecutorConfig {
+    let executor = LocalExecutor::new(LocalExecutorConfig {
         shell: "/bin/bash".into(),
         timeout: Duration::from_millis(request.timeout_ms.unwrap_or(30_000)),
         max_output_bytes: request.max_output_bytes.unwrap_or(64 * 1024),
@@ -86,12 +82,14 @@ async fn run(request: Request, cancellation: CancellationSignal) -> Value {
             Err(_) => failure("execution_failed", "command execution failed"),
         },
         Ok(ExecutionOutcome::Cancelled) => json!({"version": 1, "outcome": "cancelled"}),
-        Err(error) => {
-            let error = serde_json::to_value(&error).unwrap_or(Value::Null);
-            let code = error["code"].as_str().unwrap_or("execution_failed").to_owned();
-            let message = error["message"].as_str().unwrap_or("command execution failed").to_owned();
-            failure(&code, &message)
-        }
+        Err(error) => failure(
+            match error.code {
+                ExecutionErrorCode::InvalidRequest => "invalid_request",
+                ExecutionErrorCode::InvalidDirectory => "invalid_directory",
+                ExecutionErrorCode::ExecutionFailed => "execution_failed",
+            },
+            &error.message,
+        ),
     }
 }
 

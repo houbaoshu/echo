@@ -1,5 +1,5 @@
 [workspace]
-members = ["runtime", "agent-bridge", "exec-bridge"]
+members = ["runtime", "exec-bridge"]
 resolver = "3"
 
 [profile.release]

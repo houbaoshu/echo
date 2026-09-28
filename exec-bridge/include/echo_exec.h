@@ -5,7 +5,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* One shell command per handle, run by Mini Agent's LocalConversationExecutor
+/* One shell command per handle, run by mini-agent-exec's LocalExecutor
  * (/bin/bash --noprofile --norc -c, inherited environment, stdin null, per-stream
  * output limit, timeout, and every descendant killed when the command ends).
  *

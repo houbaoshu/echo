@@ -178,3 +178,94 @@ extension LanguageModelExecutorGenerationRequest {
         }
     }
 }
+
+/// A model the test answers request by request: every model request waits until the test says
+/// what the model returns. Stop cancels a waiting request, as it cancels a real one.
+final class PuppetModel: Sendable {
+    enum Answer: Sendable {
+        case text(String)
+        case call(name: String, arguments: String)
+        case fail(AgentModelError)
+        /// Text and calls pushed live by the test until it finishes the stream.
+        case stream(PuppetStream)
+    }
+    private final class Queue: Sendable {
+        let waiting = Mutex<[(id: UUID, continuation: CheckedContinuation<Answer, any Error>)]>([])
+        func next() async throws -> Answer {
+            let id = UUID()
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    if Task.isCancelled { continuation.resume(throwing: CancellationError()); return }
+                    waiting.withLock { $0.append((id, continuation)) }
+                }
+            } onCancel: {
+                let waiter = waiting.withLock { list -> CheckedContinuation<Answer, any Error>? in
+                    guard let index = list.firstIndex(where: { $0.id == id }) else { return nil }
+                    return list.remove(at: index).continuation
+                }
+                waiter?.resume(throwing: CancellationError())
+            }
+        }
+    }
+    private let queue = Queue()
+    let model: ScriptedAgentModel
+
+    init() {
+        let queue = queue
+        model = ScriptedAgentModel { _, emit, index in
+            switch try await queue.next() {
+            case .text(let text): try await emit.text(text)
+            case .call(let name, let arguments): await emit.call(name, arguments, id: "call-\(index)")
+            case .fail(let error): throw error
+            case .stream(let stream):
+                for await event in stream.events {
+                    switch event {
+                    case .text(let text): try await emit.text([text], entryID: stream.entryID)
+                    case .call(let name, let arguments): await emit.call(name, arguments, id: "call-\(index)")
+                    }
+                }
+            }
+        }
+    }
+
+    var factory: AgentHarness.ModelFactory { model.factory }
+    var requests: [LanguageModelExecutorGenerationRequest] { model.requests }
+    var waiting: Int { queue.waiting.withLock { $0.count } }
+
+    /// Waits until a request is waiting, then answers the oldest one.
+    @MainActor func answer(_ answer: Answer, timeout: Duration = .seconds(5)) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while waiting == 0 {
+            guard ContinuousClock.now < deadline else { throw SettingsError("No model request to answer") }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        let waiter = queue.waiting.withLock { $0.removeFirst() }
+        waiter.continuation.resume(returning: answer)
+    }
+    @MainActor func reply(_ text: String) async throws { try await answer(.text(text)) }
+    /// Waits until `count` requests reached the model.
+    @MainActor func waitForRequests(_ count: Int, timeout: Duration = .seconds(5)) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while requests.count < count {
+            guard ContinuousClock.now < deadline else { throw SettingsError("Model request \(count) never arrived") }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+    }
+}
+
+/// Live output of one puppet generation.
+final class PuppetStream: Sendable {
+    enum Event: Sendable { case text(String), call(name: String, arguments: String) }
+    let entryID = "reply-" + UUID().uuidString
+    let events: AsyncStream<Event>
+    private let continuation: AsyncStream<Event>.Continuation
+    init() { (events, continuation) = AsyncStream.makeStream() }
+    func send(_ text: String) { continuation.yield(.text(text)) }
+    /// Sends chunks a gap apart, as a model streams them. Snapshots trail the model by up to two
+    /// chunks, and chunks sent back to back can reach one snapshot together and be held with it.
+    func send(_ chunks: [String], gap: Duration = .milliseconds(40)) async throws {
+        for chunk in chunks { send(chunk); try await Task.sleep(for: gap) }
+    }
+    func call(_ name: String, _ arguments: String) { continuation.yield(.call(name: name, arguments: arguments)) }
+    func finish() { continuation.finish() }
+}

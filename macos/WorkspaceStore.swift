@@ -159,7 +159,9 @@ struct WorkspaceSnapshot: Codable {
         let unreadable = "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。"
         let native = nativeSessionURL(saved.id)
         var supersededSnapshot = false
-        if files.fileExists(atPath: native.path) || saved.state.engine == .native {
+        // An engine hint without a native sidecar blocks only when no Rust history is left to import.
+        if files.fileExists(atPath: native.path)
+            || (saved.state.engine == .native && !files.fileExists(atPath: sessionURL(saved.id).path)) {
             do {
                 var state = try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: native))
                 guard state.native != nil else { throw CocoaError(.fileReadCorruptFile) }
@@ -168,7 +170,15 @@ struct WorkspaceSnapshot: Codable {
                 switch state.migratedFrom {
                 case migrationSource(saved.id)?:
                     // Stopped between writing this snapshot and retiring its unchanged source.
-                    try? retireRustSession(saved.id)
+                    // Nothing runs natively while the Rust sidecar is in place, and the blocked
+                    // conversation never saves, so the snapshot keeps its mark for the next launch.
+                    do { try retireRustSession(saved.id) }
+                    catch {
+                        var blocked = saved.state
+                        blocked.engine = .native; blocked.agentStored = true
+                        blocked.loadError = "会话迁移未完成（无法移走原历史），已禁止执行。下次启动时会重试。"
+                        return blocked
+                    }
                     return state
                 case nil:
                     var blocked = saved.state
@@ -187,7 +197,14 @@ struct WorkspaceSnapshot: Codable {
                 return state
             }
         }
-        guard saved.state.agentStored == true || supersededSnapshot else { return saved.state }
+        guard saved.state.agentStored == true || supersededSnapshot
+                || files.fileExists(atPath: sessionURL(saved.id).path) else {
+            // A conversation kept in the manifest has no sidecar to be unreadable: a load error on
+            // it is from an import that failed, which the next launch tries again.
+            var state = saved.state
+            state.loadError = nil
+            return state
+        }
         do { return try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: sessionURL(saved.id))) }
         catch {
             var state = saved.state
@@ -221,7 +238,6 @@ struct WorkspaceSnapshot: Codable {
                 try saveSession(saved.state, id: saved.id)
                 result.state.messages = []; result.state.tools = nil; result.state.agentHistory = nil
                 result.state.inputReceipts = nil; result.state.pendingInputs = nil
-                result.state.agentProjection = nil; result.state.savedCheckpoint = nil; result.state.deliveredReplies = nil
                 result.state.native = nil
                 result.state.agentStored = true
             }
@@ -266,10 +282,6 @@ struct WorkspaceSnapshot: Codable {
     var onRevealVoice: ((UUID) -> Void)?
     private let emptyActivity = TaskStore()
     private let sourceFactory: () -> (any TaskSource)?
-    /// The native engine's source; nil keeps every conversation on `sourceFactory`.
-    private let nativeSourceFactory: (() -> (any TaskSource)?)?
-    /// Whether a conversation sent to for the first time uses the native engine.
-    private let prefersNative: () -> Bool
     private let persistence: WorkspacePersistence?
     private var observations: [UUID: AnyCancellable] = [:]
     private var lifecycleObservations: [UUID: AnyCancellable] = [:]
@@ -291,14 +303,10 @@ struct WorkspaceSnapshot: Codable {
          initialStore: TaskStore? = nil,
          dictation: DictationController = DictationController(),
          voice: VoiceSessionController = VoiceSessionController(),
-         sourceFactory: @escaping () -> (any TaskSource)? = { nil },
-         nativeSourceFactory: (() -> (any TaskSource)?)? = nil,
-         prefersNative: @escaping () -> Bool = { false }) {
+         sourceFactory: @escaping () -> (any TaskSource)? = { nil }) {
         self.dictation = dictation; self.voice = voice
         self.persistence = persistence
         self.sourceFactory = sourceFactory
-        self.nativeSourceFactory = nativeSourceFactory
-        self.prefersNative = prefersNative
         voiceObservation = voice.$snapshot.map { $0.session.owner == nil }.removeDuplicates().sink { [weak self] ended in
             if ended { self?.finishVoiceConversation() }
         }
@@ -322,7 +330,7 @@ struct WorkspaceSnapshot: Codable {
                 conversations = snapshot.conversations.map { saved in
                     let (store, restored) = restoredStore(saved, persistence: persistence)
                     // Retitle only after the legacy demo cleanup changed what the conversation shows.
-                    let title = !saved.manuallyNamed && store.engine != .native && store.messages != restored.messages
+                    let title = !saved.manuallyNamed && !store.usesAgent && store.messages != restored.messages
                         ? String((store.messages.first(where: { $0.role == .user })?.content ?? "新会话").prefix(60))
                         : saved.title
                     return WorkspaceConversation(id: saved.id,
@@ -394,65 +402,43 @@ struct WorkspaceSnapshot: Codable {
 
     // Commands capture their target at the surface that issued them. Selection and
     // desktop activity are navigation state, never an implicit command destination.
-    private var preferredEngine: AgentEngineKind? { nativeSourceFactory != nil && prefersNative() ? .native : nil }
-    /// With the native engine preferred, a Rust-engine conversation moves to it once, at its next
-    /// send or continue: convert, write the native sidecar, retire the Rust one, save the
-    /// manifest. Until the native sidecar and the retirement are both done, nothing changes.
-    private func migrateIfPreferred(_ conversation: WorkspaceConversation) -> Bool {
-        guard preferredEngine == .native, conversation.store.engine == .rust, !conversation.store.isGenerating,
-              conversation.store.agentLoadError == nil, let harness = nativeSourceFactory?() as? AgentHarness else { return true }
-        guard !saveBlocked else { conversation.store.notice = Self.saveBlockedNotice; return false }
-        let undo: () -> Void
-        do { undo = try conversation.store.migrate(to: harness) }
-        catch { conversation.store.notice = error.localizedDescription; return false }
-        guard let persistence else { return true }
-        // The snapshot records its source, so a later launch can tell whether the Rust history
-        // changed before the migration finished (see `restoreSession`).
-        var snapshot = conversation.store.snapshot
-        snapshot.migratedFrom = persistence.migrationSource(conversation.id)
-        do {
-            try persistence.saveSession(snapshot, id: conversation.id)
-            try persistence.retireRustSession(conversation.id)
-        } catch {
-            // Nothing runs natively while the Rust sidecar is in place: a Rust-engine build could
-            // still write it. A snapshot that cannot be removed stays marked as one.
-            _ = persistence.removeNativeSession(conversation.id)
-            undo()
-            conversation.store.notice = "会话迁移失败，已保留原历史：\(error.localizedDescription)"
-            return false
-        }
-        persistedAgentIDs.insert(conversation.id)
-        flush()
-        return true
-    }
-    private func makeSource(_ engine: AgentEngineKind?) -> (any TaskSource)? {
-        if engine == .native, let nativeSourceFactory { return nativeSourceFactory() }
-        return sourceFactory()
-    }
-    /// A native conversation whose workspace gives it no native engine stays blocked: another
-    /// engine would save its state to its own sidecar and fork the conversation.
+    /// A conversation the Rust engine saved is imported when it loads: convert, write the native
+    /// sidecar marked with its source, retire the Rust sidecar (see `restoreSession` for a launch
+    /// that stops between the two). One that cannot be imported stays blocked with its Rust
+    /// history untouched, and the next launch tries again. A saved native conversation whose
+    /// workspace has no Agent engine stays blocked too: another source would fork it.
     private func restoredStore(_ saved: WorkspaceSnapshot.Conversation,
                                persistence: WorkspacePersistence) -> (store: TaskStore, restored: TaskStore.Snapshot) {
         var restored = persistence.restoreSession(saved)
-        let source = makeSource(restored.engine)
-        if restored.engine == .native, !(source is AgentHarness) {
-            // Keep the manifest's reference, not the history: saving must neither copy the
-            // conversation into the manifest nor replace its sidecar.
+        let source = sourceFactory()
+        let agent = source is AgentHarness
+        if restored.engine == .native, !agent {
             restored = saved.state
             restored.engine = .native; restored.agentStored = true
             restored.loadError = "此会话由 Foundation Models Agent 创建，当前无法打开，已禁止执行。"
+        } else if agent, AgentHistoryImport.needsImport(restored), !saveBlocked {
+            do {
+                var imported = restored
+                imported.native = try AgentHistoryImport.native(importing: restored)
+                imported.engine = .native; imported.agentStored = true
+                imported.agentHistory = nil; imported.inputReceipts = nil; imported.pendingInputs = nil
+                imported.migratedFrom = persistence.migrationSource(saved.id)
+                try persistence.saveSession(imported, id: saved.id)
+                try persistence.retireRustSession(saved.id)
+                imported.migratedFrom = nil
+                restored = imported
+            } catch {
+                _ = persistence.removeNativeSession(saved.id)
+                let reason = (error as? AgentHistoryImport.Failure)?.errorDescription ?? "会话迁移失败，已保留原历史：\(error.localizedDescription)"
+                restored = saved.state
+                restored.engine = .rust; restored.loadError = reason
+            }
         }
         return (TaskStore(snapshot: restored, source: source), restored)
     }
     @discardableResult func send(_ text: String, conversationID: UUID) -> Bool {
         guard !shuttingDown, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let target = conversation(id: conversationID), target.store.canSubmit else { return false }
-        // The engine is chosen at a conversation's first send, from the setting at that moment.
-        if target.store.isPristine, let preferred = preferredEngine ?? (nativeSourceFactory != nil ? .rust : nil),
-           target.store.engine != preferred {
-            target.store.adoptSource(makeSource(preferred))
-        }
-        guard migrateIfPreferred(target) else { return false }
         if voice.conversationID == conversationID {
             guard voice.canSubmit else { return false }
             voice.prepareForSubmission()
@@ -507,8 +493,7 @@ struct WorkspaceSnapshot: Codable {
         else { target.store.stopTask() }
     }
     @discardableResult func retry(conversationID: UUID) -> Bool {
-        guard !shuttingDown, let target = conversation(id: conversationID), target.store.canRetry,
-              migrateIfPreferred(target), target.store.canRetry else { return false }
+        guard !shuttingDown, let target = conversation(id: conversationID), target.store.canRetry else { return false }
         if voice.conversationID == conversationID {
             guard voice.canSubmit else { return false }
             voice.prepareForSubmission()
@@ -706,7 +691,7 @@ struct WorkspaceSnapshot: Codable {
         byRecency(drafts.filter { $0.id != excluding && $0.projectID == projectID && canAssociateProject(conversationID: $0.id) }).first
     }
     private func makeDraft(projectID: UUID?) -> WorkspaceConversation {
-        let conversation = WorkspaceConversation(projectID: projectID, title: "新对话", store: TaskStore(source: makeSource(preferredEngine)))
+        let conversation = WorkspaceConversation(projectID: projectID, title: "新对话", store: TaskStore(source: sourceFactory()))
         drafts.append(conversation); bind(conversation)
         return conversation
     }
@@ -797,7 +782,6 @@ struct WorkspaceSnapshot: Codable {
         }
         flush()
         stores.forEach { $0.shutdown() }
-        await AgentBridge.waitForShutdown()
         await ExecutionService.waitForShutdown()
     }
     private func scheduleSave() {

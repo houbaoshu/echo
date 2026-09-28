@@ -14,7 +14,7 @@ fn completed_output_is_the_history_contract() {
     let result = run.wait(Duration::from_secs(10));
     assert_eq!(result["outcome"], "completed");
     // Byte for byte what Mini Agent writes into v1 history for this command.
-    let expected = mini_agent::types::CommandOutput {
+    let expected = mini_agent_exec::CommandOutput {
         stdout: "out 🌱".into(), stderr: "err".into(), exit_code: Some(3), timed_out: false,
         stdout_truncated: false, stderr_truncated: false,
     };
@@ -74,7 +74,7 @@ fn a_directory_that_moved_or_is_an_alias_is_reported() {
 }
 
 /// Cancel returns at once; done arrives only after the shell, its child and a descendant that
-/// left the shell's session are gone (agent-bridge `lifecycle.rs` semantics on the new ABI).
+/// left the shell's session are gone (the semantics the removed agent-bridge `lifecycle.rs` pinned, on this ABI).
 #[test]
 fn cancel_kills_the_whole_tree_before_reporting() {
     let temp = tempfile::tempdir().unwrap();

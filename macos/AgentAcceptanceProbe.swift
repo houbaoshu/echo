@@ -2,8 +2,8 @@ import AppKit
 
 /// System-only acceptance of an already built, relocated App. Business history
 /// assertions belong to EchoIntegrationTests; this checks the independent process
-/// and the ordinary AppKit termination path with real Rust-owned child processes,
-/// for the Rust engine or, with `native`, the native engine and its execution core.
+/// and the ordinary AppKit termination path with real child processes of the
+/// execution core.
 @MainActor enum AgentAcceptanceProbe {
     static func wait(_ label: String, _ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(15))
@@ -13,7 +13,7 @@ import AppKit
         }
     }
 
-    static func run(baseURL: String, root: URL, native: Bool = false, register: (WorkspaceStore) -> Void) async throws {
+    static func run(baseURL: String, root: URL, register: (WorkspaceStore) -> Void) async throws {
         let config = try ModelConfiguration(baseURL: baseURL, model: "fixture").validated()
         guard let host = try config.rootURL().host, ["127.0.0.1", "localhost"].contains(host),
               let resources = Bundle.main.resourceURL else {
@@ -24,14 +24,9 @@ import AppKit
         defer { pet.stop() }
         guard pet.image.width > 0 else { throw SettingsError("搬移后的应用无法加载精灵。") }
         let endpoint = AgentEndpoint(baseURL: config.baseURL, model: "fixture", apiKey: nil, apiProtocol: .chatCompletions)
-        // Chosen explicitly, not through the settings toggle: the audit names the engine it checks.
         let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("workspace.json")),
             sourceFactory: {
-                guard native else {
-                    return AgentTaskSource(model: AgentModel(base_url: config.baseURL, model: "fixture", protocol: .chat_completions),
-                                           resources: resources)
-                }
-                return AgentHarness(resolveModel: {
+                AgentHarness(resolveModel: {
                     let transport = AgentTransport.make(for: endpoint)
                     return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
                 })
@@ -46,9 +41,7 @@ import AppKit
             work.store.tools.first?.state == "执行中"
                 && FileManager.default.fileExists(atPath: project.appendingPathComponent("child.pid").path)
         }
-        print(native
-              ? "PASS: relocated bundle loaded pet and the native engine from empty cwd; requesting AppKit quit during bash"
-              : "PASS: relocated bundle loaded pet and default prompt from empty cwd; requesting AppKit quit during bash")
+        print("PASS: relocated bundle loaded pet and the Agent from empty cwd; requesting AppKit quit during bash")
         fflush(nil)
     }
 }

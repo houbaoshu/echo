@@ -158,6 +158,10 @@ enum AgentInstructions {
     private var bashDone: Set<String> = []
     private var bashWaiters: [String: CheckedContinuation<Void, any Error>] = [:]
     private let runner: any CommandRunning
+    /// Commands started and not yet cleaned up. A stopped stream ends without waiting for its
+    /// tools, so the turn waits for these before it settles.
+    private var runningCommands = 0
+    private var commandWaiters: [CheckedContinuation<Void, Never>] = []
     private var operations: [String: UInt64] = [:]
     private var nextOperation: UInt64 = 0
     private var directoryWaiters: [UUID: CheckedContinuation<AgentProjectRoot, any Error>] = [:]
@@ -305,6 +309,7 @@ enum AgentInstructions {
             let result = await Self.consume(session, prompt: prompt, metadata: metadata) { [weak self] entries in
                 await self?.receive(entries)
             }
+            await commandsCleanedUp()
             var entries = Array(session.transcript).filter { if case .instructions = $0 { false } else { true } }
             // A Stop before Foundation Models recorded the prompt still leaves the input in the history.
             if let userPrompt, !entries[history.count...].contains(where: { Self.messageID(of: $0) == userPrompt.metadata[AgentPromptKey.message].flatMap(Self.string) }) {
@@ -555,7 +560,10 @@ enum AgentInstructions {
             catch { storageFailure = error.localizedDescription; throw error }
             if let key { started.insert(key); callDirectories[key] = directory; project() }
             if !stopRequested { host?.harnessStatus(TaskStore.toolSummary(command)) }
+            runningCommands += 1
             let outcome = await runner.run(command: command, directory: directory)
+            runningCommands -= 1
+            if runningCommands == 0 { commandWaiters.forEach { $0.resume() }; commandWaiters = [] }
             switch outcome {
             case .completed(let output):
                 if let key { finishedOutputs[key] = output; project() }
@@ -570,6 +578,12 @@ enum AgentInstructions {
                 throw AgentExecutionFailure(message: message)
             }
         }
+    }
+
+    /// Returns once every command this turn started has finished its cleanup.
+    private func commandsCleanedUp() async {
+        guard runningCommands > 0 else { return }
+        await withCheckedContinuation { commandWaiters.append($0) }
     }
 
     /// Waits until every bash call written before `key` in its batch is done.
@@ -665,7 +679,13 @@ enum AgentInstructions {
     private func project() {
         guard let host else { return }
         var entries = state.entries
-        if isRunning, let runningPrompt { entries += [runningPrompt] + live }
+        if isRunning, let runningPrompt {
+            // A reply still being written is the stream's to show; it becomes a message once a
+            // tool call follows it or its generation ends.
+            var written = live
+            if case .response = written.last { written.removeLast() }
+            entries += [runningPrompt] + written
+        }
         let existing = Dictionary(host.harnessMessages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let knownTools = Dictionary(host.harnessTools.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var messages: [ConversationMessage] = []

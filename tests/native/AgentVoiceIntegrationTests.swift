@@ -10,15 +10,10 @@ extension EchoIntegrationScenarios {
         try await Task.sleep(for: .milliseconds(10))
       }
     }
-    @Test(
-      arguments: ["rust:chat_completions", "rust:responses", "native:chat_completions", "native:responses"],
-      ["tool", "model", "directory", "queue", "stop"])
-    static func voiceRouting(engineProtocol: String, scenario: String) async throws {
-      let (engine, apiProtocol) = (String(engineProtocol.split(separator: ":")[0]), String(engineProtocol.split(separator: ":")[1]))
-      try await withSession(.named(engine)) { session in
-        let makeSource = {
-          AgentEngine.source(engine, server: session.server, protocol: AgentModel.ProtocolName(rawValue: apiProtocol)!)
-        }
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses], ["tool", "model", "directory", "queue", "stop"])
+    static func voiceRouting(apiProtocol: ModelAPIProtocol, scenario: String) async throws {
+      try await withSession { session in
+        let makeSource = { AgentFixture.source(server: session.server, protocol: apiProtocol) }
         let f = AgentVoiceFixture(source: makeSource())
         f.sourceFactory = makeSource
         defer { f.shutdown() }
@@ -89,7 +84,7 @@ extension EchoIntegrationScenarios {
           f.speak("skip; also explain the result", start: 600)
           #expect(
             f.store.task?.runID == run && f.store.task?.status == .running,
-            "voice steering does not cancel/restart the real Core round")
+            "voice steering does not cancel/restart the turn")
           try await waitForAgentVoice("voice final") {
             !f.store.isGenerating && f.synths.first?.chunks.isEmpty == false
           }
@@ -123,12 +118,10 @@ extension EchoIntegrationScenarios {
         }
       }
     }
-    @Test(arguments: ["rust", "native"], ["chat_completions", "responses"])
-    static func streamedMarkdown(engine: String, apiProtocol: String) async throws {
-      try await withSession(.named(engine)) { session in
-        let makeSource = {
-          AgentEngine.source(engine, server: session.server, protocol: AgentModel.ProtocolName(rawValue: apiProtocol)!)
-        }
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
+    static func streamedMarkdown(apiProtocol: ModelAPIProtocol) async throws {
+      try await withSession { session in
+        let makeSource = { AgentFixture.source(server: session.server, protocol: apiProtocol) }
         let f = AgentVoiceFixture(source: makeSource())
         f.sourceFactory = makeSource
         defer { f.shutdown() }
@@ -137,12 +130,10 @@ extension EchoIntegrationScenarios {
         f.speak("slow-stream markdown-stream 汇报结果")
         let final = "## 结果\n\n- **第一项**通过\n- 运行 `swift test`\n- 第三项\n- 第四项完成"
         var seen: [String] = []
-        var revisions: Set<UInt64> = []
         try await waitForAgentVoice("streamed reply completes for \(apiProtocol)") {
           let text = f.store.replyStream.text
           if f.store.isGenerating, !text.isEmpty, seen.last != text {
             seen.append(text)
-            revisions.insert(f.store.snapshot.savedCheckpoint?.revision ?? 0)
           }
           return !f.store.isGenerating
         }
@@ -150,8 +141,6 @@ extension EchoIntegrationScenarios {
           seen.filter { $0 != final }.count >= 2 && seen.allSatisfy { final.hasPrefix($0) },
           "real SSE deltas grow the reply before the turn completes (\(apiProtocol): \(seen.count) updates)"
         )
-        // Rust checkpoints carry revisions; the native engine saves no model output while it streams.
-        #expect(revisions.count == 1, "streamed text never advances checkpoints (\(apiProtocol))")
         #expect(
           f.store.replyStream.text == final && f.store.task?.status == .completed,
           "the completed Markdown reply is kept after streaming (\(apiProtocol))")

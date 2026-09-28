@@ -50,14 +50,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         if let index = CommandLine.arguments.firstIndex(of: "--acceptance-test") {
-            // --acceptance-test <fixture URL> <root> [native]
-            let arguments = CommandLine.arguments[(index + 1)...]
-            guard arguments.count == 2 || (arguments.count == 3 && arguments.last == "native") else { exit(2) }
+            // --acceptance-test <fixture URL> <root>
+            guard CommandLine.arguments.count == index + 3 else { exit(2) }
             Task { @MainActor in
                 do {
                     try await AgentAcceptanceProbe.run(baseURL: CommandLine.arguments[index + 1],
-                        root: URL(fileURLWithPath: CommandLine.arguments[index + 2]),
-                        native: arguments.count == 3) { self.acceptanceWorkspace = $0 }
+                        root: URL(fileURLWithPath: CommandLine.arguments[index + 2])) { self.acceptanceWorkspace = $0 }
                     // terminateLater enters AppKit's nested event loop. Invoke
                     // from a run-loop event, like the Quit menu, after this Swift
                     // task leaves the main dispatch queue so cleanup can resume.
@@ -97,9 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.pets = pets
             let store = try pets.loadInitial()
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: WorkspacePersistence.defaultURL),
-                                           sourceFactory: { AgentTaskSource(settings: settings) },
-                                           nativeSourceFactory: { AgentHarness(settings: settings) },
-                                           prefersNative: { settings.snapshot.nativeAgent })
+                                           sourceFactory: { AgentHarness(settings: settings) })
             // Live Voice's planet. It loads its sprite only while a call is running, so the app
             // starts with nothing decoded beyond the pet itself.
             let planets = PlanetStore(settings: settings,

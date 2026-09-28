@@ -22,8 +22,6 @@
 		A2D38BC03062D573000AB0C0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2D38BBF3062D573000AB0C0 /* Assets.xcassets */; };
 		E00000000000000000000030 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		E00000000000000000000031 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
-		E11000000000000000000B00 /* AgentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F00 /* AgentWire.swift */; };
-		E11000000000000000000B01 /* AgentBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F01 /* AgentBridge.swift */; };
 		E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F02 /* AgentConnectionTester.swift */; };
 		E11000000000000000000B03 /* TaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F03 /* TaskStore.swift */; };
 		E11000000000000000000B05 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F05 /* SettingsStore.swift */; };
@@ -31,14 +29,6 @@
 		E11000000000000000000B07 /* VoiceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F07 /* VoiceDiagnostics.swift */; };
 		E11000000000000000000B08 /* ChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F08 /* ChatTests.swift */; };
 		E11000000000000000000B0A /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F0A /* SettingsTests.swift */; };
-		E11100000000000000000B00 /* AgentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F00 /* AgentWire.swift */; };
-		E11100000000000000000B01 /* AgentTaskSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11100000000000000000F01 /* AgentTaskSource.swift */; };
-		E11100000000000000000B02 /* AgentConnectionTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F02 /* AgentConnectionTester.swift */; };
-		E11100000000000000000B03 /* TaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F03 /* TaskStore.swift */; };
-		E11100000000000000000B05 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F05 /* SettingsStore.swift */; };
-		E11100000000000000000B06 /* VoiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F06 /* VoiceProtocol.swift */; };
-		E11100000000000000000B07 /* VoiceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F07 /* VoiceDiagnostics.swift */; };
-		E11100000000000000000B08 /* AgentTaskSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11100000000000000000F08 /* AgentTaskSourceTests.swift */; };
 		E11200000000000000000B00 /* AgentSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11200000000000000000F00 /* AgentSessionTests.swift */; };
 		E11300000000000000000B00 /* VoiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F00 /* VoiceTests.swift */; };
 		E11300000000000000000B01 /* VoiceBargeInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F01 /* VoiceBargeInTests.swift */; };
@@ -115,14 +105,6 @@
 			isa = PBXBuildFile;
 			fileRef = 7385F3E986D8793A4584EE31;
 		};
-		4861077C58DCA2FD9910205F = {
-			isa = PBXBuildFile;
-			fileRef = 7385F3E986D8793A4584EE31;
-		};
-		94832A520768771E7285B39A = {
-			isa = PBXBuildFile;
-			fileRef = E12200000000000000000F02;
-		};
 		775CBE322F97683D29D5475B = {
 			isa = PBXBuildFile;
 			fileRef = D99CD76EFF731DB92DDFA79A;
@@ -186,10 +168,6 @@
 		F26EAD91B663BB2BCD833522 = {
 			isa = PBXBuildFile;
 			fileRef = 2D11BE1C34798D95A2C2829F;
-		};
-		20CC54B4487082597103767B = {
-			isa = PBXBuildFile;
-			fileRef = 804A0B2C452FA2B53B548DFB;
 		};
 		81FFE00A82930E806C58AD0A = {
 			isa = PBXBuildFile;
@@ -311,15 +289,7 @@
 			isa = PBXBuildFile;
 			fileRef = CF3DABC0D10122CBD030B84D;
 		};
-		65CEEA0E5FE927DC8D6B4C8F = {
-			isa = PBXBuildFile;
-			fileRef = CF3DABC0D10122CBD030B84D;
-		};
 		82EA4910FA0A21C0579F3E29 = {
-			isa = PBXBuildFile;
-			fileRef = EA68E8426039B5A782DA9770;
-		};
-		139A43442A7A20467E021EAD = {
 			isa = PBXBuildFile;
 			fileRef = EA68E8426039B5A782DA9770;
 		};
@@ -327,15 +297,7 @@
 			isa = PBXBuildFile;
 			fileRef = 3526F0A888174738325FD582;
 		};
-		BF3839A481C8EB21C796E06B = {
-			isa = PBXBuildFile;
-			fileRef = 3526F0A888174738325FD582;
-		};
 		0BB27615F70BEF3BF486FD84 = {
-			isa = PBXBuildFile;
-			fileRef = CF0CDA52A4EF0DA66805FDBB;
-		};
-		C58144D7E90E1F5E87E8A3FC = {
 			isa = PBXBuildFile;
 			fileRef = CF0CDA52A4EF0DA66805FDBB;
 		};
@@ -371,15 +333,7 @@
 			isa = PBXBuildFile;
 			fileRef = 1724D95EA440B9705DD87F8B;
 		};
-		42A09C85E1FC8EB7417A9E22 = {
-			isa = PBXBuildFile;
-			fileRef = 1724D95EA440B9705DD87F8B;
-		};
 		955E078386857E835DC7753C = {
-			isa = PBXBuildFile;
-			fileRef = 66A204B6F23FC886D5B6A26E;
-		};
-		D38392FEAE98B043BBA01F32 = {
 			isa = PBXBuildFile;
 			fileRef = 66A204B6F23FC886D5B6A26E;
 		};
@@ -398,13 +352,6 @@
 			remoteInfo = RustCore;
 		};
 		E110000000000000000000C1 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E0000000000000000000000F /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E000000000000000000000A0;
-			remoteInfo = RustCore;
-		};
-		E111000000000000000000C1 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E0000000000000000000000F /* Project object */;
 			proxyType = 1;
@@ -533,8 +480,6 @@
 		E0000000000000000000001D /* pets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = pets; path = assets/pets; sourceTree = "<group>"; };
 		E0000000000000000000001E /* planets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = planets; path = assets/planets; sourceTree = "<group>"; };
 		E110000000000000000000FF /* EchoChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		E11000000000000000000F00 /* AgentWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentWire.swift; path = macos/AgentWire.swift; sourceTree = "<group>"; };
-		E11000000000000000000F01 /* AgentBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentBridge.swift; path = macos/AgentBridge.swift; sourceTree = "<group>"; };
 		E11000000000000000000F02 /* AgentConnectionTester.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentConnectionTester.swift; path = macos/AgentConnectionTester.swift; sourceTree = "<group>"; };
 		E11000000000000000000F03 /* TaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TaskStore.swift; path = macos/TaskStore.swift; sourceTree = "<group>"; };
 		E11000000000000000000F05 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsStore.swift; path = macos/SettingsStore.swift; sourceTree = "<group>"; };
@@ -542,9 +487,6 @@
 		E11000000000000000000F07 /* VoiceDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceDiagnostics.swift; path = macos/VoiceDiagnostics.swift; sourceTree = "<group>"; };
 		E11000000000000000000F08 /* ChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatTests.swift; path = tests/ChatTests.swift; sourceTree = "<group>"; };
 		E11000000000000000000F0A /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsTests.swift; path = tests/SettingsTests.swift; sourceTree = "<group>"; };
-		E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoAgentTaskSourceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		E11100000000000000000F01 /* AgentTaskSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentTaskSource.swift; path = macos/AgentTaskSource.swift; sourceTree = "<group>"; };
-		E11100000000000000000F08 /* AgentTaskSourceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentTaskSourceTests.swift; path = tests/AgentTaskSourceTests.swift; sourceTree = "<group>"; };
 		E112000000000000000000FF = {
 			path = EchoIntegrationTests.xctest;
 			isa = PBXFileReference;
@@ -586,7 +528,6 @@
 			explicitFileType = wrapper.application;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		E12200000000000000000F02 /* AgentBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentBridgeTests.swift; path = tests/AgentBridgeTests.swift; sourceTree = "<group>"; };
 		E123000000000000000000FF = {
 			path = AgentLiveProbe.app;
 			isa = PBXFileReference;
@@ -708,12 +649,6 @@
 			path = tests/native/CABITests.swift;
 			sourceTree = "<group>";
 			lastKnownFileType = sourcecode.swift;
-		};
-		804A0B2C452FA2B53B548DFB = {
-			isa = PBXFileReference;
-			path = tests/AgentBridgeMemory.c;
-			sourceTree = "<group>";
-			lastKnownFileType = sourcecode.c.c;
 		};
 		304DB495A0C2573A6D5628CD = {
 			isa = PBXFileReference;
@@ -1029,11 +964,6 @@
 			files = (
 			);
 		};
-		E111000000000000000000A2 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			files = (
-			);
-		};
 		E112000000000000000000A2 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
@@ -1096,7 +1026,6 @@
 				E90000000000000000000004,
 				E90000000000000000000006,
 				E90000000000000000000007,
-				804A0B2C452FA2B53B548DFB,
 				7EC0845D8753AC831E0E60BC,
 			);
 			sourceTree = "<group>";
@@ -1180,9 +1109,6 @@
 				E12500000000000000000F00,
 				E12400000000000000000F00,
 				E12300000000000000000F00,
-				E11000000000000000000F00,
-				E11000000000000000000F01,
-				E12200000000000000000F02,
 				E12000000000000000000F00,
 				E11500000000000000000F00,
 				E11400000000000000000F00,
@@ -1197,7 +1123,6 @@
 				E11300000000000000000F03,
 				E11300000000000000000F04,
 				E11200000000000000000F00,
-				E11100000000000000000F01,
 				E11000000000000000000F02,
 				E11000000000000000000F03,
 				66A204B6F23FC886D5B6A26E,
@@ -1209,7 +1134,6 @@
 				E11000000000000000000F05,
 				E11000000000000000000F06,
 				E11000000000000000000F07,
-				E11100000000000000000F08,
 				E11000000000000000000F08,
 				E11000000000000000000F0A,
 			);
@@ -1245,7 +1169,6 @@
 				E114000000000000000000FF,
 				E113000000000000000000FF,
 				E112000000000000000000FF,
-				E111000000000000000000FF,
 				E110000000000000000000FF,
 				E2DD4E7379914193D6F68337,
 				E2D88B0EC8C4D64A02775E4A,
@@ -1271,7 +1194,6 @@
 				E0000000000000000000002C /* Sources */,
 				E0000000000000000000002D /* Frameworks */,
 				E0000000000000000000002E /* Resources */,
-				E000000000000000000000A2 /* Copy Agent conversation prompt */,
 			);
 			buildRules = (
 			);
@@ -1303,23 +1225,6 @@
 			productReference = E110000000000000000000FF /* EchoChatTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		E111000000000000000000AA /* EchoAgentTaskSourceTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E111000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoAgentTaskSourceTests" */;
-			buildPhases = (
-				E111000000000000000000A1 /* Sources */,
-				E111000000000000000000A2 /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				E111000000000000000000C2 /* PBXTargetDependency */,
-			);
-			name = EchoAgentTaskSourceTests;
-			productName = EchoAgentTaskSourceTests;
-			productReference = E111000000000000000000FF /* EchoAgentTaskSourceTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
 		E112000000000000000000AA = {
 			dependencies = (
 				E112000000000000000000C2,
@@ -1336,7 +1241,6 @@
 				E112000000000000000000A1,
 				E112000000000000000000A2,
 				DBFE12719D46C3EEE749B575,
-				B052DFAFF61A3F322544B935,
 			);
 			name = EchoIntegrationTests;
 			buildRules = (
@@ -1355,7 +1259,6 @@
 				E0000000000000000000002A,
 			);
 			buildPhases = (
-				E113000000000000000000A3,
 				E113000000000000000000A1,
 				E113000000000000000000A2,
 				72A06BFDE903275E43C80EAA,
@@ -1438,7 +1341,6 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E123000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentLiveProbe" */;
 			buildPhases = (
-				E123000000000000000000A3 /* Copy Agent conversation prompt */,
 				E123000000000000000000A1 /* Sources */,
 				E123000000000000000000A2 /* Frameworks */,
 			);
@@ -1459,7 +1361,6 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E124000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceLiveProbe" */;
 			buildPhases = (
-				E124000000000000000000A3 /* Copy Agent conversation prompt */,
 				E124000000000000000000A1 /* Sources */,
 				E124000000000000000000A2 /* Frameworks */,
 			);
@@ -1480,7 +1381,6 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E125000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceSoakProbe" */;
 			buildPhases = (
-				E125000000000000000000A3 /* Copy Agent conversation prompt */,
 				E125000000000000000000A1 /* Sources */,
 				E125000000000000000000A2 /* Frameworks */,
 			);
@@ -1556,7 +1456,6 @@
 			buildConfigurationList = 3520EF9078A9455D970D3C11;
 			buildPhases = (
 				A63B539E6599A77F3DB2E41F,
-				3516E35B59948405AB869408,
 			);
 			buildRules = (
 			);
@@ -1589,7 +1488,6 @@
 			buildConfigurationList = 5434AC0DB7C9B2D3D86539E4;
 			buildPhases = (
 				007FFFEEC82A0419CE03D396,
-				59FEBACC0F6E6AA47D993331,
 			);
 			buildRules = (
 			);
@@ -1719,7 +1617,6 @@
 				E114000000000000000000AA,
 				E113000000000000000000AA,
 				E112000000000000000000AA,
-				E111000000000000000000AA,
 				E110000000000000000000AA,
 				622BCBC3AA8DF672AAC38174,
 				03A21A103EBCD69617CCBCC0,
@@ -1851,86 +1748,6 @@
 				"",
 			);
 		};
-		E000000000000000000000A2 /* Copy Agent conversation prompt */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = "Copy Agent conversation prompt";
-			shellPath = /bin/zsh;
-			shellScript = (
-				"\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"",
-				"",
-			);
-		};
-		E113000000000000000000A3 = {
-			isa = PBXShellScriptBuildPhase;
-			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
-			shellPath = /bin/zsh;
-			alwaysOutOfDate = 1;
-			name = "Copy Agent conversation prompt";
-		};
-		E123000000000000000000A3 /* Copy Agent conversation prompt */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = "Copy Agent conversation prompt";
-			shellPath = /bin/zsh;
-			shellScript = (
-				"\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"",
-				"",
-			);
-		};
-		E124000000000000000000A3 /* Copy Agent conversation prompt */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = "Copy Agent conversation prompt";
-			shellPath = /bin/zsh;
-			shellScript = (
-				"\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"",
-				"",
-			);
-		};
-		E125000000000000000000A3 /* Copy Agent conversation prompt */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = "Copy Agent conversation prompt";
-			shellPath = /bin/zsh;
-			shellScript = (
-				"\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"",
-				"",
-			);
-		};
-		B052DFAFF61A3F322544B935 = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			alwaysOutOfDate = 1;
-			files = (
-			);
-			name = "Copy Agent conversation prompt";
-			shellPath = /bin/sh;
-			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		3516E35B59948405AB869408 = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			alwaysOutOfDate = 1;
-			files = (
-			);
-			name = "Copy Agent conversation prompt";
-			shellPath = /bin/sh;
-			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		59FEBACC0F6E6AA47D993331 = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			alwaysOutOfDate = 1;
-			files = (
-			);
-			name = "Copy Agent conversation prompt";
-			shellPath = /bin/sh;
-			shellScript = "\"$PROJECT_DIR/scripts/xcode-copy-prompt.sh\"\n";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -1948,8 +1765,6 @@
 				26BC95D8A7B3E4F129E9AD9F,
 				82EA4910FA0A21C0579F3E29,
 				534B7D287D089271F8634C32,
-				E11000000000000000000B00,
-				E11000000000000000000B01,
 				E11000000000000000000B02,
 				E11000000000000000000B03,
 				E11000000000000000000B05,
@@ -1960,32 +1775,11 @@
 				75548D3C52D3DD19C3BD3ECB,
 			);
 		};
-		E111000000000000000000A1 = {
-			isa = PBXSourcesBuildPhase;
-			files = (
-				D38392FEAE98B043BBA01F32,
-				42A09C85E1FC8EB7417A9E22,
-				C58144D7E90E1F5E87E8A3FC,
-				BF3839A481C8EB21C796E06B,
-				139A43442A7A20467E021EAD,
-				65CEEA0E5FE927DC8D6B4C8F,
-				E11100000000000000000B00,
-				E11100000000000000000B01,
-				E11100000000000000000B02,
-				E11100000000000000000B03,
-				E11100000000000000000B05,
-				E11100000000000000000B06,
-				E11100000000000000000B07,
-				E11100000000000000000B08,
-				4861077C58DCA2FD9910205F,
-			);
-		};
 		E112000000000000000000A1 = {
 			isa = PBXSourcesBuildPhase;
 			files = (
 				C622A7EBBE746BA108EA86AA,
 				E11200000000000000000B00,
-				94832A520768771E7285B39A,
 				775CBE322F97683D29D5475B,
 				62B9BFB9095B17879C439924,
 				A48445E581B7F7391D46A313,
@@ -2097,7 +1891,6 @@
 				837321AFF82528C3A8EAB2F5,
 				6817F4D9EBEF250F3A26ED4F,
 				F26EAD91B663BB2BCD833522,
-				20CC54B4487082597103767B,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2182,11 +1975,6 @@
 			isa = PBXTargetDependency;
 			target = E000000000000000000000A0 /* RustCore */;
 			targetProxy = E110000000000000000000C1 /* PBXContainerItemProxy */;
-		};
-		E111000000000000000000C2 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E000000000000000000000A0 /* RustCore */;
-			targetProxy = E111000000000000000000C1 /* PBXContainerItemProxy */;
 		};
 		E112000000000000000000C2 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -2397,36 +2185,6 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
-			};
-			name = Development;
-		};
-		E111000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
-			};
-			name = Debug;
-		};
-		E111000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
-			};
-			name = Release;
-		};
-		E111000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoAgentTaskSourceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
 			};
 			name = Development;
 		};
@@ -2921,26 +2679,6 @@
 			};
 			name = TestPerformance;
 		};
-		E696C5A4CB8F5CEBF7F44906 = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = YES;
-				CODE_SIGN_IDENTITY = "-";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-			};
-			name = DevelopmentDebug;
-		};
-		32B302BAEC15825E67419D8F = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = YES;
-				CODE_SIGN_IDENTITY = "-";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAgentTaskSourceTests;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-			};
-			name = TestPerformance;
-		};
 		9D93A9D04BBBA7125FF43FA2 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -3243,7 +2981,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};
@@ -3256,7 +2994,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};
@@ -3269,7 +3007,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};
@@ -3282,7 +3020,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};
@@ -3295,7 +3033,7 @@
 				OTHER_LDFLAGS = "$(inherited) -framework Security -framework SystemConfiguration -framework CoreFoundation";
 				CODE_SIGN_IDENTITY = "-";
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/agent-bridge/include $(PROJECT_DIR)/exec-bridge/include";
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
 				ENABLE_ADDRESS_SANITIZER = YES;
 			};
 		};
@@ -3793,17 +3531,6 @@
 				E110000000000000000000D2,
 				5F5459E05617E7DCD7BBC87E,
 				19F90618FD9EF1B4F47E61AA,
-			);
-			defaultConfigurationName = Release;
-		};
-		E111000000000000000000EE = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E111000000000000000000D0,
-				E111000000000000000000D1,
-				E111000000000000000000D2,
-				E696C5A4CB8F5CEBF7F44906,
-				32B302BAEC15825E67419D8F,
 			);
 			defaultConfigurationName = Release;
 		};

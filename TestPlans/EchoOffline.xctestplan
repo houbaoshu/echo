@@ -30,14 +30,6 @@
     {
       "target": {
         "containerPath": "container:Echo.xcodeproj",
-        "identifier": "E111000000000000000000AA",
-        "name": "EchoAgentTaskSourceTests"
-      },
-      "parallelizable": false
-    },
-    {
-      "target": {
-        "containerPath": "container:Echo.xcodeproj",
         "identifier": "E113000000000000000000AA",
         "name": "EchoVoiceTests"
       },

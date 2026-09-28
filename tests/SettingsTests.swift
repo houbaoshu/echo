@@ -183,26 +183,19 @@ import Testing
         #expect(!secrets.values.values.contains("blocked-secret"))
 
     }
-    /// The native engine is on unless turned off, the choice survives a reload, and it picks which
-    /// engine's connection test runs.
-    @Test @MainActor static func nativeAgentSettingSelectsTheConnectionTest() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("native-agent-settings-\(UUID())")
+    /// The connection test runs the injected tester with the typed configuration.
+    @Test @MainActor static func connectionTestUsesTheAgentTester() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("agent-settings-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("settings.json")
-        try Data(#"{"version":2,"activeProvider":"ollama","providers":{"ollama":{"model":{"baseURL":"http://localhost:11434/v1","model":"m"}}},"selectedPetID":"builtin:chiyan"}"#.utf8).write(to: url)
-        let rust = RecordingTester(), native = RecordingTester()
-        let settings = SettingsStore(url: url, secrets: ProviderSecrets(), tester: rust, nativeTester: native)
-        #expect(settings.snapshot.nativeAgent, "Settings saved before the setting existed use the native engine")
+        try Data(#"{"version":2,"activeProvider":"ollama","providers":{"ollama":{"model":{"baseURL":"http://localhost:11434/v1","model":"m"}}},"selectedPetID":"builtin:chiyan","nativeAgent":false}"#.utf8).write(to: url)
+        let tester = RecordingTester()
+        let settings = SettingsStore(url: url, secrets: ProviderSecrets(), tester: tester)
+        #expect(settings.notice == nil, "A setting from the transition to the native engine is ignored")
         settings.testConnection()
         try await waitUntil { !settings.testing }
-        #expect(rust.count == 0 && native.count == 1, "The connection test checks the native engine by default")
-        settings.setNativeAgent(false)
-        #expect(!settings.snapshot.nativeAgent && settings.agentEngineNotice == nil)
-        settings.testConnection()
-        try await waitUntil { !settings.testing }
-        #expect(rust.count == 1 && native.count == 1)
-        #expect(!SettingsStore(url: url, secrets: ProviderSecrets()).snapshot.nativeAgent, "Turning it off is saved")
+        #expect(tester.count == 1 && settings.testSucceeded)
     }
     @MainActor private static func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))

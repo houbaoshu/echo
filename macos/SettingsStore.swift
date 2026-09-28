@@ -138,9 +138,6 @@ struct SettingsSnapshot: Codable {
     var voiceSecretAccount: String?
     /// ⌥ Space opens the pet's quick composer from anywhere.
     var quickComposerHotKey = true
-    /// The native Foundation Models engine, on unless turned off: new conversations use it, and a
-    /// Rust-engine conversation moves to it at its next send. Off keeps new ones on the Rust engine.
-    var nativeAgent = true
 
     var model: ModelConfiguration { settings(for: activeProvider).model }
     var secretAccount: String? { settings(for: activeProvider).secretAccount }
@@ -149,7 +146,7 @@ struct SettingsSnapshot: Codable {
     }
     private enum CodingKeys: String, CodingKey {
         case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, voiceSecretAccount,
-             quickComposerHotKey, nativeAgent
+             quickComposerHotKey
     }
     private enum LegacyKeys: String, CodingKey { case model, secretAccount }
     init() {}
@@ -162,7 +159,6 @@ struct SettingsSnapshot: Codable {
         voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
         voiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .voiceSecretAccount)
         quickComposerHotKey = try values.decodeIfPresent(Bool.self, forKey: .quickComposerHotKey) ?? true
-        nativeAgent = try values.decodeIfPresent(Bool.self, forKey: .nativeAgent) ?? true
         if version == 1 {
             let legacy = try decoder.container(keyedBy: LegacyKeys.self)
             let model = try legacy.decode(ModelConfiguration.self, forKey: .model)
@@ -204,7 +200,6 @@ protocol ConnectionTesting: Sendable {
     private let url: URL?
     private let secrets: any SecretStore
     private let tester: any ConnectionTesting
-    private let nativeTester: any ConnectionTesting
     private struct Credential {
         var key = ""
         var loaded = true
@@ -234,9 +229,8 @@ protocol ConnectionTesting: Sendable {
             value.model != snapshot.settings(for: provider).model || value.key != (credentials[provider]?.key ?? "")
         }
     }
-    init(url: URL? = nil, secrets: any SecretStore = KeychainSecretStore(), tester: any ConnectionTesting = ModelConnectionTester(),
-         nativeTester: any ConnectionTesting = NativeConnectionTester()) {
-        self.url = url; self.secrets = secrets; self.tester = tester; self.nativeTester = nativeTester
+    init(url: URL? = nil, secrets: any SecretStore = KeychainSecretStore(), tester: any ConnectionTesting = NativeConnectionTester()) {
+        self.url = url; self.secrets = secrets; self.tester = tester
         if let url, FileManager.default.fileExists(atPath: url.path) {
             do {
                 let decoded = try JSONDecoder().decode(SettingsSnapshot.self, from: Data(contentsOf: url))
@@ -378,14 +372,6 @@ protocol ConnectionTesting: Sendable {
         do { try update { $0.quickComposerHotKey = enabled } }
         catch { hotKeyNotice = error is SettingsError ? error.localizedDescription : "快捷键设置保存失败，请检查目录写入权限。" }
     }
-    @Published var agentEngineNotice: String?
-    /// Applies from each conversation's next send; a conversation already moved stays native.
-    func setNativeAgent(_ enabled: Bool) {
-        guard enabled != snapshot.nativeAgent else { return }
-        agentEngineNotice = nil
-        do { try update { $0.nativeAgent = enabled }; invalidateTest() }
-        catch { agentEngineNotice = error is SettingsError ? error.localizedDescription : "设置保存失败，请检查目录写入权限。" }
-    }
     func selectPet(_ id: String) throws { try update { $0.selectedPetID = id } }
     func selectPlanet(_ id: String) throws { try update { $0.selectedPlanetID = id } }
     /// One saved preference: the published snapshot changes only once the file has it.
@@ -408,9 +394,7 @@ protocol ConnectionTesting: Sendable {
         do {
             let configuration = try draft.validated()
             guard !apiKey.contains("\r"), !apiKey.contains("\n") else { throw SettingsError("API Key 不能包含换行。") }
-            let key = selectedProvider.requiresKey ? apiKey : ""; let current = revision
-            // The test exercises the engine new conversations will use.
-            let tester = snapshot.nativeAgent ? nativeTester : tester
+            let key = selectedProvider.requiresKey ? apiKey : ""; let current = revision; let tester = tester
             testing = true
             task = Task { [weak self] in
                 var result: String; var success = false

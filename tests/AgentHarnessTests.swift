@@ -1,5 +1,4 @@
 import Combine
-import EchoAgentBridge
 import Foundation
 import FoundationModels
 import Synchronization
@@ -115,7 +114,26 @@ import Testing
         #expect(second.kinds == ["instructions", "prompt", "response", "prompt"], "Each request carries the whole conversation")
         #expect(simple.native.turns.map(\.outcome) == [.completed, .completed])
         #expect(simple.saved.count >= 4, "Input is saved before the request, and the ending before it is announced")
-        #expect(echo_agent_active_sessions() == 0, "The native engine never opens a Rust session")
+        #expect(!ExecutionService.coreStarted, "Chatting never starts the execution core")
+    }
+
+    /// A reply being written is shown by the stream alone: the conversation gets its message when
+    /// the generation ends, so the chat never draws the partial text twice.
+    @Test func aReplyBeingWrittenIsNotYetAMessage() async throws {
+        let puppet = PuppetModel()
+        let store = TaskStore(source: AgentHarness(resolveModel: { puppet.factory }))
+        defer { store.shutdown() }
+        #expect(store.send("讲讲天气"))
+        try await puppet.waitForRequests(1)
+        let reply = PuppetStream()
+        try await puppet.answer(.stream(reply))
+        // Snapshots trail the model by two chunks.
+        try await reply.send(["今天", "天气", "不错，", "适合"])
+        try await Self.wait("the reply streams") { store.replyStream.live?.hasPrefix("今天") == true }
+        #expect(store.messages.map(\.role) == [.user], "Only the stream shows the reply: \(store.messages.map(\.content))")
+        reply.send("散步。"); reply.finish()
+        try await Self.wait("turn ends") { !store.isGenerating }
+        #expect(store.messages.map(\.content) == ["讲讲天气", "今天天气不错，适合散步。"] && store.replyStream.live == nil)
     }
 
     @Test func textBesideToolCallIsAMessageAndTheToolReadsTheProject() async throws {
@@ -566,8 +584,7 @@ import Testing
         let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
         let model = ScriptedAgentModel { request, emit, _ in try await emit.text("reply \(request.userTexts.count)") }
         func workspace() -> WorkspaceStore {
-            WorkspaceStore(persistence: persistence, sourceFactory: { nil },
-                           nativeSourceFactory: { AgentHarness(resolveModel: { model.factory }) }, prefersNative: { true })
+            WorkspaceStore(persistence: persistence, sourceFactory: { AgentHarness(resolveModel: { model.factory }) })
         }
         var store = workspace()
         let chat = try #require(store.selected)
@@ -631,8 +648,7 @@ import Testing
         let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
         let model = ScriptedAgentModel { _, emit, _ in try await emit.text("native reply") }
         func native() -> WorkspaceStore {
-            WorkspaceStore(persistence: persistence, sourceFactory: { nil },
-                           nativeSourceFactory: { AgentHarness(resolveModel: { model.factory }) }, prefersNative: { true })
+            WorkspaceStore(persistence: persistence, sourceFactory: { AgentHarness(resolveModel: { model.factory }) })
         }
         var store = native()
         let chat = try #require(store.selected)
@@ -707,24 +723,6 @@ import Testing
         let blocked = persistence.restoreSession(manifestEntry(conflict))
         #expect(blocked.loadError?.contains("两份") == true && blocked.engine == .native)
         #expect(fm.fileExists(atPath: persistence.sessionURL(conflict).path) && fm.fileExists(atPath: persistence.nativeSessionURL(conflict).path))
-    }
-
-    @Test func aDraftTakesTheEngineChosenAtItsFirstSend() async throws {
-        var native = false
-        let model = ScriptedAgentModel { _, emit, _ in try await emit.text("ok") }
-        let workspace = WorkspaceStore(sourceFactory: { nil },
-                                       nativeSourceFactory: { AgentHarness(resolveModel: { model.factory }) }, prefersNative: { native })
-        defer { workspace.shutdown() }
-        let draft = try #require(workspace.selected)
-        #expect(draft.store.engine == nil)
-        native = true
-        #expect(workspace.send("hello", conversationID: draft.id))
-        #expect(draft.store.engine == .native && draft.store.usesAgent)
-        try await AgentHarnessTests.wait("reply") { !draft.store.isGenerating }
-        native = false
-        #expect(workspace.send("still native", conversationID: draft.id))
-        #expect(draft.store.engine == .native, "A conversation keeps its engine")
-        try await AgentHarnessTests.wait("second reply") { !draft.store.isGenerating }
     }
 }
 
@@ -824,7 +822,8 @@ import Testing
         let cleaned = Mutex(false)
         let runner = AgentHarnessTests.FakeRunner { _, _, _ in
             while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
-            try? await Task.sleep(for: .milliseconds(100))   // the process tree is being killed
+            // The process tree is being killed; cancellation does not cut that short.
+            await Task.detached { try? await Task.sleep(for: .milliseconds(300)) }.value
             cleaned.withLock { $0 = true }
             return .cancelled
         }

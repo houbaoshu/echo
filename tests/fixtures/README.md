@@ -17,7 +17,9 @@ opaque string, not decrypted reasoning.
 - `invalid-duplicate-id.json`: syntactically valid history with a duplicate ID;
   initialization must fail before any model or tool runs.
 
-Consumers: `agent-bridge/tests/history_v1.rs`, `lifecycle.rs`, and `v2_contract.rs`.
+Consumers: `tests/AgentHistoryImportTests.swift` and the import scenarios in
+`tests/AgentSessionTests.swift`, which turn saved Rust-engine conversations into
+the native transcript. mini-agent-rs keeps byte-identical copies for its own tests.
 Keep these regression fixtures fixed; add a new fixture for new formats.
 
 ## ASR pause regression sources

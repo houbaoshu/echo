@@ -37,30 +37,27 @@ def main():
                 selector.register(server.stdout, selectors.EVENT_READ)
                 assert selector.select(timeout=5), "Fixture startup timed out"
             port = int(server.stdout.readline().strip())
-            # Each engine quits during a running bash command; neither may leave its shell or child.
-            for engine, loaded in [("rust", "loaded pet and default prompt from empty cwd"),
-                                   ("native", "loaded pet and the native engine from empty cwd")]:
-                artifacts = root / f"artifacts-{engine}"
-                log_path = root / f"app-{engine}.log"
-                with log_path.open("w") as log:
-                    result = subprocess.run([str(executable), "--acceptance-test",
-                                             f"http://127.0.0.1:{port}", str(artifacts)]
-                                            + (["native"] if engine == "native" else []),
-                                            cwd=cwd, stdout=log, stderr=subprocess.STDOUT, timeout=40)
-                output = log_path.read_text()
-                assert result.returncode == 0, f"App failed ({engine}): {result.returncode}; see {log_path}"
-                assert f"relocated bundle {loaded}" in output, f"{engine}: {output}"
-                assert "AppKit termination acknowledged command cleanup" in output, f"{engine}: {output}"
-                pids = list(artifacts.glob("process-audit/*.pid"))
-                assert len(pids) == 2, f"The shell/child exit scenario did not start ({engine})"
-                for file in pids:
-                    try:
-                        os.kill(int(file.read_text().strip()), 0)
-                    except ProcessLookupError:
-                        continue
-                    raise AssertionError(f"Process survived AppKit termination ({engine}): {file.name}")
+            # Quit during a running bash command; no shell or child may survive it.
+            artifacts = root / "artifacts"
+            log_path = root / "app.log"
+            with log_path.open("w") as log:
+                result = subprocess.run([str(executable), "--acceptance-test",
+                                         f"http://127.0.0.1:{port}", str(artifacts)],
+                                        cwd=cwd, stdout=log, stderr=subprocess.STDOUT, timeout=40)
+            output = log_path.read_text()
+            assert result.returncode == 0, f"App failed: {result.returncode}; see {log_path}"
+            assert "relocated bundle loaded pet and the Agent from empty cwd" in output, output
+            assert "AppKit termination acknowledged command cleanup" in output, output
+            pids = list(artifacts.glob("process-audit/*.pid"))
+            assert len(pids) == 2, "The shell/child exit scenario did not start"
+            for file in pids:
+                try:
+                    os.kill(int(file.read_text().strip()), 0)
+                except ProcessLookupError:
+                    continue
+                raise AssertionError(f"Process survived AppKit termination: {file.name}")
             assert list(cwd.iterdir()) == [], "App or fixture wrote into its empty working directory"
-            print("PASS: signed relocated App, bundled resources, system libraries, normal exit, no surviving shell/child on either engine")
+            print("PASS: signed relocated App, bundled resources, system libraries, normal exit, no surviving shell/child")
         finally:
             server.terminate()
             try:

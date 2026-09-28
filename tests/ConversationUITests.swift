@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 import Carbon.HIToolbox
+import FoundationModels
 import SwiftUI
 
 @MainActor private final class ComposerSecrets: SecretStore {
@@ -22,106 +23,28 @@ import SwiftUI
     func cancel() {}
 }
 
-@MainActor private final class ComposerAgent: AgentSessionSource {
-    var controls: [AgentCommand] = []
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {}
-    func cancel() {}
-    func open(sessionID: String, generation: String, restore: AgentRestore,
-              receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws {}
-    func control(_ command: AgentCommand) throws { controls.append(command) }
-    func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
+/// A native Agent session whose model never answers: stores that only need to be Agent sessions.
+@MainActor private func idleAgent() -> AgentHarness {
+    let puppet = PuppetModel()
+    return AgentHarness(resolveModel: { puppet.factory })
 }
 
-/// An Agent session that streams a running step's text and only checkpoints the reply
-/// once the step is final, the way the core's poll responses do.
-@MainActor private final class StreamingAgent: AgentSessionSource {
-    private var receive: ((AgentBatch) -> Void)?
-    private var streamReceiver: ((AgentStream) -> Void)?
-    private var sessionID = ""
-    private var generation = ""
-    private var receipts: [AgentInputReceipt] = []
-    private var entries: [AgentDisplayEntry] = []
-    private var nextID: UInt64 = 1
-    private var revision: UInt64 = 0
-    private let turnID: UInt64 = 1
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {}
-    func cancel() {}
-    func observeStream(_ receive: @escaping (AgentStream) -> Void) { streamReceiver = receive }
-    func open(sessionID: String, generation: String, restore: AgentRestore,
-              receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws {
-        self.sessionID = sessionID; self.generation = generation; self.receive = receive
-    }
-    func control(_ command: AgentCommand) throws {
-        guard case .sendMessage(let input) = command else { return }
-        let id = nextID; nextID += 1
-        receipts.append(.init(client_message_id: input.client_message_id, message_id: id, turn_id: turnID))
-        entries.append(.init(type: .message, message_id: id, turn_id: turnID, role: .user, text: input.text))
-        emit([.init(type: .turn_started), .init(type: .model_started)])
-    }
-    func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
-    /// A coalesced stream snapshot: everything the running step has written so far.
-    func stream(_ text: String, operation: UInt64 = 2, toolCall: Bool = false) {
-        streamReceiver?(AgentStream(turn_id: turnID, operation_id: operation, text: text, tool_call: toolCall))
-    }
-    /// The final reply, with the projection that carries it, in one batch.
-    func finish(_ text: String, operation: UInt64 = 2) {
-        let id = nextID; nextID += 1
-        entries.append(.init(type: .message, message_id: id, turn_id: turnID, role: .assistant,
-                             text: text, final_reply: true))
-        revision += 1
-        emit([.init(type: .assistant, message_id: id, content: text, final_reply: true),
-              .init(type: .finished, outcome: AgentOutcome(status: .completed, reply: text))],
-             operation: operation,
-             checkpoint: AgentCheckpoint(id: .init(generation: generation, revision: revision), history: "{}",
-                                         input_receipts: receipts, projection: entries))
-    }
-    private func emit(_ kinds: [AgentEvent.Kind], operation: UInt64? = nil, checkpoint: AgentCheckpoint? = nil) {
-        receive?(AgentBatch(session_id: sessionID, generation: generation, turn_id: turnID,
-            kind: .init(type: .update),
-            events: kinds.map { AgentEvent(version: 1, session_id: sessionID, turn_id: turnID,
-                                           operation_id: operation, kind: $0) },
-            checkpoint: checkpoint))
+/// Runs a condition check until it holds, failing the test after five seconds.
+@MainActor private func eventually(_ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
+    let deadline = Date().addingTimeInterval(5)
+    while !condition() {
+        guard Date() < deadline else { XCTFail("Timed out: \(label())"); return }
+        try await Task.sleep(for: .milliseconds(10))
     }
 }
 
-/// Drives the Agent tool UI with the batches the core sends around one tool call:
-/// a proposal that waits for a project folder, then the command running in it.
-@MainActor private final class ToolAgent: AgentSessionSource {
-    private var receive: ((AgentBatch) -> Void)?
-    private var sessionID = ""
-    private var generation = ""
-    private var receipts: [AgentInputReceipt] = []
-    private var entries: [AgentDisplayEntry] = []
-    private var revision: UInt64 = 0
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {}
-    func cancel() {}
-    func open(sessionID: String, generation: String, restore: AgentRestore,
-              receive: @escaping (AgentBatch) -> Void, failure: @escaping (String) -> Void) throws {
-        self.sessionID = sessionID; self.generation = generation; self.receive = receive
-    }
-    func control(_ command: AgentCommand) throws {
-        guard case .sendMessage(let input) = command else { return }
-        receipts.append(.init(client_message_id: input.client_message_id, message_id: 1, turn_id: 1))
-        entries.append(.init(type: .message, message_id: 1, turn_id: 1, role: .user, text: input.text))
-        emit([.init(type: .turn_started)], checkpoint: true)
-    }
-    func close(afterCleanup: @escaping () -> Void) { afterCleanup() }
-    /// Text beside a tool call, and the call waiting for a folder.
-    func propose(_ command: String) {
-        entries.append(.init(type: .message, message_id: 2, turn_id: 1, role: .assistant, text: "我先检查文件。", final_reply: false))
-        entries.append(.init(type: .tool, message_id: 2, turn_id: 1, call_id: "call-1", command: command))
-        emit([.init(type: .assistant, message_id: 2, content: "我先检查文件。", final_reply: false),
-              .init(type: .directory_required)], checkpoint: true)
-    }
-    func run(in directory: String) {
-        emit([.init(type: .tool_started, call: .init(id: "call-1"), directory: directory)])
-    }
-    private func emit(_ kinds: [AgentEvent.Kind], checkpoint: Bool = false) {
-        if checkpoint { revision += 1 }
-        receive?(AgentBatch(session_id: sessionID, generation: generation, turn_id: 1, kind: .init(type: .update),
-            events: kinds.map { AgentEvent(version: 1, session_id: sessionID, turn_id: 1, kind: $0) },
-            checkpoint: checkpoint ? AgentCheckpoint(id: .init(generation: generation, revision: revision), history: "{}",
-                                                     input_receipts: receipts, projection: entries) : nil))
+/// A command that ignores Stop until the test lets it finish, like one whose cleanup is still pending.
+private final class HeldRunner: CommandRunning {
+    let gate = ScriptGate()
+    func run(command: String, directory: String) async -> CommandOutcome {
+        let gate = gate
+        await Task.detached { try? await gate.wait() }.value
+        return .cancelled
     }
 }
 
@@ -772,8 +695,8 @@ private struct ComposerHeightHost: View {
     }
 
     func testStoppingAndDictationEscape() async throws {
-        let source = ComposerAgent()
-        let agentStore = TaskStore(source: source)
+        let puppet = PuppetModel(), runner = HeldRunner()
+        let agentStore = TaskStore(source: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
         let recognizer = ComposerRecognizer()
         let dictation = DictationController(audio: ComposerAudio(), recognizer: { recognizer }, permission: { true })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
@@ -783,18 +706,27 @@ private struct ComposerHeightHost: View {
                                      styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(), windowOverride: window)
         main.present()
-        defer { main.shutdown(); workspace.shutdown() }
+        defer { runner.gate.open(); main.shutdown(); workspace.shutdown() }
         func refresh() async throws {
             try await Task.sleep(for: .milliseconds(100)); window.contentView?.layoutSubtreeIfNeeded()
         }
         func node(_ id: String) -> AnyObject? { findAccessibility(id, in: window.contentView!) }
+        // A command is running whose cleanup outlasts Stop, so the task stays stopping.
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent("echo-stopping-\(UUID())")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        print("Stopping test project: \(project.path)")
         _ = agentStore.send("generate")
+        try await puppet.answer(.call(name: "bash", arguments: #"{"command":"sleep 60"}"#))
+        try await eventually("the command asks for a folder") { agentStore.needsDirectory }
+        workspace.provideDirectory(project, conversationID: conversation.id)
+        try await eventually("the command runs") { agentStore.tools.first?.state == "执行中" && !agentStore.needsDirectory }
         agentStore.mainDraft = "steer"
         try await refresh()
         XCTAssertTrue(node("conversation.send")?.isAccessibilityEnabled?() == true)
         XCTAssertTrue(node("conversation.stop") != nil)
         XCTAssertTrue(node("conversation.send")?.accessibilityPerformPress?() == true)
-        XCTAssertTrue(source.controls.contains { if case .sendMessage = $0 { return true }; return false } && agentStore.mainDraft.isEmpty)
+        XCTAssertTrue(agentStore.messages.last { $0.role == .user }?.content == "steer" && agentStore.mainDraft.isEmpty,
+                     "Sending while the Agent runs steers it: \(agentStore.messages.map(\.content))")
         XCTAssertTrue(main.handleEscape(), "Escape dispatches the existing Agent Stop action")
         XCTAssertTrue(agentStore.task?.status == .stopping)
         XCTAssertTrue(!main.handleEscape(), "Escape does not repeat Stop while cleanup is pending")
@@ -816,7 +748,7 @@ private struct ComposerHeightHost: View {
         window.cancelOperation(nil)
         try await refresh()
         XCTAssertTrue(dictation.isActive && agentStore.mainDraft == "原草稿" && agentStore.task?.status == .stopping,
-                     "Escape neither cancels dictation nor repeats Stop while stopping")
+                     "Escape neither cancels dictation nor repeats Stop while stopping: \(dictation.isActive), \(agentStore.mainDraft), \(String(describing: agentStore.task?.status))")
         XCTAssertTrue(node("dictation.cancel")?.accessibilityPerformPress?() == true)
         try await refresh()
         XCTAssertTrue(window.firstResponder is ComposerTextView, "Explicit cancel restores composer focus")
@@ -1790,7 +1722,7 @@ private struct ComposerHeightHost: View {
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "", status: .completed),
             messages: [.init(role: .user, content: "跑个任务"), .init(role: .assistant, content: "任务结果")],
             mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false)
-        let finishedTask = TaskStore(snapshot: archive, source: ComposerAgent())
+        let finishedTask = TaskStore(snapshot: archive, source: idleAgent())
         defer { finishedTask.shutdown() }
         XCTAssertTrue(finishedTask.usesAgent && finishedTask.task?.summary == "已完成", "The stored task still records its outcome")
         let agentDone = try await texts(of: finishedTask)
@@ -1798,7 +1730,7 @@ private struct ComposerHeightHost: View {
 
         archive.task?.status = .interrupted
         archive.task?.summary = "已中断 · 可继续跟进"
-        let brokenTask = TaskStore(snapshot: archive, source: ComposerAgent())
+        let brokenTask = TaskStore(snapshot: archive, source: idleAgent())
         defer { brokenTask.shutdown() }
         let agentBroken = try await texts(of: brokenTask)
         XCTAssertTrue(agentBroken.contains { $0.contains("已中断 · 可继续跟进") },
@@ -1827,14 +1759,18 @@ private struct ComposerHeightHost: View {
             return accessibilityText(in: view)
         }
 
-        let agent = ToolAgent(), store = TaskStore(source: agent)
+        let puppet = PuppetModel(), runner = HeldRunner()
+        let store = TaskStore(source: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
-        defer { workspace.shutdown() }
+        defer { runner.gate.open(); workspace.shutdown() }
         // 关联项目 lists available projects and is disabled without one.
         _ = workspace.addProject(url: FileManager.default.temporaryDirectory)
         store.send("看看项目")
-        agent.propose("printf probe")
-        XCTAssertTrue(store.needsDirectory && store.tools.map(\.state) == ["待执行"])
+        let proposal = PuppetStream()
+        try await puppet.answer(.stream(proposal))
+        proposal.send("我先检查文件。"); proposal.call("bash", #"{"command":"printf probe"}"#); proposal.finish()
+        try await eventually("the call waits for a folder") { store.needsDirectory }
+        XCTAssertTrue(store.tools.map(\.state) == ["待执行"], "\(store.tools.map(\.state))")
         let waiting = try await texts(of: store, workspace: workspace)
         XCTAssertTrue(waiting.contains { $0.contains("我先检查文件。") }, "Text beside the call stays in the chat: \(waiting)")
         XCTAssertTrue(waiting.contains { $0.contains("待执行 · printf probe") }, "The pending call shows its command: \(waiting)")
@@ -1846,38 +1782,59 @@ private struct ComposerHeightHost: View {
         // through this accessibility walk (reading accessibilityTitle on SwiftUI nodes aborts the
         // test process), so only its enabling condition is pinned here.
         XCTAssertTrue(workspace.projects.contains { $0.isAvailable })
-        agent.run(in: "/tmp/probe-project")
-        XCTAssertTrue(store.tools.first?.state == "执行中" && store.tools.first?.directory == "/tmp/probe-project")
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent("echo-probe-project-\(UUID())")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        print("Tool card test project: \(project.path)")
+        workspace.provideDirectory(project, conversationID: try XCTUnwrap(workspace.selected?.id))
+        try await eventually("the command runs") { !store.needsDirectory && store.tools.first?.directory != nil }
+        XCTAssertTrue(store.tools.first?.state == "执行中" && store.tools.first?.directory == ExecutionService.canonicalPath(project.path),
+                      "\(String(describing: store.tools.first))")
         let running = try await texts(of: store, workspace: workspace)
         XCTAssertTrue(running.contains { $0.contains("执行中 · printf probe") }, "The call shows it is running: \(running)")
         XCTAssertTrue(running.contains { $0.contains("正在运行命令 · printf probe") }, "The task row names the step: \(running)")
 
+        // Saved conversations: one turn that ran four commands — finished, not run, cut off, and
+        // one the app quit during — and one turn that never finished.
         let user = ConversationMessage(role: .user, content: "跑命令"), reply = ConversationMessage(role: .assistant, content: "做完了")
-        func record(_ call: String, _ result: String?, _ state: String) -> AgentToolRecord {
-            AgentToolRecord(callID: call, entryID: 2, turnID: 1, afterMessageID: user.id, command: "cmd-\(call)", result: result, state: state)
+        func call(_ id: String) -> Transcript.ToolCall {
+            Transcript.ToolCall(id: id, toolName: "bash", arguments: try! GeneratedContent(json: #"{"command":"cmd-\#(id)"}"#))
         }
+        func output(_ id: String, _ result: String) -> Transcript.Entry {
+            .toolOutput(.init(id: id, toolName: "bash", segments: [.text(.init(content: result))]))
+        }
+        let prompt = Transcript.Entry.prompt(Transcript.Prompt(metadata: [AgentPromptKey.message: user.id.uuidString],
+                                                               segments: [.text(.init(content: user.content))]))
+        var ran = NativeAgentState()
+        ran.entries = [
+            prompt,
+            .toolCalls(Transcript.ToolCalls(id: "calls", ["done", "skipped", "cut", "lost"].map(call))),
+            output("done", #"{"stdout":"out","stderr":"err","exit_code":2,"timed_out":true,"stdout_truncated":true,"stderr_truncated":false}"#),
+            output("skipped", #"{"status":"not_executed","detail":"Superseded by follow-up instructions."}"#),
+            output("cut", #"{"status":"unknown","detail":"Cancelled during execution; inspect workspace for effects."}"#),
+            .response(Transcript.Response(id: "echo-reply", assetIDs: [], segments: [.text(.init(content: reply.content))])),
+        ]
+        ran.replies = ["echo-reply": reply.id]
+        ran.turns = [.init(start: 0, outcome: .completed)]
         let finished = TaskStore(snapshot: .init(
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已完成", status: .completed),
             messages: [user, reply], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
-            tools: [
-                record("done", #"{"stdout":"out","stderr":"err","exit_code":2,"timed_out":true,"stdout_truncated":true,"stderr_truncated":false}"#, "执行结束"),
-                record("skipped", #"{"status":"not_executed","detail":"Superseded by follow-up instructions."}"#, "未执行"),
-                record("cut", #"{"status":"unknown","detail":"Cancelled during execution; inspect workspace for effects."}"#, "执行结果未知"),
-                record("lost", nil, "执行中"),
-            ]), source: ComposerAgent())
+            tools: [], engine: .native, native: ran), source: idleAgent())
         defer { finished.shutdown() }
         XCTAssertEqual(finished.tools.map(\.state), ["执行结束", "未执行", "执行结果未知", "执行结果未知"],
-                       "A call restored without a result is unknown, whatever it was doing")
+                       "A call restored without a result is unknown")
         let restored = try await texts(of: finished)
         for label in ["执行结束 · cmd-done", "未执行 · cmd-skipped", "执行结果未知 · cmd-cut", "执行结果未知 · cmd-lost"] {
             XCTAssertTrue(restored.contains { $0.contains(label) }, "Restored tool card \(label): \(restored)")
         }
         XCTAssertTrue(!restored.contains { $0.contains("继续处理") }, "A completed Agent turn offers no continue: \(restored)")
 
+        var asked = NativeAgentState()
+        asked.entries = [prompt]
+        asked.turns = [.init(start: 0, outcome: .interrupted)]
         let unfinished = TaskStore(snapshot: .init(
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已中断 · 可继续跟进", status: .interrupted),
             messages: [user], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
-            tools: []), source: ComposerAgent())
+            tools: [], engine: .native, native: asked), source: idleAgent())
         defer { unfinished.shutdown() }
         XCTAssertTrue(unfinished.canRetry)
         let interrupted = try await texts(of: unfinished)
@@ -1940,15 +1897,15 @@ private struct ComposerHeightHost: View {
     }
 
     /// The chat shows the reply while the model writes it. An Agent session's messages come
-    /// from the core's checkpoint projection, which carries a reply only once the step is
-    /// final, so the streamed snapshots have to reach the transcript on their own — and give
-    /// the bubble back to the settled message without leaving a second copy behind.
+    /// from its saved transcript, which carries a reply only once the generation is final, so
+    /// the streamed text has to reach the chat on its own — and give the bubble back to the
+    /// settled message without leaving a second copy behind.
     func testStreamingReplyRendersInTranscript() async throws {
         NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let dictation = DictationController()
         defer { voice.shutdown(); dictation.shutdown() }
-        let agent = StreamingAgent(), store = TaskStore(source: agent)
+        let puppet = PuppetModel(), store = TaskStore(source: AgentHarness(resolveModel: { puppet.factory }))
         defer { store.shutdown() }
         let view = NSHostingView(rootView: ConversationView(store: store, voice: voice, dictation: dictation,
             startDictation: {}, startVoice: {}, conversationID: UUID(),
@@ -1965,26 +1922,33 @@ private struct ComposerHeightHost: View {
         }
         XCTAssertTrue(store.usesAgent, "The transcript under test is an Agent session")
         store.send("讲讲今天的天气")
+        try await puppet.waitForRequests(1)
         let asked = try await texts()
         XCTAssertTrue(asked.contains { $0.contains("讲讲今天的天气") }, "The question is on screen: \(asked)")
         XCTAssertTrue(!asked.contains { $0.contains("正在回复…") },
                      "Nothing stands in for the reply before the model writes: \(asked)")
 
-        agent.stream("今天")
-        XCTAssertTrue(store.replyStream.live == "今天" && store.messages.allSatisfy { $0.role == .user },
-                     "A stream snapshot is live text, not yet a conversation message")
+        // Stream snapshots trail the model by two chunks.
+        let reply = PuppetStream()
+        try await puppet.answer(.stream(reply))
+        try await reply.send(["今天", "**天气**", "不错，"])
+        try await eventually("the first delta streams") { store.replyStream.live?.hasPrefix("今天") == true }
+        XCTAssertTrue(store.messages.allSatisfy { $0.role == .user },
+                     "Streamed text is live text, not yet a conversation message: \(store.messages)")
         let firstDelta = try await texts()
         XCTAssertTrue(firstDelta.contains { $0.contains("今天") }, "The first delta reaches the chat: \(firstDelta)")
         XCTAssertTrue(firstDelta.contains { $0.contains("正在回复…") },
                      "The streamed bubble says the reply is still being written: \(firstDelta)")
 
-        agent.stream("今天**天气**不错，")
+        try await reply.send(["适合", "散步"])
+        try await eventually("the reply grows") { store.replyStream.live?.contains("不错，") == true }
         let grown = try await texts()
         XCTAssertTrue(grown.contains { $0.contains("今天天气不错，") },
-                     "A later snapshot grows the same bubble, with Markdown rendered: \(grown)")
+                     "Later text grows the same bubble, with Markdown rendered: \(grown)")
         XCTAssertTrue(!grown.contains { $0.contains("**") }, "The bubble renders Markdown, not its syntax: \(grown)")
 
-        agent.finish("今天**天气**不错，适合散步。")
+        reply.send("。"); reply.finish()
+        try await eventually("the turn ends") { !store.isGenerating }
         XCTAssertTrue(store.replyStream.live == nil, "The settled step stops supplying live text")
         XCTAssertTrue(store.messages.last?.role == .assistant && store.messages.last?.status == .completed
                      && store.messages.last?.content == "今天**天气**不错，适合散步。",
@@ -2005,13 +1969,14 @@ private struct ComposerHeightHost: View {
     /// session itself are untouched.
     func testLiveVoiceHidesRunningStatusText() async throws {
         NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
-        let agent = StreamingAgent()
+        let puppet = PuppetModel()
         var recognizers: [ComposerRecognizer] = []
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
             let recognizer = ComposerRecognizer(); recognizers.append(recognizer); return recognizer
         }, synthesizer: { ComposerSynthesizer() }, permission: { true })
         let dictation = DictationController()
-        let workspace = WorkspaceStore(dictation: dictation, voice: voice, sourceFactory: { agent })
+        let workspace = WorkspaceStore(dictation: dictation, voice: voice,
+                                       sourceFactory: { AgentHarness(resolveModel: { puppet.factory }) })
         let settings = SettingsStore(secrets: ComposerSecrets())
         defer { workspace.shutdown(); voice.shutdown(); dictation.shutdown() }
         let conversation = workspace.selected!
@@ -2044,11 +2009,15 @@ private struct ComposerHeightHost: View {
         for _ in 0..<100 where voice.snapshot.recognition != .listening { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertTrue(voice.snapshot.recognition == .listening, "Live Voice connected")
 
-        // A spoken turn, streamed the way the core writes it.
+        // A spoken turn, streamed the way the model writes it.
         recognizers.last?.emit("讲讲今天的天气")
         XCTAssertTrue(store.isGenerating, "The spoken turn reached the Agent session")
+        try await puppet.waitForRequests(1)
         XCTAssertTrue(store.task?.summary == "正在请求模型…", "The task still records its own step: \(store.task?.summary ?? "nil")")
-        agent.stream("今天")
+        let reply = PuppetStream()
+        try await puppet.answer(.stream(reply))
+        try await reply.send(["今天", "天气", "不错"])
+        try await eventually("the reply streams") { store.replyStream.live != nil }
         let streaming = try await drawn()
         XCTAssertTrue(streaming.contains { $0.contains("今天") },
                      "The reply still streams into the chat, so the check above reads real text: \(streaming)")
@@ -2099,7 +2068,7 @@ private struct ComposerHeightHost: View {
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已中断 · 可继续跟进", status: .interrupted),
             messages: [queued, .init(role: .assistant, content: "只写了一半", status: .interrupted)],
             mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false)
-        let broken = TaskStore(snapshot: archive, source: ComposerAgent())
+        let broken = TaskStore(snapshot: archive, source: idleAgent())
         defer { broken.shutdown() }
         let brokenID = UUID()
         let brokenVoice = VoiceSessionController()
@@ -2138,13 +2107,14 @@ private struct ComposerHeightHost: View {
     /// message and no persisted guess.
     func testLiveVoiceTranscribesInTranscript() async throws {
         NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
-        let agent = StreamingAgent()
+        let puppet = PuppetModel()
         var recognizers: [ComposerRecognizer] = []
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
             let recognizer = ComposerRecognizer(); recognizers.append(recognizer); return recognizer
         }, synthesizer: { ComposerSynthesizer() }, permission: { true })
         let dictation = DictationController()
-        let workspace = WorkspaceStore(dictation: dictation, voice: voice, sourceFactory: { agent })
+        let workspace = WorkspaceStore(dictation: dictation, voice: voice,
+                                       sourceFactory: { AgentHarness(resolveModel: { puppet.factory }) })
         let settings = SettingsStore(secrets: ComposerSecrets())
         defer { workspace.shutdown(); voice.shutdown(); dictation.shutdown() }
         let conversation = workspace.selected!
@@ -2236,17 +2206,19 @@ private struct ComposerHeightHost: View {
                      "The stand-in gives way to the message it stood for")
         XCTAssertTrue(inTranscript("讲讲今天的天气") && !besideComposer("讲讲今天的天气"),
                      "The words stayed in the chat: \(visibleText(in: view))")
-        // The input really is queued on the core; only the caption saying so is left out, so
-        // the bubble that just settled does not sprout a line and lose it again.
-        XCTAssertTrue(store.messages.last { $0.role == .user }?.steering == "待处理",
-                     "The queue state is untouched: \(store.messages.map { $0.steering ?? "nil" })")
+        // The first input starts the turn itself, so it has no queue caption; the follow-up
+        // below is the one that waits, and pins that Live Voice leaves its caption out.
         XCTAssertTrue(!visibleText(in: view).contains { $0.contains("待处理") },
                      "Live Voice draws no 待处理 line: \(visibleText(in: view))")
 
         // A reply is being written and the user speaks again. The words wait where their
         // message will land — above the reply — so committing them moves nothing. Position is
         // read from the drawn frames, because a message and a stand-in look alike by design.
-        agent.stream("今天")
+        try await puppet.waitForRequests(1)
+        let reply = PuppetStream()
+        try await puppet.answer(.stream(reply))
+        try await reply.send(["今天", "天气", "不错"])
+        try await eventually("the reply streams") { store.replyStream.live != nil }
         recognizers.last?.emit("再说说明天", final: false, start: 200)
         try await settle()
         XCTAssertTrue(voice.subtitle == "再说说明天" && standIns() == 1, "The follow-up is being heard")
@@ -2283,13 +2255,13 @@ private struct ComposerHeightHost: View {
         // Stopping the turn takes half-heard words with it: nothing unsent is left in the chat
         // looking like a message. (A final the session refuses is pinned on the controller, in
         // VoiceTests.agentRefusedFinalTests.)
-        let settledCount = store.messages.count
+        let settled = store.messages.filter { $0.role == .user }.map(\.content)
         recognizers.last?.emit("还没说完", final: false, start: 400)
         try await settle()
         XCTAssertTrue(standIns() == 1, "A half-heard sentence stands in")
         store.stopTask()
         try await settle()
-        XCTAssertTrue(voice.subtitle.isEmpty && store.messages.count == settledCount,
+        XCTAssertTrue(voice.subtitle.isEmpty && store.messages.filter { $0.role == .user }.map(\.content) == settled,
                      "Stopping discards it instead of sending it: \(voice.subtitle)")
         XCTAssertTrue(standIns() == 0, "Nothing unsent stays drawn")
 
@@ -2300,8 +2272,11 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(standIns() == 0, "No stand-in outlives the session")
         XCTAssertTrue(store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气", "再说说明天"],
                      "The messages it produced are untouched: \(store.messages.map(\.content))")
-        XCTAssertTrue(visibleText(in: view).contains { $0.contains("待处理") },
-                     "Outside Live Voice the queue caption is there, so it was only ever hidden: \(visibleText(in: view))")
+        // Stop settled the turn, so the follow-up that never got its turn is interrupted, and
+        // outside Live Voice its caption shows.
+        XCTAssertTrue(store.messages.last { $0.role == .user }?.steering == "已中断"
+                     && visibleText(in: view).contains { $0.contains("已中断") },
+                     "Outside Live Voice the follow-up's caption is there: \(visibleText(in: view))")
     }
 
     func testLiveVoiceTurnKeepsTaskCardHidden() async throws {

@@ -75,7 +75,7 @@ struct VoiceLiveTests {
         print("ASR PASS: \(transcript)")
 
         print("3/4 Model: replying to recognized text in a fresh conversation…")
-        let store = TaskStore(source: AgentTaskSource(settings: settings))
+        let store = TaskStore(source: AgentHarness(settings: settings))
         defer { store.shutdown() }
         guard store.send(transcript) else { throw SettingsError("Agent 未接收转写。") }
         let deadline = ContinuousClock.now.advanced(by: .seconds(65))

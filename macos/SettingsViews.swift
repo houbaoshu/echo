@@ -180,22 +180,6 @@ struct ModelSettingsView: View {
                         .accessibilityIdentifier("settings.notice")
                 }
             }
-            Section {
-                Toggle("使用 Foundation Models Agent",
-                       isOn: Binding(get: { settings.snapshot.nativeAgent }, set: { settings.setNativeAgent($0) }))
-                    .toggleStyle(.switch)
-                    .accessibilityLabel("使用 Foundation Models Agent")
-                    .accessibilityIdentifier("settings.nativeAgent")
-            } footer: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("旧引擎的会话会在下一次发送或继续处理时一次性迁移。关闭后新会话使用旧引擎，已迁移的会话不回退；测试连接也按此开关验证。")
-                        .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
-                    if let notice = settings.agentEngineNotice {
-                        Label(notice, systemImage: "exclamationmark.triangle").font(WorkspaceStyle.caption)
-                            .foregroundStyle(WorkspaceStyle.warning).accessibilityIdentifier("settings.nativeAgent.notice")
-                    }
-                }
-            }
         }
         // A grouped form draws a text field as plain trailing-aligned text, which reads
         // as a value rather than something editable. These are all credentials and
