@@ -72,7 +72,7 @@ import Testing
         #expect(chat.messages == before && !chat.send("after shutdown"))
         restored.shutdown(); interrupted.shutdown()
     }
-    @Test @MainActor static func legacyArchiveCompatibilityAndCleanup() throws {
+    @Test @MainActor static func restoredChatStates() throws {
         let source = ChatSource()
         let failing = ChatSource()
         let seed = TaskStore(source: failing)
@@ -82,17 +82,12 @@ import Testing
         failing.callbacks[0](.failed("before first text"))
         let archiveSource = seed.snapshot
         let decoder = JSONDecoder()
-        let legacy = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000001","role":"assistant","text":"old","isComplete":false}"#.utf8))
-        #expect(legacy.content == "old" && legacy.status == .interrupted && legacy.timestamp == Date(timeIntervalSince1970: 0))
-        let encoded = try JSONEncoder().encode(legacy)
-        let encodedText = String(decoding: encoded, as: UTF8.self)
-        #expect(!encodedText.contains("isComplete") && !encodedText.contains("\"text\""))
-        let decoded = try decoder.decode(ConversationMessage.self, from: encoded)
-        #expect(decoded == legacy)
-        // Steering captions: accepted follow-ups say nothing now, so a saved one is
-        // dropped on load, while queued and interrupted keep the state the user needs.
-        let acceptedSteering = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000004","role":"user","content":"follow up","steering":"已接收"}"#.utf8))
-        #expect(acceptedSteering.steering == nil, "An archived accepted-steering caption is not shown again")
+        // The earliest builds wrote `text`: such a message still parses, so the workspace holding
+        // it loads and that conversation can be reported, and it is written back in today's form.
+        let earliest = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000001","role":"assistant","text":"old"}"#.utf8))
+        #expect(earliest.content == "old" && earliest.status == .completed && earliest.timestamp == Date(timeIntervalSince1970: 0))
+        let encodedText = String(decoding: try JSONEncoder().encode(earliest), as: UTF8.self)
+        #expect(!encodedText.contains("\"text\"") && encodedText.contains("\"content\""))
         let queuedSteering = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000005","role":"user","content":"follow up","steering":"待处理"}"#.utf8))
         #expect(queuedSteering.steering == "待处理", "A queued follow-up keeps its caption")
         var queuedArchive = archiveSource
@@ -100,31 +95,16 @@ import Testing
         let reopened = TaskStore(snapshot: queuedArchive, source: nil)
         #expect(reopened.messages.first?.steering == "已中断", "A follow-up left queued at quit reopens as interrupted")
         reopened.shutdown()
-        let canned = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000002","role":"assistant","text":"已检查现有素材，保留赤焰的动画帧"}"#.utf8))
         var archive = archiveSource
-        archive.messages = [canned]
-        let cleaned = TaskStore(snapshot: archive, source: nil)
-        defer { cleaned.shutdown() }
-        #expect(cleaned.messages.isEmpty && cleaned.task == nil, "Old canned demo output is removed")
-        let unknownCompletion = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000003","role":"assistant","text":"legacy partial"}"#.utf8))
-        archive.messages = [seed.messages[0], unknownCompletion]
-        let legacyFailure = TaskStore(snapshot: archive, source: nil)
-        defer { legacyFailure.shutdown() }
-        #expect(legacyFailure.messages.last?.status == .failed && legacyFailure.requestMessages.count == 1,
-            "Latest legacy reply without completion metadata inherits the terminal task status")
-        archive.messages = [ConversationMessage(role: .user, content: canned.content)]
-        let real = TaskStore(snapshot: archive, source: nil)
-        defer { real.shutdown() }
-        #expect(real.messages.first?.content == canned.content, "New real messages matching demo text are retained")
         archive.messages = [seed.messages[0]]
-        let oldFailure = TaskStore(snapshot: archive, source: source)
-        #expect(oldFailure.messages.last?.status == .failed, "Legacy failures before first text must show their error and Retry in the conversation")
-        oldFailure.retry()
-        #expect(oldFailure.messages.count == 2 && oldFailure.messages.last?.status == .pending, "Legacy failures before first text get an assistant placeholder on retry")
-        oldFailure.shutdown()
-        let stoppedAtShutdown = oldFailure.messages
+        let failedBeforeReply = TaskStore(snapshot: archive, source: source)
+        #expect(failedBeforeReply.messages.last?.status == .failed, "A turn that failed before any reply shows its error and Retry in the conversation")
+        failedBeforeReply.retry()
+        #expect(failedBeforeReply.messages.count == 2 && failedBeforeReply.messages.last?.status == .pending, "Retry reuses the placeholder reply")
+        failedBeforeReply.shutdown()
+        let stoppedAtShutdown = failedBeforeReply.messages
         source.callbacks.last?(.progress("after shutdown"))
-        #expect(oldFailure.messages == stoppedAtShutdown && oldFailure.messages.last?.status == .interrupted)
+        #expect(failedBeforeReply.messages == stoppedAtShutdown && failedBeforeReply.messages.last?.status == .interrupted)
     }
     @Test @MainActor static func missingConfigurationProducesFailure() throws {
         let store = TaskStore()

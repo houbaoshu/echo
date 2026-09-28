@@ -28,7 +28,7 @@ final class AppIntegrationTests: XCTestCase {
         let harness = AgentHarness(settings: settings)
         let store = TaskStore(source: harness)
         defer { store.shutdown() }
-        XCTAssertTrue(store.usesAgent && store.engine == .native && store.canSubmit && !harness.isRunning)
+        XCTAssertTrue(store.usesAgent && store.canSubmit && !harness.isRunning)
         XCTAssertFalse(ExecutionService.coreStarted)
     }
 }

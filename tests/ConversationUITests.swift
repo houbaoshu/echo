@@ -1818,7 +1818,7 @@ private struct ComposerHeightHost: View {
         let finished = TaskStore(snapshot: .init(
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已完成", status: .completed),
             messages: [user, reply], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
-            tools: [], engine: .native, native: ran), source: idleAgent())
+            tools: [], native: ran), source: idleAgent())
         defer { finished.shutdown() }
         XCTAssertEqual(finished.tools.map(\.state), ["执行结束", "未执行", "执行结果未知", "执行结果未知"],
                        "A call restored without a result is unknown")
@@ -1834,7 +1834,7 @@ private struct ComposerHeightHost: View {
         let unfinished = TaskStore(snapshot: .init(
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已中断 · 可继续跟进", status: .interrupted),
             messages: [user], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
-            tools: [], engine: .native, native: asked), source: idleAgent())
+            tools: [], native: asked), source: idleAgent())
         defer { unfinished.shutdown() }
         XCTAssertTrue(unfinished.canRetry)
         let interrupted = try await texts(of: unfinished)

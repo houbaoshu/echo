@@ -186,10 +186,10 @@ import Testing
         #expect(messages.map { $0["content"] as? String } == ["system text", "earlier"], "The continue prompt is never sent")
     }
 
-    /// Arguments imported from Rust history go back to the provider exactly as the model wrote
+    /// Arguments a saved history keeps verbatim go back to the provider exactly as the model wrote
     /// them, even when they are not JSON.
     @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
-    func importedArgumentsReplayVerbatim(api: ModelAPIProtocol) async throws {
+    func savedArgumentsReplayVerbatim(api: ModelAPIProtocol) async throws {
         let call = Transcript.ToolCall(id: "call_old", metadata: [AgentCallArguments.rawKey: "ls -la"], toolName: "bash",
                                        arguments: try GeneratedContent(json: "{}"))
         let history: [Transcript.Entry] = [

@@ -62,9 +62,9 @@ struct AgentModelError: Error, LocalizedError, Equatable {
     }
 }
 
-/// A call's arguments as the model wrote them. History imported from the Rust engine keeps them
-/// verbatim in the call's metadata: Rust stored and replayed whatever text a model produced,
-/// including arguments that are not JSON, and the model should see its own call again.
+/// A call's arguments as the model wrote them. A call whose saved history keeps them verbatim in
+/// its metadata — arguments that are not JSON, from conversations moved over from the Rust engine
+/// — replays that text, so the model sees its own call again.
 enum AgentCallArguments {
     static let rawKey = "echo.rawArguments"
     static func text(_ call: Transcript.ToolCall) -> String {

@@ -31,7 +31,7 @@ extension EchoIntegrationScenarios {
         }
         #expect(work.store.task?.status == .completed && work.store.tools.count == 3)
         f.workspace.flush()
-        let bytes = try Data(contentsOf: f.persistence.sessionURL(work.id, engine: work.store.engine))
+        let bytes = try Data(contentsOf: f.persistence.sessionURL(work.id))
         let state = try JSONDecoder().decode(TaskStore.Snapshot.self, from: bytes)
         try verifyNative(state, api: api)
         let restored = WorkspaceStore(persistence: f.persistence, sourceFactory: { f.source() })

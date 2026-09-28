@@ -501,7 +501,7 @@ import Testing
         #expect(restored.model.requests.last?.kinds == ["instructions", "prompt", "response", "prompt"])
         #expect(Array(restored.store.messages.prefix(2)) == chat.store.messages)
         let json = String(decoding: data, as: UTF8.self)
-        #expect(json.contains(#""version":"1.1""#) && json.contains(#""engine":"native""#))
+        #expect(json.contains(#""version":"1.1""#) && !json.contains(#""engine""#))
     }
 
     nonisolated static func kind(_ entry: Transcript.Entry) -> String {
@@ -575,9 +575,9 @@ import Testing
     }
 }
 
-/// Native sidecars: their own directory, never the Rust engine's path, engine taken from the file.
+/// Native sidecars: saved apart from the manifest, restored from the file, blocked when it is not there.
 @MainActor @Suite(.serialized, .tags(.fast)) struct NativePersistenceTests {
-    @Test func sidecarsAreSeparateAndSurviveOlderBuilds() async throws {
+    @Test func nativeHistorySavesAndRestores() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("echo-native-persistence-\(UUID())")
         defer { try? fm.removeItem(at: root) }
@@ -590,25 +590,23 @@ import Testing
         let chat = try #require(store.selected)
         #expect(store.send("hello", conversationID: chat.id))
         try await AgentHarnessTests.wait("reply") { !chat.store.isGenerating }
-        #expect(chat.store.engine == .native && chat.store.task?.status == .completed)
+        #expect(chat.store.task?.status == .completed)
         store.flush()
-        let native = persistence.nativeSessionURL(chat.id)
-        #expect(fm.fileExists(atPath: native.path) && !fm.fileExists(atPath: persistence.sessionURL(chat.id).path),
-                "A native conversation never writes the Rust engine's sidecar")
+        let native = persistence.sessionURL(chat.id)
+        #expect(fm.fileExists(atPath: native.path) && !fm.fileExists(atPath: persistence.legacySessionURL(chat.id).path))
         let manifest = try String(contentsOf: persistence.url, encoding: .utf8)
         #expect(!manifest.contains("\"content\"") && !manifest.contains("transcript")
-                && manifest.contains(#""agentStored" : true"#) && manifest.contains(#""engine" : "native""#), "\(manifest)")
+                && manifest.contains(#""agentStored" : true"#), "\(manifest)")
         let expected = chat.store.messages
         store.shutdown()
 
-        // An older build rewrote the manifest: no engine hint, and its own load error.
+        // A load error kept in the manifest does not outlive a readable sidecar.
         var snapshot = try JSONDecoder().decode(WorkspaceSnapshot.self, from: Data(contentsOf: persistence.url))
-        snapshot.conversations[0].state.engine = nil
         snapshot.conversations[0].state.loadError = "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。"
         try JSONEncoder().encode(snapshot).write(to: persistence.url)
         store = workspace()
         let reopened = try #require(store.conversation(id: chat.id)).store
-        #expect(reopened.engine == .native && reopened.agentLoadError == nil && reopened.messages == expected)
+        #expect(reopened.agentLoadError == nil && reopened.messages == expected)
         #expect(store.send("again", conversationID: chat.id))
         try await AgentHarnessTests.wait("second reply") { !reopened.isGenerating }
         #expect(reopened.messages.last?.content == "reply 2")
@@ -619,18 +617,18 @@ import Testing
         try Data("{broken".utf8).write(to: native)
         store = workspace()
         let blocked = try #require(store.conversation(id: chat.id)).store
-        #expect(blocked.engine == .native && blocked.agentLoadError != nil && !blocked.send("no"))
+        #expect(blocked.agentLoadError != nil && !blocked.send("no"))
         store.flush(); store.shutdown()
         #expect(try Data(contentsOf: native) == Data("{broken".utf8))
         try fm.removeItem(at: native)
         store = workspace()
         #expect(try #require(store.conversation(id: chat.id)).store.agentLoadError != nil)
         store.flush(); store.shutdown()
-        #expect(!fm.fileExists(atPath: native.path) && !fm.fileExists(atPath: persistence.sessionURL(chat.id).path))
+        #expect(!fm.fileExists(atPath: native.path))
         try original.write(to: native)
 
         // Orphans are pruned; deleting a conversation removes its sidecar.
-        let orphan = persistence.nativeSessionURL(UUID())
+        let orphan = persistence.sessionURL(UUID())
         try original.write(to: orphan)
         store = workspace()
         #expect(!fm.fileExists(atPath: orphan.path) && fm.fileExists(atPath: native.path))
@@ -640,7 +638,7 @@ import Testing
     }
 
     /// A workspace without the native engine keeps a native conversation blocked: saving neither
-    /// writes the Rust sidecar nor copies the conversation into the manifest.
+    /// replaces its sidecar nor copies the conversation into the manifest.
     @Test func aWorkspaceWithoutTheNativeEngineLeavesNativeConversationsAlone() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("echo-native-blocked-\(UUID())")
@@ -655,74 +653,20 @@ import Testing
         #expect(store.send("secret question", conversationID: chat.id))
         try await AgentHarnessTests.wait("reply") { !chat.store.isGenerating }
         store.flush(); store.shutdown()
-        let sidecar = try Data(contentsOf: persistence.nativeSessionURL(chat.id))
+        let sidecar = try Data(contentsOf: persistence.sessionURL(chat.id))
         let expected = chat.store.messages
 
         store = WorkspaceStore(persistence: persistence, sourceFactory: { nil })
         let blocked = try #require(store.conversation(id: chat.id)).store
         #expect(blocked.agentLoadError != nil && !blocked.canSubmit && !store.send("no", conversationID: chat.id))
         store.flush(); store.shutdown()
-        #expect(!fm.fileExists(atPath: persistence.sessionURL(chat.id).path), "No Rust sidecar is created")
-        #expect(try Data(contentsOf: persistence.nativeSessionURL(chat.id)) == sidecar, "The native sidecar is untouched")
+        #expect(try Data(contentsOf: persistence.sessionURL(chat.id)) == sidecar, "The native sidecar is untouched")
         #expect(!(try String(contentsOf: persistence.url, encoding: .utf8)).contains("native reply"), "The manifest holds no history")
 
         store = native()
         let reopened = try #require(store.conversation(id: chat.id)).store
-        #expect(reopened.agentLoadError == nil && reopened.engine == .native && reopened.messages == expected)
+        #expect(reopened.agentLoadError == nil && reopened.messages == expected)
         store.shutdown()
-    }
-
-    /// Both sidecars on disk: a native sidecar marked as a migration snapshot wins only over the
-    /// exact Rust history it came from; a Rust history that changed since (or appeared after a
-    /// legacy conversation's migration) wins and the snapshot is set aside; an unmarked native
-    /// history and a Rust one block the conversation with both kept.
-    @Test func bothSidecarsResolveWithoutLosingHistory() throws {
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("echo-both-sidecars-\(UUID())")
-        defer { try? fm.removeItem(at: root) }
-        let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
-        let rust = TaskStore.Snapshot(task: nil, messages: [.init(role: .user, content: "rust history")], mainDraft: "",
-                                      followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
-                                      agentHistory: Data("{}".utf8), tools: [], agentStored: true)
-        let manifestEntry = { (id: UUID) in
-            WorkspaceSnapshot.Conversation(id: id, projectID: nil, title: "t", manuallyNamed: false, lastUsed: Date(),
-                                           state: TaskStore.Snapshot(task: nil, messages: [], mainDraft: "", followUpDraft: "",
-                                                                     activityDismissed: false, activitiesCollapsed: false, agentStored: true))
-        }
-        func write(_ id: UUID, marker: (Data) -> String?) throws {
-            try fm.createDirectory(at: persistence.sessionsDirectory, withIntermediateDirectories: true)
-            try fm.createDirectory(at: persistence.nativeSessionsDirectory, withIntermediateDirectories: true)
-            let rustData = try JSONEncoder().encode(rust)
-            try rustData.write(to: persistence.sessionURL(id))
-            var native = TaskStore.Snapshot(task: nil, messages: [.init(role: .user, content: "native snapshot")], mainDraft: "",
-                                            followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
-                                            tools: [], engine: .native, native: NativeAgentState())
-            native.migratedFrom = marker(rustData)
-            try JSONEncoder().encode(native).write(to: persistence.nativeSessionURL(id))
-        }
-
-        let unchanged = UUID()
-        try write(unchanged) { _ in persistence.migrationSource(unchanged) }
-        let finished = persistence.restoreSession(manifestEntry(unchanged))
-        #expect(finished.engine == .native && finished.messages.first?.content == "native snapshot")
-        #expect(!fm.fileExists(atPath: persistence.sessionURL(unchanged).path) && fm.fileExists(atPath: persistence.rustBackupURL(unchanged).path))
-
-        for (label, marker) in [("changed since", "0000"), ("legacy", "legacy")] {
-            let id = UUID()
-            try write(id) { _ in marker }
-            let snapshotBytes = try Data(contentsOf: persistence.nativeSessionURL(id))
-            let restored = persistence.restoreSession(manifestEntry(id))
-            #expect(restored.engine != .native && restored.messages.first?.content == "rust history" && restored.loadError == nil, "\(label)")
-            #expect(!fm.fileExists(atPath: persistence.nativeSessionURL(id).path)
-                    && (try? Data(contentsOf: persistence.staleNativeURL(id))) == snapshotBytes, "\(label): set aside, not deleted")
-            #expect(fm.fileExists(atPath: persistence.sessionURL(id).path), "\(label): the Rust history stays in place")
-        }
-
-        let conflict = UUID()
-        try write(conflict) { _ in nil }
-        let blocked = persistence.restoreSession(manifestEntry(conflict))
-        #expect(blocked.loadError?.contains("两份") == true && blocked.engine == .native)
-        #expect(fm.fileExists(atPath: persistence.sessionURL(conflict).path) && fm.fileExists(atPath: persistence.nativeSessionURL(conflict).path))
     }
 }
 

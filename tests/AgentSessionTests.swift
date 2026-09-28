@@ -149,7 +149,7 @@ extension EchoIntegrationScenarios {
         #expect(chat.store.task?.status == .completed && chat.store.tools.isEmpty == (seed != "tool"))
         let expected = chat.store.snapshot
         workspace.shutdown()
-        let historyURL = persistence.sessionURL(chat.id, engine: chat.store.engine)
+        let historyURL = persistence.sessionURL(chat.id)
         let original = try Data(contentsOf: historyURL)
         let corrupt = Data("{invalid history".utf8)
         if failure == "missing" {
@@ -225,7 +225,7 @@ extension EchoIntegrationScenarios {
       try #require(chat.store.send("hello"))
       try await wait("seed saved history") { !chat.store.isGenerating }
       f.workspace.flush()
-      try FileManager.default.moveItem(at: f.persistence.sessionURL(chat.id, engine: chat.store.engine),
+      try FileManager.default.moveItem(at: f.persistence.sessionURL(chat.id),
                                        to: f.root.appendingPathComponent("preserved-chat.json"))
       let unreadable = WorkspaceStore(persistence: f.persistence, sourceFactory: { f.source() })
       defer { unreadable.shutdown() }
@@ -722,250 +722,75 @@ extension EchoIntegrationScenarios {
 
       }
     }
-    // MARK: Conversations the Rust engine saved
+    // MARK: Conversations older builds saved
 
-    /// What the migration must leave alone in a Rust sidecar: its history and what it shows.
-    static func rustState(_ url: URL) throws -> [String] {
-      let state = try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: url))
-      return [state.agentHistory.map { String(decoding: $0, as: UTF8.self) } ?? "none",
-              String(describing: state.messages.map { [$0.id.uuidString, $0.content] }),
-              String(describing: state.tools?.map(\.callID)), String(state.native == nil)]
-    }
-
-    /// Writes a conversation as a build with the Rust engine left it: the responses-tool fixture
-    /// as its v1 history, the messages and tool card that history shows, and a manifest entry
-    /// that holds only a reference.
-    @discardableResult
-    static func writeRustConversation(_ persistence: WorkspacePersistence, id: UUID = UUID(), fixture: String = "responses-tool",
-                                      directory: String? = nil) throws -> (id: UUID, messages: [ConversationMessage], tool: AgentToolRecord) {
-      let history = try Data(contentsOf: EchoTestResources.resource("fixtures/agent-v1/\(fixture).json"))
-      var user = ConversationMessage(role: .user, content: "读取示例"); user.coreID = 3
-      var reply = ConversationMessage(role: .assistant, content: "已读取。"); reply.coreID = 9
-      let output = #"{"stdout":"fixture-output","stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}"#
-      let tool = AgentToolRecord(callID: "call_fixture", entryID: 5, turnID: 2, afterMessageID: user.id,
-                                 command: "printf fixture-output", result: output, state: "执行结束", directory: directory)
-      let task = ActivityTask(id: UUID(), runID: UUID(), title: "读取示例", summary: "已完成", status: .completed)
-      let sidecar = TaskStore.Snapshot(task: task, messages: [user, reply], mainDraft: "", followUpDraft: "",
-                                       activityDismissed: false, activitiesCollapsed: false, agentHistory: history,
-                                       tools: [tool], agentStored: true,
-                                       inputReceipts: [.init(client_message_id: user.id.uuidString, message_id: 3, turn_id: 2)],
-                                       pendingInputs: [])
-      try FileManager.default.createDirectory(at: persistence.sessionsDirectory, withIntermediateDirectories: true)
-      try JSONEncoder().encode(sidecar).write(to: persistence.sessionURL(id))
-      var entry = TaskStore.Snapshot(task: task, messages: [], mainDraft: "", followUpDraft: "", activityDismissed: false,
-                                     activitiesCollapsed: false, agentStored: true)
-      entry.engine = .rust
-      var manifest = persistence.load().0 ?? WorkspaceSnapshot(projects: [], conversations: [])
-      manifest.conversations.removeAll { $0.id == id }
-      manifest.conversations.append(.init(id: id, projectID: nil, title: "读取示例", manuallyNamed: false, lastUsed: Date(), state: entry))
-      try FileManager.default.createDirectory(at: persistence.url.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try JSONEncoder().encode(manifest).write(to: persistence.url)
-      return (id, [user, reply], tool)
-    }
-
-    static func visible(_ tool: AgentToolRecord) -> [String?] {
-      [tool.callID, tool.command, tool.result, tool.state, tool.directory, tool.afterMessageID?.uuidString]
-    }
-
-    /// A conversation the Rust engine saved is imported as it loads, with nothing but Swift: the
-    /// screen is unchanged, the Rust sidecar is retired, the model sees the archived call, its
-    /// result and reasoning under Echo's own instructions, and it stays imported after a restart.
-    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
-    static func rustConversationsAreImportedWhenTheyLoad(api: ModelAPIProtocol) async throws {
+    /// Only native history opens. A conversation an older build saved — a Rust-engine sidecar, or
+    /// messages kept in the manifest, the earliest of them still in the `text` format — is shown
+    /// as unsupported: it cannot run, it is never saved as native history, it reads the same at
+    /// every launch, and deleting it removes what it left behind.
+    @Test static func oldFormatConversationsAreUnsupportedAndCanBeDeleted() async throws {
       try await withSession { f in
-        f.protocolName = api
-        let persistence = WorkspacePersistence(url: f.root.appendingPathComponent("import/workspace.json"))
-        let saved = try writeRustConversation(persistence, directory: "/tmp/archived-project")
+        let fm = FileManager.default
+        let persistence = WorkspacePersistence(url: f.root.appendingPathComponent("old-formats/workspace.json"))
         var workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
-        let store = try #require(workspace.conversation(id: saved.id)).store
-        #expect(store.engine == .native && store.agentLoadError == nil && store.canSubmit)
-        #expect(store.messages.map(\.id) == saved.messages.map(\.id) && store.messages.map(\.content) == saved.messages.map(\.content))
-        #expect(store.tools.map(visible) == [visible(saved.tool)], "Tool cards read the same, folder included")
-        #expect(!FileManager.default.fileExists(atPath: persistence.sessionURL(saved.id).path)
-                && FileManager.default.fileExists(atPath: persistence.rustBackupURL(saved.id).path)
-                && FileManager.default.fileExists(atPath: persistence.nativeSessionURL(saved.id).path))
-        workspace.flush()
-        let written = try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: persistence.nativeSessionURL(saved.id)))
-        #expect(written.migratedFrom == nil && written.native != nil, "Once the Rust sidecar is retired the native one is no snapshot")
-        #expect(workspace.send("继续", conversationID: saved.id))
-        try await wait("imported conversation continues") { !store.isGenerating }
-        #expect(store.task?.status == .completed && store.messages.last?.content == "最终回复：已读取真实工具结果")
-        let request = String(decoding: try #require(f.server.requests.last), as: UTF8.self)
-        #expect(request.contains("fixture-output") && request.contains("已读取。") && !request.contains("Answer directly or use bash"))
-        #expect(request.contains("synthetic-opaque-fixture") == (api == .responses), "Responses replays the archived reasoning")
-        let messages = store.messages
+        let current = try #require(workspace.selected)
+        #expect(workspace.send("hello", conversationID: current.id))
+        try await wait("native reply") { !current.store.isGenerating }
+        let currentMessages = current.store.messages
         workspace.flush(); workspace.shutdown()
+
+        // Add what older builds left: a Rust-engine sidecar with the copy a migration set aside,
+        // and a conversation kept in the manifest.
+        let rust = UUID(), inline = UUID()
+        let rustSidecar = Data(#"{"agentHistory":"{\"version\":1}","messages":[]}"#.utf8)
+        try fm.createDirectory(at: persistence.legacySessionsDirectory, withIntermediateDirectories: true)
+        try rustSidecar.write(to: persistence.legacySessionURL(rust))
+        let migrated = persistence.legacySessionsDirectory.appendingPathComponent("\(rust.uuidString).v1-migrated.json")
+        try rustSidecar.write(to: migrated)
+        var manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: persistence.url)) as! [String: Any]
+        let task: [String: Any] = ["id": UUID().uuidString, "runID": UUID().uuidString, "title": "old", "summary": "已完成", "status": "completed"]
+        func entry(_ id: UUID, _ title: String, _ state: [String: Any]) -> [String: Any] {
+          ["id": id.uuidString, "title": title, "manuallyNamed": false, "lastUsed": 0,
+           "state": state.merging(["mainDraft": "", "followUpDraft": "", "activityDismissed": false, "activitiesCollapsed": false,
+                                   "task": task]) { $1 }]
+        }
+        manifest["conversations"] = (manifest["conversations"] as! [[String: Any]]) + [
+          entry(rust, "Rust 会话", ["messages": [], "agentStored": true, "engine": "rust"]),
+          entry(inline, "早期会话", ["messages": [["id": UUID().uuidString, "role": "user", "text": "old user"],
+                                                 ["id": UUID().uuidString, "role": "assistant", "content": "old answer", "status": "completed"]]]),
+        ]
+        try JSONSerialization.data(withJSONObject: manifest).write(to: persistence.url)
+        let requests = f.server.requests.count
+
+        for launch in 1...2 {
+          workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
+          #expect(workspace.persistenceNotice == nil, "launch \(launch): the workspace itself loads")
+          let native = try #require(workspace.conversation(id: current.id)).store
+          #expect(native.agentLoadError == nil && native.messages == currentMessages && native.canSubmit, "launch \(launch)")
+          for id in [rust, inline] {
+            let store = try #require(workspace.conversation(id: id)).store
+            #expect(store.agentLoadError == WorkspacePersistence.unsupportedFormat && !store.canSubmit && !store.canRetry
+                    && !workspace.send("继续", conversationID: id) && !workspace.retry(conversationID: id), "launch \(launch)")
+          }
+          #expect(try #require(workspace.conversation(id: inline)).store.messages.map(\.content) == ["old user", "old answer"],
+                  "launch \(launch): what it saved is left as it is")
+          workspace.flush(); workspace.shutdown()
+          #expect(f.server.requests.count == requests, "launch \(launch): nothing reaches the model")
+          #expect(try Data(contentsOf: persistence.legacySessionURL(rust)) == rustSidecar
+                  && !fm.fileExists(atPath: persistence.sessionURL(rust).path) && !fm.fileExists(atPath: persistence.sessionURL(inline).path),
+                  "launch \(launch): never saved as native history")
+        }
 
         workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
         defer { workspace.shutdown() }
-        #expect(try #require(workspace.conversation(id: saved.id)).store.messages == messages)
-      }
-    }
-
-    /// A conversation from before the Rust engine, kept in the manifest, imports its messages.
-    @Test static func legacyConversationsAreImportedWhenTheyLoad() async throws {
-      try await withSession { f in
-        let persistence = WorkspacePersistence(url: f.root.appendingPathComponent("legacy/workspace.json"))
-        let id = UUID()
-        try persistence.save(WorkspaceSnapshot(projects: [], conversations: [.init(
-          id: id, projectID: nil, title: "old", manuallyNamed: false, lastUsed: Date(),
-          state: TaskStore.Snapshot(task: nil, messages: [.init(role: .user, content: "old user"), .init(role: .assistant, content: "old answer")],
-                                    mainDraft: "retained draft", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false))]))
-        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
-        defer { workspace.shutdown() }
-        let store = try #require(workspace.conversation(id: id)).store
-        let messages = store.messages
-        #expect(store.engine == .native && store.mainDraft == "retained draft" && messages.map(\.content) == ["old user", "old answer"])
-        #expect(workspace.send("hello migrated", conversationID: id))
-        try await wait("legacy turn") { !store.isGenerating }
-        #expect(store.task?.status == .completed && store.messages.count == 4 && Array(store.messages.prefix(2)) == messages)
-        let request = String(decoding: try #require(f.server.requests.last), as: UTF8.self)
-        #expect(request.contains("old user") && request.contains("old answer"))
-        workspace.flush()
-        #expect(!(try String(contentsOf: persistence.url, encoding: .utf8)).contains("old answer"), "The manifest keeps only a reference")
-      }
-    }
-
-    /// Makes the import's file steps fail on demand.
-    final class FailingFiles: FileManager {
-      var failRetire = false, failNativeRemoval = false
-      override func moveItem(at source: URL, to destination: URL) throws {
-        if failRetire, source.path.contains("/agent-sessions/") { throw CocoaError(.fileWriteNoPermission) }
-        try super.moveItem(at: source, to: destination)
-      }
-      override func removeItem(at url: URL) throws {
-        if failNativeRemoval, url.path.contains("/agent-sessions-v2/") { throw CocoaError(.fileWriteNoPermission) }
-        try super.removeItem(at: url)
-      }
-    }
-
-    /// An import that fails leaves the Rust history untouched, blocks the conversation, keeps its
-    /// history out of the manifest, and is tried again at the next launch.
-    @Test static func importFailuresKeepTheRustHistoryAndRetry() async throws {
-      try await withSession { f in
-        let fm = FileManager.default
-        // A history the converter rejects.
-        let invalid = WorkspacePersistence(url: f.root.appendingPathComponent("import-invalid/workspace.json"))
-        let broken = try writeRustConversation(invalid, fixture: "invalid-duplicate-id")
-        let before = try rustState(invalid.sessionURL(broken.id))
-        var workspace = WorkspaceStore(persistence: invalid, sourceFactory: { f.source() })
-        let refused = try #require(workspace.conversation(id: broken.id)).store
-        #expect(refused.agentLoadError?.contains("无法迁移") == true && !refused.canSubmit && !workspace.send("no", conversationID: broken.id))
-        workspace.flush(); workspace.shutdown()
-        #expect(try rustState(invalid.sessionURL(broken.id)) == before && !fm.fileExists(atPath: invalid.nativeSessionURL(broken.id).path))
-        #expect(!(try String(contentsOf: invalid.url, encoding: .utf8)).contains("已读取。"), "The manifest keeps only a reference")
-        // Repaired by hand: the next launch imports it.
-        try writeRustConversation(invalid, id: broken.id)
-        workspace = WorkspaceStore(persistence: invalid, sourceFactory: { f.source() })
-        #expect(try #require(workspace.conversation(id: broken.id)).store.engine == .native)
-        workspace.shutdown()
-
-        // The native sidecar cannot be written: a file stands where its directory goes.
-        let blocked = WorkspacePersistence(url: f.root.appendingPathComponent("import-blocked/workspace.json"))
-        let saved = try writeRustConversation(blocked)
-        let state = try rustState(blocked.sessionURL(saved.id))
-        try Data().write(to: blocked.nativeSessionsDirectory)
-        workspace = WorkspaceStore(persistence: blocked, sourceFactory: { f.source() })
-        #expect(try #require(workspace.conversation(id: saved.id)).store.agentLoadError?.contains("迁移失败") == true)
-        workspace.flush(); workspace.shutdown()
-        #expect(try rustState(blocked.sessionURL(saved.id)) == state)
-        try fm.removeItem(at: blocked.nativeSessionsDirectory)
-        workspace = WorkspaceStore(persistence: blocked, sourceFactory: { f.source() })
-        #expect(try #require(workspace.conversation(id: saved.id)).store.engine == .native, "The next launch tries again")
-        workspace.shutdown()
-      }
-    }
-
-    /// A leftover snapshot whose unchanged source still cannot be retired at the next launch does
-    /// not run natively either: the conversation stays blocked, the snapshot keeps its mark, and a
-    /// launch that can retire the Rust history finishes the import.
-    @Test static func aLeftoverImportSnapshotWaitsUntilTheRustHistoryIsRetired() async throws {
-      try await withSession { f in
-        let url = f.root.appendingPathComponent("import-stuck/workspace.json")
-        let plain = WorkspacePersistence(url: url)
-        let saved = try writeRustConversation(plain)
-        let source = try Data(contentsOf: plain.sessionURL(saved.id))
-        let files = FailingFiles(); files.failRetire = true; files.failNativeRemoval = true
-        var workspace = WorkspaceStore(persistence: WorkspacePersistence(url: url, files: files), sourceFactory: { f.source() })
-        workspace.flush(); workspace.shutdown()
-        let snapshotBytes = try Data(contentsOf: plain.nativeSessionURL(saved.id))
-
-        // The Rust history is still exactly the source, but retiring it fails again.
-        let stuck = FailingFiles(); stuck.failRetire = true
-        workspace = WorkspaceStore(persistence: WorkspacePersistence(url: url, files: stuck), sourceFactory: { f.source() })
-        let blocked = try #require(workspace.conversation(id: saved.id)).store
-        #expect(blocked.agentLoadError?.contains("迁移未完成") == true && !blocked.canSubmit
-                && !workspace.send("不应运行", conversationID: saved.id), "Nothing runs while the Rust sidecar is in place")
-        workspace.flush(); workspace.shutdown()
-        #expect(try Data(contentsOf: plain.sessionURL(saved.id)) == source, "The Rust history is untouched")
-        #expect(try Data(contentsOf: plain.nativeSessionURL(saved.id)) == snapshotBytes, "The snapshot keeps its mark")
-        #expect(f.server.requests.isEmpty)
-
-        // Once the Rust history can be retired, the import finishes.
-        workspace = WorkspaceStore(persistence: plain, sourceFactory: { f.source() })
-        defer { workspace.shutdown() }
-        let finished = try #require(workspace.conversation(id: saved.id)).store
-        #expect(finished.engine == .native && finished.agentLoadError == nil && finished.messages.map(\.id) == saved.messages.map(\.id))
-        #expect(!FileManager.default.fileExists(atPath: plain.sessionURL(saved.id).path)
-                && FileManager.default.fileExists(atPath: plain.rustBackupURL(saved.id).path))
-      }
-    }
-
-    /// A launch that stops between writing the native sidecar and retiring the Rust one — here,
-    /// both the retirement and the cleanup fail — leaves a marked snapshot. The next launch
-    /// finishes the import only if the Rust history is exactly its source; if a Rust-engine build
-    /// wrote to it meanwhile, that newer history is imported instead and the snapshot is kept aside.
-    @Test static func aLeftoverImportSnapshotNeverReplacesNewerRustHistory() async throws {
-      try await withSession { f in
-        let fm = FileManager.default
-        let url = f.root.appendingPathComponent("import-leftover/workspace.json")
-        let plain = WorkspacePersistence(url: url)
-        let saved = try writeRustConversation(plain)
-        let source = try Data(contentsOf: plain.sessionURL(saved.id))
-        let files = FailingFiles(); files.failRetire = true; files.failNativeRemoval = true
-        var workspace = WorkspaceStore(persistence: WorkspacePersistence(url: url, files: files), sourceFactory: { f.source() })
-        #expect(try #require(workspace.conversation(id: saved.id)).store.agentLoadError?.contains("迁移失败") == true,
-                "Nothing runs while the Rust sidecar is in place")
-        workspace.flush(); workspace.shutdown()
-        let snapshot = try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: plain.nativeSessionURL(saved.id)))
-        #expect(try snapshot.migratedFrom != nil && Data(contentsOf: plain.sessionURL(saved.id)) == source)
-        let snapshotBytes = try Data(contentsOf: plain.nativeSessionURL(saved.id))
-
-        // The Rust history is exactly the snapshot's source: the import finishes.
-        workspace = WorkspaceStore(persistence: plain, sourceFactory: { f.source() })
-        let finished = try #require(workspace.conversation(id: saved.id)).store
-        #expect(finished.engine == .native && finished.agentLoadError == nil && finished.messages.map(\.id) == saved.messages.map(\.id))
-        #expect(!fm.fileExists(atPath: plain.sessionURL(saved.id).path))
-        workspace.shutdown()
-
-        // Put the leftover state back, with a Rust history an older build extended meanwhile.
-        try fm.removeItem(at: plain.rustBackupURL(saved.id))
-        var newer = try JSONDecoder().decode(TaskStore.Snapshot.self, from: source)
-        var extra = ConversationMessage(role: .user, content: "written by an older build"); extra.coreID = 11
-        var history = try JSONSerialization.jsonObject(with: try #require(newer.agentHistory)) as! [String: Any]
-        var entries = history["entries"] as! [[String: Any]]
-        entries.append(["id": 11, "turn_id": 10, "value": ["message": ["role": "user", "content": "written by an older build"]]])
-        history["entries"] = entries
-        history["turns"] = (history["turns"] as! [[String: Any]]) + [["id": 10, "model_calls": 0, "outcome": NSNull()]]
-        history["next_id"] = 12
-        newer.agentHistory = try JSONSerialization.data(withJSONObject: history)
-        newer.messages.append(extra)
-        // The older build was interrupted before it answered.
-        newer.task?.status = .interrupted; newer.task?.summary = "已中断 · 可继续跟进"
-        try JSONEncoder().encode(newer).write(to: plain.sessionURL(saved.id))
-        try snapshotBytes.write(to: plain.nativeSessionURL(saved.id))
-
-        workspace = WorkspaceStore(persistence: plain, sourceFactory: { f.source() })
-        defer { workspace.shutdown() }
-        let recovered = try #require(workspace.conversation(id: saved.id)).store
-        #expect(recovered.engine == .native && recovered.messages.map(\.content).contains("written by an older build"),
-                "The newer Rust history is what gets imported")
-        #expect(try Data(contentsOf: plain.staleNativeURL(saved.id)) == snapshotBytes, "The stale snapshot is kept aside")
-        #expect(recovered.canRetry, "The older build's unanswered message can be continued")
-        #expect(workspace.retry(conversationID: saved.id))
-        try await wait("continue newer history") { !recovered.isGenerating }
-        let request = String(decoding: try #require(f.server.requests.last), as: UTF8.self)
-        #expect(request.contains("written by an older build"))
+        workspace.deleteConversation(rust)
+        workspace.deleteConversation(inline)
+        #expect(workspace.conversation(id: rust) == nil && workspace.conversation(id: inline) == nil
+                && workspace.conversation(id: current.id) != nil)
+        #expect(!fm.fileExists(atPath: persistence.legacySessionURL(rust).path) && !fm.fileExists(atPath: migrated.path),
+                "Deleting it removes the files an older build left")
+        let saved = try String(contentsOf: persistence.url, encoding: .utf8)
+        #expect(!saved.contains(rust.uuidString) && !saved.contains(inline.uuidString) && !saved.contains("old answer"))
       }
     }
   }

@@ -30,12 +30,9 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
     var status: Status = .completed
     var timestamp = Date()
     var errorMessage: String?
-    var coreID: UInt64?
     var steering: String?
-    // Decode-only provenance for removing the old demo source's canned messages.
-    private(set) var legacyWithoutCompletion = false
 
-    private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, text, isComplete, coreID, steering }
+    private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, text, steering }
     init(role: Role, content: String, status: Status = .completed) {
         self.role = role; self.content = content; self.status = status
     }
@@ -43,25 +40,21 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
         role = try values.decode(Role.self, forKey: .role)
+        // The earliest builds wrote `text`. Reading it keeps a workspace holding such a conversation
+        // readable, so that conversation can be reported as unsupported instead of the whole
+        // manifest failing to load.
         content = try values.decodeIfPresent(String.self, forKey: .content) ?? values.decode(String.self, forKey: .text)
-        let savedStatus = try values.decodeIfPresent(Status.self, forKey: .status)
-        let complete = try values.decodeIfPresent(Bool.self, forKey: .isComplete)
-        status = savedStatus ?? (role == .assistant && complete == false ? .interrupted : .completed)
+        status = try values.decodeIfPresent(Status.self, forKey: .status) ?? .completed
         timestamp = try values.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date(timeIntervalSince1970: 0)
         errorMessage = try values.decodeIfPresent(String.self, forKey: .errorMessage)
-        coreID = try values.decodeIfPresent(UInt64.self, forKey: .coreID)
         steering = try values.decodeIfPresent(String.self, forKey: .steering)
-        // Accepted steering is part of the normal flow and no longer carries a
-        // caption; drop the one older sessions saved beside the message.
-        if steering == "已接收" { steering = nil }
-        legacyWithoutCompletion = savedStatus == nil && complete == nil
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(id, forKey: .id); try values.encode(role, forKey: .role)
         try values.encode(content, forKey: .content); try values.encode(status, forKey: .status)
         try values.encode(timestamp, forKey: .timestamp); try values.encodeIfPresent(errorMessage, forKey: .errorMessage)
-        try values.encodeIfPresent(coreID, forKey: .coreID); try values.encodeIfPresent(steering, forKey: .steering)
+        try values.encodeIfPresent(steering, forKey: .steering)
     }
 }
 
@@ -157,10 +150,6 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var tool: String?
 }
 
-/// Which Agent engine a saved conversation belongs to. Only the native engine runs; `rust`
-/// marks history written by the Rust engine, which is imported when the conversation loads.
-enum AgentEngineKind: String, Codable, Sendable { case rust, native }
-
 @MainActor final class TaskStore: ObservableObject {
     let lifecycle = PassthroughSubject<TaskLifecycleEvent, Never>()
     @Published private(set) var task: ActivityTask?
@@ -193,7 +182,6 @@ enum AgentEngineKind: String, Codable, Sendable { case rust, native }
     var usesAgent: Bool { harness != nil }
     /// The Agent engine, when this conversation uses it.
     private var harness: AgentHarness? { source as? AgentHarness }
-    var engine: AgentEngineKind? { harness != nil ? .native : nil }
     private let source: (any TaskSource)?
     private var retired = false
     private var responseMessageID: UUID?
@@ -208,27 +196,17 @@ enum AgentEngineKind: String, Codable, Sendable { case rust, native }
         var followUpDraft: String
         var activityDismissed: Bool
         var activitiesCollapsed: Bool
-        /// Read from conversations the Rust engine saved, for importing them; never written.
-        var agentHistory: Data? = nil
         var tools: [AgentToolRecord]? = nil
         var agentStored: Bool? = nil
         var loadError: String? = nil
-        /// Read from Rust-engine conversations, for importing them; never written.
-        var inputReceipts: [AgentInputReceipt]? = nil
-        var pendingInputs: [AgentInput]? = nil
-        /// A hint in the manifest; the native sidecar's existence is what decides the engine.
-        var engine: AgentEngineKind? = nil
         var native: NativeAgentState? = nil
-        /// Set only on the native sidecar a migration writes, until the Rust sidecar is retired:
-        /// the SHA-256 of the Rust sidecar it was converted from ("legacy" for a conversation
-        /// that had none). It tells a leftover migration snapshot from a native history.
-        var migratedFrom: String? = nil
     }
     var snapshot: Snapshot {
         Snapshot(task: task, messages: messages, mainDraft: mainDraft, followUpDraft: followUpDraft,
                  activityDismissed: activityDismissed, activitiesCollapsed: activitiesCollapsed,
                  tools: usesAgent ? tools : nil, agentStored: agentStored, loadError: agentLoadError,
-                 engine: engine, native: harness?.persistentState)
+                 // A blocked conversation has no history of its own to save.
+                 native: agentLoadError == nil ? harness?.persistentState : nil)
     }
     convenience init(snapshot: Snapshot, source: (any TaskSource)?) {
         self.init(source: source)
@@ -244,43 +222,10 @@ enum AgentEngineKind: String, Codable, Sendable { case rust, native }
         if usesAgent, task?.status == .completed { task?.summary = "已完成" }
         // The engine rebuilds messages and tools from its transcript, closing calls left without a result.
         harness?.restore(snapshot.native)
-        // Cards imported from the Rust engine get new display IDs; they keep the folder they ran in.
-        let saved = snapshot.tools ?? []
-        for index in tools.indices where index < saved.count && tools[index].callID == saved[index].callID && tools[index].directory == nil {
-            tools[index].directory = saved[index].directory
-        }
         for index in tools.indices where tools[index].result == nil { tools[index].state = "执行结果未知" }
         for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
-        // Only legacy messages lack completion metadata. Remove the old canned source's output
-        // before any history is sent to a real model. The native engine rebuilt its messages from
-        // its transcript above and never held demo output, so it skips this.
-        if harness == nil {
-            let canned = [
-                "已检查现有素材，保留当前宠物的动画帧", "已检查现有素材，保留赤焰的动画帧",
-                "正在核对悬停、方向拖动和窗口跟随效果", "正在整理演示结果与交互摘要",
-                "演示任务已停止，后续进展已取消。你可以继续跟进。",
-                "演示已完成。动画素材保持不变，可以继续跟进或再演示一次。"
-            ]
-            messages.removeAll { message in
-                guard message.legacyWithoutCompletion else { return false }
-                if message.role == .user {
-                    return ["用当前宠物素材，演示桌宠的动画与交互。", "用现有赤焰素材，演示桌宠的动画与交互。"].contains(message.content)
-                }
-                return canned.contains(message.content) || message.content.hasPrefix("我会用本地演示数据展示任务进展。\n")
-                    || message.content.hasPrefix("已收到跟进：")
-                    || (message.content.hasPrefix("演示完成：已将「") && message.content.hasSuffix("」加入本地跟进记录。"))
-            }
-            if messages != snapshot.messages {
-                if messages.isEmpty { task = nil }
-                else {
-                    task?.title = String((messages.first(where: { $0.role == .user })?.content ?? "新会话").prefix(80))
-                    task?.status = .interrupted
-                    task?.summary = "历史演示已清理，可继续会话。"
-                }
-            }
-        }
-        // Older requests created no assistant message until their first text arrived.
-        // Materialize that terminal state so the conversation itself can show Retry.
+        // A turn that ended before any reply has no assistant message. Materialize that
+        // terminal state so the conversation itself can show Retry.
         if messages.last?.role == .user, let task, [.failed, .stopped, .interrupted].contains(task.status) {
             let status: ConversationMessage.Status = task.status == .failed ? .failed : task.status == .stopped ? .stopped : .interrupted
             var response = ConversationMessage(role: .assistant, content: "", status: status)
@@ -293,7 +238,7 @@ enum AgentEngineKind: String, Codable, Sendable { case rust, native }
         }
         if let index = messages.indices.last, messages[index].role == .assistant {
             responseMessageID = messages[index].id
-            if messages[index].status == .interrupted || messages[index].legacyWithoutCompletion {
+            if messages[index].status == .interrupted {
                 switch task?.status {
                 case .failed: messages[index].status = .failed; messages[index].errorMessage = task?.summary
                 case .stopped: messages[index].status = .stopped
