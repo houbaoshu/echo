@@ -19,6 +19,8 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* tests/LocalChatTests.swift */; };
+		F20000000000000000000011 /* macos/AgentLocalChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000010 /* macos/AgentLocalChat.swift */; };
 		066D4A271DFD208FC9B7EE6B /* tests/tools/SwiftUIOutlineListReentrancy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 017854AC34F5C611DA191769 /* tests/tools/SwiftUIOutlineListReentrancy.swift */; };
 		0B31A1F06E0BE2DC74A02DA1 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		0BB27615F70BEF3BF486FD84 /* macos/ProjectPathAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0CDA52A4EF0DA66805FDBB /* macos/ProjectPathAccess.swift */; };
@@ -109,6 +111,7 @@
 		EE2B5A483F67D04C0F2A9F6A /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		EE3E2F85DDBFEEDEDD7B89FC /* tests/fixtures/speech/paused.wav in Resources */ = {isa = PBXBuildFile; fileRef = 9B8E739899162095ABA722F3 /* tests/fixtures/speech/paused.wav */; };
 		F1DA05F3182E450B41CD433D /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
+		F20000000000000000000003 /* CoreAILM in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000002 /* CoreAILM */; };
 		F26EAD91B663BB2BCD833522 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		F68549B4E6629AA6F02A9CDC /* macos/ExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */; };
 		F7EF4AB9C967C47A9F18B500 /* tests/native/EchoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3FF57E62DA09C501023D462 /* tests/native/EchoUITests.swift */; };
@@ -249,6 +252,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		F20000000000000000000012 /* tests/LocalChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/LocalChatTests.swift; sourceTree = "<group>"; };
+		F20000000000000000000010 /* macos/AgentLocalChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/AgentLocalChat.swift; sourceTree = "<group>"; };
 		017854AC34F5C611DA191769 /* tests/tools/SwiftUIOutlineListReentrancy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/tools/SwiftUIOutlineListReentrancy.swift; sourceTree = "<group>"; };
 		0A943A0226E44527A68563F2 /* tests/AgentHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentHarnessTests.swift; sourceTree = "<group>"; };
 		1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/ExecutionService.swift; sourceTree = "<group>"; };
@@ -342,6 +347,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = 8159C655A6D1F584D0AD6A3F /* EchoSpeechHost */;
@@ -356,6 +362,7 @@
 		E112000000000000000000EC /* Exceptions for "macos" folder in "EchoIntegrationTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = E112000000000000000000AA /* EchoIntegrationTests */;
@@ -363,6 +370,7 @@
 		E113000000000000000000EC /* Exceptions for "macos" folder in "EchoVoiceTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = E113000000000000000000AA /* EchoVoiceTests */;
@@ -370,6 +378,7 @@
 		E114000000000000000000EC /* Exceptions for "macos" folder in "EchoWorkspaceTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = E114000000000000000000AA /* EchoWorkspaceTests */;
@@ -377,6 +386,7 @@
 		E115000000000000000000EC /* Exceptions for "macos" folder in "EchoViewTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = E115000000000000000000AA /* EchoViewTests */;
@@ -384,6 +394,7 @@
 		E123000000000000000000EC /* Exceptions for "macos" folder in "AgentLiveProbe" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = E123000000000000000000AA /* AgentLiveProbe */;
@@ -391,6 +402,7 @@
 		E124000000000000000000EC /* Exceptions for "macos" folder in "VoiceLiveProbe" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = E124000000000000000000AA /* VoiceLiveProbe */;
@@ -398,6 +410,7 @@
 		E125000000000000000000EC /* Exceptions for "macos" folder in "VoiceSoakProbe" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = E125000000000000000000AA /* VoiceSoakProbe */;
@@ -405,6 +418,7 @@
 		E126000000000000000000EC /* Exceptions for "macos" folder in "AppleSpeechDeviceProbe" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = E126000000000000000000AA /* AppleSpeechDeviceProbe */;
@@ -412,6 +426,7 @@
 		E69F3B51CE1B237D6FEB36E8 /* Exceptions for "macos" folder in "EchoLiveHost" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				CoreAILocalChat.swift,
 				main.swift,
 			);
 			target = 74679465BC618EAAE681B8A8 /* EchoLiveHost */;
@@ -443,6 +458,7 @@
 		E0000000000000000000002D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				F20000000000000000000003 /* CoreAILM in Frameworks */,
 			);
 		};
 		E110000000000000000000A2 /* Frameworks */ = {
@@ -517,6 +533,7 @@
 				E11400000000000000000F02 /* ProjectFileBrowserTests.swift */,
 				0A943A0226E44527A68563F2 /* tests/AgentHarnessTests.swift */,
 				474D9F2D95791491A7B3D4E6 /* tests/AgentModelTests.swift */,
+				F20000000000000000000012 /* tests/LocalChatTests.swift */,
 				E11300000000000000000F00 /* VoiceTests.swift */,
 				E11300000000000000000F01 /* VoiceBargeInTests.swift */,
 				E11300000000000000000F02 /* AgentVoiceTests.swift */,
@@ -530,6 +547,7 @@
 				3526F0A888174738325FD582 /* macos/AgentLanguageModels.swift */,
 				EA68E8426039B5A782DA9770 /* macos/AgentTools.swift */,
 				CF3DABC0D10122CBD030B84D /* macos/AgentHarness.swift */,
+				F20000000000000000000010 /* macos/AgentLocalChat.swift */,
 				E11000000000000000000F05 /* SettingsStore.swift */,
 				E11000000000000000000F06 /* VoiceProtocol.swift */,
 				E11000000000000000000F07 /* VoiceDiagnostics.swift */,
@@ -863,6 +881,9 @@
 				E0000000000000000000002A /* macos */,
 			);
 			name = Echo;
+			packageProductDependencies = (
+				F20000000000000000000002 /* CoreAILM */,
+			);
 			productName = Echo;
 			productReference = E0000000000000000000001A /* Echo.app */;
 			productType = "com.apple.product-type.application";
@@ -1100,6 +1121,9 @@
 			);
 			mainGroup = E00000000000000000000010;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F20000000000000000000001 /* XCRemoteSwiftPackageReference "coreai-models" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E00000000000000000000011 /* Products */;
 			projectDirPath = "";
@@ -1289,6 +1313,7 @@
 				26BC95D8A7B3E4F129E9AD9F /* macos/AgentLanguageModels.swift in Sources */,
 				82EA4910FA0A21C0579F3E29 /* macos/AgentTools.swift in Sources */,
 				534B7D287D089271F8634C32 /* macos/AgentHarness.swift in Sources */,
+				F20000000000000000000011 /* macos/AgentLocalChat.swift in Sources */,
 				E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */,
 				E11000000000000000000B03 /* TaskStore.swift in Sources */,
 				E11000000000000000000B05 /* SettingsStore.swift in Sources */,
@@ -1335,6 +1360,7 @@
 			files = (
 				3B42CB39447CC127369519D4 /* tests/AgentHarnessTests.swift in Sources */,
 				DDBEF3D5359192AC5896BA28 /* tests/AgentModelTests.swift in Sources */,
+				F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */,
 				F1DA05F3182E450B41CD433D /* tests/support/ScriptedAgentModel.swift in Sources */,
 				E11400000000000000000B00 /* WorkspaceTests.swift in Sources */,
 				E11400000000000000000B01 /* WorkspaceVoiceCommandTests.swift in Sources */,
@@ -3246,6 +3272,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F20000000000000000000001 /* XCRemoteSwiftPackageReference "coreai-models" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/coreai-models";
+			requirement = {
+				kind = revision;
+				revision = e7b24da85ea64a77d26324d7ce9607de9b955f57;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F20000000000000000000002 /* CoreAILM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F20000000000000000000001 /* XCRemoteSwiftPackageReference "coreai-models" */;
+			productName = CoreAILM;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E0000000000000000000000F /* Project object */;
 	validationLevel = 1;

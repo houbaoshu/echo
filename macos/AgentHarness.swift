@@ -24,6 +24,8 @@ struct NativeAgentState: Codable {
         /// Index of the turn's first transcript entry.
         var start: Int
         var outcome: AgentTurnOutcome?
+        /// The local model answered this turn; nil for the cloud model.
+        var local: Bool?
     }
     struct Input: Codable, Equatable {
         var messageID: UUID
@@ -126,6 +128,7 @@ enum AgentInstructions {
     weak var host: (any AgentHarnessHost)?
     private(set) var state = NativeAgentState()
     private let resolveModel: @MainActor () throws -> ModelFactory
+    private let local: LocalChatService?
     private let generationLimit: Int
 
     private var turn: Task<Void, Never>?
@@ -169,21 +172,23 @@ enum AgentInstructions {
     private var cleanupWaiters: [() -> Void] = []
     private var storageFailure: String?
 
-    init(resolveModel: @escaping @MainActor () throws -> ModelFactory, generationLimit: Int = 30,
-         runner: any CommandRunning = RustCommandRunner()) {
+    init(resolveModel: @escaping @MainActor () throws -> ModelFactory, local: LocalChatService? = nil,
+         generationLimit: Int = 30, runner: any CommandRunning = RustCommandRunner()) {
         self.resolveModel = resolveModel
+        self.local = local
         self.generationLimit = generationLimit
         self.runner = runner
     }
 
     /// Reads the model settings saved when each turn starts.
-    convenience init(settings: SettingsStore, transport: ((AgentEndpoint) -> AgentTransport)? = nil) {
+    convenience init(settings: SettingsStore, transport: ((AgentEndpoint) -> AgentTransport)? = nil,
+                     local: LocalChatService? = nil) {
         self.init(resolveModel: {
             let (configuration, key) = try settings.savedModelCredentials()
             let endpoint = AgentEndpoint(configuration, key: key)
             let session = transport?(endpoint) ?? AgentTransport.make(for: endpoint)
             return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: session, ledger: ledger, budget: budget) }
-        })
+        }, local: local)
     }
 
     var isRunning: Bool { turn != nil }
@@ -266,20 +271,31 @@ enum AgentInstructions {
         case feedback(String)
     }
 
+    /// The model a turn uses: the cloud model with Echo's tools, or the local model for chat alone.
+    private enum Route {
+        case cloud(ModelFactory)
+        case local(LocalChatService)
+        var isLocal: Bool { if case .local = self { true } else { false } }
+    }
+
     private func runTurn() async {
         guard !stopRequested else { return finish(.stopped(reply: nil)) }
-        let factory: ModelFactory
-        do { factory = try resolveModel() }
-        catch { return finish(.failed(error.localizedDescription, notice: true)) }
+        let route: Route
+        if let local, local.mode == .always {
+            route = .local(local)
+        } else {
+            do { route = .cloud(try resolveModel()) }
+            catch { return finish(.failed(error.localizedDescription, notice: true)) }
+        }
 
         let budget = GenerationBudget(limit: generationLimit, steering: steering)
-        state.turns.append(.init(start: state.entries.count))
+        state.turns.append(.init(start: state.entries.count, local: route.isLocal ? true : nil))
         var next: Next = state.pendingInputs.isEmpty ? .resume : .inputs
         var formatErrors = 0
         while true {
             // Input that enters the transcript is no longer pending; the UI drops its "待处理".
             var history = state.entries
-            let prompt: Prompt, metadata: [String: any ConvertibleToGeneratedContent]
+            let prompt: Prompt, promptText: String, metadata: [String: any ConvertibleToGeneratedContent]
             var userPrompt: Transcript.Prompt?
             var marker: Transcript.Prompt?
             switch next {
@@ -290,11 +306,14 @@ enum AgentInstructions {
                 for input in inputs.dropLast() { history.append(.prompt(Self.userPrompt(input))) }
                 let last = inputs.last!
                 userPrompt = Self.userPrompt(last)
+                promptText = last.text
                 prompt = Prompt(last.text); metadata = [AgentPromptKey.message: last.messageID.uuidString]
             case .resume:
+                promptText = ""
                 prompt = Prompt(""); metadata = [AgentPromptMarker.continueKey: true]
                 marker = Transcript.Prompt(metadata: metadata, segments: [])
             case .feedback(let text):
+                promptText = text
                 prompt = Prompt(text); metadata = [AgentPromptKey.feedback: true]
                 marker = Transcript.Prompt(metadata: metadata, segments: [.text(.init(content: text))])
             }
@@ -305,13 +324,34 @@ enum AgentInstructions {
             host?.harnessStatus("正在请求模型…")
 
             let ledger = GenerationLedger()
-            let session = LanguageModelSession(
-                profile: AgentProfile(model: factory(ledger, budget), tools: tools(), harness: self), history: history)
-            let result = await Self.consume(session, prompt: prompt, metadata: metadata) { [weak self] entries in
-                await self?.receive(entries)
+            var modelHistory = history
+            let session: LanguageModelSession?
+            var inputError: (any Error)?
+            switch route {
+            case .cloud(let factory):
+                session = LanguageModelSession(
+                    profile: AgentProfile(model: factory(ledger, budget), tools: tools(), harness: self), history: history)
+            case .local(let service):
+                do {
+                    modelHistory = try LocalChatContext.history(history, prompt: promptText)
+                    session = LanguageModelSession(profile: LocalChatProfile(model: service.factory(ledger, budget)), history: modelHistory)
+                } catch {
+                    session = nil; inputError = error
+                }
             }
-            await commandsCleanedUp()
-            var entries = Array(session.transcript).filter { if case .instructions = $0 { false } else { true } }
+            let result: Result<Void, any Error>
+            var entries = history
+            if let session {
+                result = await Self.consume(session, prompt: prompt, metadata: metadata) { [weak self] entries in
+                    await self?.receive(entries)
+                }
+                await commandsCleanedUp()
+                // The local model saw a filtered view; what it added follows the whole history.
+                let written = Array(session.transcript).filter { if case .instructions = $0 { false } else { true } }
+                entries = history + written.dropFirst(modelHistory.count)
+            } else {
+                result = .failure(inputError!)
+            }
             // A Stop before Foundation Models recorded the prompt still leaves the input in the history.
             if let userPrompt, !entries[history.count...].contains(where: { Self.messageID(of: $0) == userPrompt.metadata[AgentPromptKey.message].flatMap(Self.string) }) {
                 entries.insert(.prompt(userPrompt), at: history.count)
@@ -331,6 +371,8 @@ enum AgentInstructions {
                 state.entries = entries
                 guard let index = entries.indices.last, index >= history.count, case .response(let response) = entries[index],
                       !Self.text(response.segments).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    // The local model has no tools to be told about: its output is dropped, the input stays.
+                    if route.isLocal { return finishLocalWithoutReply(entries, base: history.count) }
                     // Neither a reply nor a tool call.
                     formatErrors += 1
                     guard formatErrors < Self.formatErrorLimit else { return finish(.failed(Self.formatErrorMessage, notice: false), outcome: .formatErrorLimit) }
@@ -361,6 +403,8 @@ enum AgentInstructions {
                 case is GenerationBudget.Exhausted:
                     state.entries = closingInterruptedCalls(entries)
                     return finish(.failed(Self.stepLimitMessage, notice: false), outcome: .stepLimit)
+                case is GeneratedContent.ParsingError where route.isLocal:
+                    return finishLocalWithoutReply(entries, base: history.count)
                 case is GeneratedContent.ParsingError:
                     formatErrors += 1
                     let dangling = Self.danglingCalls(entries)
@@ -385,6 +429,12 @@ enum AgentInstructions {
                 }
             }
         }
+    }
+
+    /// A local turn whose model wrote no usable reply: what it wrote goes, the user's input stays.
+    private func finishLocalWithoutReply(_ entries: [Transcript.Entry], base: Int) {
+        state.entries = Array(entries[..<base]) + entries[base...].filter { if case .prompt = $0 { true } else { false } }
+        finish(.failed(LocalChatError.noReply.localizedDescription, notice: false))
     }
 
     /// After a Stop only the cut-off reply goes: finished tool calls and their results stay, and
@@ -708,6 +758,7 @@ enum AgentInstructions {
                 let id = replyID(response.id)
                 var message = existing[id] ?? ConversationMessage(role: .assistant, content: text)
                 message.id = id; message.content = text; message.status = .completed
+                message.modelLabel = turnIndex > 0 && state.turns[turnIndex - 1].local == true ? "本地模型" : nil
                 messages.append(message); anchor = id
             case .toolCalls(let calls):
                 for call in calls {
@@ -928,6 +979,19 @@ private struct AgentProfile: LanguageModelSession.DynamicProfile {
             guard let harness else { throw CancellationError() }
             try await harness.toolFinished(call, history: entries)
         }
+    }
+}
+
+/// One local `respond`: short instructions and the model, with no tools and so no tool hooks.
+private struct LocalChatProfile: LanguageModelSession.DynamicProfile {
+    let model: any LanguageModel
+
+    var body: some DynamicProfile {
+        Profile {
+            Instructions(LocalChatContext.instructions)
+        }
+        .model(model)
+        .transcriptErrorHandlingPolicy(.preserveTranscript)
     }
 }
 

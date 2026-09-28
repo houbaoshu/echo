@@ -94,6 +94,7 @@ final class GenerationLedger: Sendable, Hashable {
     }
     private struct State {
         var completed: Set<String> = []
+        var allComplete = false
         var finalReply: Reply?
     }
     private let state = Mutex(State())
@@ -102,7 +103,10 @@ final class GenerationLedger: Sendable, Hashable {
     func markComplete(_ ids: some Sequence<String>, reply: Reply? = nil) {
         state.withLock { $0.completed.formUnion(ids); $0.finalReply = reply }
     }
-    func isComplete(_ id: String) -> Bool { state.withLock { $0.completed.contains(id) } }
+    /// For a model that makes one generation per `respond` and cannot name its entries: every
+    /// entry the `respond` wrote is complete.
+    func markAllComplete() { state.withLock { $0.allComplete = true } }
+    func isComplete(_ id: String) -> Bool { state.withLock { $0.allComplete || $0.completed.contains(id) } }
     /// The reply of the last completed generation, when it ended the tool loop.
     var finalReply: Reply? { state.withLock { $0.finalReply } }
     static func == (lhs: GenerationLedger, rhs: GenerationLedger) -> Bool { lhs === rhs }

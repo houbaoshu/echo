@@ -135,6 +135,9 @@ struct ConversationMessageView: View {
         VStack(alignment: .leading, spacing: 10) {
             if message.role == .assistant {
                 if !message.content.isEmpty { AssistantMarkdown(content: message.content).equatable() }
+                if let label = message.modelLabel, !message.content.isEmpty {
+                    Text(label).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                }
                 // A finished reply is its own receipt: the text is right there, so the
                 // normal path shows no status line. Everything the reply alone cannot
                 // tell — stopped, failed, interrupted — keeps one, and so does an

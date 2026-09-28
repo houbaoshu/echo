@@ -8,6 +8,7 @@
     }
   ],
   "defaultOptions": {
+    "codeCoverage": false,
     "environmentVariableEntries": [
       {
         "key": "ECHO_TEST_MODE",
