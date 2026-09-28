@@ -67,7 +67,7 @@
          <EnvironmentVariable
             key = "ECHO_LOCAL_CHAT"
             value = "always"
-            isEnabled = "YES">
+            isEnabled = "NO">
          </EnvironmentVariable>
       </EnvironmentVariables>
    </LaunchAction>

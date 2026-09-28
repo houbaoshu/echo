@@ -13,8 +13,8 @@ final class CoreAILocalChatBackend: LocalChatBackend {
     static let idleUnload: Duration = .seconds(300)
 
     private struct State {
-        var model: CoreAILanguageModel?
-        var loading: Task<CoreAILanguageModel, any Error>?
+        var model: LoadedModel?
+        var loading: Task<LoadedModel, any Error>?
         /// Replies being generated, or waiting for the model to load.
         var active = 0
         var idleTimer: Task<Void, Never>?
@@ -40,17 +40,25 @@ final class CoreAILocalChatBackend: LocalChatBackend {
 
     var isLoaded: Bool { state.withLock { $0.model != nil } }
 
+    /// A loaded model and the name its files gave when it was loaded; replacing the files later
+    /// does not change what this instance is.
+    struct LoadedModel: Sendable {
+        let model: CoreAILanguageModel
+        let name: String
+    }
+
     func respond(to request: LanguageModelExecutorGenerationRequest,
-                 streamingInto channel: LanguageModelExecutorGenerationChannel) async throws {
+                 streamingInto channel: LanguageModelExecutorGenerationChannel) async throws -> String {
         begin()
         defer { end() }
-        let model = try await loadedModel()
-        let executor = try CoreAILanguageModel.CoreAIExecutor(configuration: model.executorConfiguration)
+        let loaded = try await loadedModel()
+        let executor = try CoreAILanguageModel.CoreAIExecutor(configuration: loaded.model.executorConfiguration)
         do {
-            try await executor.respond(to: request, model: model, streamingInto: channel)
+            try await executor.respond(to: request, model: loaded.model, streamingInto: channel)
         } catch InferenceRuntimeError.contextLengthExceeded {
             throw LocalChatError.messageTooLong
         }
+        return loaded.name
     }
 
     /// Unloads the model now unless a reply is using it.
@@ -60,15 +68,15 @@ final class CoreAILocalChatBackend: LocalChatBackend {
             state.idleTimer?.cancel(); state.idleTimer = nil
             state.unloadWhenIdle = false
             defer { state.model = nil }
-            return state.model
+            return state.model?.model
         }
         model?.unload()
     }
 
     // MARK: Loading
 
-    private func loadedModel() async throws -> CoreAILanguageModel {
-        let (model, loading) = state.withLock { state -> (CoreAILanguageModel?, Task<CoreAILanguageModel, any Error>?) in
+    private func loadedModel() async throws -> LoadedModel {
+        let (model, loading) = state.withLock { state -> (LoadedModel?, Task<LoadedModel, any Error>?) in
             if let model = state.model { return (model, nil) }
             if let loading = state.loading { return (nil, loading) }
             let availability = locate()
@@ -90,7 +98,7 @@ final class CoreAILocalChatBackend: LocalChatBackend {
         return try await Self.value(of: loading!)
     }
 
-    private func finishLoad(_ model: CoreAILanguageModel?) {
+    private func finishLoad(_ model: LoadedModel?) {
         let unloadNow = state.withLock { state -> Bool in
             state.loading = nil
             if let model { state.model = model }
@@ -102,7 +110,7 @@ final class CoreAILocalChatBackend: LocalChatBackend {
         if unloadNow { unloadIfIdle() }
     }
 
-    private static func load(_ availability: LocalModelAvailability) async throws -> CoreAILanguageModel {
+    private static func load(_ availability: LocalModelAvailability) async throws -> LoadedModel {
         let url: URL
         switch availability {
         case .ready(let ready): url = ready
@@ -113,10 +121,11 @@ final class CoreAILocalChatBackend: LocalChatBackend {
         do { bundle = try LanguageBundle(at: url) } catch { throw LocalChatError.modelInvalid(error.localizedDescription) }
         // Without its own tokenizer, Core AI would fetch one from Hugging Face.
         guard bundle.hasEmbeddedTokenizer else { throw LocalChatError.modelInvalid("缺少内嵌 tokenizer") }
+        guard let name = LocalModelLocation.displayName(in: url) else { throw LocalChatError.modelInvalid("模型信息不完整") }
         do {
             let model = try await CoreAILanguageModel(resourcesAt: url, mode: .lazy)
             try await model.load()
-            return model
+            return LoadedModel(model: model, name: name)
         } catch {
             throw LocalChatError.loadFailed(error.localizedDescription)
         }

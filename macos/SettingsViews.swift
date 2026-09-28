@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The settings page's section list, hosted in a real system sidebar column.
 ///
@@ -180,6 +181,7 @@ struct ModelSettingsView: View {
                         .accessibilityIdentifier("settings.notice")
                 }
             }
+            LocalModelSection(settings: settings)
         }
         // A grouped form draws a text field as plain trailing-aligned text, which reads
         // as a value rather than something editable. These are all credentials and
@@ -201,6 +203,52 @@ struct ModelSettingsView: View {
             .disabled(settings.testing)
             .help("验证当前协议的工具调用能力，不执行命令，也不自动保存")
             .accessibilityIdentifier("settings.test")
+    }
+}
+
+/// The offline model: whether it is usable, bringing in an exported model folder, and where it is.
+/// The path is one click away rather than always on screen.
+struct LocalModelSection: View {
+    @ObservedObject var settings: SettingsStore
+    @State private var importing = false
+    private var status: String {
+        switch settings.localModel {
+        case .ready(let url): LocalModelLocation.displayName(in: url).map { "已就绪 · \($0)" } ?? "已就绪"
+        case .missing: "未安装"
+        case .invalid(let reason): "不完整：\(reason)"
+        }
+    }
+    var body: some View {
+        Section {
+            Toggle("仅使用本地模型", isOn: Binding(get: { settings.snapshot.localModelOnly }, set: { settings.setLocalModelOnly($0) }))
+                .toggleStyle(.switch).accessibilityIdentifier("settings.localModel.only")
+            LabeledContent("状态") { Text(status).accessibilityIdentifier("settings.localModel.status") }
+            HStack(spacing: 12) {
+                Button("导入模型…") { importing = true }.disabled(settings.importingLocalModel)
+                    .accessibilityIdentifier("settings.localModel.import")
+                Button("在 Finder 中显示", action: reveal).accessibilityIdentifier("settings.localModel.reveal")
+                if settings.importingLocalModel { ProgressView().controlSize(.small) }
+            }
+            if let notice = settings.localModelNotice {
+                Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                    .accessibilityIdentifier("settings.localModel.notice")
+            }
+        } header: {
+            Text("本地模型")
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.folder]) { result in
+            if case .success(let url) = result { settings.importLocalModel(from: url) }
+        }
+        .onAppear { settings.refreshLocalModel() }
+    }
+    private func reveal() {
+        if case .ready(let url) = settings.localModel {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            let folder = LocalModelLocation.installURL.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(folder)
+        }
     }
 }
 

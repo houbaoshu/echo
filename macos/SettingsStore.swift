@@ -46,10 +46,12 @@ extension ModelConfiguration {
     }
 }
 
-struct SettingsError: LocalizedError {
+struct SettingsError: LocalizedError, Equatable {
     let message: String
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }
+    /// No default model is saved: a turn may use the local model instead.
+    static let modelNotConfigured = SettingsError("请先在设置中配置并保存默认模型。")
 }
 
 @MainActor protocol SecretStore {
@@ -138,6 +140,8 @@ struct SettingsSnapshot: Codable {
     var voiceSecretAccount: String?
     /// ⌥ Space opens the pet's quick composer from anywhere.
     var quickComposerHotKey = true
+    /// Every new turn goes to the local model, never the cloud.
+    var localModelOnly = false
 
     var model: ModelConfiguration { settings(for: activeProvider).model }
     var secretAccount: String? { settings(for: activeProvider).secretAccount }
@@ -146,7 +150,7 @@ struct SettingsSnapshot: Codable {
     }
     private enum CodingKeys: String, CodingKey {
         case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, voiceSecretAccount,
-             quickComposerHotKey
+             quickComposerHotKey, localModelOnly
     }
     private enum LegacyKeys: String, CodingKey { case model, secretAccount }
     init() {}
@@ -159,6 +163,7 @@ struct SettingsSnapshot: Codable {
         voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
         voiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .voiceSecretAccount)
         quickComposerHotKey = try values.decodeIfPresent(Bool.self, forKey: .quickComposerHotKey) ?? true
+        localModelOnly = try values.decodeIfPresent(Bool.self, forKey: .localModelOnly) ?? false
         if version == 1 {
             let legacy = try decoder.container(keyedBy: LegacyKeys.self)
             let model = try legacy.decode(ModelConfiguration.self, forKey: .model)
@@ -197,6 +202,10 @@ protocol ConnectionTesting: Sendable {
     @Published private(set) var testResult: String?
     @Published private(set) var testing = false
     @Published private(set) var testSucceeded = false
+    /// The offline model, as its files show it; refreshed when the model settings appear.
+    @Published private(set) var localModel: LocalModelAvailability = .missing
+    @Published private(set) var importingLocalModel = false
+    @Published var localModelNotice: String?
     private let url: URL?
     private let secrets: any SecretStore
     private let tester: any ConnectionTesting
@@ -322,8 +331,24 @@ protocol ConnectionTesting: Sendable {
             }
         } catch { voiceNotice = error is SettingsError ? error.localizedDescription : "语音配置保存失败，请检查目录写入权限。" }
     }
+    func refreshLocalModel() { localModel = LocalModelLocation.find() }
+    /// Copies a model folder the user picked into Echo's Models folder, checking it first.
+    func importLocalModel(from source: URL) {
+        guard !importingLocalModel else { return }
+        importingLocalModel = true; localModelNotice = nil
+        Task {
+            let failure = await Task.detached {
+                let access = source.startAccessingSecurityScopedResource()
+                defer { if access { source.stopAccessingSecurityScopedResource() } }
+                return LocalModelLocation.install(from: source)
+            }.value
+            importingLocalModel = false
+            localModelNotice = failure ?? "已导入本地模型。"
+            refreshLocalModel()
+        }
+    }
     func savedModelCredentials() throws -> (configuration: ModelConfiguration, key: String) {
-        guard !snapshot.model.model.isEmpty else { throw SettingsError("请先在设置中配置并保存默认模型。") }
+        guard !snapshot.model.model.isEmpty else { throw SettingsError.modelNotConfigured }
         guard keyLoaded else { throw SettingsError("无法读取已保存的 API Key，请在设置中重新填写并保存。") }
         guard !savedKey.contains("\n"), !savedKey.contains("\r") else { throw SettingsError("已保存的 API Key 无效，请重新设置。") }
         return (try snapshot.model.validated(), savedKey)
@@ -371,6 +396,12 @@ protocol ConnectionTesting: Sendable {
         guard enabled != snapshot.quickComposerHotKey else { return }
         do { try update { $0.quickComposerHotKey = enabled } }
         catch { hotKeyNotice = error is SettingsError ? error.localizedDescription : "快捷键设置保存失败，请检查目录写入权限。" }
+    }
+    /// Takes effect from the next turn; a reply being written keeps its model.
+    func setLocalModelOnly(_ enabled: Bool) {
+        guard enabled != snapshot.localModelOnly else { return }
+        do { try update { $0.localModelOnly = enabled } }
+        catch { localModelNotice = error is SettingsError ? error.localizedDescription : "设置保存失败，请检查目录写入权限。" }
     }
     func selectPet(_ id: String) throws { try update { $0.selectedPetID = id } }
     func selectPlanet(_ id: String) throws { try update { $0.selectedPlanetID = id } }

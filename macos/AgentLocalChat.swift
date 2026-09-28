@@ -33,11 +33,33 @@ enum LocalModelLocation {
         return .ready(url.resolvingSymlinksInPath())
     }
 
-    /// What keeps the directory from being a complete model with its own tokenizer, or nil.
+    /// Copies the model at `source` to `destination` after checking it is complete and is the model
+    /// Echo expects. Whatever was at `destination` goes to the Trash (a link is removed, not what it
+    /// points to). Returns the failure to show, or nil.
+    static func install(from source: URL, to destination: URL = installURL) -> String? {
+        if let problem = problem(in: source) { return "无法导入：\(problem)。" }
+        let files = FileManager.default
+        let partial = destination.deletingLastPathComponent().appendingPathComponent(".\(name).importing-\(UUID().uuidString)")
+        do {
+            try files.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try files.copyItem(at: source.resolvingSymlinksInPath(), to: partial)
+            if (try? files.attributesOfItem(atPath: destination.path)) != nil {
+                try files.trashItem(at: destination, resultingItemURL: nil)
+            }
+            try files.moveItem(at: partial, to: destination)
+            return nil
+        } catch {
+            try? files.removeItem(at: partial)
+            return "导入失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// What keeps the directory from being the complete model Echo supports, with its own
+    /// tokenizer, or nil.
     static func problem(in url: URL) -> String? {
         let files = FileManager.default
-        guard let data = try? Data(contentsOf: url.appendingPathComponent("metadata.json")),
-              let metadata = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return "缺少 metadata.json" }
+        guard let metadata = metadata(in: url) else { return "缺少 metadata.json" }
+        guard metadata["name"] as? String == name else { return "不是 \(name) 模型" }
         guard metadata["kind"] as? String == "llm",
               let main = (metadata["assets"] as? [String: Any])?["main"] as? String,
               let language = metadata["language"] as? [String: Any] else { return "metadata.json 不是语言模型的描述" }
@@ -46,6 +68,23 @@ enum LocalModelLocation {
         guard language["embedded_tokenizer"] as? Bool == true,
               files.fileExists(atPath: url.appendingPathComponent("tokenizer/tokenizer.json").path) else { return "缺少内嵌 tokenizer" }
         return nil
+    }
+}
+
+extension LocalModelLocation {
+    /// The model's name as its metadata gives it — the source model and its compression —
+    /// never the folder it was imported from. Nil unless the directory passes `problem(in:)`.
+    static func displayName(in url: URL) -> String? {
+        guard problem(in: url) == nil, let metadata = metadata(in: url) else { return nil }
+        let source = ((metadata["source"] as? [String: Any])?["hf_model_id"] as? String)
+            .flatMap { $0.split(separator: "/").last.map(String.init) } ?? name
+        guard let compression = metadata["compression"] as? String, !compression.isEmpty else { return source }
+        return "\(source) \(compression)"
+    }
+
+    fileprivate static func metadata(in url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url.appendingPathComponent("metadata.json")) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 }
 
@@ -61,6 +100,7 @@ enum LocalChatError: Error, LocalizedError, Equatable {
     case loadFailed(String)
     case messageTooLong
     case noReply
+    case cannotContinue
 
     var errorDescription: String? {
         switch self {
@@ -69,6 +109,7 @@ enum LocalChatError: Error, LocalizedError, Equatable {
         case .loadFailed(let reason): "本地模型加载失败：\(reason)"
         case .messageTooLong: "这条消息太长，本地模型无法处理。请缩短后重试。"
         case .noReply: "本地模型没有给出有效回复，请重试。"
+        case .cannotContinue: "这一轮已有回复或执行过工具，本地模型无法接着处理。"
         }
     }
 }
@@ -77,9 +118,10 @@ enum LocalChatError: Error, LocalizedError, Equatable {
 /// but never while a reply is being generated.
 protocol LocalChatBackend: Sendable {
     func availability() -> LocalModelAvailability
-    /// Streams one reply to `request`; waiting for a load ends at cancellation.
+    /// Streams one reply to `request` and returns the name of the model that wrote it; waiting
+    /// for a load ends at cancellation.
     func respond(to request: LanguageModelExecutorGenerationRequest,
-                 streamingInto channel: LanguageModelExecutorGenerationChannel) async throws
+                 streamingInto channel: LanguageModelExecutorGenerationChannel) async throws -> String
 }
 
 /// The app's local model, shared by every conversation.
@@ -103,11 +145,11 @@ final class LocalChatService: Sendable {
     }
 
     fileprivate func generate(_ request: LanguageModelExecutorGenerationRequest,
-                              into channel: LanguageModelExecutorGenerationChannel) async throws {
+                              into channel: LanguageModelExecutorGenerationChannel) async throws -> String {
         try await gate.acquire()
         defer { gate.release() }
         try Task.checkCancellation()
-        try await backend.respond(to: request, streamingInto: channel)
+        return try await backend.respond(to: request, streamingInto: channel)
     }
 }
 
@@ -186,10 +228,10 @@ struct LocalChatExecutor: LanguageModelExecutor {
         // Qwen3 thinks before answering unless its chat template gets enable_thinking=false.
         local.contextOptions.reasoningLevel = .custom("none")
         local.generationOptions.maximumResponseTokens = LocalChatContext.maximumResponseTokens
-        try await configuration.service.value.generate(local, into: channel)
+        let model = try await configuration.service.value.generate(local, into: channel)
         // A cancelled generation can end without an error; only one that ran to its end is complete.
         try Task.checkCancellation()
-        configuration.ledger.markAllComplete()
+        configuration.ledger.markAllComplete(model: model)
     }
 }
 
@@ -229,6 +271,17 @@ enum LocalChatContext {
         // A reply without its question reads as the model's own opening.
         while let first = kept.first, case .response = first { kept.removeFirst() }
         return kept
+    }
+
+    /// Whether the last user message never got anything back: no reply was kept and no tool was
+    /// called for it. Only such a message may be answered by the local model on a continue, so an
+    /// interrupted turn is never handled twice. A restart closes calls left open with results, and
+    /// a Stop drops only a reply that was cut off, so both are judged from the saved history alone.
+    static func isUnanswered(_ entries: [Transcript.Entry]) -> Bool {
+        guard let last = entries.lastIndex(where: { entry in
+            if case .prompt(let prompt) = entry { prompt.metadata[AgentPromptKey.message] != nil } else { false }
+        }) else { return false }
+        return entries[(last + 1)...].allSatisfy { if case .prompt = $0 { true } else { false } }
     }
 
     /// The text of a user message or reply the local model keeps; nil for everything else.

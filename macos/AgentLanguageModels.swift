@@ -41,7 +41,14 @@ struct AgentEndpoint: Hashable, Sendable {
 /// Model failures as the user sees them. Wording follows mini-agent-rs, which Echo showed so far.
 struct AgentModelError: Error, LocalizedError, Equatable {
     let message: String
+    /// Set for failures to reach the provider at all.
+    var transportCode: URLError.Code?
     var errorDescription: String? { message }
+    /// The Mac has no usable network: only these may hand a turn to the local model.
+    var isOffline: Bool {
+        guard let transportCode else { return false }
+        return [.notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff].contains(transportCode)
+    }
 
     static func httpStatus(_ code: Int) -> AgentModelError {
         let reasons = [400: "Bad Request", 401: "Unauthorized", 402: "Payment Required", 403: "Forbidden", 404: "Not Found",
@@ -58,7 +65,9 @@ struct AgentModelError: Error, LocalizedError, Equatable {
     static let invalidChat = AgentModelError(message: "model protocol error: invalid Chat Completions response")
     static let invalidEndpoint = AgentModelError(message: "invalid configuration: base URL must use HTTP(S) without credentials, query or fragment")
     static func transport(_ error: any Error) -> AgentModelError {
-        if let error = error as? URLError { return .init(message: "HTTP transport error: \(error.code.rawValue) \(error.localizedDescription)") }
+        if let error = error as? URLError {
+            return .init(message: "HTTP transport error: \(error.code.rawValue) \(error.localizedDescription)", transportCode: error.code)
+        }
         return .init(message: "HTTP transport error")
     }
 }
@@ -95,6 +104,7 @@ final class GenerationLedger: Sendable, Hashable {
     private struct State {
         var completed: Set<String> = []
         var allComplete = false
+        var model: String?
         var finalReply: Reply?
     }
     private let state = Mutex(State())
@@ -104,8 +114,10 @@ final class GenerationLedger: Sendable, Hashable {
         state.withLock { $0.completed.formUnion(ids); $0.finalReply = reply }
     }
     /// For a model that makes one generation per `respond` and cannot name its entries: every
-    /// entry the `respond` wrote is complete.
-    func markAllComplete() { state.withLock { $0.allComplete = true } }
+    /// entry the `respond` wrote is complete. `model` names the model that wrote them.
+    func markAllComplete(model: String? = nil) { state.withLock { $0.allComplete = true; $0.model = model } }
+    /// The model a local `respond` used, for the replies it wrote.
+    var model: String? { state.withLock { $0.model } }
     func isComplete(_ id: String) -> Bool { state.withLock { $0.allComplete || $0.completed.contains(id) } }
     /// The reply of the last completed generation, when it ended the tool loop.
     var finalReply: Reply? { state.withLock { $0.finalReply } }

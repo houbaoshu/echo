@@ -32,6 +32,21 @@ import Testing
 }
 
 @Suite(.serialized) enum SettingsTests {
+    @Test @MainActor static func localModelOnlyIsOffUntilChosenAndSaved() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("local-only-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("settings.json")
+        try Data(#"{"version":2,"activeProvider":"openAI","providers":{"openAI":{"model":{"baseURL":"https://api.openai.com/v1","model":""}}},"selectedPetID":"builtin:chiyan"}"#.utf8).write(to: url)
+        let settings = SettingsStore(url: url, secrets: ProviderSecrets())
+        #expect(!settings.snapshot.localModelOnly, "Settings saved before the switch leave it off")
+        settings.setLocalModelOnly(true)
+        #expect(settings.snapshot.localModelOnly && settings.localModelNotice == nil)
+        #expect(SettingsStore(url: url, secrets: ProviderSecrets()).snapshot.localModelOnly, "The choice is saved")
+        settings.setLocalModelOnly(false)
+        #expect(!SettingsStore(url: url, secrets: ProviderSecrets()).snapshot.localModelOnly)
+    }
+
     @Test @MainActor static func providerMigrationDraftsAndCredentialRotation() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("provider-settings-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

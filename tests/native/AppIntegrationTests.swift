@@ -66,7 +66,7 @@ final class AppIntegrationTests: XCTestCase {
         XCTAssertEqual(store.task?.status, .completed, store.task?.summary ?? "")
         let reply = try XCTUnwrap(store.messages.last { $0.role == .assistant })
         XCTAssertFalse(reply.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        XCTAssertEqual(reply.modelLabel, "本地模型")
+        XCTAssertEqual(reply.modelLabel, "Qwen3-0.6B 4bit", "The model's own name, from its metadata")
         XCTAssertGreaterThan(Set(snapshots).count, 1, "The reply streams")
         let entries = try XCTUnwrap(store.snapshot.native).entries
         XCTAssertFalse(entries.contains { if case .reasoning = $0 { true } else { false } }, "Thinking is off")

@@ -38,15 +38,18 @@ struct NativeAgentState: Codable {
     var pendingInputs: [Input] = []
     /// The assistant message shown for each response entry, by entry ID.
     var replies: [String: UUID] = [:]
+    /// The local model that wrote a response entry, by entry ID, as it named itself then.
+    var replyModels: [String: String] = [:]
 
     init() {}
-    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies }
+    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies, replyModels }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         entries = Array(try values.decode(Transcript.self, forKey: .transcript))
         turns = try values.decode([Turn].self, forKey: .turns)
         pendingInputs = try values.decode([Input].self, forKey: .pendingInputs)
         replies = try values.decode([String: UUID].self, forKey: .replies)
+        replyModels = try values.decodeIfPresent([String: String].self, forKey: .replyModels) ?? [:]
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -54,6 +57,7 @@ struct NativeAgentState: Codable {
         try values.encode(turns, forKey: .turns)
         try values.encode(pendingInputs, forKey: .pendingInputs)
         try values.encode(replies, forKey: .replies)
+        if !replyModels.isEmpty { try values.encode(replyModels, forKey: .replyModels) }
     }
 
     /// Continue is offered for input that never reached the model and for a last turn that did not complete.
@@ -124,11 +128,14 @@ enum AgentInstructions {
     static let formatErrorLimit = 3
     static let stepLimitMessage = "已达到本轮 30 次模型请求限制。"
     static let formatErrorMessage = "模型连续返回无效工具格式，已停止。"
+    static let offlineAfterOutputMessage = "网络已断开，本轮已有输出或执行过工具，未自动改用本地模型。联网后点“继续处理”。"
 
     weak var host: (any AgentHarnessHost)?
     private(set) var state = NativeAgentState()
     private let resolveModel: @MainActor () throws -> ModelFactory
     private let local: LocalChatService?
+    /// Read when a turn starts: every new turn goes to the local model.
+    private let localOnly: @MainActor () -> Bool
     private let generationLimit: Int
 
     private var turn: Task<Void, Never>?
@@ -173,9 +180,11 @@ enum AgentInstructions {
     private var storageFailure: String?
 
     init(resolveModel: @escaping @MainActor () throws -> ModelFactory, local: LocalChatService? = nil,
+         localOnly: @escaping @MainActor () -> Bool = { false },
          generationLimit: Int = 30, runner: any CommandRunning = RustCommandRunner()) {
         self.resolveModel = resolveModel
         self.local = local
+        self.localOnly = localOnly
         self.generationLimit = generationLimit
         self.runner = runner
     }
@@ -188,7 +197,7 @@ enum AgentInstructions {
             let endpoint = AgentEndpoint(configuration, key: key)
             let session = transport?(endpoint) ?? AgentTransport.make(for: endpoint)
             return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: session, ledger: ledger, budget: budget) }
-        }, local: local)
+        }, local: local, localOnly: { settings.snapshot.localModelOnly })
     }
 
     var isRunning: Bool { turn != nil }
@@ -280,11 +289,26 @@ enum AgentInstructions {
 
     private func runTurn() async {
         guard !stopRequested else { return finish(.stopped(reply: nil)) }
-        let route: Route
-        if let local, local.mode == .always {
-            route = .local(local)
+        var route: Route
+        if let local, local.mode == .always || localOnly() {
+            // Only the local model: when it cannot be used the turn says so and never goes to the cloud.
+            switch local.backend.availability() {
+            case .ready: route = .local(local)
+            case .missing: return finish(.failed(LocalChatError.modelMissing.localizedDescription, notice: true))
+            case .invalid(let reason): return finish(.failed(LocalChatError.modelInvalid(reason).localizedDescription, notice: true))
+            }
         } else {
             do { route = .cloud(try resolveModel()) }
+            catch let error as SettingsError where error == .modelNotConfigured && local != nil {
+                // Without a cloud model the local one answers, when there is one.
+                switch local!.backend.availability() {
+                case .ready: route = .local(local!)
+                case .missing:
+                    return finish(.failed("尚未配置模型。请在设置中配置并保存默认模型，或导入本地模型。", notice: true))
+                case .invalid(let reason):
+                    return finish(.failed("尚未配置默认模型，本地模型也不完整（\(reason)）。请在设置中配置默认模型，或重新导入本地模型。", notice: true))
+                }
+            }
             catch { return finish(.failed(error.localizedDescription, notice: true)) }
         }
 
@@ -293,6 +317,9 @@ enum AgentInstructions {
         var next: Next = state.pendingInputs.isEmpty ? .resume : .inputs
         var formatErrors = 0
         while true {
+            // What this request starts from, restored if it goes to the local model instead.
+            let before = (entries: state.entries, pendingInputs: state.pendingInputs)
+            let resuming = if case .resume = next { true } else { false }
             // Input that enters the transcript is no longer pending; the UI drops its "待处理".
             var history = state.entries
             let prompt: Prompt, promptText: String, metadata: [String: any ConvertibleToGeneratedContent]
@@ -333,6 +360,8 @@ enum AgentInstructions {
                     profile: AgentProfile(model: factory(ledger, budget), tools: tools(), harness: self), history: history)
             case .local(let service):
                 do {
+                    // A continue is answered only for a message nothing was done for yet.
+                    if resuming && !LocalChatContext.isUnanswered(history) { throw LocalChatError.cannotContinue }
                     modelHistory = try LocalChatContext.history(history, prompt: promptText)
                     session = LanguageModelSession(profile: LocalChatProfile(model: service.factory(ledger, budget)), history: modelHistory)
                 } catch {
@@ -357,6 +386,10 @@ enum AgentInstructions {
                 entries.insert(.prompt(userPrompt), at: history.count)
             }
             let added = entries[history.count...]
+            if let model = ledger.model {
+                for case .response(let response) in added { state.replyModels[response.id] = model }
+            }
+            let streamed = live.contains { if case .prompt = $0 { false } else { true } }
             runningPrompt = nil; live = []; checkpointed = []; dispatched = []
 
             if stopRequested { return finishStopped(entries, base: history.count, ledger: ledger) }
@@ -424,6 +457,32 @@ enum AgentInstructions {
                         return finish(.failed(Self.formatErrorMessage, notice: false), outcome: .formatErrorLimit)
                     }
                 default:
+                    if case .cloud = route, let local, (Self.unwrap(error) as? AgentModelError)?.isOffline == true {
+                        // Offline before the turn produced anything: the same input goes to the local
+                        // model. Anything later would repeat or mix work, so that turn stops instead.
+                        let turnStart = state.turns[state.turns.count - 1].start
+                        let untouched = !streamed && started.isEmpty
+                            && entries[turnStart...].allSatisfy { if case .prompt = $0 { true } else { false } }
+                            && (!resuming || LocalChatContext.isUnanswered(history))
+                        guard untouched else {
+                            state.entries = closingInterruptedCalls(Self.trimmingUnfinished(entries, base: history.count, ledger: ledger))
+                            return finish(.failed(Self.offlineAfterOutputMessage, notice: false))
+                        }
+                        switch local.backend.availability() {
+                        case .ready:
+                            state.entries = before.entries
+                            state.pendingInputs = before.pendingInputs + state.pendingInputs
+                            state.turns[state.turns.count - 1].local = true
+                            route = .local(local)
+                            continue
+                        case .missing:
+                            state.entries = entries
+                            return finish(.failed("当前离线，本地模型未安装。请联网后重试，或在设置中导入本地模型。", notice: false))
+                        case .invalid(let reason):
+                            state.entries = entries
+                            return finish(.failed("当前离线，本地模型不完整（\(reason)）。请联网后重试，或在设置中重新导入本地模型。", notice: false))
+                        }
+                    }
                     state.entries = closingInterruptedCalls(Self.trimmingUnfinished(entries, base: history.count, ledger: ledger))
                     return finish(.failed(Self.message(for: error), notice: false))
                 }
@@ -492,6 +551,7 @@ enum AgentInstructions {
         resumeLease(granted: nil)
         let responses = Set(state.entries.compactMap { if case .response(let response) = $0 { response.id } else { nil } })
         state.replies = state.replies.filter { responses.contains($0.key) }
+        state.replyModels = state.replyModels.filter { responses.contains($0.key) }
         project()
         host?.harnessNeedsDirectory(false)
         // Idle before the conversation hears the ending, so a listener may start the next turn at once.
@@ -758,7 +818,9 @@ enum AgentInstructions {
                 let id = replyID(response.id)
                 var message = existing[id] ?? ConversationMessage(role: .assistant, content: text)
                 message.id = id; message.content = text; message.status = .completed
-                message.modelLabel = turnIndex > 0 && state.turns[turnIndex - 1].local == true ? "本地模型" : nil
+                // Replies saved before models were named keep the generic label.
+                message.modelLabel = state.replyModels[response.id]
+                    ?? (turnIndex > 0 && state.turns[turnIndex - 1].local == true ? "本地模型" : nil)
                 messages.append(message); anchor = id
             case .toolCalls(let calls):
                 for call in calls {
