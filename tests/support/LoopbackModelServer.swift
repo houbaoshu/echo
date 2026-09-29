@@ -193,7 +193,7 @@ final class LoopbackModelServer: @unchecked Sendable {
         let value: [String: Any]
         if responses {
             var output: [[String: Any]] = arguments.map { [["type": "function_call", "call_id": "call-1", "name": toolName, "arguments": $0]] }
-                ?? [["type": "message", "role": "assistant", "content": [["type": "output_text", "text": reply]]]]
+                ?? [["type": "message", "id": "msg-test", "role": "assistant", "content": [["type": "output_text", "text": reply]]]]
             if text.contains("acceptance-rwv"), command != nil {
                 output.insert(["type": "reasoning", "id": "rs-acceptance-\(results.count)", "summary": [], "encrypted_content": "acceptance-opaque-reasoning"], at: 0)
             }

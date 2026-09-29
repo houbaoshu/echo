@@ -265,27 +265,38 @@ struct EchoModelExecutor: LanguageModelExecutor {
 
 // MARK: - SSE
 
-/// Server-sent event lines split on `\n` bytes only: `bytes.lines` also splits on Unicode
+/// Server-sent events split on ASCII CR/LF only: `bytes.lines` also splits on Unicode
 /// separators such as U+2028, which may appear inside a JSON payload.
 struct SSELines: Sendable {
     static let limit = 1024 * 1024
     let bytes: URLSession.AsyncBytes
 
-    /// The payload of each `data:` line, `[DONE]` included.
+    /// Join an event's data fields with newlines and dispatch at its blank-line delimiter.
     func events() -> AsyncThrowingStream<String, any Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 var line = [UInt8](), total = 0
+                var fields: [String] = []
+                var afterCR = false
+                func endLine() {
+                    if line.isEmpty {
+                        if !fields.isEmpty { continuation.yield(fields.joined(separator: "\n")) }
+                        fields.removeAll(keepingCapacity: true)
+                    } else if let payload = Self.payload(line) {
+                        fields.append(payload)
+                    }
+                    line.removeAll(keepingCapacity: true)
+                }
                 do {
                     for try await byte in bytes {
                         total += 1
                         if total > Self.limit { throw AgentModelError.tooLarge }
-                        if byte == 0x0A {
-                            if let payload = Self.payload(line) { continuation.yield(payload) }
-                            line.removeAll(keepingCapacity: true)
-                        } else { line.append(byte) }
+                        if byte == 0x0A, afterCR { afterCR = false; continue }
+                        afterCR = byte == 0x0D
+                        if byte == 0x0A || byte == 0x0D { endLine() }
+                        else { line.append(byte) }
                     }
-                    if let payload = Self.payload(line) { continuation.yield(payload) }
+                    // An event without its blank-line delimiter is incomplete, even at EOF.
                     continuation.finish()
                 } catch let error as AgentModelError { continuation.finish(throwing: error) }
                 catch is CancellationError { continuation.finish(throwing: CancellationError()) }
@@ -326,10 +337,11 @@ struct SSELines: Sendable {
     }
 
     private static func payload(_ line: [UInt8]) -> String? {
-        var text = String(decoding: line, as: UTF8.self)
-        if text.hasSuffix("\r") { text.removeLast() }
+        let text = String(decoding: line, as: UTF8.self)
+        if text == "data" { return "" }
         guard text.hasPrefix("data:") else { return nil }
-        return text.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        let value = text.dropFirst(5)
+        return String(value.hasPrefix(" ") ? value.dropFirst() : value)
     }
 }
 
@@ -417,6 +429,7 @@ enum ResponsesWire {
         let channel: LanguageModelExecutorGenerationChannel
         private var responseID: String?
         private var textPart: String?
+        private var messagesStreamed: Set<String> = []
         private var reasoningStreamed: Set<String> = []
         private var reasoningPart: (item: String, index: Int)?
         private var completed: [String: Any]?
@@ -440,7 +453,9 @@ enum ResponsesWire {
             switch event["type"] as? String {
             case "response.output_text.delta", "response.refusal.delta":
                 guard let delta = event["delta"] as? String, !delta.isEmpty else { return }
-                let part = "\(event["item_id"] as? String ?? "")#\(event["content_index"] as? Int ?? 0)"
+                let item = event["item_id"] as? String ?? "output-\(event["output_index"] as? Int ?? 0)"
+                messagesStreamed.insert(item)
+                let part = "\(item)#\(event["content_index"] as? Int ?? 0)"
                 // Message item IDs are not replayed, and providers may reuse them, so the entry gets its own.
                 let id = responseID ?? localID()
                 if responseID == nil { responseID = id; emitted.append(id) }
@@ -478,7 +493,7 @@ enum ResponsesWire {
             guard let output = response["output"] as? [[String: Any]] else { throw AgentModelError.invalidResponses }
             completed = response
             let callsID = localID()
-            for item in output {
+            for (index, item) in output.enumerated() {
                 switch item["type"] as? String {
                 case "reasoning":
                     let id = item["id"] as? String ?? localID()
@@ -500,13 +515,16 @@ enum ResponsesWire {
                     if calls == 0 { emitted.append(callsID) }
                     calls += 1
                 case "message":
-                    guard responseID == nil else { continue }
+                    let itemID = item["id"] as? String ?? "output-\(index)"
+                    guard !messagesStreamed.contains(itemID) else { continue }
                     let parts = (item["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String ?? $0["refusal"] as? String }
                     let text = parts.joined(separator: "\n")
                     guard !text.isEmpty else { continue }
-                    let id = localID()
-                    responseID = id; emitted.append(id); self.text = text
-                    await channel.send(.response(entryID: id, action: .appendText(text, tokenCount: 1)))
+                    let id = responseID ?? localID()
+                    if responseID == nil { responseID = id; emitted.append(id) }
+                    let piece = self.text.isEmpty ? text : "\n" + text
+                    self.text += piece
+                    await channel.send(.response(entryID: id, action: .appendText(piece, tokenCount: 1)))
                 default:
                     continue
                 }
@@ -602,7 +620,7 @@ enum ChatWire {
             }
             for (position, call) in (delta["tool_calls"] as? [[String: Any]] ?? []).enumerated() {
                 let index = call["index"] as? Int ?? position
-                guard index <= 64 else { throw AgentModelError.chatStreamError }
+                guard (0...64).contains(index) else { throw AgentModelError.chatStreamError }
                 while calls.count <= index { calls.append(("", "", "")) }
                 if let id = call["id"] as? String, !id.isEmpty { calls[index].id = id }
                 let function = call["function"] as? [String: Any] ?? [:]

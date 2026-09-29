@@ -4,9 +4,9 @@
     {
       "identity" : "coreai-models",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/coreai-models",
+      "location" : "https://github.com/houbaoshu/coreai-models.git",
       "state" : {
-        "revision" : "e7b24da85ea64a77d26324d7ce9607de9b955f57"
+        "revision" : "2b5b610adcd65c97b896e53dbf04d3a50b6f89b5"
       }
     },
     {

@@ -175,6 +175,57 @@ import Testing
         #expect(!String(describing: second).contains("thinking"), "reasoning_content is neither kept nor replayed")
     }
 
+    @Test(arguments: [-1, 65, Int.max])
+    func chatRejectsInvalidToolCallIndices(index: Int) async throws {
+        let reply = Reply.sse([Self.chatChunk(["tool_calls": [["index": index, "id": "bad",
+            "function": ["name": "note", "arguments": "{}"]]]], finish: "tool_calls")])
+        let run = await Self.run(.chatCompletions, replies: [reply])
+        #expect(Self.message(run) == AgentModelError.chatStreamError.message)
+        #expect(run.ledger.finalReply == nil)
+        #expect(!run.kinds.contains("toolOutput"))
+    }
+
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses], ["\n", "\r\n", "\r"])
+    func multilineSSEEventsAreAssembledBeforeParsing(api: ModelAPIProtocol, newline: String) async throws {
+        let event: [String: Any] = api == .chatCompletions
+            ? Self.chatChunk(["content": "你好\u{2028}world"], finish: "stop")
+            : ["type": "response.completed", "response": ["status": "completed", "output": [
+                ["type": "message", "id": "m", "content": [["type": "output_text", "text": "你好\u{2028}world"]]]]]]
+        let data = try JSONSerialization.data(withJSONObject: event, options: [.prettyPrinted])
+        let fields = String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
+            .map { "data: " + $0 + "\r\n" }.joined()
+        // Split transport chunks inside fields and delimiters, with ignored SSE fields/comments.
+        let wire = (": heartbeat\r\nevent: message\r\nid: 1\r\n" + fields + "\r\ndata: [DONE]\r\n\r\n")
+            .replacingOccurrences(of: "\r\n", with: newline)
+        let run = await Self.run(api, replies: [Reply(chunks: wire.map(String.init))])
+        #expect(try run.result.get() == "你好\u{2028}world")
+        #expect(run.ledger.finalReply?.text == "你好\u{2028}world")
+    }
+
+    @Test(arguments: [false, true])
+    func responsesPreserveEveryCompletedMessage(streamFirst: Bool) async throws {
+        let output: [[String: Any]] = [
+            ["type": "message", "id": "commentary", "content": [["type": "output_text", "text": "Let me check."]]],
+            ["type": "message", "id": "answer", "content": [["type": "output_text", "text": "The answer is 8."],
+                ["type": "output_text", "text": "Done."]]],
+        ]
+        let response: [String: Any] = ["status": "completed", "output": output]
+        let reply = streamFirst
+            ? Reply.sse([["type": "response.output_text.delta", "item_id": "commentary", "content_index": 0, "delta": "Let me check."],
+                         ["type": "response.completed", "response": response]])
+            : Reply(contentType: "application/json", chunks: [String(decoding: try JSONSerialization.data(withJSONObject: response), as: UTF8.self)])
+        let run = await Self.run(.responses, replies: [reply])
+        let expected = "Let me check.\nThe answer is 8.\nDone."
+        #expect(try run.result.get() == expected)
+        #expect(run.ledger.finalReply?.text == expected)
+        let saved = run.session.transcript.compactMap { entry -> String? in
+            guard case .response(let response) = entry else { return nil }
+            #expect(run.ledger.isComplete(response.id))
+            return AgentHarness.text(response.segments)
+        }
+        #expect(saved == [expected])
+    }
+
     @Test func chatWithoutKeyOrToolsAndTheContinueMarker() async throws {
         let history: [Transcript.Entry] = [.prompt(.init(segments: [.text(.init(content: "earlier"))]))]
         let reply = Reply(contentType: "application/json", chunks: [#"{"choices":[{"message":{"content":"plain"},"finish_reason":"stop"}]}"#])

@@ -3276,10 +3276,10 @@
 /* Begin XCRemoteSwiftPackageReference section */
 		F20000000000000000000001 /* XCRemoteSwiftPackageReference "coreai-models" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/apple/coreai-models";
+			repositoryURL = "https://github.com/houbaoshu/coreai-models.git";
 			requirement = {
 				kind = revision;
-				revision = e7b24da85ea64a77d26324d7ce9607de9b955f57;
+				revision = 2b5b610adcd65c97b896e53dbf04d3a50b6f89b5;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

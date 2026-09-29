@@ -1,5 +1,7 @@
 import AppKit
 import Combine
+import FoundationModels
+@testable import CoreAILanguageModels
 import XCTest
 @testable import Echo
 
@@ -103,5 +105,79 @@ final class AppIntegrationTests: XCTestCase {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
         }
         return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+}
+
+/// Exercises the actual pinned dependency, with exported weights supplied explicitly.
+/// TEST_RUNNER_ECHO_COREAI_REGRESSION_MODELS is a colon-separated list of model directories.
+final class CoreAIDependencyRegressionTests: XCTestCase {
+    private func models() throws -> [URL] {
+        guard let paths = ProcessInfo.processInfo.environment["ECHO_COREAI_REGRESSION_MODELS"], !paths.isEmpty else {
+            throw XCTSkip("Set ECHO_COREAI_REGRESSION_MODELS to exported Qwen3 and Qwen2.5 models")
+        }
+        return paths.split(separator: ":").map { URL(fileURLWithPath: String($0)) }
+    }
+
+    @MainActor func testMultilingualStreamingMatchesFullTokenDecode() async throws {
+        for url in try models() {
+            let bundle = try LanguageBundle(at: url)
+            let tokenizer = try await bundle.loadTokenizer()
+            let model = try await CoreAILanguageModel(resourcesAt: url)
+            let reasoning: ContextOptions.ReasoningLevel? = model.capabilities.contains(.reasoning) ? .custom("none") : nil
+            defer { model.unload() }
+            for prompt in ["3 加 5 等于几？请用中文完整回答。", "请原样重复：你好，世界！Hello, café 😀。"] {
+                let session = LanguageModelSession(model: model)
+                var snapshots: [String] = []
+                for try await snapshot in session.streamResponse(
+                    to: Prompt(prompt), options: .init(samplingMode: .greedy, maximumResponseTokens: 80),
+                    contextOptions: .init(reasoningLevel: reasoning)) {
+                    snapshots.append(snapshot.content)
+                }
+                let actual = try XCTUnwrap(snapshots.last)
+                // Regenerate the same greedy sequence, decoding all tokens together as the oracle.
+                let entries = Array(session.transcript).filter { if case .response = $0 { false } else { true } }
+                let input = CoreAILanguageModel.CoreAIExecutor.makeTokens(
+                    from: entries, using: tokenizer, reasoningEffort: reasoning == nil ? nil : "none")
+                let engine = try await ModelResources.shared(for: model.executorConfiguration).engine()
+                try await engine.reset(to: 0)
+                var tokens: [Int] = []
+                var eos = Set(LanguageConfig.additionalStopTokenIds(from: url.appendingPathComponent("tokenizer"), tokenizer: tokenizer))
+                if let id = tokenizer.eosTokenId { eos.insert(Int32(id)) }
+                for try await output in try await engine.generate(
+                    with: input.map(Int32.init), samplingConfiguration: .greedy, inferenceOptions: .init(maxTokens: 80)) {
+                    if eos.contains(output.tokenId) { break }
+                    tokens.append(Int(output.tokenId))
+                }
+                let expected = tokenizer.decode(tokens: tokens)
+                XCTAssertFalse(expected.isEmpty, bundle.name)
+                XCTAssertEqual(Array(actual.utf8), Array(expected.utf8), "\(bundle.name): \(prompt)")
+                XCTAssertTrue(snapshots.allSatisfy { expected.hasPrefix($0) }, "Every streamed prefix must be intact")
+                XCTAssertFalse(actual.contains("\u{FFFD}"))
+                print("COREAI STREAM \(bundle.name): \(actual)")
+            }
+        }
+    }
+
+    @MainActor func testQwen25ToolArgumentsRenderAsObjectsWithNulls() async throws {
+        let urls = try models()
+        let url = try XCTUnwrap(urls.first { $0.lastPathComponent.contains("qwen2_5") })
+        let tokenizer = try await LanguageBundle(at: url).loadTokenizer()
+        let arguments = #"{"city":"北京","unit":null,"filter":{"tags":["a",null],"limit":3}}"#
+        let call = Transcript.ToolCall(id: "call_1", toolName: "read_file", arguments: try GeneratedContent(json: arguments))
+        let entries: [Transcript.Entry] = [
+            .prompt(.init(segments: [.text(.init(content: "Read the file."))])),
+            .toolCalls(.init([call])),
+            .toolOutput(.init(id: "call_1", toolName: "read_file", segments: [.text(.init(content: "found"))])),
+        ]
+        let tokens = CoreAILanguageModel.CoreAIExecutor.makeTokens(from: entries, using: tokenizer)
+        let rendered = tokenizer.decode(tokens: tokens)
+        let start = try XCTUnwrap(rendered.range(of: "<tool_call>"))
+        let end = try XCTUnwrap(rendered.range(of: "</tool_call>", range: start.upperBound..<rendered.endIndex))
+        let body = Data(rendered[start.upperBound..<end.lowerBound].utf8)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let actual = try XCTUnwrap(object["arguments"] as? [String: Any], "Arguments must be an object, not double-encoded JSON")
+        let expected = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any])
+        XCTAssertEqual(NSDictionary(dictionary: actual), NSDictionary(dictionary: expected))
+        XCTAssertTrue(rendered.contains("found"), "The tool result remains in the replayed transcript")
     }
 }
