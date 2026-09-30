@@ -3,15 +3,61 @@ import Foundation
 
 @MainActor private final class WorkspaceTestSource: TaskSource {
     var requests = 0
+    var cancellations = 0
     var lastRequest: [ConversationMessage] = []
     var receive: (@MainActor (TaskEvent) -> Void)?
     func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
         requests += 1; lastRequest = messages; self.receive = receive
     }
-    func cancel() {}
+    func cancel() { cancellations += 1 }
 }
 
 @Suite(.serialized) struct WorkspaceTests {
+    @MainActor @Test static func endingPetActivitiesPreservesHistory() throws {
+        let source = WorkspaceTestSource()
+        let workspace = WorkspaceStore(sourceFactory: { source })
+        defer { workspace.shutdown() }
+
+        #expect(workspace.sendQuickMessage("已完成任务"))
+        let completed = try #require(workspace.activity)
+        source.receive?(.completed("保留这条回复"))
+        let completedHistory = completed.store.messages
+
+        #expect(workspace.sendQuickMessage("运行中的任务"))
+        let running = try #require(workspace.activity)
+        source.receive?(.progress("部分回复"))
+        workspace.enterPetFollowUp(running.id)
+        #expect(running.store.isGenerating && workspace.petFollowUpID == running.id)
+
+        let priorCancellations = source.cancellations
+        workspace.endPetActivity(conversationID: completed.id)
+        #expect(source.cancellations == priorCancellations && running.store.isGenerating,
+                "Closing a completed card cannot stop a different task")
+        #expect(!workspace.petActivityIDs.contains(completed.id))
+        #expect(workspace.conversation(id: completed.id)?.store.messages == completedHistory)
+        #expect(completed.store.task?.status == .completed)
+
+        workspace.endPetActivity(conversationID: running.id)
+        #expect(source.cancellations == priorCancellations + 1 && !running.store.isGenerating)
+        #expect(running.store.task?.status == .stopped)
+        #expect(workspace.petActivityIDs.isEmpty && !workspace.isPetActivityVisible)
+        #expect(workspace.petFollowUpID == nil && !running.store.isFollowUpExpanded)
+        #expect(workspace.conversations.count == 2,
+                "Ending activities keeps both conversations in history")
+        #expect(running.store.messages.contains { $0.content == "部分回复" && $0.status == .stopped })
+        let stoppedHistory = running.store.messages
+
+        source.receive?(.completed("迟到的回复"))
+        workspace.endPetActivity(conversationID: running.id)
+        #expect(source.cancellations == priorCancellations + 1 && running.store.messages == stoppedHistory,
+                "Late callbacks and repeated closes cannot revive or erase the ended activity")
+
+        #expect(workspace.send("继续历史会话", conversationID: completed.id))
+        #expect(workspace.petActivityIDs.contains(completed.id))
+        #expect(completed.store.messages.prefix(completedHistory.count).elementsEqual(completedHistory),
+                "The retained history remains available for a later follow-up")
+    }
+
     @MainActor @Test static func draftsPromotionRestartAndOrdering() async throws {
         func check(_ condition: @autoclosure () -> Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
             #expect(condition(), "\(message)", sourceLocation: sourceLocation)

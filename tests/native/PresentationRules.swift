@@ -114,20 +114,21 @@ import Testing
         #expect(!panel.isOpaque && panel.backgroundColor == .clear && !panel.hasShadow)
         #expect(panel.contentView?.isOpaque == false, "The hosting view cannot paint a rectangular background")
         let content = panel.frame.insetBy(dx: CompanionLayout.activityPadding, dy: CompanionLayout.activityPadding)
+        let closeFrames = [CGRect(x: content.minX - 4, y: content.maxY - 16, width: 20, height: 20)]
         for point in [CGPoint(x: panel.frame.minX + 1, y: content.midY),
                       CGPoint(x: panel.frame.maxX - 1, y: content.midY),
                       CGPoint(x: content.midX, y: panel.frame.minY + 1),
                       CGPoint(x: content.midX, y: panel.frame.maxY - 1)] {
-            panel.updateMousePassthrough(at: point, contentInset: CompanionLayout.activityPadding, allowsCloseButton: true)
+            panel.updateMousePassthrough(at: point, contentInset: CompanionLayout.activityPadding, closeButtonFrames: closeFrames)
             #expect(panel.ignoresMouseEvents, "The transparent margins pass mouse events to the desktop")
         }
         panel.updateMousePassthrough(at: CGPoint(x: content.midX, y: content.midY),
-                                     contentInset: CompanionLayout.activityPadding, allowsCloseButton: true)
+                                     contentInset: CompanionLayout.activityPadding, closeButtonFrames: closeFrames)
         #expect(!panel.ignoresMouseEvents, "The card still accepts clicks")
         let closePoint = CGPoint(x: content.minX - 2, y: content.maxY + 2)
-        panel.updateMousePassthrough(at: closePoint, contentInset: CompanionLayout.activityPadding, allowsCloseButton: true)
+        panel.updateMousePassthrough(at: closePoint, contentInset: CompanionLayout.activityPadding, closeButtonFrames: closeFrames)
         #expect(!panel.ignoresMouseEvents, "The protruding close button still accepts clicks")
-        panel.updateMousePassthrough(at: closePoint, contentInset: CompanionLayout.activityPadding, allowsCloseButton: false)
+        panel.updateMousePassthrough(at: closePoint, contentInset: CompanionLayout.activityPadding, closeButtonFrames: [])
         #expect(panel.ignoresMouseEvents, "An absent close button does not leave an invisible hit target")
     }
 

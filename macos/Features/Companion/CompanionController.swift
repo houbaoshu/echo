@@ -24,12 +24,11 @@ import Combine
 
     /// AppKit must ignore the whole window outside the card; a SwiftUI hit test alone
     /// does not forward a click through to another application's window.
-    func updateMousePassthrough(at point: NSPoint, contentInset: CGFloat, allowsCloseButton: Bool) {
+    func updateMousePassthrough(at point: NSPoint, contentInset: CGFloat, closeButtonFrames: [CGRect]) {
         // Keep receiving mouse-up when a text selection or button press crosses the edge.
         guard NSEvent.pressedMouseButtons == 0 else { return }
         let contentFrame = frame.insetBy(dx: contentInset, dy: contentInset)
-        let closeFrame = CGRect(x: contentFrame.minX - 4, y: contentFrame.maxY - 16, width: 20, height: 20)
-        ignoresMouseEvents = !contentFrame.contains(point) && !(allowsCloseButton && closeFrame.contains(point))
+        ignoresMouseEvents = !contentFrame.contains(point) && !closeButtonFrames.contains { $0.contains(point) }
     }
 }
 
@@ -64,6 +63,8 @@ import Combine
     private var composerObservation: AnyCancellable?
     private var projectPickerObservation: AnyCancellable?
     private var outsideClickMonitor: Any?
+    private var activityMouseUpMonitor: Any?
+    private var globalActivityMouseUpMonitor: Any?
 
     init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore? = nil, pets: PetCatalog? = nil,
          planets: PlanetStore? = nil, defaults: UserDefaults = .standard) {
@@ -93,6 +94,19 @@ import Combine
         // The bubble only reports; clicks pass through to whatever is behind it.
         bubblePanel.ignoresMouseEvents = true
         super.init()
+        placement.onCloseButtonFramesChange = { [weak self] in
+            self?.updateActivityMousePassthrough(at: NSEvent.mouseLocation)
+        }
+        // Re-enable passthrough after a drag ends in the padding, even if the pointer
+        // does not move before the next click. The global monitor also covers other apps.
+        let mouseUps: NSEvent.EventTypeMask = [.leftMouseUp, .rightMouseUp, .otherMouseUp]
+        activityMouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseUps) { [weak self] event in
+            Task { @MainActor [weak self] in self?.updateActivityMousePassthrough(at: NSEvent.mouseLocation) }
+            return event
+        }
+        globalActivityMouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseUps) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateActivityMousePassthrough(at: NSEvent.mouseLocation) }
+        }
         self.pets.onActivate = { [weak self] store in
             self?.petPanel.replacePet(with: store)
             self?.layout()
@@ -230,8 +244,17 @@ import Combine
     }
 
     private func updateActivityMousePassthrough(at point: NSPoint) {
+        guard let contentView = activityPanel.contentView else { return }
+        // Measure every close button, including stacked and scrolled cards, rather than
+        // treating transparent padding beside the entire list as a click target.
+        let listFrame = activityPanel.frame.insetBy(dx: CompanionLayout.activityPadding, dy: CompanionLayout.activityPadding)
+        let closeFrames = activityPlacement.closeButtonFrames.map {
+            let frame = activityPanel.convertToScreen(contentView.convert($0, to: nil))
+            // Buttons clipped by the scroll view cannot turn its surrounding padding into a hit target.
+            return workspace.isActivityListExpanded && workspace.petFollowUpID == nil ? frame.intersection(listFrame) : frame
+        }
         activityPanel.updateMousePassthrough(at: point, contentInset: CompanionLayout.activityPadding,
-                                            allowsCloseButton: workspace.petFollowUpID != nil)
+                                            closeButtonFrames: closeFrames)
     }
 
     /// Hover covers the pet and the controls as they would appear while hovered.
@@ -355,6 +378,8 @@ import Combine
         settings.cancelTest(); pets.stop(); pets.onActivate = nil
         observation = nil; composerObservation = nil; projectPickerObservation = nil
         if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor); self.outsideClickMonitor = nil }
+        if let activityMouseUpMonitor { NSEvent.removeMonitor(activityMouseUpMonitor); self.activityMouseUpMonitor = nil }
+        if let globalActivityMouseUpMonitor { NSEvent.removeMonitor(globalActivityMouseUpMonitor); self.globalActivityMouseUpMonitor = nil }
         NotificationCenter.default.removeObserver(self)
         noticeTimer?.invalidate()
         mainController?.shutdown()

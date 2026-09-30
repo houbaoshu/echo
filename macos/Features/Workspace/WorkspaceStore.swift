@@ -431,6 +431,13 @@ struct WorkspaceSnapshot: Codable {
         target.store.followUpDraft = ""
         return true
     }
+    /// End only the transient pet activity; its conversation and history remain available.
+    func endPetActivity(conversationID: UUID) {
+        guard !shuttingDown, petActivityIDs.contains(conversationID) else { return }
+        stop(conversationID: conversationID)
+        removePetActivity(conversationID)
+    }
+
     func stop(conversationID: UUID) {
         guard !shuttingDown, let target = conversation(id: conversationID) else { return }
         if voice.conversationID == conversationID { voice.stopReply() }

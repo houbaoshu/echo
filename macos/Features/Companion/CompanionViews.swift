@@ -80,6 +80,21 @@ struct RoundControl: View {
 
 @MainActor final class ActivityPlacement: ObservableObject {
     @Published var isBelowPet = false
+    private(set) var closeButtonFrames: [CGRect] = []
+    var onCloseButtonFramesChange: (() -> Void)?
+
+    func updateCloseButtonFrames(_ frames: [CGRect]) {
+        guard closeButtonFrames != frames else { return }
+        closeButtonFrames = frames
+        onCloseButtonFramesChange?()
+    }
+}
+
+private struct ActivityCloseButtonFrames: PreferenceKey {
+    static var defaultValue: [CGRect] { [] }
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+        value.append(contentsOf: nextValue())
+    }
 }
 
 struct ActivityCapsule: View {
@@ -92,15 +107,16 @@ struct ActivityCapsule: View {
     var title: String?
     var followUp: (() -> Void)?
     var exit: (() -> Void)?
+    var end: (() -> Void)?
     @State private var hovered = false
     @State private var followUpFocusRequest = 0
 
     init(store: TaskStore, canStop: Bool = false, send: @escaping () -> Void, stop: @escaping () -> Void,
          open: @escaping () -> Void = {}, placement: ActivityPlacement, title: String? = nil,
-         followUp: (() -> Void)? = nil, exit: (() -> Void)? = nil) {
+         followUp: (() -> Void)? = nil, exit: (() -> Void)? = nil, end: (() -> Void)? = nil) {
         self.store = store; self.canStop = canStop
         self.send = send; self.stop = stop; self.open = open; self.placement = placement
-        self.title = title; self.followUp = followUp; self.exit = exit
+        self.title = title; self.followUp = followUp; self.exit = exit; self.end = end
     }
     private var statusSymbol: String {
         switch store.task?.status {
@@ -210,9 +226,18 @@ struct ActivityCapsule: View {
                 .shadow(color: Color(nsColor: .separatorColor).opacity(0.35), radius: 20, y: 6)
         }
         .overlay(alignment: .topLeading) {
-            if store.isFollowUpExpanded {
-                RoundControl(symbol: "xmark", label: "退出跟进", size: 20, identifier: "activity.followUp.exit") { (exit ?? store.toggleFollowUp)() }
-                    .offset(x: -4, y: -4)
+            if store.task != nil {
+                RoundControl(symbol: "xmark", label: "结束任务", size: 20, identifier: "activity.end") {
+                    if let end { end() }
+                    else { stop(); store.closeActivity() }
+                }
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: ActivityCloseButtonFrames.self,
+                                               value: [proxy.frame(in: .named("activityCanvas"))])
+                    }
+                }
+                .offset(x: -4, y: -4)
             }
         }
         .onHover { hovered = $0 }
@@ -640,7 +665,8 @@ struct WorkspaceActivityCapsule: View {
             send: { workspace.sendFollowUp(conversationID: conversation.id) },
             stop: { workspace.stop(conversationID: conversation.id) },
             open: { workspace.expandActivityList() }, placement: placement, title: conversation.title,
-            followUp: { workspace.enterPetFollowUp(conversation.id) }, exit: { workspace.exitPetFollowUp() })
+            followUp: { workspace.enterPetFollowUp(conversation.id) }, exit: { workspace.exitPetFollowUp() },
+            end: { workspace.endPetActivity(conversationID: conversation.id) })
             .id(conversation.id)
     }
     var body: some View {
@@ -673,6 +699,8 @@ struct WorkspaceActivityCapsule: View {
         }
         .padding(CompanionLayout.activityPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: placement.isBelowPet ? .top : .bottom)
+        .coordinateSpace(name: "activityCanvas")
+        .onPreferenceChange(ActivityCloseButtonFrames.self) { placement.updateCloseButtonFrames($0) }
     }
 }
 
