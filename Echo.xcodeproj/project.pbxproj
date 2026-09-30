@@ -348,7 +348,7 @@
 			membershipExceptions = (
 				App/Info.plist,
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = 8159C655A6D1F584D0AD6A3F /* EchoSpeechHost */;
 		};
@@ -363,7 +363,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = E112000000000000000000AA /* EchoIntegrationTests */;
 		};
@@ -371,7 +371,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = E113000000000000000000AA /* EchoVoiceTests */;
 		};
@@ -379,7 +379,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = E114000000000000000000AA /* EchoWorkspaceTests */;
 		};
@@ -387,7 +387,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = E115000000000000000000AA /* EchoViewTests */;
 		};
@@ -395,7 +395,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = E123000000000000000000AA /* AgentLiveProbe */;
 		};
@@ -403,7 +403,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = E124000000000000000000AA /* VoiceLiveProbe */;
 		};
@@ -411,7 +411,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = E125000000000000000000AA /* VoiceSoakProbe */;
 		};
@@ -419,7 +419,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = E126000000000000000000AA /* AppleSpeechDeviceProbe */;
 		};
@@ -427,7 +427,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/main.swift,
-				CoreAILocalChat.swift,
+				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = 74679465BC618EAAE681B8A8 /* EchoLiveHost */;
 		};
