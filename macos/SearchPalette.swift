@@ -315,3 +315,16 @@ struct ChatSearchPalette: View {
         presentation.isOpen = false
     }
 }
+
+#Preview("聊天搜索") {
+    let store = TaskStore(snapshot: .init(
+        task: nil,
+        messages: [ConversationMessage(role: .user, content: "帮我整理项目文件")],
+        mainDraft: "",
+        followUpDraft: "",
+        activityDismissed: false,
+        activitiesCollapsed: false
+    ), source: nil)
+    let workspace = WorkspaceStore(initialStore: store)
+    return ChatSearchPalette(workspace: workspace, close: {})
+}

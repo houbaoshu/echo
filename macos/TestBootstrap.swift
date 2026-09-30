@@ -76,7 +76,13 @@ import AppKit
                         try await Task.sleep(for: .milliseconds(text.contains("slow") ? 2000 : 350))
                     }
                     try Task.checkCancellation()
-                    receive(.completed("Offline reply: \(text)"))
+                    let reply: String
+                    switch text {
+                    case "查询当前模型": reply = "我是 Echo 助手。当前会话使用离线测试回复，用于验证桌宠卡片的结构和交互。"
+                    case "回应中文问候": reply = "你好！有什么我可以帮你做的吗？"
+                    default: reply = "Offline reply: \(text)"
+                    }
+                    receive(.completed(reply))
                 } catch {}
             }
         }

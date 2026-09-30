@@ -423,3 +423,8 @@ struct SettingsEntryButton: View {
             .padding(.leading, 2).frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+#Preview("设置入口") {
+    SettingsEntryButton(action: {})
+        .frame(width: 220, height: 60)
+}

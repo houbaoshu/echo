@@ -364,3 +364,19 @@ struct PetCardButtonStyle: ButtonStyle {
         }
     }
 }
+
+#Preview("设置") {
+    let settings = SettingsStore()
+    let voice = VoiceSessionController()
+    let pets = PetCatalog(
+        settings: settings,
+        builtinRoot: Bundle.main.resourceURL?.appendingPathComponent("pets")
+    )
+    let planets = PlanetStore(
+        settings: settings,
+        root: Bundle.main.resourceURL?.appendingPathComponent("planets"),
+        voice: voice
+    )
+    return SettingsView(settings: settings, voice: voice, pets: pets, planets: planets)
+        .frame(width: 720, height: 560)
+}

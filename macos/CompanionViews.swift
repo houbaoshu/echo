@@ -87,110 +87,125 @@ struct ActivityCapsule: View {
     var canStop: Bool = false
     let send: () -> Void
     let stop: () -> Void
-    /// Clicking the title opens the conversation in the main window, e.g. to choose its project folder.
     var open: () -> Void = {}
     @ObservedObject var placement: ActivityPlacement
+    var title: String?
+    var followUp: (() -> Void)?
+    var exit: (() -> Void)?
     @State private var hovered = false
     @State private var followUpFocusRequest = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var showActions: Bool { hovered || store.isFollowUpExpanded }
-    private var isRunning: Bool { store.isGenerating || canStop }
-    private var outcome: TaskStatus? {
-        guard !isRunning, let status = store.task?.status, [.completed, .failed].contains(status) else { return nil }
-        return status
+
+    init(store: TaskStore, canStop: Bool = false, send: @escaping () -> Void, stop: @escaping () -> Void,
+         open: @escaping () -> Void = {}, placement: ActivityPlacement, title: String? = nil,
+         followUp: (() -> Void)? = nil, exit: (() -> Void)? = nil) {
+        self.store = store; self.canStop = canStop
+        self.send = send; self.stop = stop; self.open = open; self.placement = placement
+        self.title = title; self.followUp = followUp; self.exit = exit
     }
+    private var statusSymbol: String {
+        switch store.task?.status {
+        case .completed: "checkmark.circle.fill"
+        case .failed: "exclamationmark.circle.fill"
+        case .stopped, .interrupted: "pause.circle.fill"
+        default: "circle.dotted"
+        }
+    }
+    private var statusColor: Color {
+        switch store.task?.status {
+        case .completed: .green
+        case .failed, .stopped, .interrupted: .orange
+        default: .accentColor
+        }
+    }
+    private var statusLabel: String {
+        switch store.task?.status {
+        case .completed: "已完成"
+        case .failed: "失败"
+        case .stopped: "已停止"
+        case .interrupted: "已中断"
+        case .stopping: "正在停止"
+        default: "运行中"
+        }
+    }
+    private var summary: String {
+        let source = store.cardSummary
+        let plain = (try? AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            .map { String($0.characters) } ?? source
+        return plain.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+    private var summaryLabel: Text {
+        let icon = Text(Image(systemName: statusSymbol)).foregroundColor(statusColor)
+        let heading = Text(title ?? store.task?.title ?? "新会话").fontWeight(.semibold).foregroundColor(.primary)
+        let reply = Text(summary).foregroundColor(.secondary)
+        return Text("\(icon)  \(heading)  ·  \(reply)")
+    }
+    private var summaryView: some View {
+        summaryLabel
+            .font(.system(size: 13))
+            .lineLimit(3).truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: open)
+            .accessibilityLabel(statusLabel + "，" + (title ?? store.task?.title ?? "新会话") + "，" + summary)
+            .accessibilityIdentifier("activity.summary")
+            .padding(.trailing, hovered || store.isFollowUpExpanded ? 50 : 0)
+    }
+
+    private var header: some View {
+        ZStack(alignment: .trailing) {
+            summaryView
+            if hovered && !store.isFollowUpExpanded {
+                Button("跟进") { (followUp ?? store.toggleFollowUp)() }
+                    .buttonStyle(.bordered).controlSize(.small).companionControlActive()
+                    .accessibilityIdentifier("activity.followUp.toggle")
+            }
+            if store.isFollowUpExpanded {
+                RoundControl(symbol: store.isGenerating || canStop ? "stop.fill" : "arrow.up", label: store.isGenerating || canStop ? "停止回复" : "发送跟进",
+                             size: 28, emphasized: true,
+                             enabled: store.isGenerating || canStop || !store.followUpDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                             identifier: store.isGenerating || canStop ? "activity.stop" : "activity.send") {
+                    if store.isGenerating || canStop { stop() } else { send() }
+                }
+            }
+        }
+        .padding(.horizontal, 16).frame(height: CompanionLayout.collapsedHeight)
+    }
+
+    private var followUpComposer: some View {
+        NativeComposer(text: $store.followUpDraft, focusRequest: followUpFocusRequest,
+                       onEscape: { (exit ?? store.toggleFollowUp)(); return true },
+                       fontSize: 13, minHeight: 24, maxLines: 1,
+                       label: "继续跟进输入框", identifier: "activity.followUp", onSend: send)
+            .overlay(alignment: .leading) {
+                if store.followUpDraft.isEmpty {
+                    Text("继续跟进").font(.system(size: 13)).foregroundStyle(.tertiary)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+            .padding(.horizontal, 14).padding(.bottom, 10)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            ZStack(alignment: .trailing) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(store.task?.title ?? "新会话").font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    Text(store.task?.summary ?? "准备开始").font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-                .lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle()).onTapGesture(perform: open)
-                .mask {
-                    HStack(spacing: 0) {
-                        Rectangle()
-                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
-                            .frame(width: showActions ? 26 : 10)
-                        if showActions { Color.clear.frame(width: 64) }
-                        else if outcome != nil { Color.clear.frame(width: 30) }
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isButton).accessibilityAction { open() }
-                .accessibilityIdentifier("activity.open")
-                if let outcome {
-                    Image(systemName: outcome == .completed ? "checkmark" : "exclamationmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(outcome == .completed ? WorkspaceStyle.success : WorkspaceStyle.warning)
-                        .frame(width: 26, height: 26)
-                        .background(outcome == .completed ? WorkspaceStyle.successFill : WorkspaceStyle.warningFill, in: Circle())
-                        .opacity(showActions ? 0 : 1)
-                        .accessibilityLabel(outcome == .completed ? "已完成" : "失败")
-                        .accessibilityIdentifier("activity.outcome")
-                }
-                HStack(spacing: 8) {
-                    RoundControl(symbol: "arrowshape.turn.up.left.fill", label: "继续跟进", emphasized: true,
-                                 identifier: "activity.followUp.toggle") {
-                        store.toggleFollowUp()
-                    }
-                    if isRunning {
-                        RoundControl(symbol: "stop.fill", label: "停止回复", enabled: store.task?.status != .stopping,
-                                     identifier: "activity.stop") {
-                            stop()
-                        }
-                    } else {
-                        RoundControl(symbol: "checkmark", label: "标记完成", identifier: "activity.acknowledge") {
-                            store.closeActivity()
-                        }
-                    }
-                }
-                .opacity(showActions ? 1 : 0).allowsHitTesting(showActions)
-                .accessibilityHidden(!showActions)
+            header
+            if store.isFollowUpExpanded {
+                followUpComposer
             }
-            .padding(.horizontal, 18).frame(height: 54)
-            HStack(spacing: 4) {
-                    NativeComposer(text: $store.followUpDraft, focusRequest: followUpFocusRequest,
-                                   onEscape: { store.toggleFollowUp(); return true },
-                                   fontSize: 13, minHeight: 20, maxLines: 1,
-                                   label: "继续跟进输入框", identifier: "activity.followUp", onSend: send)
-                        .overlay(alignment: .leading) {
-                            if store.followUpDraft.isEmpty {
-                                Text("继续跟进").font(.system(size: 13)).foregroundStyle(.tertiary)
-                                    .allowsHitTesting(false).accessibilityHidden(true)
-                            }
-                        }
-                    if !store.followUpDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        RoundControl(symbol: "arrow.up", label: "发送跟进", size: 22, emphasized: true) { send() }
-                    }
-                }
-                .padding(.horizontal, 10).frame(height: 26)
-                .background(Color(nsColor: .textBackgroundColor), in: Capsule()).padding(.horizontal, 10).padding(.bottom, 14)
-                .frame(height: store.isFollowUpExpanded ? 40 : 0, alignment: .bottom)
-                .clipped().opacity(store.isFollowUpExpanded ? 1 : 0)
-                .allowsHitTesting(store.isFollowUpExpanded)
-                .accessibilityHidden(!store.isFollowUpExpanded)
         }
         .frame(width: CompanionLayout.capsuleWidth)
-        .background { CompanionBackground(shape: RoundedRectangle(cornerRadius: store.isFollowUpExpanded ? 25 : 27)) }
-        .clipShape(RoundedRectangle(cornerRadius: store.isFollowUpExpanded ? 25 : 27))
-        .shadow(color: .black.opacity(0.18), radius: 7, y: 3)
+        .background { CompanionBackground(shape: RoundedRectangle(cornerRadius: 28)) }
+        .shadow(color: .black.opacity(0.10), radius: 7, y: 3)
         .overlay(alignment: .topLeading) {
-            RoundControl(symbol: "xmark", label: "关闭活动浮窗（任务继续）", size: 16) { store.closeActivity() }
-                .offset(x: -6, y: -6).opacity(hovered ? 1 : 0)
-                .allowsHitTesting(hovered).accessibilityHidden(!hovered)
+            if store.isFollowUpExpanded {
+                RoundControl(symbol: "xmark", label: "退出跟进", size: 20, identifier: "activity.followUp.exit") { (exit ?? store.toggleFollowUp)() }
+                    .offset(x: -4, y: -4)
+            }
         }
-        .padding(12).contentShape(Rectangle())
         .onHover { hovered = $0 }
+        .onAppear { if store.isFollowUpExpanded { followUpFocusRequest += 1 } }
         .onChange(of: store.isFollowUpExpanded) { _, expanded in if expanded { followUpFocusRequest += 1 } }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: showActions)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: store.isFollowUpExpanded)
-        .frame(maxWidth: .infinity, maxHeight: .infinity,
-               alignment: placement.isBelowPet ? .top : .bottom)
     }
 }
 
@@ -218,9 +233,9 @@ struct ActivityCapsule: View {
     /// The strip's layout from the live stores. The drawn strip and the controller's hover
     /// hit-frame both read it here, so the pointer target always matches the width on screen.
     func surface(hovered: Bool, store: TaskStore, voice: VoiceSessionController,
-                 unseenCompleted: Int, runningTasks: Int) -> PetSurfacePresentation {
+                 unseenCompleted: Int, runningTasks: Int, activityCount: Int? = nil, activitiesCollapsed: Bool? = nil) -> PetSurfacePresentation {
         PetSurfacePresentation(hovered: hovered, composerOpen: isComposerOpen, draft: draft,
-                               activityCount: store.activityCount, activitiesCollapsed: store.activitiesCollapsed,
+                               activityCount: activityCount ?? store.activityCount, activitiesCollapsed: activitiesCollapsed ?? store.activitiesCollapsed,
                                unseenCompleted: unseenCompleted, voice: voice.snapshot, canStartVoice: voice.canStartCall,
                                runningTasks: runningTasks, composerSent: collapsesOnExit,
                                connectedVoiceSession: connectedVoiceSession)
@@ -245,7 +260,7 @@ struct ActivityCapsule: View {
     }
     /// Asks the open editor for focus again, e.g. once its panel has become key.
     func refocusComposer() { if isComposerOpen { focusRequest += 1 } }
-    func didSend() { draft = ""; collapsesOnExit = true }
+    func didSend() { draft = ""; collapsesOnExit = true; closeComposer() }
 }
 
 struct PetControlActions {
@@ -348,7 +363,8 @@ struct PetControls: View {
     static func visiblePlanet(_ planet: PetStore?, suspended: Bool) -> PetStore? { suspended ? nil : planet }
     private var surface: PetSurfacePresentation {
         presentation.surface(hovered: presentation.isHovered, store: store, voice: voice,
-                             unseenCompleted: unseenCompleted, runningTasks: runningTasks)
+                             unseenCompleted: unseenCompleted, runningTasks: runningTasks,
+                             activityCount: workspace?.petActivities.count, activitiesCollapsed: workspace?.isPetTrayCollapsed)
     }
     var body: some View {
         let surface = surface
@@ -605,19 +621,46 @@ struct PetControls: View {
 
 struct WorkspaceActivityCapsule: View {
     @ObservedObject var workspace: WorkspaceStore
-    let placement: ActivityPlacement
+    @ObservedObject var placement: ActivityPlacement
+    @ViewBuilder private func card(_ conversation: WorkspaceConversation) -> some View {
+        ActivityCapsule(store: conversation.store,
+            canStop: workspace.voice.conversationID == conversation.id && workspace.voice.presentation.isReplyAudioActive,
+            send: { workspace.sendFollowUp(conversationID: conversation.id) },
+            stop: { workspace.stop(conversationID: conversation.id) },
+            open: { workspace.expandActivityList() }, placement: placement, title: conversation.title,
+            followUp: { workspace.enterPetFollowUp(conversation.id) }, exit: { workspace.exitPetFollowUp() })
+            .id(conversation.id)
+    }
     var body: some View {
-        let targetID = workspace.activityID
-        let isVoiceReplying = workspace.voice.conversationID == targetID && workspace.voice.presentation.isReplyAudioActive
-        let canStop = workspace.activityStore.isGenerating || isVoiceReplying
-        ActivityCapsule(store: workspace.activityStore, canStop: canStop,
-            send: { if let targetID { workspace.sendFollowUp(conversationID: targetID) } },
-            stop: { if let targetID { workspace.stop(conversationID: targetID) } },
-            open: {
-                workspace.revealActivity()
-                workspace.activityStore.showMainWindow()
-            }, placement: placement)
-            .id(workspace.activityID)
+        Group {
+            if let id = workspace.petFollowUpID, let conversation = workspace.conversation(id: id) {
+                card(conversation)
+            } else if workspace.isActivityListExpanded {
+                ScrollView {
+                    VStack(spacing: 8) { ForEach(workspace.petActivities) { card($0) } }
+                        .padding(.vertical, 6)
+                }
+                .scrollIndicators(.automatic)
+                .frame(height: workspace.petActivityHeight)
+            } else if let first = workspace.petActivities.first {
+                ZStack(alignment: placement.isBelowPet ? .top : .bottom) {
+                    ForEach(Array(workspace.petActivities.prefix(3).enumerated().dropFirst().reversed()), id: \.element.id) { index, _ in
+                        CompanionBackground(shape: RoundedRectangle(cornerRadius: 28))
+                            .frame(width: CompanionLayout.capsuleWidth - CGFloat(index) * 12,
+                                   height: CompanionLayout.collapsedHeight)
+                            .offset(y: CGFloat(index) * (placement.isBelowPet ? 7 : -7))
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                    card(first)
+                }
+                .frame(height: workspace.petActivityHeight, alignment: placement.isBelowPet ? .top : .bottom)
+                .contentShape(Rectangle()).onTapGesture { workspace.expandActivityList() }
+                .accessibilityAction(named: "展开会话列表") { workspace.expandActivityList() }
+                .accessibilityIdentifier("activity.summary")
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: placement.isBelowPet ? .top : .bottom)
     }
 }
 
@@ -810,4 +853,12 @@ struct WorkspaceCompanionBubble: View {
                 .equatable()
         }
     }
+}
+
+#Preview("精灵控制") {
+    HStack(spacing: 12) {
+        RoundControl(symbol: "square.and.pencil", label: "输入") {}
+        RoundControl(symbol: "waveform", label: "语音", emphasized: true) {}
+    }
+    .padding(24)
 }

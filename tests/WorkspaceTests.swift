@@ -202,72 +202,71 @@ import Foundation
         check(ws.snapshot.drafts?.map(\.id) == [mainDraft.id], "The quick conversation does not stay in drafts")
 
         let quickSource = sources.last!
-        // Completion folds the open card into the bell and counts it until the card is expanded.
-        quickSource.receive?(.completed("回复"))
-        check(quick.store.activitiesCollapsed && !ws.activityStore.isActivityVisible && quick.store.hasUnseenCompletion,
-              "A completed task collapses its card into the bell")
-        check(ws.unseenCompletedCount == 1, "The bell counts one completed task not yet expanded")
-        ws.toggleActivityTray()
-        check(ws.activityStore.isActivityVisible && ws.unseenCompletedCount == 0,
-              "Clicking the bell expands the completed card and clears its count")
-        ws.toggleActivityTray()
-        check(quick.store.activitiesCollapsed && ws.unseenCompletedCount == 0, "Collapsing a viewed card does not count it again")
-
-        // Several completions accumulate; each bell click views the newest remaining one.
-        quick.store.send("第二个问题")
-        check(ws.sendQuickMessage("另一个桌宠任务"), "A second quick task starts")
+        quickSource.receive?(.progress("第一段，正在读取内容"))
+        check(quick.store.cardSummary.contains("读取内容"), "Progress reaches the compact card")
+        quick.store.harnessStream(operation: 1, text: "流式新增内容", toolCall: false, final: false)
+        check(quick.store.cardSummary == "流式新增内容", "Native streaming updates the card")
+        quick.store.harnessStatus("正在读取文件 · README")
+        check(quick.store.cardSummary.contains("README"), "Tool progress replaces the earlier stream")
+        let longReply = String(repeating: "开头内容", count: 100) + "最后的新内容"
+        quick.store.harnessStream(operation: 2, text: longReply, toolCall: false, final: false)
+        check(quick.store.cardSummary.hasSuffix("最后的新内容"), "Long streams retain the latest text")
+        quickSource.receive?(.completed("最终回复，已经整理好结果"))
+        check(ws.isPetActivityVisible && !quick.store.isFollowUpExpanded && ws.unseenCompletedCount == 1,
+              "A completed result remains visible and unread without a composer")
+        check(quick.store.cardSummary.contains("最终回复"), "The result replaces progress")
+        ws.expandActivityList()
+        check(ws.isActivityListExpanded && ws.unseenCompletedCount == 1 && ws.petFollowUpID == nil,
+              "Expanding a stack only reveals the list")
+        ws.toggleActivityTray(); ws.toggleActivityTray()
+        check(ws.isPetActivityVisible && !ws.isActivityListExpanded && ws.unseenCompletedCount == 1,
+              "The bell reopens the stack without acknowledging it")
+        ws.enterPetFollowUp(quick.id)
+        check(ws.unseenCompletedCount == 0 && quick.store.isFollowUpExpanded, "Entering follow-up views the result")
+        for message in ["第二个问题", "第三个问题"] {
+            quick.store.followUpDraft = message
+            check(ws.sendFollowUp(conversationID: quick.id), "Follow-up is accepted")
+            check(ws.petActivities.count == 1 && ws.petFollowUpID == quick.id && quick.store.isFollowUpExpanded,
+                  "Consecutive follow-ups keep the same entry and editor")
+            check(quickSource.lastRequest.last?.content == message, "Follow-up targets the original conversation")
+            quickSource.receive?(.completed("新回复：" + message))
+            check(quick.store.cardSummary.contains(message) && ws.unseenCompletedCount == 0,
+                  "The visible follow-up updates its reply and remains seen")
+        }
+        ws.exitPetFollowUp()
+        check(!quick.store.isFollowUpExpanded && ws.petFollowUpID == nil, "Exit returns to compact cards")
+        check(ws.sendQuickMessage("另一个桌宠任务"), "A second quick chat starts")
         let other = ws.activity!, otherSource = sources.last!
-        check(ws.runningTaskCount == 2, "Both quick tasks are running")
-        quickSource.receive?(.completed("第二个回复"))
-        check(ws.unseenCompletedCount == 1 && other.store.isActivityVisible,
-              "Another conversation's completion counts without collapsing the current card")
         otherSource.receive?(.completed("另一个回复"))
-        check(ws.unseenCompletedCount == 2 && !ws.activityStore.isActivityVisible && ws.runningTaskCount == 0,
-              "Completed tasks accumulate in the bell")
-        ws.toggleActivityTray()
-        check(ws.activityID == other.id && other.store.isActivityVisible && ws.unseenCompletedCount == 1,
-              "The bell expands the newest completion first")
-        ws.toggleActivityTray()
-        check(!other.store.isActivityVisible && ws.unseenCompletedCount == 1, "Collapsing keeps the remaining count")
-        ws.toggleActivityTray()
-        check(ws.activityID == quick.id && quick.store.isActivityVisible && ws.unseenCompletedCount == 0,
-              "The next click expands the remaining completion")
-        ws.toggleActivityTray()
-
-        // Failures are not completions: a closed card only returns as a bell.
-        quick.store.send("第三个问题")
-        quick.store.closeActivity()
-        check(ws.activityStore.activityCount == 0, "Closing the card hides the activity while the task runs")
+        quick.store.send("后台更新")
+        quickSource.receive?(.completed("后台的新结果"))
+        check(ws.petActivities.count == 2 && ws.unseenCompletedCount == 2, "The bell counts conversations, including updated results")
+        ws.expandActivityList()
+        check(ws.unseenCompletedCount == 2, "The expanded list does not consume unread results")
+        ws.enterPetFollowUp(other.id)
+        check(ws.unseenCompletedCount == 1, "Following up acknowledges only that conversation")
+        ws.exitPetFollowUp()
+        quick.store.send("失败的任务")
+        quickSource.receive?(.progress("已有的部分内容"))
         quickSource.receive?(.failed("连接失败"))
-        check(ws.activityStore.activityCount == 1 && quick.store.activitiesCollapsed && ws.unseenCompletedCount == 0,
-              "A failure after closing returns as a bell without a completed count")
-
-        // A card whose follow-up is open stays open, and what it shows counts as seen.
-        quick.store.send("第四个问题")
-        ws.toggleActivityTray()
-        quick.store.toggleFollowUp()
-        quickSource.receive?(.completed("第四个回复"))
-        check(quick.store.isActivityVisible && ws.unseenCompletedCount == 0, "An open follow-up keeps its card")
-        quick.store.toggleFollowUp()
-
-        // The conversation on screen already shows its reply.
+        check(quick.store.cardSummary.contains("部分内容") && quick.store.task?.status == .failed,
+              "Failure keeps partial content and its status")
+        quick.store.send("停止的任务")
+        quickSource.receive?(.progress("停止前的内容")); quick.store.stopTask()
+        check(quick.store.cardSummary.contains("停止前") && quick.store.task?.status == .stopped,
+              "Stop keeps partial content")
         ws.select(quick.id); ws.isMainWindowVisible = true
-        quick.store.send("第五个问题")
-        quickSource.receive?(.completed("第五个回复"))
-        check(quick.store.activitiesCollapsed && ws.unseenCompletedCount == 0,
-              "A completion viewed in the main window collapses without counting")
+        check(!ws.petActivityIDs.contains(quick.id) && ws.conversation(id: quick.id) != nil,
+              "Viewing a terminal result removes its pet entry, preserving history")
+        quick.store.send("主窗口里的任务")
+        check(ws.petActivityIDs.contains(quick.id) && ws.isPetActivityVisible, "Main-window work appears on the pet while running")
+        quickSource.receive?(.completed("主窗口可见的新结果"))
+        check(!ws.petActivityIDs.contains(quick.id) && ws.unseenCompletedCount == 0,
+              "A result completed in the visible selected main chat leaves no entry or count")
         ws.isMainWindowVisible = false
-        quick.store.send("第六个问题")
-        quickSource.receive?(.completed("第六个回复"))
-        check(ws.unseenCompletedCount == 1, "A hidden main window leaves the completion unseen")
-        ws.isMainWindowVisible = true
-        check(ws.unseenCompletedCount == 0, "Showing the selected conversation marks it seen")
-        ws.isMainWindowVisible = false
-        other.store.send("继续另一个任务")
-        otherSource.receive?(.completed("另一个任务的新回复"))
-        check(ws.unseenCompletedCount == 1, "A background conversation's completion is counted")
-        other.store.send("再继续")
-        check(ws.unseenCompletedCount == 0 && !other.store.hasUnseenCompletion, "Starting a new run supersedes its unseen completion")
+        other.store.send("后台再更新")
+        otherSource.receive?(.completed("后台结果"))
+        check(ws.unseenCompletedCount == 1, "An unseen background result stays available")
 
         // The + menu's project goes with the quick conversation; an unknown project is dropped.
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("quick-project-\(UUID())")

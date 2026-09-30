@@ -206,3 +206,14 @@ struct HoverRevealButton: View {
             .help(help ?? label).accessibilityLabel(label)
     }
 }
+
+#Preview("项目选择") {
+    let workspace = WorkspaceStore()
+    return ProjectSelectionPanel(
+        workspace: workspace,
+        selectedProjectID: nil,
+        select: { _ in },
+        addFolder: {},
+        close: {}
+    )
+}

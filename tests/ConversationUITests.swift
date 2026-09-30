@@ -1508,7 +1508,7 @@ private struct ComposerHeightHost: View {
         }
         let host = NSHostingView(rootView: controls(unseen: 0))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight),
-                              styleMask: .borderless, backing: .buffered, defer: false)
+                              styleMask: .titled, backing: .buffered, defer: false)
         window.contentView = host
         window.appearance = NSAppearance(named: .aqua)
         window.makeKeyAndOrderFront(nil)
@@ -1551,18 +1551,19 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(sent == ["桌宠提问"] && presentation.draft == "桌宠提问", "A rejected send keeps the draft")
         accepts = true
         XCTAssertTrue(node("pet.send")?.accessibilityPerformPress?() == true)
-        XCTAssertTrue(sent.count == 2 && presentation.draft.isEmpty && presentation.collapsesOnExit && presentation.isComposerOpen,
-                     "A sent message clears the composer, which then collapses on pointer exit")
+        XCTAssertTrue(sent.count == 2 && presentation.draft.isEmpty && !presentation.isComposerOpen,
+                     "A sent new chat closes the composer and returns to the compact controls")
         host.rootView = controls(unseen: 0, running: 1)
         try await refresh()
-        try snapshot("pet-composer-sent")
-        XCTAssertTrue(node("pet.composer") != nil && node("voice.start") != nil
-                     && axValue(node("pet.activity.expand")) == "1 个任务进行中",
-                     "After a send the composer shows Live Voice and a running bell beside it")
+        try await Task.sleep(for: .milliseconds(250)); host.layoutSubtreeIfNeeded()
+        XCTAssertTrue(!presentation.isComposerOpen, "A running new chat shows no input box")
+        presentation.openComposer()
+        try await refresh()
         host.rootView = controls(unseen: 0)
         presentation.draft = "保留草稿"
         try await refresh()
-        editor.keyDown(with: key(53, "\u{1b}"))
+        guard let reopened = node("pet.composer") as? ComposerTextView else { throw SettingsError("Missing reopened quick composer") }
+        reopened.keyDown(with: key(53, "\u{1b}"))
         try await refresh()
         XCTAssertTrue(!presentation.isComposerOpen && presentation.draft == "保留草稿", "Escape closes the composer and keeps its draft")
         XCTAssertTrue(node("voice.start") != nil && node("pet.compose") != nil, "Closing the composer restores the hover controls")
@@ -1642,27 +1643,29 @@ private struct ComposerHeightHost: View {
                      && findAccessibility("pet.activity.collapse", in: controls) != nil,
                      "Without hover the running task keeps Live Voice and its card's ⌃")
         source.receive?(.completed("完成"))
-        // The card fades out over 0.2 s before it leaves the screen.
-        try await hover(outside) { !companion.activityPanel.isVisible && findAccessibility("pet.collapsed", in: controls) != nil }
-        XCTAssertTrue(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 1
-                     && findAccessibility("pet.collapsed", in: controls)?.accessibilityLabel?() == "1 个已完成任务未查看",
-                     "A completed task folds its card away and collapses to the green bar")
-        try await hover(inside) { axValue(findAccessibility("pet.activity.expand", in: controls)) != nil }
-        XCTAssertTrue(axValue(findAccessibility("pet.activity.expand", in: controls)) == "1 个已完成任务未查看",
-                     "Hover shows the bell with the green completed count")
-        XCTAssertTrue(findAccessibility("pet.activity.expand", in: controls)?.accessibilityPerformPress?() == true)
-        try await hover(inside) { findAccessibility("pet.activity.collapse", in: controls) != nil }
-        XCTAssertTrue(companion.activityPanel.isVisible && workspace.unseenCompletedCount == 0
-                     && findAccessibility("pet.activity.collapse", in: controls) != nil
-                     && findAccessibility("pet.activity.expand", in: controls) == nil,
-                     "Clicking the bell expands the completed card, clears the count and shows ⌃")
-        XCTAssertTrue(findAccessibility("pet.activity.collapse", in: controls)?.accessibilityPerformPress?() == true)
-        try await hover(inside) { findAccessibility("pet.activity.expand", in: controls) != nil }
+        try await settle()
+        XCTAssertTrue(companion.activityPanel.isVisible && !companion.activityPanel.canBecomeKey && workspace.unseenCompletedCount == 1,
+                     "Completion retains the compact card without taking keyboard focus")
+        workspace.expandActivityList()
+        try await settle()
+        XCTAssertTrue(!companion.activityPanel.canBecomeKey && workspace.unseenCompletedCount == 1,
+                     "The list does not acknowledge the result or take keyboard focus")
+        workspace.enterPetFollowUp(workspace.activityID!)
+        try await settle()
+        XCTAssertTrue(companion.activityPanel.canBecomeKey && workspace.unseenCompletedCount == 0,
+                     "Only follow-up enables the keyboard and acknowledges this result")
+        workspace.exitPetFollowUp()
+        try await settle()
+        XCTAssertTrue(!companion.activityPanel.canBecomeKey, "Exiting follow-up releases the keyboard")
+        workspace.toggleActivityTray()
         try await Task.sleep(for: .milliseconds(300))
         try await hover(inside) { findAccessibility("pet.activity.expand", in: controls) != nil }
-        XCTAssertTrue(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 0
-                     && axValue(findAccessibility("pet.activity.expand", in: controls)) == "",
-                     "⌃ collapses the viewed card back into a bell without a count")
+        XCTAssertTrue(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 0,
+                     "User collapse hides the cards")
+        XCTAssertTrue(findAccessibility("pet.activity.expand", in: controls)?.accessibilityPerformPress?() == true)
+        try await settle()
+        XCTAssertTrue(companion.activityPanel.isVisible && !workspace.isActivityListExpanded,
+                     "The bell restores the stack")
         companion.petPanel.samplePointer(at: outside)
     }
 
@@ -2487,7 +2490,7 @@ private struct ComposerHeightHost: View {
             workspace: workspace, actions: PetControlActions(send: { sent.append(($0, presentation.projectID)); return true }))
             .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight),
-                              styleMask: .borderless, backing: .buffered, defer: false)
+                              styleMask: .titled, backing: .buffered, defer: false)
         window.contentView = host
         window.appearance = NSAppearance(named: .aqua)
         defer { window.orderOut(nil) }
@@ -2512,6 +2515,8 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(axValue(node("pet.project.name")) == folder.lastPathComponent, "The chosen project shows as a chip")
         XCTAssertTrue(node("pet.send")?.accessibilityPerformPress?() == true && sent.last?.1 == projectID
                      && presentation.projectID == projectID, "A send carries the project, which stays selected")
+        XCTAssertTrue(!presentation.isComposerOpen, "Sending returns to the compact card")
+        presentation.openComposer()
         try await refresh()
         XCTAssertTrue(node("pet.project.detach")?.accessibilityPerformPress?() == true && presentation.projectID == nil)
         try await refresh()
@@ -2521,7 +2526,7 @@ private struct ComposerHeightHost: View {
         var selected: UUID?, closed = 0, added = 0
         let panelHost = NSHostingView(rootView: ProjectSelectionPanel(workspace: workspace, selectedProjectID: nil,
             select: { selected = $0 }, addFolder: { added += 1 }, close: { closed += 1 }))
-        let panelWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200), styleMask: .borderless, backing: .buffered, defer: false)
+        let panelWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200), styleMask: .titled, backing: .buffered, defer: false)
         panelWindow.contentView = panelHost
         defer { panelWindow.orderOut(nil) }
         try await Task.sleep(for: .milliseconds(120)); panelHost.layoutSubtreeIfNeeded()
@@ -2532,16 +2537,8 @@ private struct ComposerHeightHost: View {
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertTrue(added == 1, "The folder dialog runs after the panel has closed")
 
-        // Clicking the card's title opens its conversation, e.g. to choose a folder it waits for.
-        var opened = 0
-        store.send("需要目录的任务")
-        let cardHost = NSHostingView(rootView: ActivityCapsule(store: store, send: {}, stop: {}, open: { opened += 1 }, placement: placement))
-        let cardWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 284, height: 118), styleMask: .borderless, backing: .buffered, defer: false)
-        cardWindow.contentView = cardHost
-        defer { cardWindow.orderOut(nil) }
-        try await Task.sleep(for: .milliseconds(120)); cardHost.layoutSubtreeIfNeeded()
-        XCTAssertTrue(findAccessibility("activity.open", in: cardHost)?.accessibilityPerformPress?() == true && opened == 1,
-                     "The activity card opens its conversation")
+        // The pet card's list and follow-up navigation are exercised by the companion
+        // lifecycle test and by real Echo UI tests, rather than opening the main window.
     }
 
     func testCompanionBubblePanel() async throws {

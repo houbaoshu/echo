@@ -1221,3 +1221,20 @@ struct NativeComposer: NSViewRepresentable {
         }
     }
 }
+
+#Preview("聊天") {
+    let store = TaskStore(snapshot: .init(
+        task: nil,
+        messages: [
+            ConversationMessage(role: .user, content: "帮我总结一下这个项目。"),
+            ConversationMessage(role: .assistant, content: "这是一个 macOS 桌面精灵应用，支持聊天和语音交互。")
+        ],
+        mainDraft: "",
+        followUpDraft: "",
+        activityDismissed: false,
+        activitiesCollapsed: false
+    ), source: nil)
+    let workspace = WorkspaceStore(initialStore: store)
+    return WorkspaceConversationView(workspace: workspace, planets: PlanetStore())
+        .frame(width: 700, height: 560)
+}

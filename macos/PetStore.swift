@@ -183,3 +183,13 @@ struct PetView: View {
             .accessibilityLabel(store.displayName)
     }
 }
+
+#Preview("桌面精灵") {
+    if let directory = Bundle.main.resourceURL?.appendingPathComponent("pets/chiyan"),
+       let store = try? PetStore(directory: directory) {
+        PetView(store: store)
+            .padding(24)
+    } else {
+        Text("无法加载内置精灵素材")
+    }
+}

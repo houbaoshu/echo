@@ -2,9 +2,9 @@ import Foundation
 import CoreGraphics
 
 struct CompanionLayout {
-    static let capsuleWidth: CGFloat = 260
-    static let collapsedHeight: CGFloat = 54
-    static let expandedHeight: CGFloat = 94
+    static let capsuleWidth: CGFloat = 330
+    static let collapsedHeight: CGFloat = 56
+    static let expandedHeight: CGFloat = 96
     static let controlsWidth = PetSurfacePresentation.canvasWidth
     static let controlsHeight = PetSurfacePresentation.canvasHeight
     var pet: CGRect
@@ -13,19 +13,14 @@ struct CompanionLayout {
     /// The bubble canvas between the pet and the activity; empty unless room was reserved.
     var bubble: CGRect = .zero
     var isActivityBelowPet: Bool { activity.maxY <= pet.minY }
-    // A fixed transparent hosting canvas avoids AppKit/SwiftUI resizing races.
-    // `activity` still describes the padded visible capsule for layout checks.
-    var activityCanvas: CGRect {
-        CGRect(x: activity.minX,
-               y: isActivityBelowPet ? activity.maxY - Self.expandedHeight - 24 : activity.minY,
-               width: activity.width,
-               height: Self.expandedHeight + 24)
-    }
+    // The canvas follows the compact stack, list, or follow-up height; its 12 pt
+    // margin keeps the card shadows inside the floating panel.
+    var activityCanvas: CGRect { activity }
     /// `bubble` reserves the bubble canvas between the pet and the activity, e.g. for a voice session.
-    static func place(pet: CGRect, in screen: CGRect, expanded: Bool, bubble reservesBubble: Bool = false) -> Self {
+    static func place(pet: CGRect, in screen: CGRect, expanded: Bool, bubble reservesBubble: Bool = false, activityHeight: CGFloat? = nil) -> Self {
         let inset = screen.insetBy(dx: 8, dy: 8)
         let width = min(capsuleWidth + 24, inset.width)
-        let height = (expanded ? expandedHeight : collapsedHeight) + 24
+        let height = min((activityHeight ?? (expanded ? expandedHeight : collapsedHeight)) + 24, inset.height - pet.height - controlsHeight - 8)
         // Keep room for the controls below the pet. The activity goes toward
         // the screen center, so it never reserves space above a top-edge pet.
         // Coordinates are AppKit's bottom-up points.
@@ -41,7 +36,7 @@ struct CompanionLayout {
         let bubble = CGRect(x: left, y: below ? controls.minY - bubbleHeight : placed.maxY, width: width, height: bubbleHeight)
         // The capsule's 12 pt transparent padding overlaps the pet side by 4 pt; the bubble keeps its own margin.
         let overlap: CGFloat = reservesBubble ? 12 : 4
-        let activity = CGRect(x: left, y: below ? bubble.minY + overlap - height : bubble.maxY - overlap,
+        let activity = CGRect(x: left, y: clamp(below ? bubble.minY + overlap - height : bubble.maxY - overlap, inset.minY, inset.maxY - height),
                               width: width, height: height)
         return Self(pet: placed, activity: activity, controls: controls, bubble: reservesBubble ? bubble : .zero)
     }

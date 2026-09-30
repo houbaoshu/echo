@@ -322,3 +322,14 @@ struct ProjectReadOnlyText: NSViewRepresentable {
         if changed { view.sizeToFit() }
     }
 }
+
+#Preview("项目文件") {
+    let workspace = WorkspaceStore()
+    if let conversationID = workspace.selectedID,
+       let directory = Bundle.main.resourceURL?.appendingPathComponent("pets") {
+        let projectID = workspace.addProject(url: directory)
+        _ = workspace.associateProject(projectID, conversationID: conversationID)
+    }
+    return WorkspaceInspector(workspace: workspace)
+        .frame(width: 320, height: 460)
+}

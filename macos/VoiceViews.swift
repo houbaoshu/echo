@@ -171,3 +171,15 @@ private struct PlanetFrame: View {
             .scaledToFit()
     }
 }
+
+#Preview("语音状态") {
+    VStack(spacing: 20) {
+        VoicePlanet(store: nil, indicator: .listening, size: 80)
+        RecordingWaveform(
+            levels: [-60, -42, -25, -18, -32, -48, -22, -36, -55],
+            active: true
+        )
+        .frame(width: 240, height: 40)
+    }
+    .padding(24)
+}

@@ -158,7 +158,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @Published private(set) var activitiesCollapsed = false
     @Published private(set) var activityDismissed = false
     @Published private(set) var isFollowUpExpanded = false
-    /// Set when a completed run's card collapses unviewed; cleared once the card is expanded.
+    /// A terminal result is unread until follow-up or the visible main conversation is opened.
     /// The value orders completions across conversations. Transient: restart never restores the activity.
     @Published private(set) var unseenCompletion: UInt64?
     private static var completionClock: UInt64 = 0
@@ -167,6 +167,18 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @Published var followUpDraft = ""
     @Published var notice: String?
     let replyStream = AssistantReplyStream()
+    @Published private(set) var cardProgress = ""
+    private var cardReply = ""
+    /// Uses the latest reply and execution step, without a summarization request.
+    var cardSummary: String {
+        if isGenerating { return cardProgress.isEmpty ? task?.summary ?? "正在回复…" : cardProgress }
+        let reply = cardReply.isEmpty
+            ? messages.last(where: { $0.role == .assistant && !$0.content.isEmpty })?.content ?? ""
+            : cardReply
+        let text = reply.isEmpty ? task?.summary ?? "准备开始" : reply
+        // Keep the ending in view as a long stream advances and when its result settles.
+        return String(text.suffix(260))
+    }
     @Published private(set) var tools: [AgentToolRecord] = []
     @Published private(set) var needsDirectory = false
     @Published private(set) var waitingForProject = false
@@ -289,12 +301,14 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         guard !retired, task?.runID == runID, isGenerating else { return }
         switch event {
         case .progress(let text):
+            cardReply = text; cardProgress = String(text.suffix(260))
             task?.summary = String(text.suffix(180))
             updateResponse(text, status: .streaming)
         case .completed(let text):
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 receive(.failed("模型未返回文本回复，请重试。"), runID: runID); return
             }
+            cardReply = text
             task?.summary = String(text.prefix(180)); task?.status = .completed
             updateResponse(text, status: .completed)
             source?.cancel()
@@ -306,11 +320,10 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         lifecycle.send(.reply(runID, event))
     }
 
-    func toggleFollowUp() { isFollowUpExpanded.toggle() }
+    func toggleFollowUp() { isFollowUpExpanded.toggle(); if isFollowUpExpanded { markSeen() } }
     func sendFollowUp() {
         guard send(followUpDraft) else { return }
         followUpDraft = ""
-        isFollowUpExpanded = false
     }
     func sendMainMessage() {
         guard send(mainDraft) else { return }
@@ -327,7 +340,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         }
         task?.runID = UUID()
         task?.status = .running
-        task?.summary = "正在回复：\(text)"
+        cardReply = ""; cardProgress = ""
+        task?.summary = "正在回复…"
         responseMessageID = nil
         messages.append(.init(role: .user, content: text))
         activeRequestMessages = requestMessages
@@ -344,6 +358,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         guard !retired, canRetry else { return false }
         if harness != nil { return beginNative(text: nil) }
         source?.cancel()
+        cardReply = ""; cardProgress = ""
         task?.runID = UUID(); task?.status = .running; task?.summary = "正在等待模型回复…"
         responseMessageID = messages.last?.id
         updateResponse("", status: .pending)
@@ -379,18 +394,13 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     func toggleActivities() {
         if activitiesCollapsed { expandActivity() } else { activitiesCollapsed = true }
     }
-    /// Expanding the card is what views a completed run.
-    func expandActivity() {
-        activityDismissed = false; activitiesCollapsed = false
-        markSeen()
-    }
-    /// A completed run folds its card into the bell. `unseen` is false when the conversation is
-    /// already on screen. An open follow-up keeps the card, and what it shows counts as seen.
+    /// Revealing the tray does not acknowledge any result.
+    func expandActivity() { activityDismissed = false; activitiesCollapsed = false }
     func collapseForCompletion(unseen: Bool) {
         guard task != nil else { return }
         if isFollowUpExpanded && isActivityVisible { markSeen(); return }
-        activityDismissed = false; activitiesCollapsed = true
-        if unseen { Self.completionClock += 1; unseenCompletion = Self.completionClock } else { markSeen() }
+        if unseen { Self.completionClock += 1; unseenCompletion = Self.completionClock }
+        else { markSeen() }
     }
     /// A Live Voice turn is spoken, not watched: its card stays folded instead of appearing while it runs.
     func foldActivity() { if !activitiesCollapsed { activitiesCollapsed = true } }
@@ -447,6 +457,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         guard let harness, !harness.isRunning else { return false }
         storageFailure = nil; notice = nil; responseMessageID = nil
         if task == nil { task = .init(id: UUID(), runID: UUID(), title: String((text ?? "继续处理").prefix(80)), summary: "", status: .running) }
+        cardReply = ""; cardProgress = ""
         task?.runID = UUID(); task?.status = .running; task?.summary = "正在请求模型…"
         if let text {
             let message = ConversationMessage(role: .user, content: text)
@@ -482,6 +493,7 @@ extension TaskStore: AgentHarnessHost {
     }
     func harnessStream(operation: UInt64, text: String, toolCall: Bool, final: Bool) {
         guard !retired else { return }
+        if isGenerating, !toolCall, !text.isEmpty { cardReply = text; cardProgress = String(text.suffix(260)) }
         if final {
             if toolCall { replyStream.withdraw(operation) } else { replyStream.complete(operationID: operation, text: text) }
         } else if task?.status == .running {
@@ -490,13 +502,14 @@ extension TaskStore: AgentHarnessHost {
     }
     func harnessStatus(_ summary: String) {
         guard !retired, task?.status == .running else { return }
+        cardProgress = summary
         task?.summary = summary
     }
     func harnessNeedsDirectory(_ needed: Bool) {
         guard !retired else { return }
         let value = needed && task?.status == .running
         if needsDirectory != value { needsDirectory = value }
-        if value { task?.summary = "等待选择项目文件夹" }
+        if value { task?.summary = "等待选择项目文件夹"; cardProgress = "等待选择项目文件夹" }
     }
     func harnessProjectDirectory() -> URL? { projectDirectory?() }
     func harnessAcquireLease(_ path: String, ready: @escaping () -> Void) {
@@ -507,7 +520,7 @@ extension TaskStore: AgentHarnessHost {
         guard !retired else { return }
         let value = waiting && task?.status == .running
         if waitingForProject != value { waitingForProject = value }
-        if value { task?.summary = "等待项目空闲…" }
+        if value { task?.summary = "等待项目空闲…"; cardProgress = "等待项目空闲…" }
     }
     func harnessSave() throws {
         guard !retired else { throw CancellationError() }
@@ -526,6 +539,7 @@ extension TaskStore: AgentHarnessHost {
         var event: TaskLifecycleEvent
         switch ending {
         case .completed(let reply, let text):
+            cardReply = text
             responseMessageID = reply
             if task?.status == .stopping {
                 // A Stop admitted while the reply was applied lands on a completed turn.

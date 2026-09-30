@@ -213,6 +213,36 @@ struct WorkspaceSnapshot: Codable {
     private(set) var composerFocusID: UUID?
     private var drafts: [WorkspaceConversation] = []
     @Published private(set) var activityID: UUID?
+    /// Transient pet entries; removing an entry leaves its conversation in history.
+    @Published private(set) var petActivityIDs: [UUID] = []
+    @Published private(set) var isActivityListExpanded = false
+    @Published private(set) var petFollowUpID: UUID?
+    @Published private(set) var isPetTrayCollapsed = false
+    var petActivities: [WorkspaceConversation] { petActivityIDs.filter { $0 != voice.conversationID }.compactMap { conversation(id: $0) } }
+    var isPetActivityVisible: Bool { !petActivities.isEmpty && !isPetTrayCollapsed }
+    var petActivityHeight: CGFloat {
+        if petFollowUpID != nil { return CompanionLayout.expandedHeight }
+        if isActivityListExpanded { return max(0, CGFloat(min(3, petActivities.count)) * (CompanionLayout.collapsedHeight + 8) - 8) + 12 }
+        return CompanionLayout.collapsedHeight + CGFloat(min(2, max(0, petActivities.count - 1))) * 7
+    }
+    func expandActivityList() { isActivityListExpanded = true }
+    func enterPetFollowUp(_ id: UUID) {
+        guard petActivityIDs.contains(id), let store = conversation(id: id)?.store else { return }
+        exitPetFollowUp()
+        activityID = id; petFollowUpID = id
+        store.expandActivity()
+        if !store.isFollowUpExpanded { store.toggleFollowUp() }
+    }
+    func exitPetFollowUp() {
+        if let id = petFollowUpID, let store = conversation(id: id)?.store, store.isFollowUpExpanded { store.toggleFollowUp() }
+        petFollowUpID = nil
+    }
+    private func removePetActivity(_ id: UUID) {
+        if petFollowUpID == id { exitPetFollowUp() }
+        petActivityIDs.removeAll { $0 == id }
+        conversation(id: id)?.store.closeActivity()
+        if activityID == id { activityID = petActivityIDs.first }
+    }
     @Published var isMainWindowVisible = false {
         didSet {
             if !isMainWindowVisible { dictation.cancel() }
@@ -257,6 +287,7 @@ struct WorkspaceSnapshot: Codable {
         if let initialStore {
             let conversation = WorkspaceConversation(store: initialStore)
             conversations = [conversation]; selectedID = conversation.id; activityID = conversation.id
+            if initialStore.task != nil { petActivityIDs = [conversation.id] }
             bind(conversation)
         } else if let persistence {
             let (snapshot, notice) = persistence.load()
@@ -298,27 +329,21 @@ struct WorkspaceSnapshot: Codable {
         guard let id = conversation(id: conversationID)?.projectID else { return nil }
         return projects.first { $0.id == id }
     }
-    /// Completed runs whose card has not been expanded since, across all conversations.
-    var unseenCompletedCount: Int { conversations.filter { $0.store.hasUnseenCompletion }.count }
-    /// The pet's bell: an open card collapses; otherwise the newest unseen completion becomes
-    /// the activity and expands, so each click views one completed task.
+    var unseenCompletedCount: Int { petActivities.filter { $0.store.hasUnseenCompletion }.count }
     func toggleActivityTray() {
-        let current = activityStore
-        if current.isActivityVisible { current.toggleActivities(); return }
-        let unseen = conversations.compactMap { conversation in
-            conversation.store.unseenCompletion.map { (conversation, $0) }
-        }
-        if let next = unseen.max(by: { $0.1 < $1.1 })?.0 {
-            if activityID != next.id { activityID = next.id }
-            next.store.expandActivity()
-        } else if current.task != nil {
-            current.expandActivity()
+        if isPetActivityVisible {
+            exitPetFollowUp(); isPetTrayCollapsed = true
+            petActivities.forEach { $0.store.foldActivity() }
+        } else {
+            isPetTrayCollapsed = false; isActivityListExpanded = false
+            petActivities.forEach { $0.store.expandActivity() }
         }
     }
     var runningTaskCount: Int { conversations.filter { $0.store.isGenerating }.count }
     private func markViewedActivitySeen() {
         guard isMainWindowVisible else { return }
         selected?.store.markSeen()
+        if let selected, !selected.store.isGenerating, petActivityIDs.contains(selected.id) { removePetActivity(selected.id) }
         if voiceCompletion == selectedID { voiceCompletion = nil }
     }
     private func isViewing(_ id: UUID) -> Bool { isMainWindowVisible && selectedID == id }
@@ -404,7 +429,6 @@ struct WorkspaceSnapshot: Codable {
     @discardableResult func sendFollowUp(conversationID: UUID) -> Bool {
         guard let target = conversation(id: conversationID), send(target.store.followUpDraft, conversationID: conversationID) else { return false }
         target.store.followUpDraft = ""
-        if target.store.isFollowUpExpanded { target.store.toggleFollowUp() }
         return true
     }
     func stop(conversationID: UUID) {
@@ -498,6 +522,13 @@ struct WorkspaceSnapshot: Codable {
             case .started:
                 // A new run supersedes the previous outcome.
                 target.store.markSeen()
+                if !self.petActivityIDs.contains(id) {
+                    self.exitPetFollowUp(); self.isActivityListExpanded = false; self.isPetTrayCollapsed = false
+                    self.petActivityIDs.insert(id, at: 0)
+                }
+                if self.voice.conversationID != id {
+                    if self.isPetTrayCollapsed { target.store.foldActivity() } else { target.store.expandActivity() }
+                }
                 // Folded before the companion next synchronizes, so the card never shows for a Live Voice turn.
                 if self.voice.conversationID == id { target.store.foldActivity() }
             case .reply(_, .completed):
@@ -506,11 +537,15 @@ struct WorkspaceSnapshot: Codable {
                 let viewed = self.isViewing(id)
                 if self.voice.conversationID == id { self.voiceCompletion = viewed ? nil : id }
                 target.store.collapseForCompletion(unseen: !viewed && self.voice.conversationID != id)
+                if viewed { self.removePetActivity(id) }
                 if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             case .reply(_, .failed):
-                if !target.store.isActivityVisible { target.store.revealCollapsed() }
+                target.store.collapseForCompletion(unseen: !self.isViewing(id))
+                if self.isViewing(id) { self.removePetActivity(id) }
                 if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             case .stopped:
+                target.store.collapseForCompletion(unseen: !self.isViewing(id))
+                if self.isViewing(id) { self.removePetActivity(id) }
                 if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             default: break
             }
@@ -578,7 +613,7 @@ struct WorkspaceSnapshot: Codable {
         pendingRecency[id] = nil
         conversations.removeAll { $0.id == id }
         drafts.removeAll { $0.id == id }
-        if activityID == id { activityID = nil }
+        removePetActivity(id)
         if selectedID == id { selectedID = (conversations + drafts).max(by: { $0.lastUsed < $1.lastUsed })?.id }
         if conversations.isEmpty && drafts.isEmpty { _ = newConversation() }
         // Remove the history sidecar only once neither the manifest nor its backup references it.

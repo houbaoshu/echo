@@ -3,7 +3,7 @@ import SwiftUI
 import Combine
 
 @MainActor final class CompanionSurface: NSPanel {
-    private let acceptsKeyboard: Bool
+    var acceptsKeyboard: Bool
     override var canBecomeKey: Bool { acceptsKeyboard }
     override var canBecomeMain: Bool { false }
     init<Content: View>(title: String, acceptsKeyboard: Bool = false, content: Content) {
@@ -68,7 +68,7 @@ import Combine
         let placement = ActivityPlacement()
         activityPlacement = placement
         petPanel = PetPanel(store: petStore)
-        activityPanel = CompanionSurface(title: "活动摘要", acceptsKeyboard: true,
+        activityPanel = CompanionSurface(title: "活动摘要",
                                          content: WorkspaceActivityCapsule(workspace: workspace, placement: placement))
         let controlsPresentation = PetControlsPresentation()
         self.controlsPresentation = controlsPresentation
@@ -171,17 +171,23 @@ import Combine
         }
         // Recompute rather than force, so what comes back is whatever would have been showing
         // anyway — never a capsule or bubble the hidden state itself would have suppressed.
-        setActivityVisible(!hidden && workspace.activity != nil && taskStore.isActivityVisible, animated: true)
+        setActivityVisible(!hidden && workspace.isPetActivityVisible, animated: true)
         layout()
     }
 
     func synchronize(animated: Bool = true) {
+        let acceptsKeyboard = workspace.petFollowUpID != nil
+        if activityPanel.acceptsKeyboard != acceptsKeyboard {
+            activityPanel.acceptsKeyboard = acceptsKeyboard
+            if acceptsKeyboard { activityPanel.makeKey() }
+            else if activityPanel.isKeyWindow { activityPanel.orderOut(nil); activityPanel.orderFrontRegardless() }
+        }
         layout()
         if !petHiddenForVoicePlanet { controlsPanel.orderFrontRegardless() }
         if workspace.isMainWindowVisible {
             if mainWindow?.isVisible != true { presentMainWindow() }
         } else { mainWindow?.orderOut(nil) }
-        setActivityVisible(!petHiddenForVoicePlanet && workspace.activity != nil && taskStore.isActivityVisible, animated: animated)
+        setActivityVisible(!petHiddenForVoicePlanet && workspace.isPetActivityVisible, animated: animated)
         if let notice = taskStore.notice {
             taskStore.notice = nil
             showNotice(notice)
@@ -229,7 +235,8 @@ import Combine
     private func controlsContentFrame(hovered: Bool) -> CGRect {
         let surface = controlsPresentation.surface(hovered: hovered, store: taskStore, voice: workspace.voice,
                                                    unseenCompleted: workspace.unseenCompletedCount,
-                                                   runningTasks: workspace.runningTaskCount)
+                                                   runningTasks: workspace.runningTaskCount, activityCount: workspace.petActivities.count,
+                                                   activitiesCollapsed: workspace.isPetTrayCollapsed)
         let frames = CompanionLayout(pet: petPanel.frame, activity: activityPanel.frame, controls: controlsPanel.frame)
         return frames.controlsContent(width: surface.width)
     }
@@ -264,7 +271,7 @@ import Combine
         let reservesBubble = CompanionBubbleContent.isShown(voice: workspace.voice.snapshot, spoken: workspace.voice.spoken,
                                                             notice: bubbleState.notice)
         let frames = CompanionLayout.place(pet: petPanel.frame, in: screen, expanded: taskStore.isFollowUpExpanded,
-                                           bubble: reservesBubble)
+                                           bubble: reservesBubble, activityHeight: workspace.petActivityHeight)
         if activityPlacement.isBelowPet != frames.isActivityBelowPet {
             activityPlacement.isBelowPet = frames.isActivityBelowPet
         }

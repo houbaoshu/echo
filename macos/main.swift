@@ -38,6 +38,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let planets = PlanetStore(settings: settings, root: Bundle.main.resourceURL?.appendingPathComponent("planets"), voice: voice)
                     companion = CompanionController(petStore: store, workspace: workspace, settings: settings,
                         pets: pets, planets: planets, defaults: defaults)
+                    if ProcessInfo.processInfo.environment["ECHO_UI_PET_POSITION"] == "top",
+                       let panel = companion?.petPanel, let screen = panel.screen?.visibleFrame {
+                        panel.setFrameOrigin(NSPoint(x: screen.midX - panel.frame.width / 2,
+                                                     y: screen.maxY - panel.frame.height - 24))
+                    }
                     store.start()
                     companion?.showMainWindow()
                     return

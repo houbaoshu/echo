@@ -211,3 +211,9 @@ struct SpokenDraftView: View {
         }
     }
 }
+
+#Preview("Markdown 回复") {
+    AssistantMarkdown(content: "## 示例回复\n\n这是一段 **加粗文字**，还有一条列表：\n\n- 打开项目\n- 查看结果")
+        .padding(20)
+        .frame(width: 420)
+}
