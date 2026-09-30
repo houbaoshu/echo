@@ -21,7 +21,7 @@
 /* Begin PBXBuildFile section */
 		066D4A271DFD208FC9B7EE6B /* tests/tools/SwiftUIOutlineListReentrancy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 017854AC34F5C611DA191769 /* tests/tools/SwiftUIOutlineListReentrancy.swift */; };
 		0B31A1F06E0BE2DC74A02DA1 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
-		0BB27615F70BEF3BF486FD84 /* macos/ProjectPathAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0CDA52A4EF0DA66805FDBB /* macos/ProjectPathAccess.swift */; };
+		0BB27615F70BEF3BF486FD84 /* macos/Features/ProjectBrowser/ProjectPathAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */; };
 		0D0285C1020B6D53204DB1B7 /* tests/native/SpeechDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6DAA41743D56B6467CB43F9 /* tests/native/SpeechDeviceTests.swift */; };
 		0D482A8E03DDC5C6B0384533 /* tests/fixtures/speech/en-US.wav in Resources */ = {isa = PBXBuildFile; fileRef = 1E53D6C44AD40EA364F6E230 /* tests/fixtures/speech/en-US.wav */; };
 		0FA787DDAEEE6CA7A1CB6062 /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
@@ -289,7 +289,7 @@
 		BDB246AE9C0537E3D5EAD79A /* tests/tools/FixtureServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/tools/FixtureServer.swift; sourceTree = "<group>"; };
 		C038B52ADC4A870F1268E696 /* EchoDeviceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoDeviceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/FastTestTag.swift; sourceTree = "<group>"; };
-		CF0CDA52A4EF0DA66805FDBB /* macos/ProjectPathAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/ProjectPathAccess.swift; sourceTree = "<group>"; };
+		CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/ProjectBrowser/ProjectPathAccess.swift; sourceTree = "<group>"; };
 		CF3DABC0D10122CBD030B84D /* macos/AgentHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/AgentHarness.swift; sourceTree = "<group>"; };
 		D5E5E6CFBA9A83634534A68F /* tests/fixtures/speech/zh-CN.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "tests/fixtures/speech/zh-CN.wav"; sourceTree = "<group>"; };
 		D99CD76EFF731DB92DDFA79A /* tests/support/LoopbackModelServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/LoopbackModelServer.swift; sourceTree = "<group>"; };
@@ -543,7 +543,7 @@
 				E11000000000000000000F02 /* AgentConnectionTester.swift */,
 				E11000000000000000000F03 /* TaskStore.swift */,
 				1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */,
-				CF0CDA52A4EF0DA66805FDBB /* macos/ProjectPathAccess.swift */,
+				CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */,
 				3526F0A888174738325FD582 /* macos/AgentLanguageModels.swift */,
 				EA68E8426039B5A782DA9770 /* macos/AgentTools.swift */,
 				CF3DABC0D10122CBD030B84D /* macos/AgentHarness.swift */,
@@ -1309,7 +1309,7 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				F68549B4E6629AA6F02A9CDC /* macos/ExecutionService.swift in Sources */,
-				0BB27615F70BEF3BF486FD84 /* macos/ProjectPathAccess.swift in Sources */,
+				0BB27615F70BEF3BF486FD84 /* macos/Features/ProjectBrowser/ProjectPathAccess.swift in Sources */,
 				26BC95D8A7B3E4F129E9AD9F /* macos/AgentLanguageModels.swift in Sources */,
 				82EA4910FA0A21C0579F3E29 /* macos/AgentTools.swift in Sources */,
 				534B7D287D089271F8634C32 /* macos/AgentHarness.swift in Sources */,
