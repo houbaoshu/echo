@@ -19,8 +19,6 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
-		F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* tests/LocalChatTests.swift */; };
-		F20000000000000000000011 /* macos/AgentLocalChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000010 /* macos/AgentLocalChat.swift */; };
 		066D4A271DFD208FC9B7EE6B /* tests/tools/SwiftUIOutlineListReentrancy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 017854AC34F5C611DA191769 /* tests/tools/SwiftUIOutlineListReentrancy.swift */; };
 		0B31A1F06E0BE2DC74A02DA1 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		0BB27615F70BEF3BF486FD84 /* macos/ProjectPathAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0CDA52A4EF0DA66805FDBB /* macos/ProjectPathAccess.swift */; };
@@ -112,6 +110,8 @@
 		EE3E2F85DDBFEEDEDD7B89FC /* tests/fixtures/speech/paused.wav in Resources */ = {isa = PBXBuildFile; fileRef = 9B8E739899162095ABA722F3 /* tests/fixtures/speech/paused.wav */; };
 		F1DA05F3182E450B41CD433D /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
 		F20000000000000000000003 /* CoreAILM in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000002 /* CoreAILM */; };
+		F20000000000000000000011 /* macos/AgentLocalChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000010 /* macos/AgentLocalChat.swift */; };
+		F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* tests/LocalChatTests.swift */; };
 		F26EAD91B663BB2BCD833522 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		F68549B4E6629AA6F02A9CDC /* macos/ExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */; };
 		F7EF4AB9C967C47A9F18B500 /* tests/native/EchoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3FF57E62DA09C501023D462 /* tests/native/EchoUITests.swift */; };
@@ -252,8 +252,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		F20000000000000000000012 /* tests/LocalChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/LocalChatTests.swift; sourceTree = "<group>"; };
-		F20000000000000000000010 /* macos/AgentLocalChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/AgentLocalChat.swift; sourceTree = "<group>"; };
 		017854AC34F5C611DA191769 /* tests/tools/SwiftUIOutlineListReentrancy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/tools/SwiftUIOutlineListReentrancy.swift; sourceTree = "<group>"; };
 		0A943A0226E44527A68563F2 /* tests/AgentHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentHarnessTests.swift; sourceTree = "<group>"; };
 		1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/ExecutionService.swift; sourceTree = "<group>"; };
@@ -340,94 +338,96 @@
 		E2DD4E7379914193D6F68337 /* EchoAppIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoAppIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E6DAA41743D56B6467CB43F9 /* tests/native/SpeechDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/SpeechDeviceTests.swift; sourceTree = "<group>"; };
 		EA68E8426039B5A782DA9770 /* macos/AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/AgentTools.swift; sourceTree = "<group>"; };
+		F20000000000000000000010 /* macos/AgentLocalChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/AgentLocalChat.swift; sourceTree = "<group>"; };
+		F20000000000000000000012 /* tests/LocalChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/LocalChatTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		2B7150E4BA9C1E2D3C6B7DFF /* Exceptions for "macos" folder in "EchoSpeechHost" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Info.plist,
+				App/Info.plist,
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = 8159C655A6D1F584D0AD6A3F /* EchoSpeechHost */;
 		};
 		E0000000000000000000002B /* Exceptions for "macos" folder in "Echo" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Info.plist,
+				App/Info.plist,
 			);
 			target = E0000000000000000000002F /* Echo */;
 		};
 		E112000000000000000000EC /* Exceptions for "macos" folder in "EchoIntegrationTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = E112000000000000000000AA /* EchoIntegrationTests */;
 		};
 		E113000000000000000000EC /* Exceptions for "macos" folder in "EchoVoiceTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = E113000000000000000000AA /* EchoVoiceTests */;
 		};
 		E114000000000000000000EC /* Exceptions for "macos" folder in "EchoWorkspaceTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = E114000000000000000000AA /* EchoWorkspaceTests */;
 		};
 		E115000000000000000000EC /* Exceptions for "macos" folder in "EchoViewTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = E115000000000000000000AA /* EchoViewTests */;
 		};
 		E123000000000000000000EC /* Exceptions for "macos" folder in "AgentLiveProbe" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = E123000000000000000000AA /* AgentLiveProbe */;
 		};
 		E124000000000000000000EC /* Exceptions for "macos" folder in "VoiceLiveProbe" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = E124000000000000000000AA /* VoiceLiveProbe */;
 		};
 		E125000000000000000000EC /* Exceptions for "macos" folder in "VoiceSoakProbe" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = E125000000000000000000AA /* VoiceSoakProbe */;
 		};
 		E126000000000000000000EC /* Exceptions for "macos" folder in "AppleSpeechDeviceProbe" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = E126000000000000000000AA /* AppleSpeechDeviceProbe */;
 		};
 		E69F3B51CE1B237D6FEB36E8 /* Exceptions for "macos" folder in "EchoLiveHost" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/main.swift,
 				CoreAILocalChat.swift,
-				main.swift,
 			);
 			target = 74679465BC618EAAE681B8A8 /* EchoLiveHost */;
 		};
@@ -1528,7 +1528,7 @@
 		030D00D0AC643C25E1B9531C /* TestPerformance configuration for PBXNativeTarget "Echo" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 			};
 			name = TestPerformance;
@@ -2453,7 +2453,7 @@
 		E000000000000000000000D2 /* Debug configuration for PBXNativeTarget "Echo" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 			};
 			name = Debug;
@@ -2461,7 +2461,7 @@
 		E000000000000000000000D3 /* Release configuration for PBXNativeTarget "Echo" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 			};
 			name = Release;
@@ -2498,7 +2498,7 @@
 		E000000000000000000000D7 /* Development configuration for PBXNativeTarget "Echo" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 			};
 			name = Development;
@@ -2910,7 +2910,7 @@
 		EB8EC5DD9BB679ABD9270062 /* DevelopmentDebug configuration for PBXNativeTarget "Echo" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 			};
 			name = DevelopmentDebug;
