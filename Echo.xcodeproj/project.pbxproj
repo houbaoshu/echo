@@ -40,7 +40,7 @@
 		4BC45D0F3EB64F8C20E7ACCA /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
 		51789CADEE056BE7BFEA61E9 /* tests/native/LiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2342CC6EB3F55C38085D3E /* tests/native/LiveTests.swift */; };
 		51DC2E4A0F04C3BD9B586531 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
-		534B7D287D089271F8634C32 /* macos/AgentHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3DABC0D10122CBD030B84D /* macos/AgentHarness.swift */; };
+		534B7D287D089271F8634C32 /* macos/Features/Agent/AgentHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */; };
 		53B597DF7242A6CFEDC2ABB6 /* tests/support/AgentVoiceFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BF4D83C4FDB9149833754EA /* tests/support/AgentVoiceFixture.swift */; };
 		5B7C35523FF9FBEB0850E76E /* AgentLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12300000000000000000F00 /* AgentLiveTests.swift */; };
 		62B9BFB9095B17879C439924 /* tests/support/NativeMemorySecrets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7385F3E986D8793A4584EE31 /* tests/support/NativeMemorySecrets.swift */; };
@@ -290,7 +290,7 @@
 		C038B52ADC4A870F1268E696 /* EchoDeviceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoDeviceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/FastTestTag.swift; sourceTree = "<group>"; };
 		CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/ProjectBrowser/ProjectPathAccess.swift; sourceTree = "<group>"; };
-		CF3DABC0D10122CBD030B84D /* macos/AgentHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/AgentHarness.swift; sourceTree = "<group>"; };
+		CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentHarness.swift; sourceTree = "<group>"; };
 		D5E5E6CFBA9A83634534A68F /* tests/fixtures/speech/zh-CN.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "tests/fixtures/speech/zh-CN.wav"; sourceTree = "<group>"; };
 		D99CD76EFF731DB92DDFA79A /* tests/support/LoopbackModelServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/LoopbackModelServer.swift; sourceTree = "<group>"; };
 		DD5CA30C697920C91E817DFD /* tests/hosts/main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/hosts/main.swift; sourceTree = "<group>"; };
@@ -546,7 +546,7 @@
 				CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */,
 				3526F0A888174738325FD582 /* macos/AgentLanguageModels.swift */,
 				EA68E8426039B5A782DA9770 /* macos/AgentTools.swift */,
-				CF3DABC0D10122CBD030B84D /* macos/AgentHarness.swift */,
+				CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */,
 				F20000000000000000000010 /* macos/AgentLocalChat.swift */,
 				E11000000000000000000F05 /* SettingsStore.swift */,
 				E11000000000000000000F06 /* VoiceProtocol.swift */,
@@ -1312,7 +1312,7 @@
 				0BB27615F70BEF3BF486FD84 /* macos/Features/ProjectBrowser/ProjectPathAccess.swift in Sources */,
 				26BC95D8A7B3E4F129E9AD9F /* macos/AgentLanguageModels.swift in Sources */,
 				82EA4910FA0A21C0579F3E29 /* macos/AgentTools.swift in Sources */,
-				534B7D287D089271F8634C32 /* macos/AgentHarness.swift in Sources */,
+				534B7D287D089271F8634C32 /* macos/Features/Agent/AgentHarness.swift in Sources */,
 				F20000000000000000000011 /* macos/AgentLocalChat.swift in Sources */,
 				E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */,
 				E11000000000000000000B03 /* TaskStore.swift in Sources */,
