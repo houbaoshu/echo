@@ -54,9 +54,6 @@ import Combine
     private var composerObservation: AnyCancellable?
     private var projectPickerObservation: AnyCancellable?
     private var outsideClickMonitor: Any?
-    private var hotKey: GlobalHotKey?
-    private var hotKeyObservation: AnyCancellable?
-    var isHotKeyRegistered: Bool { hotKey?.isRegistered == true }
 
     init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore? = nil, pets: PetCatalog? = nil,
          planets: PlanetStore? = nil, defaults: UserDefaults = .standard) {
@@ -129,9 +126,6 @@ import Combine
                 guard let self, !self.workspace.isMainWindowVisible else { return }
                 self.showNotice(error.message)
             }
-        }
-        hotKeyObservation = settings.$snapshot.map(\.quickComposerHotKey).removeDuplicates().sink { [weak self] enabled in
-            self?.setHotKeyEnabled(enabled)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -262,29 +256,6 @@ import Combine
         guard !controlsPresentation.isProjectPickerOpen else { return }
         controlsPresentation.closeComposer()
     }
-    /// ⌥ Space: opens and focuses the quick composer, or closes it when it already has focus.
-    func openQuickComposer() {
-        // The whole cluster steps aside for the main window's Live Voice planet; the hotkey
-        // must not pull it back while that is showing.
-        guard !petHiddenForVoicePlanet else { return }
-        if controlsPresentation.isComposerOpen && controlsPresentation.isComposerFocused && controlsPanel.isKeyWindow {
-            controlsPresentation.closeComposer(); return
-        }
-        petPanel.orderFrontRegardless()
-        controlsPresentation.openComposer()
-        // Already open: the observer does not fire again, so claim the keyboard here.
-        controlsPanel.orderFrontRegardless(); controlsPanel.makeKey()
-    }
-    private func setHotKeyEnabled(_ enabled: Bool) {
-        guard enabled else {
-            hotKey?.invalidate(); hotKey = nil; settings.hotKeyNotice = nil
-            return
-        }
-        let hotKey = hotKey ?? GlobalHotKey(.quickComposer) { [weak self] in self?.openQuickComposer() }
-        self.hotKey = hotKey
-        let status = hotKey.register()
-        settings.hotKeyNotice = status == noErr ? nil : GlobalHotKey.message(for: status, shortcut: hotKey.shortcut)
-    }
 
     func layout() {
         guard !layingOut, let screen = CompanionLayout.screen(for: petPanel.frame, screens: NSScreen.screens.map(\.visibleFrame)) else { return }
@@ -359,7 +330,6 @@ import Combine
         workspace.voice.shutdown(); voiceObservation = nil; bubbleObservation = nil; petVoicePlanetObservation = nil
         settings.cancelTest(); pets.stop(); pets.onActivate = nil
         observation = nil; composerObservation = nil; projectPickerObservation = nil
-        hotKeyObservation = nil; hotKey?.invalidate(); hotKey = nil
         if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor); self.outsideClickMonitor = nil }
         NotificationCenter.default.removeObserver(self)
         noticeTimer?.invalidate()

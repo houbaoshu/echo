@@ -658,15 +658,15 @@ import SwiftUI
             .flatMap { $0["AppleKeyboardUIMode"] as? Int } ?? 0
         let fullKeyboardAccess = keyboardUIMode & 2 != 0
         if fullKeyboardAccess {
+            let localOnly = settings.snapshot.localModelOnly
+            try await tab(until: responder().map { String(describing: type(of: $0)).contains("PlatformSwitch") } ?? false,
+                          "the local model switch")
+            try await key(49)
+            XCTAssertTrue(settings.snapshot.localModelOnly != localOnly, "Space flips the focused switch")
+            try await key(49)
+            XCTAssertTrue(settings.snapshot.localModelOnly == localOnly)
             settings.selectedSection = "精灵"
             try await settle()
-            let hotKey = settings.snapshot.quickComposerHotKey
-            try await tab(until: responder().map { String(describing: type(of: $0)).contains("PlatformSwitch") } ?? false,
-                          "the quick composer switch")
-            try await key(49)
-            XCTAssertTrue(settings.snapshot.quickComposerHotKey != hotKey, "Space flips the focused switch")
-            try await key(49)
-            XCTAssertTrue(settings.snapshot.quickComposerHotKey == hotKey)
             let pet = pets.selectedID
             try await tab(until: (responder()?.frame.width ?? 0) > 150 && (responder()?.frame.height ?? 0) > 150,
                           "a pet card")

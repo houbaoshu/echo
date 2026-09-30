@@ -199,9 +199,6 @@ struct ActivityCapsule: View {
     @Published private(set) var isComposerOpen = false
     @Published var draft = ""
     @Published private(set) var focusRequest = 0
-    /// The editor is first responder in the key panel, so typing lands in it.
-    @Published private(set) var isComposerFocused = false
-    func setComposerFocused(_ focused: Bool) { if isComposerFocused != focused { isComposerFocused = focused } }
     /// The pet's horizontal center inside the fixed canvas; the content clamps itself to the canvas.
     @Published var petCenterX = PetSurfacePresentation.canvasWidth / 2
     /// The project the next quick send starts in; it stays selected across sends.
@@ -243,7 +240,6 @@ struct ActivityCapsule: View {
         focusRequest += 1
     }
     func closeComposer() {
-        setComposerFocused(false)
         if isProjectPickerOpen { isProjectPickerOpen = false }
         if isComposerOpen { isComposerOpen = false }
     }
@@ -492,7 +488,6 @@ struct PetControls: View {
                            onEscape: { presentation.closeComposer(); return true },
                            fontSize: 13, minHeight: 20, maxLines: 1,
                            label: "新聊天输入框", identifier: "pet.composer",
-                           onFocusChange: { [presentation] in presentation.setComposerFocused($0) },
                            caretColor: .labelColor, onSend: send)
                 .overlay(alignment: .leading) {
                     if presentation.draft.isEmpty {

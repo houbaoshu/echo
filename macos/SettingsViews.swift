@@ -259,20 +259,6 @@ struct PetSettingsView: View {
     @ObservedObject var settings: SettingsStore
     var body: some View {
         Form {
-            // The switch keeps its own label, so the form aligns it with every other
-            // section's control column instead of this view padding it into place.
-            Section {
-                Toggle("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框",
-                       isOn: Binding(get: { settings.snapshot.quickComposerHotKey }, set: { settings.setQuickComposerHotKey($0) }))
-                    .toggleStyle(.switch)
-                    .accessibilityLabel("使用 \(GlobalHotKey.Shortcut.quickComposer.title) 呼出桌宠输入框")
-                    .accessibilityIdentifier("settings.quickComposerHotKey")
-            } footer: {
-                if let notice = settings.hotKeyNotice {
-                    Label(notice, systemImage: "exclamationmark.triangle").font(WorkspaceStyle.caption)
-                        .foregroundStyle(WorkspaceStyle.warning).accessibilityIdentifier("settings.quickComposerHotKey.notice")
-                }
-            }
             Section {
                 if let notice = pets.notice { Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled) }
                 ScrollViewReader { proxy in

@@ -1,6 +1,5 @@
 import XCTest
 import AppKit
-import Carbon.HIToolbox
 import FoundationModels
 import SwiftUI
 
@@ -2545,19 +2544,7 @@ private struct ComposerHeightHost: View {
                      "The activity card opens its conversation")
     }
 
-    func testCompanionBubblePanelAndHotKey() async throws {
-        let first = GlobalHotKey(.quickComposer) {}, second = GlobalHotKey(.quickComposer) {}
-        defer { first.invalidate(); second.invalidate() }
-        let firstStatus = first.register(), secondStatus = second.register()
-        // Another running Echo may already own the shortcut; either way a duplicate is reported, not crashed on.
-        XCTAssertTrue(firstStatus == noErr || firstStatus == eventHotKeyExistsErr, "Registering ⌥ Space returns a Carbon status")
-        if firstStatus == noErr {
-            XCTAssertTrue(secondStatus == eventHotKeyExistsErr && !second.isRegistered
-                         && GlobalHotKey.message(for: secondStatus, shortcut: .quickComposer).contains("已被占用"),
-                         "A taken shortcut is reported as occupied")
-        }
-        first.invalidate(); second.invalidate()
-
+    func testCompanionBubblePanel() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
@@ -2565,17 +2552,6 @@ private struct ComposerHeightHost: View {
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
         func settle() async throws { try await Task.sleep(for: .milliseconds(150)) }
-        XCTAssertTrue(settings.snapshot.quickComposerHotKey && (companion.isHotKeyRegistered || settings.hotKeyNotice != nil),
-                     "The shortcut is on by default and either registered or explained in Settings")
-        settings.setQuickComposerHotKey(false)
-        XCTAssertTrue(!companion.isHotKeyRegistered && settings.hotKeyNotice == nil, "Turning the shortcut off unregisters it")
-        settings.setQuickComposerHotKey(true)
-        XCTAssertTrue(companion.isHotKeyRegistered || settings.hotKeyNotice != nil, "Turning it back on registers again")
-
-        companion.openQuickComposer()
-        try await settle()
-        XCTAssertTrue(companion.controlsPresentation.isComposerOpen, "The shortcut opens the quick composer")
-        companion.controlsPresentation.closeComposer()
 
         XCTAssertTrue(!companion.bubblePanel.isVisible, "No bubble without a voice session")
         let screen = companion.petPanel.screen!.visibleFrame
@@ -2631,16 +2607,12 @@ private struct ComposerHeightHost: View {
         try await settle()
         XCTAssertTrue(clusterShown(), "Live Voice running elsewhere never hides the pet")
 
-        // Switching to it is what hides the cluster, hotkey included.
+        // Switching to it is what hides the cluster.
         workspace.select(elsewhere.id)
         try await settle()
         XCTAssertTrue(!companion.petPanel.isVisible && !companion.controlsPanel.isVisible && !companion.bubblePanel.isVisible,
                      "Viewing the Live Voice conversation hides the whole cluster")
         XCTAssertTrue(suspension.isSuspended, "Hiding the strip suspends its planet")
-        companion.openQuickComposer()
-        try await settle()
-        XCTAssertTrue(!companion.controlsPresentation.isComposerOpen && !companion.controlsPanel.isVisible,
-                     "⌥ Space cannot pull the hidden cluster back")
 
         // Leaving that conversation restores it, and so does closing the window on it.
         workspace.select(read.id)

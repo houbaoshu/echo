@@ -138,8 +138,6 @@ struct SettingsSnapshot: Codable {
     static let defaultPlanetID = "builtin:ember-planet"
     var voice: VoiceConfiguration?
     var voiceSecretAccount: String?
-    /// ⌥ Space opens the pet's quick composer from anywhere.
-    var quickComposerHotKey = true
     /// Every new turn goes to the local model, never the cloud.
     var localModelOnly = false
 
@@ -149,8 +147,7 @@ struct SettingsSnapshot: Codable {
         providers[provider.rawValue] ?? ProviderSettings(model: provider.defaults)
     }
     private enum CodingKeys: String, CodingKey {
-        case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, voiceSecretAccount,
-             quickComposerHotKey, localModelOnly
+        case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, voiceSecretAccount, localModelOnly
     }
     private enum LegacyKeys: String, CodingKey { case model, secretAccount }
     init() {}
@@ -162,7 +159,6 @@ struct SettingsSnapshot: Codable {
         selectedPlanetID = try values.decodeIfPresent(String.self, forKey: .selectedPlanetID) ?? SettingsSnapshot.defaultPlanetID
         voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
         voiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .voiceSecretAccount)
-        quickComposerHotKey = try values.decodeIfPresent(Bool.self, forKey: .quickComposerHotKey) ?? true
         localModelOnly = try values.decodeIfPresent(Bool.self, forKey: .localModelOnly) ?? false
         if version == 1 {
             let legacy = try decoder.container(keyedBy: LegacyKeys.self)
@@ -190,8 +186,6 @@ protocol ConnectionTesting: Sendable {
     private var savedVoiceKey = ""
     private var voiceKeyLoaded = true
     var isVoiceDirty: Bool { voiceDraft != (snapshot.voice ?? VoiceConfiguration()) || voiceAPIKey != savedVoiceKey }
-    /// Why the enabled quick composer shortcut is not working, reported by its owner.
-    @Published var hotKeyNotice: String?
     @Published var selectedSection = "模型"
     @Published var presentationRevision = 0
     @Published private(set) var selectedProvider: ModelProvider = .openAI
@@ -398,11 +392,6 @@ protocol ConnectionTesting: Sendable {
                 catch { notice = "配置已保存，但旧密钥清理失败，请检查钥匙串访问权限。" }
             }
         } catch { notice = error is SettingsError ? error.localizedDescription : "保存失败，请检查设置目录的写入权限后重试。" }
-    }
-    func setQuickComposerHotKey(_ enabled: Bool) {
-        guard enabled != snapshot.quickComposerHotKey else { return }
-        do { try update { $0.quickComposerHotKey = enabled } }
-        catch { hotKeyNotice = error is SettingsError ? error.localizedDescription : "快捷键设置保存失败，请检查目录写入权限。" }
     }
     /// Takes effect from the next turn; a reply being written keeps its model.
     func setLocalModelOnly(_ enabled: Bool) {

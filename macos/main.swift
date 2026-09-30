@@ -16,7 +16,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .ui(let root, let defaults):
                     installMenus()
                     let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: TestBootstrap.Secrets())
-                    settings.setQuickComposerHotKey(false)
                     if settings.draft.model.isEmpty {
                         settings.selectProvider(.ollama)
                         settings.draft.model = "offline-fixture"

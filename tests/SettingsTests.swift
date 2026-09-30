@@ -54,13 +54,13 @@ import Testing
         let url = directory.appendingPathComponent("settings.json")
         let secrets = ProviderSecrets()
         secrets.values = ["legacy": "deepseek-secret", "voice": "agent-plan-secret"]
-        let legacy = #"{"version":1,"model":{"baseURL":"https://api.deepseek.com/v1","model":"existing-deepseek"},"secretAccount":"legacy","selectedPetID":"builtin:chiyan","voiceSecretAccount":"voice"}"#
+        let legacy = #"{"version":1,"model":{"baseURL":"https://api.deepseek.com/v1","model":"existing-deepseek"},"secretAccount":"legacy","selectedPetID":"builtin:chiyan","voiceSecretAccount":"voice","quickComposerHotKey":false}"#
         try Data(legacy.utf8).write(to: url)
         let settings = SettingsStore(url: url, secrets: secrets)
         #expect(settings.selectedProvider == .deepSeek && settings.apiKey == "deepseek-secret")
         #expect(settings.snapshot.secretAccount == "legacy" && settings.draft.model == "existing-deepseek")
         #expect(settings.draft.apiProtocol == .chatCompletions && !settings.isDirty)
-        #expect(settings.snapshot.quickComposerHotKey, "Settings saved before the quick composer shortcut enable it")
+        // `quickComposerHotKey` belonged to the removed ⌥ Space shortcut; files that still carry it load unchanged.
         #expect(settings.snapshot.selectedPlanetID == SettingsSnapshot.defaultPlanetID,
                      "Settings saved before Live Voice had a planet fall back to the built-in one")
         #expect(secrets.values.count == 2, "Migration adopts the original reference without touching Keychain")
@@ -82,9 +82,6 @@ import Testing
         let reopened = SettingsStore(url: url, secrets: secrets)
         #expect(reopened.selectedProvider == .openAI && reopened.apiKey == "openai-secret", "Explicit provider identity survives custom URLs")
         #expect(reopened.draft.baseURL == "https://gateway.example/v1" && reopened.draft.model == "custom-openai")
-        reopened.setQuickComposerHotKey(false)
-        #expect(!reopened.snapshot.quickComposerHotKey && reopened.hotKeyNotice == nil
-                     && !SettingsStore(url: url, secrets: secrets).snapshot.quickComposerHotKey, "Turning the shortcut off persists")
         reopened.selectProvider(.deepSeek)
         #expect(reopened.apiKey == "deepseek-secret" && reopened.draft.model == "existing-deepseek")
         reopened.apiKey = "rotated-deepseek"; reopened.save()
