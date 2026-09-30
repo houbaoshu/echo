@@ -28,7 +28,7 @@
 		13097CB5A528800655A06D1D /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		15784511C1E7338371B29560 /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
 		160380377B6FE55F49A4A4FB /* AppleSpeechDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12600000000000000000F00 /* AppleSpeechDeviceTests.swift */; };
-		26BC95D8A7B3E4F129E9AD9F /* macos/AgentLanguageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3526F0A888174738325FD582 /* macos/AgentLanguageModels.swift */; };
+		26BC95D8A7B3E4F129E9AD9F /* macos/Features/Agent/AgentLanguageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3526F0A888174738325FD582 /* macos/Features/Agent/AgentLanguageModels.swift */; };
 		294ED11A4A5B711A39E812CB /* tests/support/AgentVoiceFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BF4D83C4FDB9149833754EA /* tests/support/AgentVoiceFixture.swift */; };
 		2BA7D416B8B284177C6B0063 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		2D34581B87695B5017C83A31 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
@@ -265,7 +265,7 @@
 		2615EC88665C3BC946D57DCE /* tests/native/NativeAppKitEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/NativeAppKitEventTests.swift; sourceTree = "<group>"; };
 		2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/EchoTestResources.swift; sourceTree = "<group>"; };
 		304DB495A0C2573A6D5628CD /* EchoPerformanceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoPerformanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		3526F0A888174738325FD582 /* macos/AgentLanguageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/AgentLanguageModels.swift; sourceTree = "<group>"; };
+		3526F0A888174738325FD582 /* macos/Features/Agent/AgentLanguageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentLanguageModels.swift; sourceTree = "<group>"; };
 		3A89A1D5930BC209601F6678 /* EchoLiveHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = EchoLiveHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		474D9F2D95791491A7B3D4E6 /* tests/AgentModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentModelTests.swift; sourceTree = "<group>"; };
 		4FAB991673380E8FF8B32862 /* tests/fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; path = tests/fixtures; sourceTree = "<group>"; };
@@ -544,7 +544,7 @@
 				E11000000000000000000F03 /* TaskStore.swift */,
 				1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */,
 				CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */,
-				3526F0A888174738325FD582 /* macos/AgentLanguageModels.swift */,
+				3526F0A888174738325FD582 /* macos/Features/Agent/AgentLanguageModels.swift */,
 				EA68E8426039B5A782DA9770 /* macos/AgentTools.swift */,
 				CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */,
 				F20000000000000000000010 /* macos/AgentLocalChat.swift */,
@@ -1310,7 +1310,7 @@
 			files = (
 				F68549B4E6629AA6F02A9CDC /* macos/ExecutionService.swift in Sources */,
 				0BB27615F70BEF3BF486FD84 /* macos/Features/ProjectBrowser/ProjectPathAccess.swift in Sources */,
-				26BC95D8A7B3E4F129E9AD9F /* macos/AgentLanguageModels.swift in Sources */,
+				26BC95D8A7B3E4F129E9AD9F /* macos/Features/Agent/AgentLanguageModels.swift in Sources */,
 				82EA4910FA0A21C0579F3E29 /* macos/AgentTools.swift in Sources */,
 				534B7D287D089271F8634C32 /* macos/Features/Agent/AgentHarness.swift in Sources */,
 				F20000000000000000000011 /* macos/AgentLocalChat.swift in Sources */,
