@@ -155,17 +155,27 @@ struct ActivityCapsule: View {
         ZStack(alignment: .trailing) {
             summaryView
             if hovered && !store.isFollowUpExpanded {
-                Button("跟进") { (followUp ?? store.toggleFollowUp)() }
-                    .buttonStyle(.bordered).controlSize(.small).companionControlActive()
-                    .accessibilityIdentifier("activity.followUp.toggle")
+                Button { (followUp ?? store.toggleFollowUp)() } label: {
+                    Image(systemName: "return").font(.system(size: 13, weight: .medium))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.bordered).buttonBorderShape(.circle).companionControlActive()
+                .help("跟进").accessibilityLabel("跟进")
+                .accessibilityIdentifier("activity.followUp.toggle")
             }
             if store.isFollowUpExpanded {
-                RoundControl(symbol: store.isGenerating || canStop ? "stop.fill" : "arrow.up", label: store.isGenerating || canStop ? "停止回复" : "发送跟进",
-                             size: 28, emphasized: true,
-                             enabled: store.isGenerating || canStop || !store.followUpDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                             identifier: store.isGenerating || canStop ? "activity.stop" : "activity.send") {
+                Button {
                     if store.isGenerating || canStop { stop() } else { send() }
+                } label: {
+                    Image(systemName: store.isGenerating || canStop ? "stop.fill" : "arrow.up")
+                        .font(.system(size: 13, weight: .medium))
+                        .frame(width: 20, height: 20)
                 }
+                .buttonStyle(.bordered).buttonBorderShape(.circle).companionControlActive()
+                .disabled(!(store.isGenerating || canStop || !store.followUpDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                .help(store.isGenerating || canStop ? "停止回复" : "发送跟进")
+                .accessibilityLabel(store.isGenerating || canStop ? "停止回复" : "发送跟进")
+                .accessibilityIdentifier(store.isGenerating || canStop ? "activity.stop" : "activity.send")
             }
         }
         .padding(.horizontal, 16).frame(height: CompanionLayout.collapsedHeight)
