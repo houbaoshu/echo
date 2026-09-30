@@ -234,8 +234,7 @@ import Testing
             }
         }
         #expect(chat.store.send("hello"))
-        // Stream snapshots trail by one event (S2 in docs/foundation-models-findings.md), so
-        // "partial " itself may not show yet.
+        // Stream snapshots can trail what the model sent, so "partial " itself may not show yet.
         try await Self.wait("partial streamed") { gate.arrivals == 1 }
         chat.store.stopTask()
         #expect(chat.store.task?.status == .stopping && !chat.store.canSubmit && !chat.store.send("while stopping"))
@@ -251,8 +250,11 @@ import Testing
         gate.open()
     }
 
-    /// Constraint 1: a Stop keeps finished tool calls and their results, and a Stop that races the
-    /// normal completion of the final reply keeps that reply and leaves nothing to continue.
+    /// A Stop during a later generation drops only the cut-off reply: a finished tool call keeps its
+    /// result, on its record and in the model context. A Stop that races the normal completion of
+    /// the final reply, while the reply is applied or while the last generation is finishing, keeps
+    /// the whole reply and the turn's completed outcome, reports the turn as stopped rather than
+    /// completed, and leaves nothing to continue.
     @Test func stopKeepsFinishedToolResultsAndRacesCompletion() async throws {
         let root = try Self.project()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -334,8 +336,6 @@ import Testing
     }
 
     @Test func inputWhileAToolWaitsSupersedesIt() async throws {
-        let root = try Self.project()
-        defer { try? FileManager.default.removeItem(at: root) }
         let chat = Chat { request, emit, index in
             if index == 0 { await emit.call("read_file", #"{"path":"src/main.txt"}"#) }
             else { try await emit.text("after \(request.toolOutputs.joined())") }
@@ -349,7 +349,6 @@ import Testing
         #expect(chat.store.tools.first?.result == AgentToolResult.superseded)
         let last = try #require(chat.model.requests.last)
         #expect(last.kinds == ["instructions", "prompt", "toolCalls", "toolOutput", "prompt"] && last.userTexts == ["read", "never mind"])
-        _ = root
     }
 
     @Test func inputWhileAToolRunsKeepsItsResult() async throws {
@@ -725,8 +724,8 @@ import Testing
         #expect(chat.store.task?.status == .completed)
     }
 
-    /// Plan §10 constraint 2: calls with identical arguments are told apart by their identity,
-    /// run one at a time, and each record gets the output of its own run.
+    /// bash calls with identical arguments in one batch are told apart by their identity: they run
+    /// one at a time, and each record gets the output of its own run.
     @Test func identicalCallsRunOneAtATimeAsThemselves() async throws {
         let root = try AgentHarnessTests.project()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -755,8 +754,9 @@ import Testing
         #expect(chat.store.tools.map(\.state) == ["执行结束", "执行结束"])
     }
 
-    /// Constraint 1 with a batch: a Stop during the second command keeps the first one's real
-    /// output, although Foundation Models had not written the batch's results yet.
+    /// A finished command shows its result before Foundation Models writes the batch's results, and
+    /// a Stop during the batch's second command keeps the first one's real output, on its record and
+    /// in the model context; the interrupted command's result says it was cancelled during execution.
     @Test func stopKeepsTheFinishedCommandOfABatch() async throws {
         let root = try AgentHarnessTests.project()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -777,12 +777,11 @@ import Testing
         chat.store.stopTask()
         try await chat.idle()
         #expect(Set(chat.store.tools.map(\.result)) == [#"{"stdout":"first"}"#, AgentToolResult.cancelledDuring])
-        #expect(chat.native.entries.compactMap { if case .toolOutput(let o) = $0 { AgentHarness.text(o.segments) } else { nil } }
-                .contains(#"{"stdout":"first"}"#), "The finished result is kept in the model context")
+        #expect(chat.native.entries.toolOutputs.contains(#"{"stdout":"first"}"#), "The finished result is kept in the model context")
     }
 
-    /// Providers reuse call IDs across generations (S5 in docs/foundation-models-findings.md): a
-    /// Stop during the second generation's `call-1` must not hand it the first generation's result.
+    /// Providers may reuse call IDs across generations: a Stop during the second generation's
+    /// `call-1` must not hand it the first generation's result.
     @Test func aCallIDReusedByTheNextGenerationIsItsOwnCall() async throws {
         let root = try AgentHarnessTests.project()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -804,8 +803,8 @@ import Testing
         try await chat.idle()
         #expect(chat.store.tools.map(\.command) == ["first", "second"])
         #expect(chat.store.tools.map(\.result) == [#"{"stdout":"first"}"#, AgentToolResult.cancelledDuring])
-        #expect(chat.native.entries.compactMap { if case .toolOutput(let o) = $0 { AgentHarness.text(o.segments) } else { nil } }
-                == [#"{"stdout":"first"}"#, AgentToolResult.cancelledDuring], "Each call keeps its own result in the model context")
+        #expect(chat.native.entries.toolOutputs == [#"{"stdout":"first"}"#, AgentToolResult.cancelledDuring],
+                "Each call keeps its own result in the model context")
     }
 
     @Test func stopDuringACommandMarksOnlyThatCallUnknown() async throws {
@@ -958,13 +957,11 @@ import Testing
     @Test func savesDuringABatchKeepFinishedResults() async throws {
         let root = try AgentHarnessTests.project()
         defer { try? FileManager.default.removeItem(at: root) }
-        var chat: Chat!
-        let runner = AgentHarnessTests.FakeRunner { _, _, index in .completed(#"{"stdout":"run \#(index)"}"#) }
-        chat = Chat({ _, emit, index in
+        let chat = Chat({ _, emit, index in
             if index == 0 {
                 await emit.calls([("bash", #"{"command":"one"}"#, "c1"), ("bash", #"{"command":"two"}"#, "c2")])
             } else { try await emit.text("done") }
-        }, project: root, runner: runner)
+        }, project: root)
         #expect(chat.store.send("two commands"))
         try await chat.idle()
         // The save just before the second command started.
@@ -972,10 +969,7 @@ import Testing
             state.task?.status == .running && state.tools?.contains { $0.callID == "c1" && $0.result != nil } == true
                 && state.tools?.contains { $0.callID == "c2" && $0.result == nil } == true
         })
-        let outputs = beforeSecond.native!.entries.compactMap { entry -> String? in
-            if case .toolOutput(let output) = entry { AgentHarness.text(output.segments) } else { nil }
-        }
-        #expect(outputs == [#"{"stdout":"run 0"}"#], "The finished command's result is in the saved model context")
+        #expect(beforeSecond.native!.entries.toolOutputs == [#"{"stdout":"run 0"}"#], "The finished command's result is in the saved model context")
         let restored = Chat({ _, emit, _ in try await emit.text("x") }, project: root, snapshot: beforeSecond)
         #expect(restored.store.tools.map(\.state) == ["执行结束", "执行结果未知"])
         #expect(restored.store.tools.first?.result == #"{"stdout":"run 0"}"#)

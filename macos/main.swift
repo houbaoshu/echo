@@ -94,9 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pets.onFailure = { [weak self] error in self?.showFailure(error) }
             self.pets = pets
             let store = try pets.loadInitial()
-            // ECHO_LOCAL_CHAT=always sends every turn to the local model, for development.
-            let localChat = LocalChatService(backend: CoreAILocalChatBackend(),
-                                             mode: ProcessInfo.processInfo.environment["ECHO_LOCAL_CHAT"] == "always" ? .always : .offlineFallback)
+            let localChat = LocalChatService(backend: CoreAILocalChatBackend())
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: WorkspacePersistence.defaultURL),
                                            sourceFactory: { AgentHarness(settings: settings, local: localChat) })
             // Live Voice's planet. It loads its sprite only while a call is running, so the app

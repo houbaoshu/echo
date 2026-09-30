@@ -59,11 +59,11 @@ import Testing
         init(_ step: @escaping Step, service: LocalChatService? = nil, snapshot: TaskStore.Snapshot? = nil) {
             let backend = (service?.backend as? FakeBackend) ?? FakeBackend(step: step)
             self.backend = backend
-            let service = service ?? LocalChatService(backend: backend, mode: .always)
+            let service = service ?? LocalChatService(backend: backend)
             self.service = service
             let cloud = cloud
             let harness = AgentHarness(resolveModel: { cloud.count += 1; throw SettingsError("no cloud model") },
-                                       local: service, runner: runner)
+                                       local: service, localOnly: { true }, runner: runner)
             store = snapshot.map { TaskStore(snapshot: $0, source: harness) } ?? TaskStore(source: harness)
             store.checkpoint = { [unowned self] in self.saved.append($0) }
         }
@@ -73,20 +73,6 @@ import Testing
     }
 
     final class CloudCounter { var count = 0 }
-
-    static func kinds(_ entries: [Transcript.Entry]) -> [String] {
-        entries.map { entry in
-            switch entry {
-            case .instructions: "instructions"
-            case .prompt: "prompt"
-            case .response: "response"
-            case .reasoning: "reasoning"
-            case .toolCalls: "toolCalls"
-            case .toolOutput: "toolOutput"
-            @unknown default: "unknown"
-            }
-        }
-    }
 
     // MARK: Chat
 
@@ -138,7 +124,7 @@ import Testing
         #expect(cloud.store.send("read it"))
         try await cloud.idle()
         let before = cloud.native.entries
-        #expect(Self.kinds(before) == ["prompt", "toolCalls", "toolOutput", "response"])
+        #expect(before.map(AgentHarnessTests.kind) == ["prompt", "toolCalls", "toolOutput", "response"])
         cloud.store.shutdown()
 
         let saved = try #require(cloud.saved.last)
@@ -148,7 +134,7 @@ import Testing
         let request = try #require(chat.backend.requests.first)
         #expect(request.kinds == ["instructions", "prompt", "response", "prompt"], "No tool traffic reaches the local model")
         let after = chat.native.entries
-        #expect(Self.kinds(after) == Self.kinds(before) + ["prompt", "response"])
+        #expect(after.map(AgentHarnessTests.kind) == before.map(AgentHarnessTests.kind) + ["prompt", "response"])
         #expect(Array(after.prefix(before.count)) == before, "The saved history is untouched")
         #expect(chat.assistant.map(\.modelLabel) == [nil, Self.fakeModel])
         chat.store.shutdown()
@@ -189,7 +175,7 @@ import Testing
         try await chat.idle()
         #expect(chat.backend.requests.isEmpty)
         #expect(chat.store.task?.status == .failed && chat.store.task?.summary == LocalChatError.messageTooLong.localizedDescription)
-        #expect(Self.kinds(chat.native.entries) == ["prompt"] && chat.store.canRetry, "The message is kept for a retry")
+        #expect(chat.native.entries.map(AgentHarnessTests.kind) == ["prompt"] && chat.store.canRetry, "The message is kept for a retry")
         chat.store.shutdown()
     }
 
@@ -208,7 +194,7 @@ import Testing
         chat.store.stopTask()
         try await chat.idle()
         #expect(chat.store.task?.status == .stopped && chat.assistant.allSatisfy { $0.content.isEmpty })
-        #expect(Self.kinds(chat.native.entries) == ["prompt"] && chat.native.turns.last?.outcome == .interrupted)
+        #expect(chat.native.entries.map(AgentHarnessTests.kind) == ["prompt"] && chat.native.turns.last?.outcome == .interrupted)
         #expect(chat.store.canRetry)
         #expect(chat.store.retry())
         try await chat.idle()
@@ -223,7 +209,7 @@ import Testing
             if index == 0 { try await gate.wait() }
             try await FakeBackend.stream(["reply \(index)"], into: channel)
         }
-        let service = LocalChatService(backend: backend, mode: .always)
+        let service = LocalChatService(backend: backend)
         let first = LocalChat({ _, _, _ in }, service: service)
         let second = LocalChat({ _, _, _ in }, service: service)
         let third = LocalChat({ _, _, _ in }, service: service)
@@ -257,7 +243,7 @@ import Testing
         try await chat.idle()
         #expect(chat.backend.requests.count == 1)
         #expect(chat.store.task?.summary == LocalChatError.noReply.localizedDescription)
-        #expect(Self.kinds(chat.native.entries) == ["prompt"])
+        #expect(chat.native.entries.map(AgentHarnessTests.kind) == ["prompt"])
         chat.store.shutdown()
     }
 
@@ -377,7 +363,7 @@ import Testing
             #expect(FailingProtocol.count.withLock { $0 } == 1, "The cloud was tried first")
             #expect(chat.users == ["你好"] && chat.assistant.map(\.content) == ["本地回复0"])
             #expect(chat.assistant.first?.modelLabel == Self.fakeModel && chat.events == ["completed:本地回复0"])
-            #expect(Self.kinds(chat.native.entries) == ["prompt", "response"] && chat.native.turns.map(\.local) == [true])
+            #expect(chat.native.entries.map(AgentHarnessTests.kind) == ["prompt", "response"] && chat.native.turns.map(\.local) == [true])
             #expect(chat.backend.requests.first?.userTexts == ["你好"])
 
             // The network is back: the next turn goes to the cloud and sees the local exchange.

@@ -1873,15 +1873,8 @@ private struct ComposerHeightHost: View {
             defer { window.orderOut(nil) }
             return accessibilityText(in: view)
         }
-        func wait(_ condition: () -> Bool) async throws {
-            let deadline = Date().addingTimeInterval(5)
-            while !condition() {
-                guard Date() < deadline else { XCTFail("Timed out"); return }
-                try await Task.sleep(for: .milliseconds(10))
-            }
-        }
         XCTAssertTrue(store.usesAgent && store.send("看看目录"))
-        try await wait { store.needsDirectory }
+        try await eventually("folder requested") { store.needsDirectory }
         let waiting = try await texts()
         XCTAssertTrue(waiting.contains { $0.contains("我先看看目录。") }, "Text beside the call stays in the chat: \(waiting)")
         XCTAssertTrue(waiting.contains { $0.contains("执行中 · 列出 .") }, "The call says what it reads: \(waiting)")
@@ -1890,7 +1883,7 @@ private struct ComposerHeightHost: View {
             XCTAssertTrue(waiting.contains { $0.contains(control) }, "The folder row offers \(control): \(waiting)")
         }
         workspace.provideDirectory(nil, conversationID: try XCTUnwrap(workspace.selected?.id))
-        try await wait { !store.isGenerating }
+        try await eventually("turn ends") { !store.isGenerating }
         let done = try await texts()
         XCTAssertTrue(done.contains { $0.contains("未执行 · 列出 .") }, "Declining leaves the call not run: \(done)")
         XCTAssertTrue(done.contains { $0.contains("目录没有列出") } && !done.contains { $0.contains("需要项目文件夹才能继续") }, "\(done)")

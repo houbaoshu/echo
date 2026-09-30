@@ -49,9 +49,7 @@ extension EchoIntegrationScenarios {
     private static func verifyNative(_ state: TaskStore.Snapshot, api: ModelAPIProtocol) throws {
       let native = try #require(state.native)
       #expect(native.pendingInputs.isEmpty && native.turns.allSatisfy { $0.outcome == .completed })
-      let outputs = native.entries.compactMap { entry -> String? in
-        if case .toolOutput(let output) = entry { AgentHarness.text(output.segments) } else { nil }
-      }
+      let outputs = native.entries.toolOutputs
       let stdout = try outputs.map { try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])["stdout"] as? String }
       #expect(stdout == ["before\n", "", "after\n"])
       #expect(outputs.allSatisfy { $0.hasPrefix(#"{"stdout":"#) }, "The model saw the Rust engine's exact output format")

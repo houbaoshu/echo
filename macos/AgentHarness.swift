@@ -5,7 +5,6 @@ import FoundationModels
 // `respond`; this harness coordinates turns around it: one `respond` at a time, Stop, continue,
 // input that arrives while a turn runs, bounded recovery from invalid model output, the
 // 30-request limit, persistence gates, and the projection into `TaskStore`'s messages and tools.
-// It never creates the Rust core.
 //
 // A new `LanguageModelSession` is built for every `respond` from the history the harness holds
 // (the transcript without instructions), so settings snapshotted at turn start stay fixed for
@@ -125,8 +124,9 @@ enum AgentInstructions {
     /// request and record finished entries in `ledger`; `EchoLanguageModel` does both.
     typealias ModelFactory = @Sendable (GenerationLedger, GenerationBudget) -> any LanguageModel
 
+    static let generationLimit = 30
     static let formatErrorLimit = 3
-    static let stepLimitMessage = "已达到本轮 30 次模型请求限制。"
+    static let stepLimitMessage = "已达到本轮 \(generationLimit) 次模型请求限制。"
     static let formatErrorMessage = "模型连续返回无效工具格式，已停止。"
     static let offlineAfterOutputMessage = "网络已断开，本轮已有输出或执行过工具，未自动改用本地模型。联网后点“继续处理”。"
 
@@ -136,7 +136,6 @@ enum AgentInstructions {
     private let local: LocalChatService?
     /// Read when a turn starts: every new turn goes to the local model.
     private let localOnly: @MainActor () -> Bool
-    private let generationLimit: Int
 
     private var turn: Task<Void, Never>?
     private var stopRequested = false
@@ -150,8 +149,8 @@ enum AgentInstructions {
     /// Calls are keyed "entry index:call ID": providers reuse call IDs across generations.
     /// Read-only calls Foundation Models dispatched whose output is not in yet.
     private var dispatched: Set<String> = []
-    /// Each call by the identity its arguments carry (S11 in docs/foundation-models-findings.md);
-    /// tools are not told their call.
+    /// Each call by the identity its arguments carry: tools are not told their call, and calls with
+    /// identical arguments still carry different identities.
     private var callKeys: [GenerationID: String] = [:]
     /// bash calls whose command started this turn, and where.
     private var started: Set<String> = []
@@ -181,23 +180,23 @@ enum AgentInstructions {
 
     init(resolveModel: @escaping @MainActor () throws -> ModelFactory, local: LocalChatService? = nil,
          localOnly: @escaping @MainActor () -> Bool = { false },
-         generationLimit: Int = 30, runner: any CommandRunning = RustCommandRunner()) {
+         runner: any CommandRunning = RustCommandRunner()) {
         self.resolveModel = resolveModel
         self.local = local
         self.localOnly = localOnly
-        self.generationLimit = generationLimit
         self.runner = runner
     }
 
-    /// Reads the model settings saved when each turn starts.
-    convenience init(settings: SettingsStore, transport: ((AgentEndpoint) -> AgentTransport)? = nil,
-                     local: LocalChatService? = nil) {
+    /// Reads the model settings saved when each turn starts. `ECHO_LOCAL_CHAT=always` sends every
+    /// turn to the local model as the saved switch does, for development.
+    convenience init(settings: SettingsStore, local: LocalChatService? = nil) {
+        let alwaysLocal = ProcessInfo.processInfo.environment["ECHO_LOCAL_CHAT"] == "always"
         self.init(resolveModel: {
             let (configuration, key) = try settings.savedModelCredentials()
             let endpoint = AgentEndpoint(configuration, key: key)
-            let session = transport?(endpoint) ?? AgentTransport.make(for: endpoint)
+            let session = AgentTransport.make(for: endpoint)
             return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: session, ledger: ledger, budget: budget) }
-        }, local: local, localOnly: { settings.snapshot.localModelOnly })
+        }, local: local, localOnly: { alwaysLocal || settings.snapshot.localModelOnly })
     }
 
     var isRunning: Bool { turn != nil }
@@ -224,7 +223,7 @@ enum AgentInstructions {
     // MARK: Commands from the conversation
 
     /// Adopts saved state. Calls that never got a result had unknown effects, and a turn with no
-    /// outcome was interrupted, as in the Rust core's restore.
+    /// outcome was interrupted.
     func restore(_ saved: NativeAgentState?) {
         guard let saved else { return }
         state = saved
@@ -290,7 +289,7 @@ enum AgentInstructions {
     private func runTurn() async {
         guard !stopRequested else { return finish(.stopped(reply: nil)) }
         var route: Route
-        if let local, local.mode == .always || localOnly() {
+        if let local, localOnly() {
             // Only the local model: when it cannot be used the turn says so and never goes to the cloud.
             switch local.backend.availability() {
             case .ready: route = .local(local)
@@ -312,7 +311,7 @@ enum AgentInstructions {
             catch { return finish(.failed(error.localizedDescription, notice: true)) }
         }
 
-        let budget = GenerationBudget(limit: generationLimit, steering: steering)
+        let budget = GenerationBudget(limit: Self.generationLimit, steering: steering)
         state.turns.append(.init(start: state.entries.count, local: route.isLocal ? true : nil))
         var next: Next = state.pendingInputs.isEmpty ? .resume : .inputs
         var formatErrors = 0
@@ -322,7 +321,7 @@ enum AgentInstructions {
             let resuming = if case .resume = next { true } else { false }
             // Input that enters the transcript is no longer pending; the UI drops its "待处理".
             var history = state.entries
-            let prompt: Prompt, promptText: String, metadata: [String: any ConvertibleToGeneratedContent]
+            let promptText: String, metadata: [String: any ConvertibleToGeneratedContent]
             var userPrompt: Transcript.Prompt?
             var marker: Transcript.Prompt?
             switch next {
@@ -333,15 +332,12 @@ enum AgentInstructions {
                 for input in inputs.dropLast() { history.append(.prompt(Self.userPrompt(input))) }
                 let last = inputs.last!
                 userPrompt = Self.userPrompt(last)
-                promptText = last.text
-                prompt = Prompt(last.text); metadata = [AgentPromptKey.message: last.messageID.uuidString]
+                promptText = last.text; metadata = [AgentPromptKey.message: last.messageID.uuidString]
             case .resume:
-                promptText = ""
-                prompt = Prompt(""); metadata = [AgentPromptMarker.continueKey: true]
+                promptText = ""; metadata = [AgentPromptMarker.continueKey: true]
                 marker = Transcript.Prompt(metadata: metadata, segments: [])
             case .feedback(let text):
-                promptText = text
-                prompt = Prompt(text); metadata = [AgentPromptKey.feedback: true]
+                promptText = text; metadata = [AgentPromptKey.feedback: true]
                 marker = Transcript.Prompt(metadata: metadata, segments: [.text(.init(content: text))])
             }
             state.entries = history
@@ -371,7 +367,7 @@ enum AgentInstructions {
             let result: Result<Void, any Error>
             var entries = history
             if let session {
-                result = await Self.consume(session, prompt: prompt, metadata: metadata) { [weak self] entries in
+                result = await Self.consume(session, prompt: Prompt(promptText), metadata: metadata) { [weak self] entries in
                     await self?.receive(entries)
                 }
                 await commandsCleanedUp()
@@ -498,8 +494,9 @@ enum AgentInstructions {
 
     /// After a Stop only the cut-off reply goes: finished tool calls and their results stay, and
     /// calls left without a result are marked as not run. A final reply that completed before the
-    /// Stop took effect keeps the turn completed (S2 in docs/foundation-models-findings.md: a
-    /// cancelled stream ends normally, so the ledger, not the stream, says what finished).
+    /// Stop took effect keeps the turn completed. A cancelled stream can end without an error, so
+    /// the ledger, not the stream, says what finished
+    /// (`AgentHarnessTests.stopKeepsFinishedToolResultsAndRacesCompletion`).
     private func finishStopped(_ entries: [Transcript.Entry], base: Int, ledger: GenerationLedger) {
         var kept = Self.trimmingUnfinished(entries, base: base, ledger: ledger)
         if let reply = ledger.finalReply {
@@ -807,7 +804,7 @@ enum AgentInstructions {
             while turnIndex < state.turns.count, state.turns[turnIndex].start <= index { turnIndex += 1 }
             switch entry {
             case .prompt(let prompt):
-                guard let id = prompt.metadata[AgentPromptKey.message].flatMap(Self.string).flatMap(UUID.init(uuidString:)) else { continue }
+                guard let id = Self.messageID(of: entry).flatMap(UUID.init(uuidString:)) else { continue }
                 var message = existing[id] ?? ConversationMessage(role: .user, content: Self.text(prompt.segments))
                 message.id = id
                 if message.steering == "待处理" || message.steering == "已中断" { message.steering = nil }
@@ -898,7 +895,7 @@ enum AgentInstructions {
         }
     }
 
-    /// Calls without a result, in order, as (entry index, call).
+    /// Calls without a result, in order.
     nonisolated static func danglingCalls(_ entries: [Transcript.Entry]) -> [Transcript.ToolCall] {
         var open: [Transcript.ToolCall] = []
         for entry in entries {

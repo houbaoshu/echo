@@ -102,10 +102,7 @@ final class CoreAILocalChatBackend: LocalChatBackend {
         let unloadNow = state.withLock { state -> Bool in
             state.loading = nil
             if let model { state.model = model }
-            guard state.active == 0 else { return false }
-            if state.unloadWhenIdle { return true }
-            scheduleIdleUnload(&state)
-            return false
+            return settle(&state)
         }
         if unloadNow { unloadIfIdle() }
     }
@@ -157,23 +154,25 @@ final class CoreAILocalChatBackend: LocalChatBackend {
     private func end() {
         let unloadNow = state.withLock { state -> Bool in
             state.active -= 1
-            guard state.active == 0 else { return false }
-            if state.unloadWhenIdle { return true }
-            scheduleIdleUnload(&state)
-            return false
+            return settle(&state)
         }
         if unloadNow { unloadIfIdle() }
     }
 
-    private func scheduleIdleUnload(_ state: inout State) {
+    /// Once no reply uses the model: true when it must go now because memory ran low; otherwise
+    /// the idle timer starts.
+    private func settle(_ state: inout State) -> Bool {
+        guard state.active == 0 else { return false }
+        if state.unloadWhenIdle { return true }
         state.idleTimer?.cancel()
-        guard state.model != nil else { state.idleTimer = nil; return }
+        guard state.model != nil else { state.idleTimer = nil; return false }
         let idle = idle
         state.idleTimer = Task { [weak self] in
             try? await Task.sleep(for: idle)
             guard !Task.isCancelled else { return }
             self?.unloadIfIdle()
         }
+        return false
     }
 
     private func memoryPressure() {

@@ -2,10 +2,10 @@ import Foundation
 import FoundationModels
 import Synchronization
 
-/// A deterministic, in-process model for the native Agent engine, ported from the Phase 0 probe's
-/// `StepScript`. Each model request runs the script's step with the request and its index; the
-/// step streams into the channel through a `ScriptedEmitter`. Like `EchoLanguageModel`, the
-/// executor spends the turn's budget first and records the entries it finished in the ledger.
+/// A deterministic, in-process model for the native Agent engine. Each model request runs the
+/// script's step with the request and its index; the step streams into the channel through a
+/// `ScriptedEmitter`. Like `EchoLanguageModel`, the executor spends the turn's budget first and
+/// records the entries it finished in the ledger.
 final class ScriptedAgentModel: Sendable, Hashable {
     typealias Step = @Sendable (_ request: LanguageModelExecutorGenerationRequest, _ emit: ScriptedEmitter, _ index: Int) async throws -> Void
     private let step: Step
@@ -165,16 +165,21 @@ extension LanguageModelExecutorGenerationRequest {
             return AgentHarness.text(prompt.segments)
         }
     }
-    var toolOutputs: [String] {
-        transcript.compactMap { entry in
-            guard case .toolOutput(let output) = entry else { return nil }
-            return AgentHarness.text(output.segments)
-        }
-    }
+    var toolOutputs: [String] { transcript.toolOutputs }
     var feedback: [String] {
         transcript.compactMap { entry in
             guard case .prompt(let prompt) = entry, prompt.metadata[AgentPromptKey.feedback] != nil else { return nil }
             return AgentHarness.text(prompt.segments)
+        }
+    }
+}
+
+extension Sequence where Element == Transcript.Entry {
+    /// The text of every tool result, in order.
+    var toolOutputs: [String] {
+        compactMap { entry in
+            guard case .toolOutput(let output) = entry else { return nil }
+            return AgentHarness.text(output.segments)
         }
     }
 }

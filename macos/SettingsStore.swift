@@ -204,6 +204,8 @@ protocol ConnectionTesting: Sendable {
     @Published private(set) var testSucceeded = false
     /// The offline model, as its files show it; refreshed when the model settings appear.
     @Published private(set) var localModel: LocalModelAvailability = .missing
+    /// The ready model's name from its metadata, read with `localModel`; nil when there is no usable one.
+    @Published private(set) var localModelName: String?
     @Published private(set) var importingLocalModel = false
     @Published var localModelNotice: String?
     private let url: URL?
@@ -331,7 +333,12 @@ protocol ConnectionTesting: Sendable {
             }
         } catch { voiceNotice = error is SettingsError ? error.localizedDescription : "语音配置保存失败，请检查目录写入权限。" }
     }
-    func refreshLocalModel() { localModel = LocalModelLocation.find() }
+    func refreshLocalModel() {
+        localModel = LocalModelLocation.find()
+        if case .ready(let url) = localModel {
+            localModelName = LocalModelLocation.displayName(in: url) ?? url.lastPathComponent
+        } else { localModelName = nil }
+    }
     /// Copies a model folder the user picked into Echo's Models folder, checking it first.
     func importLocalModel(from source: URL) {
         guard !importingLocalModel else { return }

@@ -4,27 +4,26 @@ import FoundationModels
 /// The Agent connection test: Echo's own adapter, one required call to a probe tool
 /// with bash's name and schema. The call itself is the result; the probe never runs anything.
 struct NativeConnectionTester: ConnectionTesting {
-    var transport: (@Sendable (AgentEndpoint) -> AgentTransport)?
-
     @MainActor func test(configuration: ModelConfiguration, key: String) async throws {
         let configuration = try configuration.validated()
         guard !key.contains("\r"), !key.contains("\n") else { throw SettingsError("API Key 不能包含换行。") }
         try Task.checkCancellation()
         let endpoint = AgentEndpoint(configuration, key: key)
-        let model = EchoLanguageModel(endpoint: endpoint, transport: transport?(endpoint) ?? AgentTransport.make(for: endpoint),
+        let model = EchoLanguageModel(endpoint: endpoint, transport: AgentTransport.make(for: endpoint),
                                       ledger: GenerationLedger(), budget: GenerationBudget(limit: 1))
         let session = LanguageModelSession(profile: ProbeProfile(model: model), history: [])
         let title = configuration.apiProtocol.title
+        let noValidCall = SettingsError("未收到有效的 bash 工具调用，请检查模型、额度及 \(title) 工具调用支持。")
         do {
             _ = try await Self.respond(session)
-            throw SettingsError("未收到有效的 bash 工具调用，请检查模型、额度及 \(title) 工具调用支持。")
+            throw noValidCall
         } catch let error as LanguageModelSession.ToolCallError {
             guard let outcome = error.underlyingError as? ProbeTool.Outcome else { throw error }
-            if outcome == .invalid { throw SettingsError("未收到有效的 bash 工具调用，请检查模型、额度及 \(title) 工具调用支持。") }
+            if outcome == .invalid { throw noValidCall }
         } catch let error as SettingsError { throw error }
         catch is CancellationError { throw CancellationError() }
         catch is GeneratedContent.ParsingError {
-            throw SettingsError("未收到有效的 bash 工具调用，请检查模型、额度及 \(title) 工具调用支持。")
+            throw noValidCall
         } catch {
             try Task.checkCancellation()
             // Provider errors can contain arbitrary response bodies; do not show them.
@@ -53,12 +52,9 @@ struct NativeConnectionTester: ConnectionTesting {
         enum Outcome: Error, Equatable { case called, invalid }
         let name = "bash"
         let description = BashTool.toolDescription
-        @Generable struct Input {
-            var command: String
-        }
-        var parameters: GenerationSchema { Input.generationSchema }
+        var parameters: GenerationSchema { BashTool.Input.generationSchema }
         func call(arguments: GeneratedContent) async throws -> String {
-            guard let input = try? Input(arguments), !input.command.isEmpty else { throw Outcome.invalid }
+            guard let input = try? BashTool.Input(arguments), !input.command.isEmpty else { throw Outcome.invalid }
             throw Outcome.called
         }
     }

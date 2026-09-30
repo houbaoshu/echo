@@ -5,7 +5,6 @@ import Testing
 extension EchoIntegrationScenarios {
   /// Chat scenarios the Agent must pass. They observe only `TaskStore`, `WorkspaceStore`, the
   /// loopback server and files on disk.
-  /// Tool scenarios stay in `AgentSessionTests` until Phase 2 parameterizes them.
   @MainActor enum ChatScenarios {
     static func wait(_ label: String, _ condition: () -> Bool) async throws {
       try await AgentSessionTests.wait(label, condition)
@@ -131,10 +130,10 @@ extension EchoIntegrationScenarios {
 
     /// A missing or corrupt history sidecar blocks sending and retrying, is never replaced by
     /// saving, and unblocks once restored. `seed` is "hello" for chat, "tool" once the engine
-    /// executes commands; `modelContext` checks an engine's own history bytes.
+    /// executes commands; `modelContext` checks the restored model context.
     static func historyReadRecovery(
       _ f: SessionFixture, seed: String,
-      modelContext: (_ recovered: TaskStore, _ expected: TaskStore.Snapshot) -> Void = { _, _ in }
+      modelContext: (_ recovered: TaskStore, _ expected: TaskStore.Snapshot) -> Void
     ) async throws {
       let temp = f.root
       let factory = { f.source() }
@@ -355,9 +354,9 @@ extension EchoIntegrationScenarios {
       }
     }
 
-    /// The native engine's side of plan §4 #9: invalid output still fails on the third in a row
-    /// with the same wording, but the feedback is model-only, never a user bubble; calls to an
-    /// unknown tool are answered as not run, as before.
+    /// Invalid model output over both wire protocols fails the turn on the third in a row with the
+    /// format-error message. An empty reply gets feedback that reaches the model but never shows as
+    /// a user message; each call to an unknown tool is recorded as not run and executes nothing.
     @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
     static func nativeInvalidModelOutputGetsHiddenFeedback(api: ModelAPIProtocol) async throws {
       try await withSession { f in

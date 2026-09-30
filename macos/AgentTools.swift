@@ -6,8 +6,8 @@ import Synchronization
 // Pure Swift tools for the native Agent. They read the conversation's project without starting
 // any process. Names, descriptions and limits follow mini-agent-rs `tools.rs` / `tdd.rs`.
 // Arguments are decoded by the tool itself, so a schema mismatch becomes model-visible output
-// instead of aborting the turn (a typed `Arguments` fails before the tool runs; see
-// docs/foundation-models-findings.md).
+// instead of aborting the turn: a typed `Arguments` would have to decode before the tool runs.
+// `AgentReadToolTests.argumentsAreDecodedByTheTool` covers the model-visible failure.
 
 /// The project folder a tool works in, as the conversation resolved it.
 enum AgentProjectRoot: Sendable, Equatable {
@@ -212,9 +212,10 @@ struct ReadFileTool: Tool {
 
 /// Runs bash calls for the conversation: folder, directory lease, save, then the command.
 protocol AgentBashAccess: Sendable {
-    /// `call` is the arguments' identity, which names the call (S11 in
-    /// docs/foundation-models-findings.md). `command` is nil when the call carries none; it still
-    /// takes its place in the batch's order.
+    /// `call` is the identity of the call's arguments. `Tool.call` is not told which transcript
+    /// call it serves; this identity links it to the call the harness saw dispatched, also when
+    /// two calls carry identical arguments (`NativeBashTests.identicalCallsRunOneAtATimeAsThemselves`).
+    /// `command` is nil when the call carries none; it still takes its place in the batch's order.
     func run(call: GenerationID?, command: String?) async throws -> String
 }
 

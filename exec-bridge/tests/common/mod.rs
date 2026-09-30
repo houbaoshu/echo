@@ -35,6 +35,11 @@ pub fn start(request: Value) -> Result<Started, String> {
     Ok(Started { handle, results: rx })
 }
 
+/// The CommandOutput JSON a completed result carries as a string.
+pub fn parsed(result: &Value) -> Value {
+    serde_json::from_str(result["output"].as_str().expect("output is a JSON string")).unwrap()
+}
+
 pub fn command(command: &str, directory: &std::path::Path) -> Value {
     serde_json::json!({"version": 1, "command": command, "directory": directory.canonicalize().unwrap()})
 }

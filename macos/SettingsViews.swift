@@ -211,21 +211,16 @@ struct ModelSettingsView: View {
 struct LocalModelSection: View {
     @ObservedObject var settings: SettingsStore
     @State private var importing = false
-    /// The imported model's name from its metadata, or nil when there is no usable one.
-    private var modelName: String? {
-        guard case .ready(let url) = settings.localModel else { return nil }
-        return LocalModelLocation.displayName(in: url) ?? url.lastPathComponent
-    }
     var body: some View {
         Section {
             Toggle("仅使用本地模型", isOn: Binding(get: { settings.snapshot.localModelOnly }, set: { settings.setLocalModelOnly($0) }))
                 .toggleStyle(.switch).accessibilityIdentifier("settings.localModel.only")
             // Only one model can be imported for now, so the menu lists exactly what is
             // there and choosing is a no-op; it is a picker so the row reads like the others.
-            let title = modelName ?? "未导入"
+            let title = settings.localModelName ?? "未导入"
             Picker("模型", selection: .constant(title)) {
                 Text(title).tag(title)
-            }.disabled(modelName == nil).accessibilityIdentifier("settings.localModel.model")
+            }.disabled(settings.localModelName == nil).accessibilityIdentifier("settings.localModel.model")
             if case .invalid(let reason) = settings.localModel {
                 Text("模型不完整：\(reason)").font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
                     .textSelection(.enabled).accessibilityIdentifier("settings.localModel.problem")

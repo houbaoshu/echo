@@ -5,9 +5,8 @@ import Synchronization
 // Echo's own Foundation Models executors for OpenAI-compatible providers. Each `respond`
 // sends exactly one HTTP request: Foundation Models drives the tool loop, these only map the
 // transcript to the wire and the stream back to channel events. Text streams to the channel
-// as it arrives (S2 in docs/foundation-models-findings.md: `streamResponse` shows it live);
-// which entries finished is recorded in a `GenerationLedger`, so a Stop can drop only what was
-// really cut off.
+// as it arrives, so `streamResponse` shows it live; which entries finished is recorded in a
+// `GenerationLedger`, so a Stop can drop only what was really cut off.
 //
 // Transport rules match mini-agent-rs `models.rs`: the base URL plus `/chat/completions` or
 // `/responses`, a Bearer key only when one is set, one 60 s budget for the whole request
@@ -135,7 +134,6 @@ final class GenerationBudget: Sendable, Hashable {
     let steering: AgentSteeringSignal
     private let used = Mutex(0)
     init(limit: Int = 30, steering: AgentSteeringSignal = AgentSteeringSignal()) { self.limit = limit; self.steering = steering }
-    var count: Int { used.withLock { $0 } }
     func spend() throws {
         if steering.isPending { throw Superseded() }
         try used.withLock { if $0 >= limit { throw Exhausted() }; $0 += 1 }

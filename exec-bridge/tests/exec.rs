@@ -3,10 +3,6 @@ use common::*;
 use serde_json::json;
 use std::time::{Duration, Instant};
 
-fn parsed(result: &serde_json::Value) -> serde_json::Value {
-    serde_json::from_str(result["output"].as_str().expect("output is a JSON string")).unwrap()
-}
-
 #[test]
 fn completed_output_is_the_history_contract() {
     let temp = tempfile::tempdir().unwrap();

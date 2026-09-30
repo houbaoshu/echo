@@ -44,7 +44,7 @@ final class AppIntegrationTests: XCTestCase {
         guard case .ready = LocalModelLocation.find() else { return XCTFail("\(LocalModelLocation.find())") }
         let backend = CoreAILocalChatBackend()
         let harness = AgentHarness(resolveModel: { throw SettingsError("no cloud model") },
-                                   local: LocalChatService(backend: backend, mode: .always))
+                                   local: LocalChatService(backend: backend), localOnly: { true })
         let store = TaskStore(source: harness)
         defer { store.shutdown() }
         var snapshots: [String] = []

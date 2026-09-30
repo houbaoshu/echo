@@ -423,13 +423,19 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @discardableResult private func saveAgent() -> Bool {
         do { try checkpoint?(snapshot); return true }
         catch {
-            storageFailure = "会话保存失败，已停止后续执行：\(error.localizedDescription)"
-            notice = storageFailure; cancelDirectoryWait?()
-            task?.summary = storageFailure!
+            let failure = recordSaveFailure(error)
+            cancelDirectoryWait?()
+            task?.summary = failure
             if isGenerating { task?.status = .stopping; harness?.stop() }
             else { task?.status = .failed }
             return false
         }
+    }
+    /// Keeps a failed save's message: once a save fails, nothing more runs this turn.
+    private func recordSaveFailure(_ error: any Error) -> String {
+        let failure = "会话保存失败，已停止后续执行：\(error.localizedDescription)"
+        storageFailure = failure; notice = failure
+        return failure
     }
     func provideDirectory(_ url: URL?) {
         guard needsDirectory, task?.status == .running else { return }
@@ -510,8 +516,7 @@ extension TaskStore: AgentHarnessHost {
         guard !retired else { throw CancellationError() }
         do { try checkpoint?(snapshot) }
         catch {
-            let failure = "会话保存失败，已停止后续执行：\(error.localizedDescription)"
-            storageFailure = failure; notice = failure
+            let failure = recordSaveFailure(error)
             if task?.status == .running { task?.summary = failure }
             throw SettingsError(failure)
         }
@@ -548,8 +553,7 @@ extension TaskStore: AgentHarnessHost {
         // The ending joins the saved conversation before anyone is told.
         do { try checkpoint?(snapshot) }
         catch {
-            let failure = "会话保存失败，已停止后续执行：\(error.localizedDescription)"
-            storageFailure = failure; notice = failure
+            let failure = recordSaveFailure(error)
             task?.status = .failed; task?.summary = failure; event = .reply(runID, .failed(failure))
         }
         lifecycle.send(event)

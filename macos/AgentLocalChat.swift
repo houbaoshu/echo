@@ -126,19 +126,10 @@ protocol LocalChatBackend: Sendable {
 
 /// The app's local model, shared by every conversation.
 final class LocalChatService: Sendable {
-    enum Mode: Sendable {
-        /// Only when the cloud model cannot be used.
-        case offlineFallback
-        /// Every turn, for development (`ECHO_LOCAL_CHAT=always`); a failure never reaches the cloud.
-        case always
-    }
-    let mode: Mode
     let backend: any LocalChatBackend
     private let gate = LocalChatGate()
 
-    init(backend: any LocalChatBackend, mode: Mode = .offlineFallback) {
-        self.backend = backend; self.mode = mode
-    }
+    init(backend: any LocalChatBackend) { self.backend = backend }
 
     var factory: AgentHarness.ModelFactory {
         { [self] ledger, budget in LocalChatLanguageModel(service: self, ledger: ledger, budget: budget) }
