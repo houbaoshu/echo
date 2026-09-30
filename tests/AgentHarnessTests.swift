@@ -520,6 +520,21 @@ import Testing
         #expect(state.turns == [.init(start: 0, outcome: .completed)] && state.replies["msg_1"] != nil)
     }
 
+    /// Builds that labeled local replies saved `replyModels` and `turns[].local`: they are ignored
+    /// on reading and dropped on the next save.
+    @Test func replyLabelsOlderBuildsSavedAreIgnored() throws {
+        let older = Self.savedState
+            .replacingOccurrences(of: #"{"pendingInputs""#, with: #"{"replyModels":{"msg_1":"Qwen3-0.6B 4bit"},"pendingInputs""#)
+            .replacingOccurrences(of: #"{"outcome":"completed""#, with: #"{"local":true,"outcome":"completed""#)
+        #expect(older.contains("replyModels") && older.contains(#""local":true"#))
+        let state = try JSONDecoder().decode(NativeAgentState.self, from: Data(older.utf8))
+        let current = try JSONDecoder().decode(NativeAgentState.self, from: Data(Self.savedState.utf8))
+        // Entries decoded twice are not `==`, so the two are compared as they save.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        #expect(try encoder.encode(state) == encoder.encode(current))
+    }
+
     static let savedState = #"""
     {"pendingInputs":[],"replies":{"msg_1":"3F2504E0-4F89-11D3-9A0C-0305E82C3301"},"turns":[{"outcome":"completed","start":0}],"transcript":{"transcript":{"entries":[{"contents":[{"id":"BDEB42AA-7A5A-484A-AF27-25FE31F4FAB2","text":"go","type":"text"}],"contextOptions":{},"id":"FE93B8BE-C462-42DB-AEA7-F91155DA6FAB","metadata":{"echo.kind":"user"},"options":{},"role":"user"},{"id":"rs_1","reasoning":{"contents":[{"id":"04A34014-98C1-4161-ADA0-AFD5CC4E285E","text":"thinking","type":"text"}],"signature":"AQID"},"role":"reasoning"},{"id":"fc_1","role":"response","toolCalls":[{"arguments":"{\"note\": \"a\"}","id":"call-1","name":"echo"}]},{"contents":[{"id":"3C1BC845-2304-42B5-A869-44576984CD15","text":"echo:a","type":"text"}],"id":"call-1","role":"tool","toolCallID":"call-1","toolName":"echo"},{"contents":[{"id":"85FB4199-2D6D-4222-A866-B4098EB30E4F","text":"done","type":"text"}],"id":"msg_1","metadata":{"provider.item":"msg_1"},"role":"response"}]},"type":"FoundationModels.Transcript","version":"1.1"}}
     """#

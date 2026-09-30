@@ -7,14 +7,11 @@ import Testing
 /// The local chat model driven through `TaskStore`, with a fake backend that streams like Core AI:
 /// text events without entry IDs, then usage.
 @MainActor @Suite(.serialized, .tags(.fast)) struct LocalChatTests {
-    nonisolated static let fakeModel = "Fake-1B 4bit"
     typealias Step = @Sendable (_ request: LanguageModelExecutorGenerationRequest, _ channel: LanguageModelExecutorGenerationChannel, _ index: Int) async throws -> Void
 
     final class FakeBackend: LocalChatBackend {
         private let step: Step
         private let available: Mutex<LocalModelAvailability>
-        private let name = Mutex(LocalChatTests.fakeModel)
-        func setModelName(_ value: String) { name.withLock { $0 = value } }
         private let state = Mutex((requests: [LanguageModelExecutorGenerationRequest](), running: 0, maxRunning: 0))
         init(available: LocalModelAvailability = .ready(URL(fileURLWithPath: "/fake-model")), step: @escaping Step) {
             self.available = Mutex(available); self.step = step
@@ -24,7 +21,7 @@ import Testing
         func availability() -> LocalModelAvailability { available.withLock { $0 } }
         func setAvailability(_ value: LocalModelAvailability) { available.withLock { $0 = value } }
         func respond(to request: LanguageModelExecutorGenerationRequest,
-                     streamingInto channel: LanguageModelExecutorGenerationChannel) async throws -> String {
+                     streamingInto channel: LanguageModelExecutorGenerationChannel) async throws {
             let index = state.withLock { state -> Int in
                 state.requests.append(request)
                 state.running += 1; state.maxRunning = max(state.maxRunning, state.running)
@@ -32,7 +29,6 @@ import Testing
             }
             defer { state.withLock { $0.running -= 1 } }
             try await step(request, channel, index)
-            return name.withLock { $0 }
         }
 
         /// Streams `chunks` a gap apart, as Core AI does: no entry IDs, usage last.
@@ -76,7 +72,7 @@ import Testing
 
     // MARK: Chat
 
-    @Test func localTurnsChatWithoutToolsAndKeepTheirLabelAcrossARestart() async throws {
+    @Test func localTurnsChatWithoutToolsAndSurviveARestart() async throws {
         let chat = LocalChat { _, channel, index in
             try await FakeBackend.stream(["回", "复", "\(index)", "。"], gap: .milliseconds(40), into: channel)
         }
@@ -90,9 +86,8 @@ import Testing
 
         #expect(shown.contains { $0 != nil && $0 != "回复0。" && "回复0。".hasPrefix($0!) }, "The reply streams while it is written: \(shown)")
         #expect(chat.assistant.map(\.content) == ["回复0。", "回复1。"])
-        #expect(chat.assistant.allSatisfy { $0.modelLabel == Self.fakeModel && $0.status == .completed })
+        #expect(chat.assistant.allSatisfy { $0.status == .completed })
         #expect(chat.store.task?.status == .completed && chat.store.task?.summary == "已完成")
-        #expect(chat.native.turns.map(\.local) == [true, true])
 
         let requests = chat.backend.requests
         #expect(requests.count == 2)
@@ -106,11 +101,10 @@ import Testing
         #expect(requests.last?.kinds == ["instructions", "prompt", "response", "prompt"])
         #expect(!ExecutionService.coreStarted && chat.runner.runs.isEmpty, "Local chat never starts the execution core")
 
-        // A restart restores the replies with their label.
+        // A restart restores the replies.
         let saved = try #require(chat.saved.last)
         let restored = LocalChat({ _, _, _ in }, snapshot: saved)
         #expect(restored.store.messages.map(\.content) == chat.store.messages.map(\.content))
-        #expect(restored.assistant.map(\.modelLabel) == [Self.fakeModel, Self.fakeModel])
         restored.store.shutdown(); chat.store.shutdown()
     }
 
@@ -136,7 +130,6 @@ import Testing
         let after = chat.native.entries
         #expect(after.map(AgentHarnessTests.kind) == before.map(AgentHarnessTests.kind) + ["prompt", "response"])
         #expect(Array(after.prefix(before.count)) == before, "The saved history is untouched")
-        #expect(chat.assistant.map(\.modelLabel) == [nil, Self.fakeModel])
         chat.store.shutdown()
     }
 
@@ -362,8 +355,8 @@ import Testing
             try await chat.idle()
             #expect(FailingProtocol.count.withLock { $0 } == 1, "The cloud was tried first")
             #expect(chat.users == ["你好"] && chat.assistant.map(\.content) == ["本地回复0"])
-            #expect(chat.assistant.first?.modelLabel == Self.fakeModel && chat.events == ["completed:本地回复0"])
-            #expect(chat.native.entries.map(AgentHarnessTests.kind) == ["prompt", "response"] && chat.native.turns.map(\.local) == [true])
+            #expect(chat.events == ["completed:本地回复0"])
+            #expect(chat.native.entries.map(AgentHarnessTests.kind) == ["prompt", "response"] && chat.backend.requests.count == 1)
             #expect(chat.backend.requests.first?.userTexts == ["你好"])
 
             // The network is back: the next turn goes to the cloud and sees the local exchange.
@@ -372,7 +365,6 @@ import Testing
             #expect(chat.store.send("再来"))
             try await chat.idle()
             #expect(chat.assistant.map(\.content) == ["本地回复0", "云端回复"])
-            #expect(chat.assistant.map(\.modelLabel) == [Self.fakeModel, nil] && chat.native.turns.map(\.local) == [true, nil])
             #expect(cloud.requests.first?.kinds == ["instructions", "prompt", "response", "prompt"])
             #expect(chat.backend.requests.count == 1)
             chat.store.shutdown()
@@ -450,7 +442,6 @@ import Testing
         try await restarted.idle()
         #expect(restarted.users == ["在吗"] && restarted.assistant.map(\.content) == ["终于"])
         #expect(backend.requests.count == 1 && backend.requests.first?.userTexts == ["在吗"])
-        #expect(restarted.native.turns.last?.local == true)
         restarted.store.shutdown()
     }
 
@@ -458,7 +449,7 @@ import Testing
         let chat = FallbackChat(cloud: { throw SettingsError.modelNotConfigured })
         #expect(chat.store.send("你好"))
         try await chat.idle()
-        #expect(chat.assistant.map(\.content) == ["本地回复0"] && chat.native.turns.map(\.local) == [true])
+        #expect(chat.assistant.map(\.content) == ["本地回复0"] && chat.backend.requests.count == 1)
         chat.store.shutdown()
 
         let neither = FallbackChat(cloud: { throw SettingsError.modelNotConfigured },
@@ -518,7 +509,7 @@ import Testing
         print("Import fixture kept at \(root.path)")
     }
 
-    // MARK: Local only, and model names
+    // MARK: Local only
 
     @Test func localOnlyAppliesFromTheNextTurnAndNeverFallsBackToTheCloud() async throws {
         let cloud = ScriptedAgentModel { _, emit, index in try await emit.text("云端\(index)") }
@@ -539,7 +530,6 @@ import Testing
         #expect(chat.store.send("二"))
         try await chat.idle()
         #expect(chat.assistant.map(\.content) == ["本地0", "云端0"] && backend.requests.count == 1)
-        #expect(chat.assistant.map(\.modelLabel) == [Self.fakeModel, nil])
 
         // Local only with no usable model: the turn says so and the cloud is not asked.
         chat.localOnly = true
@@ -553,26 +543,5 @@ import Testing
         #expect(chat.store.task?.summary == LocalChatError.modelInvalid("缺少内嵌 tokenizer").localizedDescription)
         #expect(cloud.requests.count == 1 && backend.requests.count == 1)
         chat.store.shutdown()
-    }
-
-    @Test func eachReplyKeepsTheModelThatWroteIt() async throws {
-        let chat = LocalChat { _, channel, index in try await FakeBackend.stream(["回复\(index)"], into: channel) }
-        #expect(chat.store.send("一"))
-        try await chat.idle()
-        chat.backend.setModelName("Other-2B 8bit")
-        #expect(chat.store.send("二"))
-        try await chat.idle()
-        #expect(chat.assistant.map(\.modelLabel) == [Self.fakeModel, "Other-2B 8bit"])
-        let saved = try #require(chat.saved.last)
-        chat.store.shutdown()
-        // After a restart, and with yet another model installed, old replies keep their names.
-        let restored = LocalChat({ _, channel, _ in try await FakeBackend.stream(["三号"], into: channel) }, snapshot: saved)
-        restored.backend.setModelName("Third-4B")
-        #expect(restored.store.send("三"))
-        try await restored.idle()
-        #expect(restored.assistant.map(\.modelLabel) == [Self.fakeModel, "Other-2B 8bit", "Third-4B"])
-        let json = try JSONEncoder().encode(restored.native)
-        #expect(try JSONDecoder().decode(NativeAgentState.self, from: json).replyModels.count == 3)
-        restored.store.shutdown()
     }
 }

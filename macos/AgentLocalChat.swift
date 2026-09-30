@@ -118,10 +118,9 @@ enum LocalChatError: Error, LocalizedError, Equatable {
 /// but never while a reply is being generated.
 protocol LocalChatBackend: Sendable {
     func availability() -> LocalModelAvailability
-    /// Streams one reply to `request` and returns the name of the model that wrote it; waiting
-    /// for a load ends at cancellation.
+    /// Streams one reply to `request`; waiting for a load ends at cancellation.
     func respond(to request: LanguageModelExecutorGenerationRequest,
-                 streamingInto channel: LanguageModelExecutorGenerationChannel) async throws -> String
+                 streamingInto channel: LanguageModelExecutorGenerationChannel) async throws
 }
 
 /// The app's local model, shared by every conversation.
@@ -136,11 +135,11 @@ final class LocalChatService: Sendable {
     }
 
     fileprivate func generate(_ request: LanguageModelExecutorGenerationRequest,
-                              into channel: LanguageModelExecutorGenerationChannel) async throws -> String {
+                              into channel: LanguageModelExecutorGenerationChannel) async throws {
         try await gate.acquire()
         defer { gate.release() }
         try Task.checkCancellation()
-        return try await backend.respond(to: request, streamingInto: channel)
+        try await backend.respond(to: request, streamingInto: channel)
     }
 }
 
@@ -219,10 +218,10 @@ struct LocalChatExecutor: LanguageModelExecutor {
         // Qwen3 thinks before answering unless its chat template gets enable_thinking=false.
         local.contextOptions.reasoningLevel = .custom("none")
         local.generationOptions.maximumResponseTokens = LocalChatContext.maximumResponseTokens
-        let model = try await configuration.service.value.generate(local, into: channel)
+        try await configuration.service.value.generate(local, into: channel)
         // A cancelled generation can end without an error; only one that ran to its end is complete.
         try Task.checkCancellation()
-        configuration.ledger.markAllComplete(model: model)
+        configuration.ledger.markAllComplete()
     }
 }
 

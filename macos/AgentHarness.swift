@@ -23,8 +23,6 @@ struct NativeAgentState: Codable {
         /// Index of the turn's first transcript entry.
         var start: Int
         var outcome: AgentTurnOutcome?
-        /// The local model answered this turn; nil for the cloud model.
-        var local: Bool?
     }
     struct Input: Codable, Equatable {
         var messageID: UUID
@@ -37,18 +35,15 @@ struct NativeAgentState: Codable {
     var pendingInputs: [Input] = []
     /// The assistant message shown for each response entry, by entry ID.
     var replies: [String: UUID] = [:]
-    /// The local model that wrote a response entry, by entry ID, as it named itself then.
-    var replyModels: [String: String] = [:]
 
     init() {}
-    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies, replyModels }
+    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         entries = Array(try values.decode(Transcript.self, forKey: .transcript))
         turns = try values.decode([Turn].self, forKey: .turns)
         pendingInputs = try values.decode([Input].self, forKey: .pendingInputs)
         replies = try values.decode([String: UUID].self, forKey: .replies)
-        replyModels = try values.decodeIfPresent([String: String].self, forKey: .replyModels) ?? [:]
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -56,7 +51,6 @@ struct NativeAgentState: Codable {
         try values.encode(turns, forKey: .turns)
         try values.encode(pendingInputs, forKey: .pendingInputs)
         try values.encode(replies, forKey: .replies)
-        if !replyModels.isEmpty { try values.encode(replyModels, forKey: .replyModels) }
     }
 
     /// Continue is offered for input that never reached the model and for a last turn that did not complete.
@@ -312,7 +306,7 @@ enum AgentInstructions {
         }
 
         let budget = GenerationBudget(limit: Self.generationLimit, steering: steering)
-        state.turns.append(.init(start: state.entries.count, local: route.isLocal ? true : nil))
+        state.turns.append(.init(start: state.entries.count))
         var next: Next = state.pendingInputs.isEmpty ? .resume : .inputs
         var formatErrors = 0
         while true {
@@ -382,9 +376,6 @@ enum AgentInstructions {
                 entries.insert(.prompt(userPrompt), at: history.count)
             }
             let added = entries[history.count...]
-            if let model = ledger.model {
-                for case .response(let response) in added { state.replyModels[response.id] = model }
-            }
             let streamed = live.contains { if case .prompt = $0 { false } else { true } }
             runningPrompt = nil; live = []; checkpointed = []; dispatched = []
 
@@ -468,7 +459,6 @@ enum AgentInstructions {
                         case .ready:
                             state.entries = before.entries
                             state.pendingInputs = before.pendingInputs + state.pendingInputs
-                            state.turns[state.turns.count - 1].local = true
                             route = .local(local)
                             continue
                         case .missing:
@@ -548,7 +538,6 @@ enum AgentInstructions {
         resumeLease(granted: nil)
         let responses = Set(state.entries.compactMap { if case .response(let response) = $0 { response.id } else { nil } })
         state.replies = state.replies.filter { responses.contains($0.key) }
-        state.replyModels = state.replyModels.filter { responses.contains($0.key) }
         project()
         host?.harnessNeedsDirectory(false)
         // Idle before the conversation hears the ending, so a listener may start the next turn at once.
@@ -815,9 +804,6 @@ enum AgentInstructions {
                 let id = replyID(response.id)
                 var message = existing[id] ?? ConversationMessage(role: .assistant, content: text)
                 message.id = id; message.content = text; message.status = .completed
-                // Replies saved before models were named keep the generic label.
-                message.modelLabel = state.replyModels[response.id]
-                    ?? (turnIndex > 0 && state.turns[turnIndex - 1].local == true ? "本地模型" : nil)
                 messages.append(message); anchor = id
             case .toolCalls(let calls):
                 for call in calls {

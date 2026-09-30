@@ -31,9 +31,6 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
     var timestamp = Date()
     var errorMessage: String?
     var steering: String?
-    /// Which model wrote a reply, when it is not the usual one. Not saved: the Agent engine derives
-    /// it from its own saved turns each time it projects the conversation.
-    var modelLabel: String?
 
     private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, text, steering }
     init(role: Role, content: String, status: Status = .completed) {
