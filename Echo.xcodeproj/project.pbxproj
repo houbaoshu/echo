@@ -302,7 +302,7 @@
 		E0000000000000000000001D /* pets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = pets; path = assets/pets; sourceTree = "<group>"; };
 		E0000000000000000000001E /* planets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = planets; path = assets/planets; sourceTree = "<group>"; };
 		E110000000000000000000FF /* EchoChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		E11000000000000000000F02 /* AgentConnectionTester.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentConnectionTester.swift; path = macos/AgentConnectionTester.swift; sourceTree = "<group>"; };
+		E11000000000000000000F02 /* AgentConnectionTester.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentConnectionTester.swift; path = macos/Features/Agent/AgentConnectionTester.swift; sourceTree = "<group>"; };
 		E11000000000000000000F03 /* TaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TaskStore.swift; path = macos/Features/Conversation/TaskStore.swift; sourceTree = "<group>"; };
 		E11000000000000000000F05 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsStore.swift; path = macos/Features/Settings/SettingsStore.swift; sourceTree = "<group>"; };
 		E11000000000000000000F06 /* VoiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceProtocol.swift; path = macos/Features/Voice/VoiceProtocol.swift; sourceTree = "<group>"; };
