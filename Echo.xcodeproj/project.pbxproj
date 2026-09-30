@@ -110,7 +110,7 @@
 		EE3E2F85DDBFEEDEDD7B89FC /* tests/fixtures/speech/paused.wav in Resources */ = {isa = PBXBuildFile; fileRef = 9B8E739899162095ABA722F3 /* tests/fixtures/speech/paused.wav */; };
 		F1DA05F3182E450B41CD433D /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
 		F20000000000000000000003 /* CoreAILM in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000002 /* CoreAILM */; };
-		F20000000000000000000011 /* macos/AgentLocalChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000010 /* macos/AgentLocalChat.swift */; };
+		F20000000000000000000011 /* macos/Features/Agent/AgentLocalChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000010 /* macos/Features/Agent/AgentLocalChat.swift */; };
 		F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* tests/LocalChatTests.swift */; };
 		F26EAD91B663BB2BCD833522 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		F68549B4E6629AA6F02A9CDC /* macos/ExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */; };
@@ -338,7 +338,7 @@
 		E2DD4E7379914193D6F68337 /* EchoAppIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoAppIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E6DAA41743D56B6467CB43F9 /* tests/native/SpeechDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/SpeechDeviceTests.swift; sourceTree = "<group>"; };
 		EA68E8426039B5A782DA9770 /* macos/AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/AgentTools.swift; sourceTree = "<group>"; };
-		F20000000000000000000010 /* macos/AgentLocalChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/AgentLocalChat.swift; sourceTree = "<group>"; };
+		F20000000000000000000010 /* macos/Features/Agent/AgentLocalChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentLocalChat.swift; sourceTree = "<group>"; };
 		F20000000000000000000012 /* tests/LocalChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/LocalChatTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -547,7 +547,7 @@
 				3526F0A888174738325FD582 /* macos/Features/Agent/AgentLanguageModels.swift */,
 				EA68E8426039B5A782DA9770 /* macos/AgentTools.swift */,
 				CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */,
-				F20000000000000000000010 /* macos/AgentLocalChat.swift */,
+				F20000000000000000000010 /* macos/Features/Agent/AgentLocalChat.swift */,
 				E11000000000000000000F05 /* SettingsStore.swift */,
 				E11000000000000000000F06 /* VoiceProtocol.swift */,
 				E11000000000000000000F07 /* VoiceDiagnostics.swift */,
@@ -1313,7 +1313,7 @@
 				26BC95D8A7B3E4F129E9AD9F /* macos/Features/Agent/AgentLanguageModels.swift in Sources */,
 				82EA4910FA0A21C0579F3E29 /* macos/AgentTools.swift in Sources */,
 				534B7D287D089271F8634C32 /* macos/Features/Agent/AgentHarness.swift in Sources */,
-				F20000000000000000000011 /* macos/AgentLocalChat.swift in Sources */,
+				F20000000000000000000011 /* macos/Features/Agent/AgentLocalChat.swift in Sources */,
 				E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */,
 				E11000000000000000000B03 /* TaskStore.swift in Sources */,
 				E11000000000000000000B05 /* SettingsStore.swift in Sources */,
