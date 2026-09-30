@@ -113,7 +113,7 @@
 		F20000000000000000000011 /* macos/Features/Agent/AgentLocalChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000010 /* macos/Features/Agent/AgentLocalChat.swift */; };
 		F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* tests/LocalChatTests.swift */; };
 		F26EAD91B663BB2BCD833522 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
-		F68549B4E6629AA6F02A9CDC /* macos/ExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */; };
+		F68549B4E6629AA6F02A9CDC /* macos/Features/Agent/ExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1724D95EA440B9705DD87F8B /* macos/Features/Agent/ExecutionService.swift */; };
 		F7EF4AB9C967C47A9F18B500 /* tests/native/EchoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3FF57E62DA09C501023D462 /* tests/native/EchoUITests.swift */; };
 		FB26AB95988A510CC785270B /* tests/fixtures/speech/paused.wav in Resources */ = {isa = PBXBuildFile; fileRef = 9B8E739899162095ABA722F3 /* tests/fixtures/speech/paused.wav */; };
 		FC6EBE592730BDB220A9F612 /* VoiceLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12400000000000000000F00 /* VoiceLiveTests.swift */; };
@@ -254,7 +254,7 @@
 /* Begin PBXFileReference section */
 		017854AC34F5C611DA191769 /* tests/tools/SwiftUIOutlineListReentrancy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/tools/SwiftUIOutlineListReentrancy.swift; sourceTree = "<group>"; };
 		0A943A0226E44527A68563F2 /* tests/AgentHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentHarnessTests.swift; sourceTree = "<group>"; };
-		1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/ExecutionService.swift; sourceTree = "<group>"; };
+		1724D95EA440B9705DD87F8B /* macos/Features/Agent/ExecutionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/ExecutionService.swift; sourceTree = "<group>"; };
 		196B5603E13823B0BEE17FD8 /* EchoFrameworkRepros */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; path = EchoFrameworkRepros; sourceTree = BUILT_PRODUCTS_DIR; };
 		1E53D6C44AD40EA364F6E230 /* tests/fixtures/speech/en-US.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "tests/fixtures/speech/en-US.wav"; sourceTree = "<group>"; };
 		207D388F6D0AE8A1D34DD1DB /* tests/native/PresentationRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/PresentationRules.swift; sourceTree = "<group>"; };
@@ -542,7 +542,7 @@
 				E11200000000000000000F00 /* AgentSessionTests.swift */,
 				E11000000000000000000F02 /* AgentConnectionTester.swift */,
 				E11000000000000000000F03 /* TaskStore.swift */,
-				1724D95EA440B9705DD87F8B /* macos/ExecutionService.swift */,
+				1724D95EA440B9705DD87F8B /* macos/Features/Agent/ExecutionService.swift */,
 				CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */,
 				3526F0A888174738325FD582 /* macos/Features/Agent/AgentLanguageModels.swift */,
 				EA68E8426039B5A782DA9770 /* macos/Features/Agent/AgentTools.swift */,
@@ -1308,7 +1308,7 @@
 		E110000000000000000000A1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				F68549B4E6629AA6F02A9CDC /* macos/ExecutionService.swift in Sources */,
+				F68549B4E6629AA6F02A9CDC /* macos/Features/Agent/ExecutionService.swift in Sources */,
 				0BB27615F70BEF3BF486FD84 /* macos/Features/ProjectBrowser/ProjectPathAccess.swift in Sources */,
 				26BC95D8A7B3E4F129E9AD9F /* macos/Features/Agent/AgentLanguageModels.swift in Sources */,
 				82EA4910FA0A21C0579F3E29 /* macos/Features/Agent/AgentTools.swift in Sources */,
