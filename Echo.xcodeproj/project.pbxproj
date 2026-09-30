@@ -305,7 +305,7 @@
 		E11000000000000000000F02 /* AgentConnectionTester.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentConnectionTester.swift; path = macos/AgentConnectionTester.swift; sourceTree = "<group>"; };
 		E11000000000000000000F03 /* TaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TaskStore.swift; path = macos/Features/Conversation/TaskStore.swift; sourceTree = "<group>"; };
 		E11000000000000000000F05 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsStore.swift; path = macos/Features/Settings/SettingsStore.swift; sourceTree = "<group>"; };
-		E11000000000000000000F06 /* VoiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceProtocol.swift; path = macos/VoiceProtocol.swift; sourceTree = "<group>"; };
+		E11000000000000000000F06 /* VoiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceProtocol.swift; path = macos/Features/Voice/VoiceProtocol.swift; sourceTree = "<group>"; };
 		E11000000000000000000F07 /* VoiceDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceDiagnostics.swift; path = macos/VoiceDiagnostics.swift; sourceTree = "<group>"; };
 		E11000000000000000000F08 /* ChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ChatTests.swift; path = tests/ChatTests.swift; sourceTree = "<group>"; };
 		E11000000000000000000F0A /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SettingsTests.swift; path = tests/SettingsTests.swift; sourceTree = "<group>"; };
