@@ -101,9 +101,34 @@ import Testing
             }
             // The activity frame includes 12 pt of transparent padding around the visible capsule.
             let capsule = frames.activity.insetBy(dx: 12, dy: 12)
+            #expect(frames.activityCanvas.insetBy(dx: CompanionLayout.activityPadding,
+                                                  dy: CompanionLayout.activityPadding) == capsule,
+                    "Larger shadow padding preserves the visible card's position")
             #expect(!capsule.intersects(frames.pet) && !capsule.intersects(frames.controls),
                          "The activity never covers the pet or its controls")
         }
+
+        let panel = CompanionSurface(title: "Activity padding", content: Color.clear)
+        defer { panel.close() }
+        panel.setFrame(CGRect(x: 400, y: 300, width: 426, height: 152), display: false)
+        #expect(!panel.isOpaque && panel.backgroundColor == .clear && !panel.hasShadow)
+        #expect(panel.contentView?.isOpaque == false, "The hosting view cannot paint a rectangular background")
+        let content = panel.frame.insetBy(dx: CompanionLayout.activityPadding, dy: CompanionLayout.activityPadding)
+        for point in [CGPoint(x: panel.frame.minX + 1, y: content.midY),
+                      CGPoint(x: panel.frame.maxX - 1, y: content.midY),
+                      CGPoint(x: content.midX, y: panel.frame.minY + 1),
+                      CGPoint(x: content.midX, y: panel.frame.maxY - 1)] {
+            panel.updateMousePassthrough(at: point, contentInset: CompanionLayout.activityPadding, allowsCloseButton: true)
+            #expect(panel.ignoresMouseEvents, "The transparent margins pass mouse events to the desktop")
+        }
+        panel.updateMousePassthrough(at: CGPoint(x: content.midX, y: content.midY),
+                                     contentInset: CompanionLayout.activityPadding, allowsCloseButton: true)
+        #expect(!panel.ignoresMouseEvents, "The card still accepts clicks")
+        let closePoint = CGPoint(x: content.minX - 2, y: content.maxY + 2)
+        panel.updateMousePassthrough(at: closePoint, contentInset: CompanionLayout.activityPadding, allowsCloseButton: true)
+        #expect(!panel.ignoresMouseEvents, "The protruding close button still accepts clicks")
+        panel.updateMousePassthrough(at: closePoint, contentInset: CompanionLayout.activityPadding, allowsCloseButton: false)
+        #expect(panel.ignoresMouseEvents, "An absent close button does not leave an invisible hit target")
     }
 
     @Test static func testCompanionBubblePresentationAndLayout() throws {

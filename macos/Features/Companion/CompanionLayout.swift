@@ -5,6 +5,7 @@ struct CompanionLayout {
     static let capsuleWidth: CGFloat = 330
     static let collapsedHeight: CGFloat = 56
     static let expandedHeight: CGFloat = 96
+    static let activityPadding: CGFloat = 48
     static let controlsWidth = PetSurfacePresentation.canvasWidth
     static let controlsHeight = PetSurfacePresentation.canvasHeight
     var pet: CGRect
@@ -13,9 +14,11 @@ struct CompanionLayout {
     /// The bubble canvas between the pet and the activity; empty unless room was reserved.
     var bubble: CGRect = .zero
     var isActivityBelowPet: Bool { activity.maxY <= pet.minY }
-    // The canvas follows the compact stack, list, or follow-up height; its 12 pt
-    // margin keeps the card shadows inside the floating panel.
-    var activityCanvas: CGRect { activity }
+    // Keep the original card placement, expanding only the transparent host so the
+    // 20 pt shadow and its 6 pt vertical offset can fade before the window boundary.
+    var activityCanvas: CGRect {
+        activity.insetBy(dx: 12 - Self.activityPadding, dy: 12 - Self.activityPadding)
+    }
     /// `bubble` reserves the bubble canvas between the pet and the activity, e.g. for a voice session.
     static func place(pet: CGRect, in screen: CGRect, expanded: Bool, bubble reservesBubble: Bool = false, activityHeight: CGFloat? = nil) -> Self {
         let inset = screen.insetBy(dx: 8, dy: 8)

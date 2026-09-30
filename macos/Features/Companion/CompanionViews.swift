@@ -195,8 +195,10 @@ struct ActivityCapsule: View {
             }
         }
         .frame(width: CompanionLayout.capsuleWidth)
-        .background { CompanionBackground(shape: RoundedRectangle(cornerRadius: 28)) }
-        .shadow(color: .black.opacity(0.10), radius: 7, y: 3)
+        .background {
+            CompanionBackground(shape: RoundedRectangle(cornerRadius: 28))
+                .shadow(color: Color(nsColor: .separatorColor).opacity(0.35), radius: 20, y: 6)
+        }
         .overlay(alignment: .topLeading) {
             if store.isFollowUpExpanded {
                 RoundControl(symbol: "xmark", label: "退出跟进", size: 20, identifier: "activity.followUp.exit") { (exit ?? store.toggleFollowUp)() }
@@ -659,7 +661,7 @@ struct WorkspaceActivityCapsule: View {
                 .accessibilityIdentifier("activity.summary")
             }
         }
-        .padding(12)
+        .padding(CompanionLayout.activityPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: placement.isBelowPet ? .top : .bottom)
     }
 }

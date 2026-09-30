@@ -21,6 +21,16 @@ import Combine
         // Every companion surface inherits the system appearance.
         contentView = NSHostingView(rootView: content)
     }
+
+    /// AppKit must ignore the whole window outside the card; a SwiftUI hit test alone
+    /// does not forward a click through to another application's window.
+    func updateMousePassthrough(at point: NSPoint, contentInset: CGFloat, allowsCloseButton: Bool) {
+        // Keep receiving mouse-up when a text selection or button press crosses the edge.
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        let contentFrame = frame.insetBy(dx: contentInset, dy: contentInset)
+        let closeFrame = CGRect(x: contentFrame.minX - 4, y: contentFrame.maxY - 16, width: 20, height: 20)
+        ignoresMouseEvents = !contentFrame.contains(point) && !(allowsCloseButton && closeFrame.contains(point))
+    }
 }
 
 @MainActor final class CompanionController: NSObject, NSWindowDelegate {
@@ -219,8 +229,14 @@ import Combine
         }
     }
 
+    private func updateActivityMousePassthrough(at point: NSPoint) {
+        activityPanel.updateMousePassthrough(at: point, contentInset: CompanionLayout.activityPadding,
+                                            allowsCloseButton: workspace.petFollowUpID != nil)
+    }
+
     /// Hover covers the pet and the controls as they would appear while hovered.
     private func samplePointer(_ point: NSPoint) {
+        updateActivityMousePassthrough(at: point)
         let presentation = controlsPresentation
         let hovered = petPanel.frame.contains(point) || controlsContentFrame(hovered: true).contains(point)
         guard presentation.isHovered != hovered else { return }
@@ -280,6 +296,7 @@ import Combine
             // Only the capsule animates; its transparent host stays stable.
             activityPanel.setFrame(frames.activityCanvas, display: true)
         }
+        updateActivityMousePassthrough(at: NSEvent.mouseLocation)
         controlsPanel.setFrame(frames.controls, display: true)
         let petCenterX = frames.pet.midX - frames.controls.minX
         if controlsPresentation.petCenterX != petCenterX { controlsPresentation.petCenterX = petCenterX }
