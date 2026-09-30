@@ -139,8 +139,8 @@ import Foundation
         }
         a.store.followUpDraft = "A replacement"; a.store.toggleFollowUp()
         check(workspace.sendFollowUp(conversationID: a.id), "Follow-up replaces the current A reply")
-        check(a.store.followUpDraft.isEmpty && !a.store.isFollowUpExpanded && a.store.messages[3].status == .stopped,
-              "Accepted follow-up preserves old partial status and clears only its own editor")
+        check(a.store.followUpDraft.isEmpty && a.store.isFollowUpExpanded && a.store.messages[3].status == .stopped,
+              "Accepted follow-up preserves old partial status, clears its draft, and keeps the editor open")
         check(sa.histories.last?.map(\.content) == ["A initial", "initial full", "A spoken text", "stopped answer", "A replacement"],
               "Replacement history includes nonempty stopped partial")
         sa.onCancel = nil; sa.onStart = nil
