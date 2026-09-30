@@ -213,7 +213,7 @@ struct LocalModelSection: View {
     @State private var importing = false
     var body: some View {
         Section {
-            Toggle("仅使用本地模型", isOn: Binding(get: { settings.snapshot.localModelOnly }, set: { settings.setLocalModelOnly($0) }))
+            Toggle("本地模型", isOn: Binding(get: { settings.snapshot.localModelOnly }, set: { settings.setLocalModelOnly($0) }))
                 .toggleStyle(.switch).accessibilityIdentifier("settings.localModel.only")
             // Only one model can be imported for now, so the menu lists exactly what is
             // there and choosing is a no-op; it is a picker so the row reads like the others.
@@ -235,8 +235,6 @@ struct LocalModelSection: View {
                 Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
                     .accessibilityIdentifier("settings.localModel.notice")
             }
-        } header: {
-            Text("本地模型")
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { settings.importLocalModel(from: url) }
