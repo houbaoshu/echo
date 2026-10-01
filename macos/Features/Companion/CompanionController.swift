@@ -112,6 +112,12 @@ import Combine
             self?.layout()
         }
         petPanel.onClick = { [weak self] in self?.showMainWindow() }
+        workspace.onOpenPetActivity = { [weak self] in
+            guard let self else { return }
+            self.clearNotice()
+            self.ensureMainController()
+            self.mainController?.showWorkspace()
+        }
         petPanel.constrainOrigin = { [weak self] origin in
             guard let self else { return origin }
             let proposed = NSRect(origin: origin, size: self.petPanel.frame.size)
@@ -275,7 +281,7 @@ import Combine
         let surface = controlsPresentation.surface(hovered: hovered, store: taskStore, voice: workspace.voice,
                                                    unseenCompleted: workspace.unseenCompletedCount,
                                                    runningTasks: workspace.runningTaskCount, activityCount: workspace.petActivities.count,
-                                                   activitiesCollapsed: workspace.isPetTrayCollapsed)
+                                                   activitiesCollapsed: !workspace.isPetActivityVisible)
         let frames = CompanionLayout(pet: petPanel.frame, activity: activityPanel.frame, controls: controlsPanel.frame)
         return frames.controlsContent(width: surface.width)
     }

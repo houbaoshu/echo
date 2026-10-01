@@ -158,7 +158,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @Published private(set) var activitiesCollapsed = false
     @Published private(set) var activityDismissed = false
     @Published private(set) var isFollowUpExpanded = false
-    /// A terminal result is unread until follow-up or the visible main conversation is opened.
+    /// A terminal result is unread until its conversation is opened in the main window.
     /// The value orders completions across conversations. Transient: restart never restores the activity.
     @Published private(set) var unseenCompletion: UInt64?
     private static var completionClock: UInt64 = 0
@@ -176,8 +176,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             ? messages.last(where: { $0.role == .assistant && !$0.content.isEmpty })?.content ?? ""
             : cardReply
         let text = reply.isEmpty ? task?.summary ?? "准备开始" : reply
-        // Keep the ending in view as a long stream advances and when its result settles.
-        return String(text.suffix(260))
+        // The card truncates the combined title and result; the chat retains the full reply.
+        return text
     }
     @Published private(set) var tools: [AgentToolRecord] = []
     @Published private(set) var needsDirectory = false
@@ -320,7 +320,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         lifecycle.send(.reply(runID, event))
     }
 
-    func toggleFollowUp() { isFollowUpExpanded.toggle(); if isFollowUpExpanded { markSeen() } }
+    func toggleFollowUp() { isFollowUpExpanded.toggle() }
     func sendFollowUp() {
         guard send(followUpDraft) else { return }
         followUpDraft = ""
@@ -396,9 +396,9 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     /// Revealing the tray does not acknowledge any result.
     func expandActivity() { activityDismissed = false; activitiesCollapsed = false }
-    func collapseForCompletion(unseen: Bool) {
+    /// Completion updates the unread result without folding the card or its composer.
+    func recordCompletion(unseen: Bool) {
         guard task != nil else { return }
-        if isFollowUpExpanded && isActivityVisible { markSeen(); return }
         if unseen { Self.completionClock += 1; unseenCompletion = Self.completionClock }
         else { markSeen() }
     }

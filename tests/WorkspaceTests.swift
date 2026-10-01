@@ -13,6 +13,155 @@ import Foundation
 }
 
 @Suite(.serialized) struct WorkspaceTests {
+    @MainActor @Test static func petCardsStayUnreadUntilOpened() throws {
+        var sources: [WorkspaceTestSource] = []
+        let workspace = WorkspaceStore(sourceFactory: {
+            let source = WorkspaceTestSource()
+            sources.append(source)
+            return source
+        })
+        defer { workspace.shutdown() }
+        #expect(workspace.sendQuickMessage("第一张卡片"))
+        let first = try #require(workspace.activity)
+        let firstSource = try #require(sources.last)
+        let taskID = first.store.task?.id
+        let reply = "简短结果 " + String(repeating: "完整历史内容", count: 100)
+        firstSource.receive?(.completed(reply))
+        #expect(workspace.isPetActivityVisible && !first.store.activitiesCollapsed)
+        #expect(first.store.cardSummary.hasPrefix("简短结果"))
+        #expect(workspace.unseenCompletedCount == 1)
+
+        workspace.enterPetFollowUp(first.id)
+        #expect(first.store.isFollowUpExpanded && workspace.unseenCompletedCount == 1)
+        workspace.enterPetFollowUp(first.id)
+        #expect(workspace.petFollowUpID == nil && !first.store.isFollowUpExpanded)
+        #expect(workspace.unseenCompletedCount == 1)
+        workspace.enterPetFollowUp(first.id)
+        first.store.followUpDraft = "继续原会话"
+        #expect(workspace.sendFollowUp(conversationID: first.id))
+        #expect(first.store.followUpDraft.isEmpty && first.store.task?.id == taskID)
+        #expect(workspace.conversations.count == 1 && workspace.petActivityIDs == [first.id])
+        #expect(firstSource.lastRequest.first?.content == "第一张卡片")
+        #expect(firstSource.lastRequest.contains { $0.role == .assistant && $0.content == reply })
+        firstSource.receive?(.completed("跟进结果"))
+        #expect(first.store.isFollowUpExpanded && workspace.isPetActivityVisible)
+        #expect(workspace.unseenCompletedCount == 1)
+        workspace.collapsePetActivity(conversationID: first.id)
+        #expect(workspace.petFollowUpID == nil && !workspace.isPetActivityVisible)
+        #expect(workspace.petActivityIDs == [first.id] && workspace.unseenCompletedCount == 1)
+        workspace.toggleActivityTray()
+        #expect(workspace.isPetActivityVisible && workspace.unseenCompletedCount == 1)
+
+        #expect(workspace.sendQuickMessage("第二张卡片"))
+        let second = try #require(workspace.activity)
+        sources.last?.receive?(.completed("第二个结果"))
+        workspace.expandActivityList()
+        workspace.collapsePetActivity(conversationID: first.id)
+        #expect(workspace.visiblePetActivities.map(\.id) == [second.id])
+        #expect(workspace.unseenCompletedCount == 2)
+        workspace.collapsePetActivity(conversationID: second.id)
+        #expect(!workspace.isPetActivityVisible && workspace.unseenCompletedCount == 2)
+        workspace.toggleActivityTray()
+        #expect(workspace.visiblePetActivities.count == 2)
+        let firstHistory = first.store.messages
+        workspace.openPetActivity(conversationID: first.id)
+        #expect(workspace.isMainWindowVisible && workspace.selectedID == first.id)
+        #expect(workspace.petActivityIDs == [second.id] && workspace.unseenCompletedCount == 1)
+        #expect(first.store.messages == firstHistory && first.store.task?.id == taskID)
+        workspace.openPetActivity(conversationID: second.id)
+        #expect(workspace.selectedID == second.id && workspace.unseenCompletedCount == 0)
+        #expect(workspace.petActivities.isEmpty && workspace.conversations.count == 2)
+
+        workspace.isMainWindowVisible = false
+        #expect(workspace.send("运行时收起", conversationID: first.id))
+        workspace.collapsePetActivity(conversationID: first.id)
+        #expect(first.store.isGenerating)
+        firstSource.receive?(.completed("收起后的结果"))
+        #expect(!workspace.isPetActivityVisible && workspace.unseenCompletedCount == 1)
+        workspace.toggleActivityTray()
+        #expect(workspace.isPetActivityVisible)
+        #expect(workspace.send("运行时打开", conversationID: first.id))
+        workspace.openPetActivity(conversationID: first.id)
+        #expect(first.store.isGenerating && workspace.petActivities.isEmpty)
+        firstSource.receive?(.completed("聊天里的结果"))
+        #expect(workspace.petActivities.isEmpty && workspace.unseenCompletedCount == 0)
+    }
+
+    @MainActor @Test static func ignoringPetNotificationsPreservesHistoryAndFutureResults() async throws {
+        var sources: [WorkspaceTestSource] = []
+        let workspace = WorkspaceStore(sourceFactory: {
+            let source = WorkspaceTestSource()
+            sources.append(source)
+            return source
+        })
+        defer { workspace.shutdown() }
+        let selection = workspace.selectedID
+        var opens = 0
+        workspace.onOpenPetActivity = { opens += 1 }
+        #expect(workspace.sendQuickMessage("第一条通知"))
+        let first = try #require(workspace.activity)
+        let firstSource = try #require(sources.last)
+        firstSource.receive?(.completed("第一条结果"))
+        let firstHistory = first.store.messages
+        let taskID = first.store.task?.id
+        #expect(workspace.sendQuickMessage("第二条通知"))
+        let second = try #require(workspace.activity)
+        let secondSource = try #require(sources.last)
+        secondSource.receive?(.completed("第二条结果"))
+        let secondHistory = second.store.messages
+        #expect(workspace.unseenCompletedCount == 2)
+
+        workspace.toggleActivityTray()
+        #expect(!workspace.isPetActivityVisible && workspace.unseenCompletedCount == 2)
+        workspace.toggleActivityTray()
+        workspace.enterPetFollowUp(first.id)
+        workspace.dismissPetActivity(conversationID: first.id)
+        #expect(workspace.petActivityIDs == [second.id] && workspace.unseenCompletedCount == 1)
+        #expect(workspace.petFollowUpID == nil && !first.store.isFollowUpExpanded)
+        #expect(!first.store.hasUnseenCompletion && first.store.activityDismissed)
+        #expect(first.store.messages == firstHistory && first.store.task?.id == taskID)
+        #expect(workspace.conversation(id: first.id) === first)
+        #expect(workspace.selectedID == selection && !workspace.isMainWindowVisible && opens == 0)
+
+        for _ in 0..<2 {
+            workspace.toggleActivityTray()
+            workspace.toggleActivityTray()
+            workspace.expandActivityList()
+            workspace.objectWillChange.send()
+            await Task.yield()
+            #expect(workspace.petActivities.map(\.id) == [second.id])
+            #expect(workspace.unseenCompletedCount == 1)
+        }
+        firstSource.receive?(.completed("重复的旧结果"))
+        workspace.dismissPetActivity(conversationID: first.id)
+        #expect(first.store.messages == firstHistory && workspace.unseenCompletedCount == 1)
+        workspace.dismissPetActivity(conversationID: second.id)
+        #expect(workspace.petActivities.isEmpty && workspace.unseenCompletedCount == 0)
+        workspace.toggleActivityTray()
+        workspace.expandActivityList()
+        await Task.yield()
+        #expect(!workspace.isPetActivityVisible && workspace.petActivityIDs.isEmpty)
+        #expect(second.store.messages == secondHistory && workspace.conversations.count == 2)
+
+        #expect(workspace.send("同一会话的新任务", conversationID: first.id))
+        #expect(first.store.task?.id == taskID && workspace.petActivityIDs == [first.id])
+        firstSource.receive?(.completed("新的提醒"))
+        #expect(workspace.isPetActivityVisible && workspace.unseenCompletedCount == 1)
+        #expect(first.store.messages.prefix(firstHistory.count).elementsEqual(firstHistory))
+        #expect(workspace.conversations.count == 2 && opens == 0)
+
+        #expect(workspace.send("运行中忽略", conversationID: first.id))
+        let cancellations = firstSource.cancellations
+        workspace.dismissPetActivity(conversationID: first.id)
+        #expect(first.store.isGenerating && firstSource.cancellations == cancellations)
+        firstSource.receive?(.completed("忽略后的完成结果"))
+        workspace.toggleActivityTray()
+        #expect(workspace.petActivities.isEmpty && workspace.unseenCompletedCount == 0)
+        #expect(workspace.send("再产生新结果", conversationID: first.id))
+        firstSource.receive?(.completed("仍然可以提醒"))
+        #expect(workspace.isPetActivityVisible && workspace.unseenCompletedCount == 1)
+    }
+
     @MainActor @Test static func endingPetActivitiesPreservesHistory() throws {
         let source = WorkspaceTestSource()
         let workspace = WorkspaceStore(sourceFactory: { source })
@@ -268,7 +417,7 @@ import Foundation
         check(ws.isPetActivityVisible && !ws.isActivityListExpanded && ws.unseenCompletedCount == 1,
               "The bell reopens the stack without acknowledging it")
         ws.enterPetFollowUp(quick.id)
-        check(ws.unseenCompletedCount == 0 && quick.store.isFollowUpExpanded, "Entering follow-up views the result")
+        check(ws.unseenCompletedCount == 1 && quick.store.isFollowUpExpanded, "Entering follow-up keeps the result unread")
         for message in ["第二个问题", "第三个问题"] {
             quick.store.followUpDraft = message
             check(ws.sendFollowUp(conversationID: quick.id), "Follow-up is accepted")
@@ -276,8 +425,8 @@ import Foundation
                   "Consecutive follow-ups keep the same entry and editor")
             check(quickSource.lastRequest.last?.content == message, "Follow-up targets the original conversation")
             quickSource.receive?(.completed("新回复：" + message))
-            check(quick.store.cardSummary.contains(message) && ws.unseenCompletedCount == 0,
-                  "The visible follow-up updates its reply and remains seen")
+            check(quick.store.cardSummary.contains(message) && ws.unseenCompletedCount == 1,
+                  "The visible follow-up updates the same unread result")
         }
         ws.exitPetFollowUp()
         check(!quick.store.isFollowUpExpanded && ws.petFollowUpID == nil, "Exit returns to compact cards")
@@ -290,7 +439,7 @@ import Foundation
         ws.expandActivityList()
         check(ws.unseenCompletedCount == 2, "The expanded list does not consume unread results")
         ws.enterPetFollowUp(other.id)
-        check(ws.unseenCompletedCount == 1, "Following up acknowledges only that conversation")
+        check(ws.unseenCompletedCount == 2, "Following up does not acknowledge either conversation")
         ws.exitPetFollowUp()
         quick.store.send("失败的任务")
         quickSource.receive?(.progress("已有的部分内容"))
@@ -307,8 +456,8 @@ import Foundation
         quick.store.send("主窗口里的任务")
         check(ws.petActivityIDs.contains(quick.id) && ws.isPetActivityVisible, "Main-window work appears on the pet while running")
         quickSource.receive?(.completed("主窗口可见的新结果"))
-        check(!ws.petActivityIDs.contains(quick.id) && ws.unseenCompletedCount == 0,
-              "A result completed in the visible selected main chat leaves no entry or count")
+        check(!ws.petActivityIDs.contains(quick.id) && ws.unseenCompletedCount == 1,
+              "A viewed completion removes its entry while the other conversation stays unread")
         ws.isMainWindowVisible = false
         other.store.send("后台再更新")
         otherSource.receive?(.completed("后台结果"))

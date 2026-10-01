@@ -1601,6 +1601,57 @@ private struct ComposerHeightHost: View {
                      "Opening the bell shows the card and turns the bell into ⌃")
     }
 
+    func testIgnoringPetNotificationThroughCloseButton() async throws {
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let source = PreviewSource()
+        let workspace = WorkspaceStore(sourceFactory: { source })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
+        defer { companion.shutdown() }
+        func settle() async throws { try await Task.sleep(for: .milliseconds(250)) }
+        let selection = workspace.selectedID
+        XCTAssertTrue(workspace.sendQuickMessage("忽略这次通知"))
+        let conversation = try XCTUnwrap(workspace.activity)
+        source.receive?(.completed("仍然保留在历史中的结果"))
+        try await settle()
+        let history = conversation.store.messages
+        workspace.enterPetFollowUp(conversation.id)
+        try await settle()
+        let close = try XCTUnwrap(findAccessibility("activity.dismiss", in: companion.activityPanel.contentView!))
+        XCTAssertEqual(close.accessibilityLabel?(), "忽略任务通知")
+        XCTAssertTrue(close.accessibilityPerformPress?() == true)
+        try await settle()
+        XCTAssertFalse(companion.activityPanel.isVisible)
+        XCTAssertEqual(workspace.unseenCompletedCount, 0)
+        XCTAssertTrue(workspace.petActivities.isEmpty && workspace.petFollowUpID == nil)
+        XCTAssertFalse(workspace.isMainWindowVisible)
+        XCTAssertEqual(workspace.selectedID, selection)
+        XCTAssertNil(companion.mainWindow)
+        XCTAssertEqual(conversation.store.messages, history)
+
+        companion.controlsPresentation.isHovered = true
+        workspace.toggleActivityTray()
+        workspace.expandActivityList()
+        companion.synchronize(animated: false)
+        try await settle()
+        XCTAssertFalse(companion.activityPanel.isVisible)
+        XCTAssertNil(findAccessibility("pet.activity.expand", in: companion.controlsPanel.contentView!))
+        XCTAssertNil(findAccessibility("pet.activity.collapse", in: companion.controlsPanel.contentView!))
+
+        XCTAssertTrue(workspace.send("继续同一会话", conversationID: conversation.id))
+        source.receive?(.completed("下一次正常提醒"))
+        try await settle()
+        XCTAssertTrue(companion.activityPanel.isVisible)
+        XCTAssertEqual(workspace.unseenCompletedCount, 1)
+        XCTAssertEqual(workspace.petActivityIDs, [conversation.id])
+        XCTAssertEqual(workspace.conversations.count, 1)
+        XCTAssertEqual(Array(conversation.store.messages.prefix(history.count)), history)
+        workspace.toggleActivityTray()
+        try await settle()
+        let bell = try XCTUnwrap(findAccessibility("pet.activity.expand", in: companion.controlsPanel.contentView!))
+        XCTAssertEqual(axValue(bell), "1 个已完成任务未查看")
+    }
+
     func testCompanionQuickComposerLifecycle() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let source = PreviewSource()
@@ -1642,8 +1693,19 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(findAccessibility("voice.start", in: controls) != nil
                      && findAccessibility("pet.activity.collapse", in: controls) != nil,
                      "Without hover the running task keeps Live Voice and its card's ⌃")
-        source.receive?(.completed("完成"))
+        source.receive?(.completed("你好！" + String(repeating: "这是保留在聊天里的完整结果，", count: 30)))
         try await settle()
+        let completedHost = NSHostingView(rootView: WorkspaceActivityCapsule(workspace: workspace, placement: ActivityPlacement())
+            .background(.white).environment(\.colorScheme, .light))
+        completedHost.frame = companion.activityPanel.contentView!.bounds
+        completedHost.layoutSubtreeIfNeeded()
+        try await settle()
+        if let bitmap = completedHost.bitmapImageRepForCachingDisplay(in: completedHost.bounds) {
+            completedHost.cacheDisplay(in: completedHost.bounds, to: bitmap)
+            let output = EchoTestResources.output("pet-card-two-lines.png")
+            try bitmap.representation(using: .png, properties: [:])?.write(to: output)
+            print("Pet card render: " + output.path)
+        }
         XCTAssertTrue(companion.activityPanel.isVisible && !companion.activityPanel.canBecomeKey && workspace.unseenCompletedCount == 1,
                      "Completion retains the compact card without taking keyboard focus")
         workspace.expandActivityList()
@@ -1652,20 +1714,49 @@ private struct ComposerHeightHost: View {
                      "The list does not acknowledge the result or take keyboard focus")
         workspace.enterPetFollowUp(workspace.activityID!)
         try await settle()
-        XCTAssertTrue(companion.activityPanel.canBecomeKey && workspace.unseenCompletedCount == 0,
-                     "Only follow-up enables the keyboard and acknowledges this result")
+        XCTAssertTrue(companion.activityPanel.canBecomeKey && workspace.unseenCompletedCount == 1,
+                     "Follow-up enables the keyboard while the result stays unread")
+        let activityHost = companion.activityPanel.contentView!
+        let followUpToggle = findAccessibility("activity.followUp.toggle", in: activityHost)
+        XCTAssertTrue(followUpToggle?.accessibilityLabel?() == "取消跟进")
+        XCTAssertTrue(findAccessibility("activity.send", in: activityHost) == nil)
+        XCTAssertTrue(findAccessibility("activity.stop", in: activityHost) == nil)
+        workspace.activityStore.followUpDraft = "继续问"
+        try await settle()
+        let editor = try XCTUnwrap(findAccessibility("activity.followUp", in: activityHost) as? ComposerTextView)
+        let returnKey = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: companion.activityPanel.windowNumber, context: nil, characters: "\r",
+            charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+        editor.keyDown(with: returnKey)
+        XCTAssertTrue(source.histories.count == 2 && source.histories.last?.last?.content == "继续问")
+        XCTAssertTrue(workspace.conversations.count == 1 && workspace.petActivityIDs.count == 1)
+        source.receive?(.completed("跟进结果"))
+        try await settle()
+        XCTAssertTrue(workspace.activityStore.isFollowUpExpanded && workspace.unseenCompletedCount == 1)
+        XCTAssertTrue(findAccessibility("activity.followUp.toggle", in: activityHost)?.accessibilityPerformPress?() == true)
+        try await settle()
+        XCTAssertTrue(workspace.petFollowUpID == nil && !workspace.activityStore.isFollowUpExpanded)
         workspace.exitPetFollowUp()
         try await settle()
         XCTAssertTrue(!companion.activityPanel.canBecomeKey, "Exiting follow-up releases the keyboard")
         workspace.toggleActivityTray()
         try await Task.sleep(for: .milliseconds(300))
         try await hover(inside) { findAccessibility("pet.activity.expand", in: controls) != nil }
-        XCTAssertTrue(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 0,
-                     "User collapse hides the cards")
+        XCTAssertTrue(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 1,
+                     "User collapse hides the cards while retaining the unread result")
+        XCTAssertTrue(axValue(findAccessibility("pet.activity.expand", in: controls)) == "1 个已完成任务未查看")
         XCTAssertTrue(findAccessibility("pet.activity.expand", in: controls)?.accessibilityPerformPress?() == true)
         try await settle()
         XCTAssertTrue(companion.activityPanel.isVisible && !workspace.isActivityListExpanded,
                      "The bell restores the stack")
+        let card = try XCTUnwrap(findAccessibility("activity.summary", in: companion.activityPanel.contentView!))
+        let history = workspace.activityStore.messages
+        let conversationID = try XCTUnwrap(workspace.activityID)
+        XCTAssertTrue(card.accessibilityPerformPress?() == true)
+        try await settle()
+        XCTAssertTrue(workspace.isMainWindowVisible && workspace.selectedID == conversationID)
+        XCTAssertTrue(workspace.unseenCompletedCount == 0 && workspace.petActivities.isEmpty)
+        XCTAssertTrue(workspace.conversation(id: conversationID)?.store.messages == history)
         companion.petPanel.samplePointer(at: outside)
     }
 

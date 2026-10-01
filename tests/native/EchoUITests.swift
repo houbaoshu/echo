@@ -176,8 +176,8 @@ import XCTest
                 editor.click(); editor.typeText(text); app.typeKey(.return, modifierFlags: [])
                 wait("Quick send closes the new-chat editor") { !editor.exists }
                 wait("The compact result completes", timeout: 8) {
-                    app.staticTexts.matching(identifier: "activity.summary").allElementsBoundByIndex.contains {
-                        String(describing: $0.value ?? $0.label).contains("已完成") && String(describing: $0.value ?? $0.label).contains(text)
+                    app.buttons.matching(identifier: "activity.summary").allElementsBoundByIndex.contains {
+                        $0.label.contains("已完成") && $0.label.contains(text)
                     }
                 }
             }
@@ -185,44 +185,65 @@ import XCTest
                 let attachment = XCTAttachment(screenshot: app.screenshot())
                 attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
             }
-            sendQuick("查询当前模型")
-            sendQuick("回应中文问候")
+            // XCUI keyboard synthesis cannot reliably enter Chinese without an IME.
+            // Chinese card text is covered by the hosted companion lifecycle test.
+            sendQuick("query current model")
+            sendQuick("pet greeting")
             XCTAssertFalse(app.textViews["activity.followUp"].exists)
-            XCTAssertEqual(app.staticTexts.matching(identifier: "activity.summary").count, 1)
-            XCTAssertGreaterThan(app.staticTexts["activity.summary"].frame.minY, pet.frame.maxY)
+            XCTAssertEqual(app.buttons.matching(identifier: "activity.summary").count, 1)
+            XCTAssertGreaterThan(app.buttons["activity.summary"].frame.minY, pet.frame.maxY)
             capture("echo-cards-1-stack-below")
-            app.staticTexts.matching(identifier: "activity.summary").firstMatch.click()
-            wait("Stack opens two compact cards") { app.staticTexts.matching(identifier: "activity.summary").count == 2 }
+            pet.hover(); app.buttons["pet.activity.collapse"].click(); pet.hover()
+            let bell = app.buttons["pet.activity.expand"]
+            XCTAssertTrue(bell.waitForExistence(timeout: 3))
+            XCTAssertEqual(bell.value as? String, "2 个已完成任务未查看")
+            bell.click()
+            wait("Bell opens two compact cards") { app.buttons.matching(identifier: "activity.summary").count == 2 }
             XCTAssertFalse(app.textViews["activity.followUp"].exists)
             let listTree = XCTAttachment(string: app.debugDescription)
             listTree.name = "Expanded card accessibility"; listTree.lifetime = .keepAlways; add(listTree)
             capture("echo-cards-2-list-below")
-            app.staticTexts.matching(identifier: "activity.summary").firstMatch.hover()
+            // The nonactivating panel can be visible while XCUI marks its scroll view
+            // inactive. Move to the card's reported frame without automatic scrolling.
+            app.buttons.matching(identifier: "activity.summary").firstMatch
+                .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
             let follow = app.buttons["activity.followUp.toggle"].firstMatch
             XCTAssertTrue(follow.waitForExistence(timeout: 3)); follow.click()
             let editor = app.textViews["activity.followUp"]
             XCTAssertTrue(editor.waitForExistence(timeout: 3))
             capture("echo-cards-3-follow-up-below")
-            for text in ["第一次跟进", "第二次跟进"] {
+            for text in ["follow up one", "follow up two"] {
                 editor.click(); editor.typeText(text); app.typeKey(.return, modifierFlags: [])
                 wait("Follow-up updates the original compact reply", timeout: 8) {
-                    String(describing: app.staticTexts["activity.summary"].value ?? "").contains(text) && String(describing: app.staticTexts["activity.summary"].value ?? "").contains("已完成")
+                    app.buttons["activity.summary"].label.contains(text) && app.buttons["activity.summary"].label.contains("已完成")
                 }
                 XCTAssertTrue(editor.exists)
+                XCTAssertEqual(follow.label, "取消跟进")
+                XCTAssertFalse(app.buttons["activity.send"].exists)
             }
-            app.buttons["activity.followUp.exit"].click()
-            wait("Exit restores the list") { !editor.exists && app.staticTexts.matching(identifier: "activity.summary").count == 2 }
+            follow.click()
+            wait("Second follow-up click restores the list") { !editor.exists && app.buttons.matching(identifier: "activity.summary").count == 2 }
             pet.hover(); app.buttons["pet.activity.collapse"].click()
             pet.hover()
-            let bell = app.buttons["pet.activity.expand"]
             XCTAssertTrue(bell.waitForExistence(timeout: 3))
-            XCTAssertTrue((bell.value as? String)?.contains("1 个") == true, app.debugDescription)
+            XCTAssertEqual(bell.value as? String, "2 个已完成任务未查看", app.debugDescription)
             bell.click()
-            wait("Bell restores the compact stack") { app.staticTexts.matching(identifier: "activity.summary").count == 1 }
+            wait("Bell restores both unread cards") { app.buttons.matching(identifier: "activity.summary").count == 2 }
             XCTAssertFalse(editor.exists)
             pet.hover(); app.buttons["pet.activity.collapse"].click(); pet.hover()
-            XCTAssertTrue((app.buttons["pet.activity.expand"].value as? String)?.contains("1 个") == true,
+            XCTAssertEqual(app.buttons["pet.activity.expand"].value as? String, "2 个已完成任务未查看",
                           "Revealing or collapsing the stack must preserve its unread result")
+            bell.click()
+            let firstCard = app.buttons.matching(identifier: "activity.summary").firstMatch
+            let openedTitle = firstCard.label.contains("pet greeting") ? "pet greeting" : "query current model"
+            firstCard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            XCTAssertTrue(app.staticTexts["Offline reply: " + openedTitle].waitForExistence(timeout: 5))
+            wait("Opening one chat removes only its card") { app.buttons.matching(identifier: "activity.summary").count == 1 }
+            pet.hover(); app.buttons["pet.activity.collapse"].click(); pet.hover()
+            XCTAssertEqual(bell.value as? String, "1 个已完成任务未查看")
+            bell.click()
+            app.buttons["activity.summary"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            wait("Opening all chats clears the pet tray") { !app.buttons["activity.summary"].exists && !app.buttons["pet.activity.expand"].exists }
         }
     }
 
@@ -230,22 +251,22 @@ import XCTest
         try withApp { app, _ in
             let main = composer(app)
             main.click(); main.typeText("slow main-window task"); app.typeKey(.return, modifierFlags: [])
-            XCTAssertTrue(app.staticTexts["activity.summary"].waitForExistence(timeout: 3))
+            XCTAssertTrue(app.buttons["activity.summary"].waitForExistence(timeout: 3))
             wait("A result viewed in the main window leaves no pet entry", timeout: 10) {
-                app.staticTexts["Offline reply: slow main-window task"].exists && !app.staticTexts["activity.summary"].exists
+                app.staticTexts["Offline reply: slow main-window task"].exists && !app.buttons["activity.summary"].exists
             }
             app.typeKey("w", modifierFlags: .command)
             let pet = app.buttons["赤焰"]
             pet.hover(); app.buttons["pet.compose"].click()
             let quick = app.textViews["pet.composer"]
             XCTAssertTrue(quick.waitForExistence(timeout: 3))
-            quick.click(); quick.typeText("回应问候"); app.typeKey(.return, modifierFlags: [])
+            quick.click(); quick.typeText("pet greeting"); app.typeKey(.return, modifierFlags: [])
             wait("Bottom-edge compact result completes", timeout: 8) {
-                String(describing: app.staticTexts["activity.summary"].value ?? "").contains("已完成")
+                app.buttons["activity.summary"].label.contains("已完成")
             }
-            let card = app.staticTexts["activity.summary"]
+            let card = app.buttons["activity.summary"]
             XCTAssertLessThan(card.frame.maxY, pet.frame.minY)
-            card.click(); card.hover(); app.buttons["activity.followUp.toggle"].click()
+            card.hover(); app.buttons["activity.followUp.toggle"].click()
             XCTAssertTrue(app.textViews["activity.followUp"].waitForExistence(timeout: 3))
             XCTAssertLessThan(app.textViews["activity.followUp"].frame.maxY, pet.frame.minY)
             let screenshot = XCTAttachment(screenshot: app.screenshot())
@@ -278,7 +299,7 @@ import XCTest
             XCTAssertEqual(editor.value as? String, "main draft")
             wait("Sending closes the empty new-chat composer") { !quick.exists }
             wait("A completed pet result remains visible", timeout: 10) {
-                String(describing: app.staticTexts["activity.summary"].value ?? "").contains("已完成")
+                app.buttons["activity.summary"].label.contains("已完成")
             }
             pet.hover()
             let collapse = app.buttons["pet.activity.collapse"]

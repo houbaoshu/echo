@@ -219,15 +219,40 @@ struct WorkspaceSnapshot: Codable {
     @Published private(set) var petFollowUpID: UUID?
     @Published private(set) var isPetTrayCollapsed = false
     var petActivities: [WorkspaceConversation] { petActivityIDs.filter { $0 != voice.conversationID }.compactMap { conversation(id: $0) } }
-    var isPetActivityVisible: Bool { !petActivities.isEmpty && !isPetTrayCollapsed }
+    var visiblePetActivities: [WorkspaceConversation] { petActivities.filter { !$0.store.activitiesCollapsed } }
+    var isPetActivityVisible: Bool { !visiblePetActivities.isEmpty && !isPetTrayCollapsed }
     var petActivityHeight: CGFloat {
         if petFollowUpID != nil { return CompanionLayout.expandedHeight }
-        if isActivityListExpanded { return max(0, CGFloat(min(3, petActivities.count)) * (CompanionLayout.collapsedHeight + 8) - 8) + 12 }
-        return CompanionLayout.collapsedHeight + CGFloat(min(2, max(0, petActivities.count - 1))) * 7
+        if isActivityListExpanded { return max(0, CGFloat(min(3, visiblePetActivities.count)) * (CompanionLayout.collapsedHeight + 8) - 8) + 12 }
+        return CompanionLayout.collapsedHeight + CGFloat(min(2, max(0, visiblePetActivities.count - 1))) * 7
+    }
+    /// Folding changes presentation only; the bell still owns the unread result.
+    func collapsePetActivity(conversationID: UUID) {
+        guard petActivityIDs.contains(conversationID), let store = conversation(id: conversationID)?.store else { return }
+        if petFollowUpID == conversationID { exitPetFollowUp() }
+        store.foldActivity()
+        if visiblePetActivities.isEmpty { isPetTrayCollapsed = true }
+    }
+    /// Ignore this notification without opening its chat or stopping its task.
+    /// Only a subsequent run can add this conversation back to the pet tray.
+    func dismissPetActivity(conversationID: UUID) {
+        guard !shuttingDown, petActivityIDs.contains(conversationID) else { return }
+        removePetActivity(conversationID)
+    }
+    func openPetActivity(conversationID: UUID) {
+        guard conversation(id: conversationID) != nil else { return }
+        select(conversationID)
+        isMainWindowVisible = true
+        removePetActivity(conversationID)
+        onOpenPetActivity?()
     }
     func expandActivityList() { isActivityListExpanded = true }
     func enterPetFollowUp(_ id: UUID) {
         guard petActivityIDs.contains(id), let store = conversation(id: id)?.store else { return }
+        if petFollowUpID == id {
+            exitPetFollowUp()
+            return
+        }
         exitPetFollowUp()
         activityID = id; petFollowUpID = id
         store.expandActivity()
@@ -251,6 +276,7 @@ struct WorkspaceSnapshot: Codable {
     }
     @Published var persistenceNotice: String?
     var onRevealVoice: ((UUID) -> Void)?
+    var onOpenPetActivity: (() -> Void)?
     private let emptyActivity = TaskStore()
     private let sourceFactory: () -> (any TaskSource)?
     private let persistence: WorkspacePersistence?
@@ -335,7 +361,7 @@ struct WorkspaceSnapshot: Codable {
             exitPetFollowUp(); isPetTrayCollapsed = true
             petActivities.forEach { $0.store.foldActivity() }
         } else {
-            isPetTrayCollapsed = false; isActivityListExpanded = false
+            isPetTrayCollapsed = false; isActivityListExpanded = petActivities.count > 1
             petActivities.forEach { $0.store.expandActivity() }
         }
     }
@@ -351,7 +377,7 @@ struct WorkspaceSnapshot: Codable {
         guard let id = voiceCompletion else { return }
         voiceCompletion = nil
         guard !shuttingDown, !isViewing(id), let store = conversation(id: id)?.store else { return }
-        store.collapseForCompletion(unseen: true)
+        store.recordCompletion(unseen: true)
     }
     private func synchronizeFileBrowser() {
         fileBrowser.select(project: selectedID.flatMap { project(for: $0) })
@@ -543,15 +569,15 @@ struct WorkspaceSnapshot: Codable {
                 // A Live Voice conversation is still in progress; it is counted when the voice session ends.
                 let viewed = self.isViewing(id)
                 if self.voice.conversationID == id { self.voiceCompletion = viewed ? nil : id }
-                target.store.collapseForCompletion(unseen: !viewed && self.voice.conversationID != id)
+                target.store.recordCompletion(unseen: !viewed && self.voice.conversationID != id)
                 if viewed { self.removePetActivity(id) }
                 if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             case .reply(_, .failed):
-                target.store.collapseForCompletion(unseen: !self.isViewing(id))
+                target.store.recordCompletion(unseen: !self.isViewing(id))
                 if self.isViewing(id) { self.removePetActivity(id) }
                 if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             case .stopped:
-                target.store.collapseForCompletion(unseen: !self.isViewing(id))
+                target.store.recordCompletion(unseen: !self.isViewing(id))
                 if self.isViewing(id) { self.removePetActivity(id) }
                 if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             default: break
