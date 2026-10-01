@@ -755,15 +755,14 @@ struct ConversationView: View {
             HStack(spacing: 12) {
                 if presentation.isDictating {
                     Button { dictation.cancel(discard: true) } label: {
-                        Image(systemName: "xmark").frame(width: 28, height: 32)
-                    }.buttonStyle(.plain).help("取消转写").accessibilityLabel("取消转写")
+                        Image(systemName: "xmark").composerSecondaryLabel()
+                    }.composerSecondaryControl().help("取消转写").accessibilityLabel("取消转写")
                         .accessibilityIdentifier("dictation.cancel")
                     RecordingWaveform(levels: dictation.levels, active: presentation.mode == .dictationRecording)
                         .frame(maxWidth: .infinity).frame(height: 32)
                     Button { dictation.finishRecording() } label: {
-                        Image(systemName: "stop.fill").font(.system(size: 14)).foregroundStyle(WorkspaceStyle.primary)
-                            .frame(width: 28, height: 32).contentShape(Rectangle())
-                    }.buttonStyle(.plain).disabled(presentation.mode != .dictationRecording)
+                        Image(systemName: "stop.fill").composerSecondaryLabel()
+                    }.composerSecondaryControl().disabled(presentation.mode != .dictationRecording)
                         .help("结束录音").accessibilityLabel("结束录音")
                         .accessibilityIdentifier("dictation.finish")
                 } else {
@@ -776,7 +775,7 @@ struct ConversationView: View {
                                     .font(WorkspaceStyle.caption).lineLimit(1).truncationMode(.middle)
                                 Image(systemName: "arrow.right").font(.system(size: 9))
                             }
-                        }.buttonStyle(.plain).help("返回语音会话")
+                        }.buttonStyle(.borderless).help("返回语音会话")
                             .accessibilityLabel("返回语音会话").accessibilityIdentifier("voice.reveal")
                     }
                     if presentation.mode == .voice, let owner = voiceOwner {
@@ -795,8 +794,8 @@ struct ConversationView: View {
                             if let ws = workspace { ws.toggleVoiceSpeakerMute(owner: owner) } else { voice.toggleSpeakerMute() }
                         } label: {
                             Image(systemName: voice.snapshot.speakerMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                .frame(width: 28, height: 32)
-                        }.buttonStyle(.plain).disabled(!presentation.muteEnabled)
+                                .composerSecondaryLabel()
+                        }.composerSecondaryControl().disabled(!presentation.muteEnabled)
                             .foregroundStyle(voice.snapshot.speakerMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
                             .help(voice.snapshot.speakerMuted ? "开启扬声器" : "静音扬声器")
                             .accessibilityLabel(voice.snapshot.speakerMuted ? "开启扬声器" : "静音扬声器")
@@ -805,8 +804,8 @@ struct ConversationView: View {
                             if let ws = workspace { ws.toggleVoiceMute(owner: owner) } else { voice.toggleMute() }
                         } label: {
                             Image(systemName: voice.isMuted ? "mic.slash.fill" : "mic.fill")
-                                .frame(width: 28, height: 32)
-                        }.buttonStyle(.plain).disabled(!presentation.muteEnabled)
+                                .composerSecondaryLabel()
+                        }.composerSecondaryControl().disabled(!presentation.muteEnabled)
                             .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
                             .help(voice.isMuted ? "开启麦克风" : "关闭麦克风")
                             .accessibilityLabel(voice.isMuted ? "开启麦克风" : "关闭麦克风")
@@ -814,19 +813,17 @@ struct ConversationView: View {
                     } else {
                         Spacer(minLength: 0)
                         Button(action: startDictation) {
-                            Image(systemName: "mic")
-                        }.buttonStyle(.accessoryBar).disabled(!presentation.microphoneEnabled)
+                            Image(systemName: "mic").composerSecondaryLabel()
+                        }.composerSecondaryControl().disabled(!presentation.microphoneEnabled)
                             .help(presentation.microphoneEnabled ? "语音转文字" : "麦克风正在被占用")
                             .accessibilityLabel("语音转文字").accessibilityIdentifier("dictation.start")
                     }
                     if let output = presentation.output {
                         Button { output == .stop ? stop() : retry() } label: {
                             Image(systemName: output == .stop ? "stop.fill" : "play.fill")
-                                .font(.system(size: 9, weight: .semibold)).foregroundStyle(.white)
                                 .offset(x: output == .stop ? 0 : 1)
-                                .frame(width: 22, height: 22).background(Color.accentColor, in: Circle())
-                                .frame(width: 28, height: 32).contentShape(Rectangle())
-                        }.buttonStyle(.plain).disabled(output == .stop && !presentation.stopEnabled)
+                                .composerSecondaryLabel()
+                        }.composerSecondaryControl().disabled(output == .stop && !presentation.stopEnabled)
                             .help(output.label).accessibilityLabel(output.label)
                             .accessibilityIdentifier(output.identifier)
                     }
@@ -840,11 +837,11 @@ struct ConversationView: View {
                         case .resume: Image(systemName: "play.fill").offset(x: 1)
                         case .endVoice: Image(systemName: "xmark")
                         }
-                    }.font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
-                        .background(presentation.primaryEnabled ? Color.accentColor : Color.secondary.opacity(0.4), in: Circle())
-                        .contentShape(Circle())
-                }.buttonStyle(.plain).disabled(!presentation.primaryEnabled)
+                    }.font(.system(size: 14, weight: .semibold))
+                        // The system border adds 4 pt per side; the outer control stays 32 pt.
+                        .frame(width: 24, height: 24)
+                }.buttonStyle(.borderedProminent).buttonBorderShape(.circle).controlSize(.regular)
+                    .disabled(!presentation.primaryEnabled)
                     .help(presentation.primary.label).accessibilityLabel(presentation.primary.label)
                     .accessibilityIdentifier(presentation.primary.identifier)
             }.accessibilityElement(children: .contain).accessibilityIdentifier("conversation.actions")
@@ -874,6 +871,19 @@ struct ConversationView: View {
         }
     }
 
+}
+
+/// Quiet native controls share a 28 pt circle, centered in the primary action's 32 pt row.
+/// Compensate for the system style's 4 pt inset rather than expanding the hit area.
+private extension View {
+    func composerSecondaryLabel() -> some View {
+        font(.system(size: 14, weight: .medium))
+            .frame(width: 20, height: 20)
+    }
+    func composerSecondaryControl() -> some View {
+        buttonStyle(.bordered).buttonBorderShape(.circle).controlSize(.regular)
+            .frame(height: 32)
+    }
 }
 
 struct AgentToolView: View {

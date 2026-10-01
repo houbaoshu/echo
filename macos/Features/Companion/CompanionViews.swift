@@ -179,15 +179,11 @@ struct ActivityCapsule: View {
                     if store.isFollowUpExpanded { (exit ?? store.toggleFollowUp)() }
                     else { (followUp ?? store.toggleFollowUp)() }
                 } label: {
-                    Image(systemName: "return").font(.system(size: 13, weight: .medium))
-                        .frame(width: 20, height: 20)
-                        .background {
-                            if store.isFollowUpExpanded {
-                                Circle().fill(.primary.opacity(0.12))
-                            }
-                        }
+                    Image(systemName: "arrowshape.turn.up.left.fill")
+                        .font(.system(size: 28 * 0.46, weight: .medium))
+                        .frame(width: 28 - systemButtonInset, height: 28 - systemButtonInset)
                 }
-                .buttonStyle(.bordered).buttonBorderShape(.circle).companionControlActive()
+                .buttonStyle(.borderedProminent).buttonBorderShape(.circle).companionControlActive()
                 .help(store.isFollowUpExpanded ? "取消跟进" : "跟进")
                 .accessibilityLabel(store.isFollowUpExpanded ? "取消跟进" : "跟进")
                 .accessibilityValue(store.isFollowUpExpanded ? "已展开" : "已收起")
