@@ -160,6 +160,54 @@ import XCTest
         }
     }
 
+    func testCompletedPetControlsStayExpandedAcrossRealPointerExit() throws {
+        try withApp(petPosition: "top") { app, _ in
+            app.typeKey("w", modifierFlags: .command)
+            let pet = app.buttons["赤焰"]
+            XCTAssertTrue(pet.waitForExistence(timeout: 5))
+            let outside = pet.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+                .withOffset(CGVector(dx: -450, dy: 250))
+            let compose = app.buttons["pet.compose"]
+            let collapsed = app.descendants(matching: .any)["pet.collapsed"].firstMatch
+            pet.hover()
+            XCTAssertTrue(compose.waitForExistence(timeout: 3))
+            outside.hover()
+            wait("Idle pointer exit collapses the controls") { collapsed.exists && !compose.exists }
+            pet.hover(); compose.click()
+            let editor = app.textViews["pet.composer"]
+            XCTAssertTrue(editor.waitForExistence(timeout: 3))
+            editor.click(); editor.typeText("slow completion hold"); app.typeKey(.return, modifierFlags: [])
+            wait("Sending closes the composer") { !editor.exists }
+            outside.hover()
+            let collapse = app.buttons["pet.activity.collapse"]
+            wait("Running keeps only the existing status controls") {
+                collapse.exists && app.buttons["voice.start"].exists && !compose.exists
+            }
+            wait("Completion while the pointer is outside keeps the controls expanded", timeout: 10) {
+                app.buttons["activity.summary"].label.contains("已完成") && compose.exists && collapse.exists && !collapsed.exists
+            }
+            pet.hover(); outside.hover()
+            // Keep the pointer stationary beyond the strip and panel animation durations.
+            // An inverted expectation monitors the whole interval, rather than accepting one visible frame.
+            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                !collapse.exists || !compose.exists || collapsed.exists || !app.buttons["activity.summary"].exists
+            }, object: nil)
+            hidden.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 3), .completed,
+                           "Completion remains expanded after real pointer exit and an outside dwell")
+            collapse.click()
+            outside.hover()
+            wait("Explicit collapse releases the completion hold") {
+                collapsed.exists && !collapse.exists && !app.buttons["activity.summary"].exists
+            }
+            pet.hover()
+            XCTAssertTrue(app.buttons["pet.activity.expand"].waitForExistence(timeout: 3))
+            XCTAssertEqual(app.buttons["pet.activity.expand"].value as? String, "1 个已完成任务未查看")
+            outside.hover()
+            wait("Normal hover exit resumes after explicit collapse") { collapsed.exists && !compose.exists }
+        }
+    }
+
     func testPetConversationCardStates() throws {
         try withApp(petPosition: "top") { app, _ in
             app.typeKey("w", modifierFlags: .command)

@@ -281,7 +281,8 @@ import Combine
         let surface = controlsPresentation.surface(hovered: hovered, store: taskStore, voice: workspace.voice,
                                                    unseenCompleted: workspace.unseenCompletedCount,
                                                    runningTasks: workspace.runningTaskCount, activityCount: workspace.petActivities.count,
-                                                   activitiesCollapsed: !workspace.isPetActivityVisible)
+                                                   activitiesCollapsed: !workspace.isPetActivityVisible,
+                                                   keepsExpandedAfterCompletion: workspace.keepsPetControlsExpandedAfterCompletion)
         let frames = CompanionLayout(pet: petPanel.frame, activity: activityPanel.frame, controls: controlsPanel.frame)
         return frames.controlsContent(width: surface.width)
     }

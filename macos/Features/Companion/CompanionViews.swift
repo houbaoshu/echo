@@ -270,12 +270,14 @@ struct ActivityCapsule: View {
     /// The strip's layout from the live stores. The drawn strip and the controller's hover
     /// hit-frame both read it here, so the pointer target always matches the width on screen.
     func surface(hovered: Bool, store: TaskStore, voice: VoiceSessionController,
-                 unseenCompleted: Int, runningTasks: Int, activityCount: Int? = nil, activitiesCollapsed: Bool? = nil) -> PetSurfacePresentation {
+                 unseenCompleted: Int, runningTasks: Int, activityCount: Int? = nil, activitiesCollapsed: Bool? = nil,
+                 keepsExpandedAfterCompletion: Bool = false) -> PetSurfacePresentation {
         PetSurfacePresentation(hovered: hovered, composerOpen: isComposerOpen, draft: draft,
                                activityCount: activityCount ?? store.activityCount, activitiesCollapsed: activitiesCollapsed ?? store.activitiesCollapsed,
                                unseenCompleted: unseenCompleted, voice: voice.snapshot, canStartVoice: voice.canStartCall,
                                runningTasks: runningTasks, composerSent: collapsesOnExit,
-                               connectedVoiceSession: connectedVoiceSession)
+                               connectedVoiceSession: connectedVoiceSession,
+                               keepsExpandedAfterCompletion: keepsExpandedAfterCompletion)
     }
     func noteVoice(_ snapshot: VoiceSessionSnapshot) {
         guard case .active(let owner) = snapshot.session else {
@@ -401,7 +403,8 @@ struct PetControls: View {
     private var surface: PetSurfacePresentation {
         presentation.surface(hovered: presentation.isHovered, store: store, voice: voice,
                              unseenCompleted: unseenCompleted, runningTasks: runningTasks,
-                             activityCount: workspace?.petActivities.count, activitiesCollapsed: workspace.map { !$0.isPetActivityVisible })
+                             activityCount: workspace?.petActivities.count, activitiesCollapsed: workspace.map { !$0.isPetActivityVisible },
+                             keepsExpandedAfterCompletion: workspace?.keepsPetControlsExpandedAfterCompletion ?? false)
     }
     var body: some View {
         let surface = surface

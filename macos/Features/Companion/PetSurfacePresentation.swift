@@ -33,7 +33,7 @@ struct PetSurfacePresentation: Equatable {
     static let canvasHeight: CGFloat = 56
 
     let mode: Mode
-    /// ✎ and the voice entry appear only while the pointer is over the pet or its controls.
+    /// ✎ and the voice entry appear on hover, or while a completion holds the controls open.
     let showsActions: Bool
     let tray: Tray
     let voice: VoiceIndicator
@@ -54,7 +54,8 @@ struct PetSurfacePresentation: Equatable {
     init(hovered: Bool, composerOpen: Bool, draft: String,
          activityCount: Int, activitiesCollapsed: Bool, unseenCompleted: Int,
          voice snapshot: VoiceSessionSnapshot, canStartVoice: Bool,
-         runningTasks: Int = 0, composerSent: Bool = false, connectedVoiceSession: UUID? = nil) {
+         runningTasks: Int = 0, composerSent: Bool = false, connectedVoiceSession: UUID? = nil,
+         keepsExpandedAfterCompletion: Bool = false) {
         self.unseenCompleted = unseenCompleted
         switch snapshot.session {
         case .starting: voiceConnecting = true
@@ -79,7 +80,7 @@ struct PetSurfacePresentation: Equatable {
         if composerOpen { mode = .composer }
         else if snapshot.session.owner != nil && !voiceConnecting { mode = .voice }
         else { mode = .compact }
-        showsActions = hovered || composerOpen
+        showsActions = hovered || composerOpen || keepsExpandedAfterCompletion
         showsStatus = composerOpen ? composerSent : !showsActions && (runningTasks > 0 || voiceConnecting)
     }
 

@@ -1652,6 +1652,53 @@ private struct ComposerHeightHost: View {
         XCTAssertEqual(axValue(bell), "1 个已完成任务未查看")
     }
 
+    func testCompletedPetControlsSurvivePointerExit() async throws {
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let source = PreviewSource()
+        let workspace = WorkspaceStore(sourceFactory: { source })
+        let companion = CompanionController(petStore: pet, workspace: workspace,
+                                            settings: SettingsStore(secrets: ComposerSecrets()), defaults: EchoTestResources.defaults())
+        defer { companion.shutdown() }
+        let controls = companion.controlsPanel.contentView!
+        let presentation = companion.controlsPresentation
+        let inside = NSPoint(x: companion.petPanel.frame.midX, y: companion.petPanel.frame.midY)
+        let outside = NSPoint(x: companion.petPanel.frame.minX - 600, y: companion.petPanel.frame.maxY + 600)
+        func node(_ id: String) -> AnyObject? { findAccessibility(id, in: controls) }
+        // Drive the same sampling entry point used by AppKit's local/global pointer monitors,
+        // rather than assigning isHovered. EchoUITests also exercises real system pointer events.
+        func pointer(_ point: NSPoint, until ready: () -> Bool) async throws {
+            try await eventually("Pointer presentation updates") {
+                companion.petPanel.samplePointer(at: point)
+                return ready()
+            }
+        }
+        try await pointer(inside) { presentation.isHovered && node("pet.compose") != nil }
+        try await pointer(outside) { !presentation.isHovered && node("pet.collapsed") != nil }
+        XCTAssertTrue(workspace.sendQuickMessage("completion outside the pet"))
+        try await pointer(outside) { node("voice.start") != nil && node("pet.activity.collapse") != nil }
+        XCTAssertNil(node("pet.compose"), "Running still uses its existing status controls outside hover")
+        source.receive?(.completed("completed result"))
+        try await pointer(outside) { node("pet.compose") != nil && node("pet.activity.collapse") != nil }
+        XCTAssertFalse(presentation.isHovered)
+        XCTAssertTrue(companion.activityPanel.isVisible)
+        for point in [inside, outside, inside, outside] {
+            companion.petPanel.samplePointer(at: point)
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertNotNil(node("pet.activity.collapse"), "Completion survives pointer enter/exit and animation callbacks")
+            XCTAssertNil(node("pet.collapsed"))
+            XCTAssertTrue(companion.activityPanel.isVisible)
+        }
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertNotNil(node("pet.activity.collapse"), "A stationary outside pointer cannot hide completed controls")
+        let collapse = try XCTUnwrap(node("pet.activity.collapse"))
+        XCTAssertTrue(collapse.accessibilityPerformPress?() == true)
+        try await pointer(outside) { node("pet.collapsed") != nil && !companion.activityPanel.isVisible }
+        XCTAssertFalse(workspace.keepsPetControlsExpandedAfterCompletion)
+        XCTAssertEqual(workspace.unseenCompletedCount, 1)
+        try await pointer(inside) { node("pet.activity.expand") != nil && node("pet.compose") != nil }
+        try await pointer(outside) { node("pet.collapsed") != nil && node("pet.compose") == nil }
+    }
+
     func testCompanionQuickComposerLifecycle() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let source = PreviewSource()

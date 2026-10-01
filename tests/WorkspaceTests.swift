@@ -13,6 +13,73 @@ import Foundation
 }
 
 @Suite(.serialized) struct WorkspaceTests {
+    @MainActor @Test(.tags(.fast)) static func completionHoldsPetControlsUntilExplicitCollapse() throws {
+        var sources: [WorkspaceTestSource] = []
+        let workspace = WorkspaceStore(sourceFactory: {
+            let source = WorkspaceTestSource()
+            sources.append(source)
+            return source
+        })
+        defer { workspace.shutdown() }
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
+        #expect(workspace.sendQuickMessage("first completion"))
+        let first = try #require(workspace.activity)
+        let firstSource = try #require(sources.last)
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "Running does not arm a completion hold")
+        firstSource.receive?(.completed("first result"))
+        #expect(workspace.keepsPetControlsExpandedAfterCompletion)
+        #expect(workspace.sendQuickMessage("second completion"))
+        let second = try #require(workspace.activity)
+        sources.last?.receive?(.completed("second result"))
+        workspace.collapsePetActivity(conversationID: first.id)
+        #expect(workspace.keepsPetControlsExpandedAfterCompletion, "The other visible completion still holds the controls")
+        workspace.collapsePetActivity(conversationID: second.id)
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
+        #expect(workspace.unseenCompletedCount == 2, "Holding and folding do not acknowledge results")
+        workspace.toggleActivityTray()
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "Reopening alone does not rearm the hold")
+
+        #expect(workspace.send("new completion", conversationID: first.id))
+        firstSource.receive?(.completed("new result"))
+        #expect(workspace.keepsPetControlsExpandedAfterCompletion)
+        workspace.toggleActivityTray()
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "The tray collapse releases every hold")
+        workspace.toggleActivityTray()
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
+        #expect(workspace.send("another completion", conversationID: first.id))
+        firstSource.receive?(.completed("another result"))
+        #expect(workspace.keepsPetControlsExpandedAfterCompletion)
+        workspace.dismissPetActivity(conversationID: first.id)
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "Removing a held card leaves no stale hold")
+    }
+
+    @MainActor @Test(.tags(.fast)) static func completionHoldDoesNotChangeOtherTaskStates() throws {
+        let source = WorkspaceTestSource()
+        let workspace = WorkspaceStore(sourceFactory: { source })
+        defer { workspace.shutdown() }
+        #expect(workspace.sendQuickMessage("background"))
+        let chat = try #require(workspace.activity)
+        source.receive?(.failed("failure"))
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
+        #expect(workspace.send("stopped", conversationID: chat.id))
+        chat.store.stopTask()
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
+        #expect(workspace.send("completed", conversationID: chat.id))
+        source.receive?(.completed("result"))
+        #expect(workspace.keepsPetControlsExpandedAfterCompletion)
+        #expect(workspace.send("running again", conversationID: chat.id))
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "A new run keeps its existing presentation rules")
+        workspace.collapsePetActivity(conversationID: chat.id)
+        source.receive?(.completed("explicitly folded result"))
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion && !workspace.isPetActivityVisible,
+                "Completion preserves an explicit fold made during the run")
+        workspace.toggleActivityTray()
+        workspace.openPetActivity(conversationID: chat.id)
+        #expect(workspace.send("viewed result", conversationID: chat.id))
+        source.receive?(.completed("already viewed"))
+        #expect(!workspace.keepsPetControlsExpandedAfterCompletion && workspace.petActivities.isEmpty)
+    }
+
     @MainActor @Test static func petCardsStayUnreadUntilOpened() throws {
         var sources: [WorkspaceTestSource] = []
         let workspace = WorkspaceStore(sourceFactory: {

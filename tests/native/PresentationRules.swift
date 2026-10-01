@@ -8,10 +8,12 @@ import Testing
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
         func surface(hovered: Bool = false, composer: Bool = false, draft: String = "", count: Int = 0,
                      collapsed: Bool = false, unseen: Int = 0, voice: VoiceSessionSnapshot = .init(),
-                     canStart: Bool = true, running: Int = 0, sent: Bool = false, connected: UUID? = nil) -> Surface {
+                     canStart: Bool = true, running: Int = 0, sent: Bool = false, connected: UUID? = nil,
+                     completionHeld: Bool = false) -> Surface {
             Surface(hovered: hovered, composerOpen: composer, draft: draft, activityCount: count,
                     activitiesCollapsed: collapsed, unseenCompleted: unseen, voice: voice, canStartVoice: canStart,
-                    runningTasks: running, composerSent: sent, connectedVoiceSession: connected)
+                    runningTasks: running, composerSent: sent, connectedVoiceSession: connected,
+                    keepsExpandedAfterCompletion: completionHeld)
         }
         #expect(surface().mode == .compact && !surface().showsActions && surface().width == Surface.collapsedSize.width,
                      "Idle pet shows only the light collapsed bar")
@@ -33,6 +35,13 @@ import Testing
         #expect(running.showsStatus && running.width == 2 * Surface.circle + Surface.gap,
                      "Without hover, running tasks keep Live Voice and the bell")
         #expect(!surface(count: 1, collapsed: true, unseen: 1).showsStatus, "Finished tasks collapse to the light bar")
+        let heldCompletion = surface(count: 1, unseen: 1, completionHeld: true)
+        #expect(heldCompletion.showsActions && !heldCompletion.isCollapsedBar && heldCompletion.tray == .collapse,
+                "A completion keeps its controls and explicit collapse action without hover")
+        #expect(heldCompletion == surface(hovered: true, count: 1, unseen: 1, completionHeld: true),
+                "Pointer enter and exit cannot change the held completion's presentation")
+        #expect(surface(count: 1, collapsed: true, unseen: 1).isCollapsedBar,
+                "Releasing the completion hold restores normal hover behavior")
         #expect(!surface(composer: true, count: 1, running: 1).showsStatus
                      && surface(composer: true, count: 1, running: 1).width == Surface.composerWidth,
                      "A freshly opened composer stays in focus mode")

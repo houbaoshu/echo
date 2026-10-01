@@ -218,9 +218,15 @@ struct WorkspaceSnapshot: Codable {
     @Published private(set) var isActivityListExpanded = false
     @Published private(set) var petFollowUpID: UUID?
     @Published private(set) var isPetTrayCollapsed = false
+    /// A completion holds the controls open until that card is explicitly folded or removed.
+    /// Transient and separate from hover and unread state; reopening a folded card does not rearm it.
+    @Published private var petCompletionHoldIDs: Set<UUID> = []
     var petActivities: [WorkspaceConversation] { petActivityIDs.filter { $0 != voice.conversationID }.compactMap { conversation(id: $0) } }
     var visiblePetActivities: [WorkspaceConversation] { petActivities.filter { !$0.store.activitiesCollapsed } }
     var isPetActivityVisible: Bool { !visiblePetActivities.isEmpty && !isPetTrayCollapsed }
+    var keepsPetControlsExpandedAfterCompletion: Bool {
+        isPetActivityVisible && visiblePetActivities.contains { petCompletionHoldIDs.contains($0.id) }
+    }
     var petActivityHeight: CGFloat {
         if petFollowUpID != nil { return CompanionLayout.expandedHeight }
         if isActivityListExpanded { return max(0, CGFloat(min(3, visiblePetActivities.count)) * (CompanionLayout.collapsedHeight + 8) - 8) + 12 }
@@ -229,6 +235,7 @@ struct WorkspaceSnapshot: Codable {
     /// Folding changes presentation only; the bell still owns the unread result.
     func collapsePetActivity(conversationID: UUID) {
         guard petActivityIDs.contains(conversationID), let store = conversation(id: conversationID)?.store else { return }
+        petCompletionHoldIDs.remove(conversationID)
         if petFollowUpID == conversationID { exitPetFollowUp() }
         store.foldActivity()
         if visiblePetActivities.isEmpty { isPetTrayCollapsed = true }
@@ -263,6 +270,7 @@ struct WorkspaceSnapshot: Codable {
         petFollowUpID = nil
     }
     private func removePetActivity(_ id: UUID) {
+        petCompletionHoldIDs.remove(id)
         if petFollowUpID == id { exitPetFollowUp() }
         petActivityIDs.removeAll { $0 == id }
         conversation(id: id)?.store.closeActivity()
@@ -358,6 +366,7 @@ struct WorkspaceSnapshot: Codable {
     var unseenCompletedCount: Int { petActivities.filter { $0.store.hasUnseenCompletion }.count }
     func toggleActivityTray() {
         if isPetActivityVisible {
+            petCompletionHoldIDs.removeAll()
             exitPetFollowUp(); isPetTrayCollapsed = true
             petActivities.forEach { $0.store.foldActivity() }
         } else {
@@ -554,6 +563,7 @@ struct WorkspaceSnapshot: Codable {
             switch event {
             case .started:
                 // A new run supersedes the previous outcome.
+                self.petCompletionHoldIDs.remove(id)
                 target.store.markSeen()
                 if !self.petActivityIDs.contains(id) {
                     self.exitPetFollowUp(); self.isActivityListExpanded = false; self.isPetTrayCollapsed = false
@@ -565,11 +575,15 @@ struct WorkspaceSnapshot: Codable {
                 // Folded before the companion next synchronizes, so the card never shows for a Live Voice turn.
                 if self.voice.conversationID == id { target.store.foldActivity() }
             case .reply(_, .completed):
-                // The conversation on screen already shows its reply; everywhere else it waits in the bell.
+                // The conversation on screen already shows its reply; elsewhere the result stays unread.
                 // A Live Voice conversation is still in progress; it is counted when the voice session ends.
                 let viewed = self.isViewing(id)
                 if self.voice.conversationID == id { self.voiceCompletion = viewed ? nil : id }
                 target.store.recordCompletion(unseen: !viewed && self.voice.conversationID != id)
+                if !viewed, self.voice.conversationID != id, self.petActivityIDs.contains(id),
+                   !self.isPetTrayCollapsed, target.store.isActivityVisible {
+                    self.petCompletionHoldIDs.insert(id)
+                }
                 if viewed { self.removePetActivity(id) }
                 if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             case .reply(_, .failed):
