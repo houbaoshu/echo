@@ -1,4 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="386.42" y1="386.42" x2="637.58" y2="637.58"><stop offset="0" stop-color="#6c7583"/><stop offset="0.1" stop-color="#c3cad5"/><stop offset="0.26" stop-color="#ffffff"/><stop offset="0.42" stop-color="#e3e7ed"/><stop offset="0.68" stop-color="#9fa8b5"/><stop offset="0.88" stop-color="#737c8b"/><stop offset="1" stop-color="#525a67"/></linearGradient></defs>
-<path d="M475.51,297.32 L557.82,379.63 L442.00,654.98 L531.09,744.07 L763.59,511.58 L512.42,260.41 Z" fill="url(#g)"/>
+<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="361.30" y1="361.30" x2="662.70" y2="662.70"><stop offset="0" stop-color="#6c7583"/><stop offset="0.1" stop-color="#c3cad5"/><stop offset="0.26" stop-color="#ffffff"/><stop offset="0.42" stop-color="#e3e7ed"/><stop offset="0.68" stop-color="#9fa8b5"/><stop offset="0.88" stop-color="#737c8b"/><stop offset="1" stop-color="#525a67"/></linearGradient></defs>
+<path d="M468.22,254.39 L566.98,353.16 L428.00,683.57 L534.91,790.49 L813.91,511.49 L512.51,210.09 Z" fill="url(#g)"/>
 </svg>
