@@ -137,27 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: "文件")
         fileItem.submenu = fileMenu; menu.addItem(fileItem)
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(withTitle: "撤销", action: NSSelectorFromString("undo:"), keyEquivalent: "z")
-        let redo = editMenu.addItem(withTitle: "重做", action: NSSelectorFromString("redo:"), keyEquivalent: "z")
-        redo.keyEquivalentModifierMask = [.command, .shift]
-        editMenu.addItem(.separator())
-        for (title, selector, key) in [("剪切", "cut:", "x"), ("复制", "copy:", "c"),
-                                       ("粘贴", "paste:", "v"), ("删除", "delete:", ""),
-                                       ("全选", "selectAll:", "a")] {
-            editMenu.addItem(withTitle: title, action: NSSelectorFromString(selector), keyEquivalent: key)
-        }
-        editMenu.addItem(.separator())
-        // ⌘K, not ⌘F: this opens a palette that switches between chats, which is what ⌘K
-        // means across editors. ⌘F on macOS means "find inside what I am looking at", so it
-        // stays free for a find in the open conversation.
-        let quickOpen = editMenu.addItem(withTitle: "快速打开会话…", action: #selector(search), keyEquivalent: "k")
-        quickOpen.keyEquivalentModifierMask = [.command]
-        quickOpen.target = self
-        editMenu.addItem(.separator())
-        let palette = editMenu.addItem(withTitle: "表情与符号",
-                                       action: #selector(NSApplication.orderFrontCharacterPalette(_:)), keyEquivalent: " ")
-        palette.keyEquivalentModifierMask = [.control, .command]
+        let editMenu = makeEditMenu()
         editItem.submenu = editMenu
         menu.addItem(editItem)
         let conversationItem = NSMenuItem()
@@ -180,6 +160,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.windowsMenu = windowMenu
         workspaceCommands = commands
         NSApp.mainMenu = menu
+    }
+
+    func makeEditMenu() -> NSMenu {
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "撤销", action: NSSelectorFromString("undo:"), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "重做", action: NSSelectorFromString("redo:"), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        for (title, selector, key) in [("剪切", "cut:", "x"), ("复制", "copy:", "c"),
+                                       ("粘贴", "paste:", "v"), ("删除", "delete:", ""),
+                                       ("全选", "selectAll:", "a")] {
+            editMenu.addItem(withTitle: title, action: NSSelectorFromString(selector), keyEquivalent: key)
+        }
+        editMenu.addItem(withTitle: "查找", action: nil, keyEquivalent: "").submenu = Self.makeFindMenu()
+        editMenu.addItem(.separator())
+        // ⌘K, not ⌘F: this opens a palette that switches between chats, which is what ⌘K
+        // means across editors. ⌘F on macOS means "find inside what I am looking at", so it
+        // stays free for a find in the open conversation.
+        let quickOpen = editMenu.addItem(withTitle: "快速打开会话…", action: #selector(search), keyEquivalent: "k")
+        quickOpen.keyEquivalentModifierMask = [.command]
+        quickOpen.target = self
+        editMenu.addItem(.separator())
+        let palette = editMenu.addItem(withTitle: "表情与符号",
+                                       action: #selector(NSApplication.orderFrontCharacterPalette(_:)), keyEquivalent: " ")
+        palette.keyEquivalentModifierMask = [.control, .command]
+        return editMenu
+    }
+
+    /// The system Find submenu. Items have no target, so the responder chain decides:
+    /// the find commands enable only in a text view with `usesFindBar` (the file preview),
+    /// and the composer, which has neither find bar nor find panel, leaves them disabled.
+    static func makeFindMenu() -> NSMenu {
+        let findMenu = NSMenu(title: "查找")
+        let finderAction = #selector(NSResponder.performTextFinderAction(_:))
+        for (title, action, key, modifiers) in [
+            ("查找…", NSTextFinder.Action.showFindInterface, "f", NSEvent.ModifierFlags.command),
+            ("查找下一个", .nextMatch, "g", .command),
+            ("查找上一个", .previousMatch, "g", [.command, .shift]),
+            ("用所选内容查找", .setSearchString, "e", .command),
+        ] {
+            let item = findMenu.addItem(withTitle: title, action: finderAction, keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers
+            item.tag = action.rawValue
+        }
+        findMenu.addItem(withTitle: "跳到所选内容", action: #selector(NSTextView.centerSelectionInVisibleArea(_:)),
+                         keyEquivalent: "j")
+        return findMenu
     }
 
     @objc private func showSettings() { companion?.showSettings() }

@@ -475,6 +475,31 @@ import SwiftUI
         XCTAssertTrue(!voice.isActive && !dictation.isActive)
     }
 
+    /// Edit > Find carries the system find commands, untargeted so the responder chain answers.
+    func testEditMenuFindSubmenu() throws {
+        let edit = AppDelegate().makeEditMenu()
+        let titles = edit.items.map(\.title)
+        let index = try XCTUnwrap(titles.firstIndex(of: "查找"))
+        XCTAssertEqual(titles[index - 1], "全选")
+        let find = try XCTUnwrap(edit.items[index].submenu)
+        let finderAction = #selector(NSResponder.performTextFinderAction(_:))
+        let expected: [(String, Selector, Int, String, NSEvent.ModifierFlags)] = [
+            ("查找…", finderAction, NSTextFinder.Action.showFindInterface.rawValue, "f", .command),
+            ("查找下一个", finderAction, NSTextFinder.Action.nextMatch.rawValue, "g", .command),
+            ("查找上一个", finderAction, NSTextFinder.Action.previousMatch.rawValue, "g", [.command, .shift]),
+            ("用所选内容查找", finderAction, NSTextFinder.Action.setSearchString.rawValue, "e", .command),
+            ("跳到所选内容", #selector(NSTextView.centerSelectionInVisibleArea(_:)), 0, "j", .command),
+        ]
+        XCTAssertEqual(find.items.map(\.title), expected.map(\.0))
+        for (item, (title, action, tag, key, modifiers)) in zip(find.items, expected) {
+            XCTAssertEqual(item.action, action, title)
+            XCTAssertEqual(item.tag, tag, title)
+            XCTAssertEqual(item.keyEquivalent, key, title)
+            XCTAssertEqual(item.keyEquivalentModifierMask, modifiers, title)
+            XCTAssertNil(item.target, title)
+        }
+    }
+
     /// The native picker keeps its keyboard highlight scrolled into view.
     func testProjectPickerKeyboardScroll() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("picker-scroll-\(UUID())")
