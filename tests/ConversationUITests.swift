@@ -604,6 +604,73 @@ private struct ComposerHeightHost: View {
 
     }
 
+    func testActivationPolicyFollowsOpenWindows() async throws {
+        final class Log { var entries: [String] = [] }
+        let log = Log()
+        let controller = ActivationPolicyController(apply: { log.entries.append($0 == .regular ? "regular" : "accessory") },
+                                                    activate: { log.entries.append("activate") })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.orderOut(nil) }
+        func nextTurn() async throws { try await Task.sleep(for: .milliseconds(20)) }
+
+        controller.activate(for: window)
+        XCTAssertEqual(log.entries, ["regular", "activate"], "The app is regular before it activates")
+        try await nextTurn()
+        XCTAssertEqual(log.entries, ["regular", "activate"], "A window not yet on screen counts as open")
+
+        window.orderFront(nil); window.orderOut(nil)
+        try await nextTurn()
+        XCTAssertEqual(log.entries.last, "accessory", "Once it has shown, hiding it ends the regular app")
+
+        log.entries = []
+        window.orderFront(nil)
+        XCTAssertEqual(log.entries, ["regular"], "Showing a tracked window is regular at once, before any activation")
+        window.orderOut(nil); window.orderFront(nil)
+        try await nextTurn()
+        XCTAssertEqual(log.entries, ["regular"], "Hidden and shown again within a turn changes nothing")
+        window.orderOut(nil)
+        try await nextTurn()
+        XCTAssertEqual(log.entries, ["regular", "accessory"])
+    }
+
+    func testActivationPolicyDetoursWhenAlreadyActiveAsAccessory() async throws {
+        final class Log { var entries: [String] = []; var active = true }
+        let log = Log()
+        let controller = ActivationPolicyController(apply: { log.entries.append($0 == .regular ? "regular" : "accessory") },
+                                                    activate: { log.entries.append("activate") },
+                                                    isActive: { log.active }, activateDock: { log.entries.append("dock") },
+                                                    leaveDock: { log.entries.append("leave dock") })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.orderOut(nil) }
+
+        // Already active as an accessory, as a reopen from Spotlight leaves Echo.
+        window.orderFront(nil)
+        controller.activate(for: window)
+        XCTAssertEqual(log.entries, ["regular", "dock"], "Activation waits for the detour instead of cutting it short")
+        controller.activate(for: window)
+        XCTAssertEqual(log.entries, ["regular", "dock"], "A second request during the detour starts no second one")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(log.entries, ["regular", "dock", "activate"])
+
+        // The window closes before the detour hands activation back: Echo stays in the background.
+        window.orderOut(nil)
+        try await Task.sleep(for: .milliseconds(50))
+        log.entries = []
+        window.orderFront(nil)
+        window.orderOut(nil)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(log.entries, ["regular", "dock", "accessory", "leave dock"])
+
+        // Not active: no detour, as before.
+        log.active = false; log.entries = []
+        controller.activate(for: window)
+        XCTAssertEqual(log.entries, ["regular", "activate"])
+    }
+
     func testConsecutiveDictationAppends() async throws {
         let source = PreviewSource(), recognizer = ComposerRecognizer()
         let store = TaskStore(source: source)

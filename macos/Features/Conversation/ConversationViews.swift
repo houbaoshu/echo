@@ -78,6 +78,7 @@ extension NSFont {
 
 @MainActor enum WorkspaceActions {
     /// `asSheet: false` runs a standalone dialog, e.g. from the pet, whose panels cannot host a sheet.
+    /// A standalone dialog brings the app forward itself and keeps it a regular app while it is up.
     /// `cancelled` runs when the panel closes without a folder, for callers that must release a
     /// waiting task instead of leaving it paused.
     static func chooseFolder(asSheet: Bool = true, cancelled: (() -> Void)? = nil,
@@ -85,12 +86,14 @@ extension NSFont {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.allowsMultipleSelection = false; panel.prompt = "选择文件夹"
-        if !asSheet { NSApp.activate(ignoringOtherApps: true) }
         if asSheet, let window = NSApp.keyWindow {
             panel.beginSheetModal(for: window) { response in
                 if response == .OK, let url = panel.url { completion(url) } else { cancelled?() }
             }
-        } else if panel.runModal() == .OK, let url = panel.url { completion(url) } else { cancelled?() }
+            return
+        }
+        ActivationPolicyController.activate(for: panel)
+        if panel.runModal() == .OK, let url = panel.url { completion(url) } else { cancelled?() }
     }
     static func rename(_ current: String, completion: @escaping (String) -> Void) {
         let alert = NSAlert(); alert.messageText = "重命名"

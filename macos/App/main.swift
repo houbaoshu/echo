@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch mode {
                 case .hosted: return
                 case .ui(let root, let defaults):
+                    ActivationPolicyController.install()
                     installMenus()
                     let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: TestBootstrap.Secrets())
                     if settings.draft.model.isEmpty {
@@ -89,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         _ = DictationDiagnostics.shared
+        ActivationPolicyController.install()
         installMenus()
         do {
             let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
@@ -128,8 +130,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applicationMenu.addItem(withTitle: "服务", action: nil, keyEquivalent: "").submenu = servicesMenu
         NSApp.servicesMenu = servicesMenu
         applicationMenu.addItem(.separator())
-        // No Hide items. Echo is an LSUIElement app, so a hidden Echo has no Dock tile and no
-        // ⌘Tab entry to return from, and the pet would go with it.
+        // No Hide items. Hiding an app hides every window it owns, and the pet is one of them,
+        // whether Echo is an accessory or, with a window open, a regular app.
         applicationMenu.addItem(withTitle: "退出 Echo", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         applicationItem.submenu = applicationMenu
         menu.addItem(applicationItem)
@@ -225,6 +227,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         companion?.mainController?.focusSearch()
     }
 
+    /// The Dock tile is there only while a window is open or minimized. Clicking it brings
+    /// the main window forward, also when the window open was Settings.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        companion?.showMainWindow()
+        return false
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let workspace = companion?.workspace ?? acceptanceWorkspace else { return .terminateNow }
         companion?.mainController?.prepareForTermination()
@@ -250,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .critical
         alert.addButton(withTitle: "退出")
-        NSApp.activate(ignoringOtherApps: true)
+        ActivationPolicyController.activate(for: alert.window)
         alert.runModal()
         NSApp.terminate(nil)
     }

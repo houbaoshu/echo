@@ -296,7 +296,7 @@ import Combine
         guard let window else { return }
         workspace.isMainWindowVisible = true
         if window.isMiniaturized { window.deminiaturize(nil) }
-        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil); ActivationPolicyController.activate(for: window)
     }
     @objc func hideMainWindow() {
         searchPalette.isOpen = false
@@ -392,10 +392,10 @@ import Combine
     /// after a flexible space following its tracking separator. They carry the system icon,
     /// the stateful tooltip and the validation, and the title is drawn by the window.
     ///
-    /// They are here because without them a collapsed sidebar is a dead end: the settings
-    /// gear rides in that column's footer accessory and disappears with it, Echo is an
-    /// LSUIElement app with no Dock tile to fall back on, and AppKit collapses the sidebar
-    /// on its own when the window gets narrow. ⌘B / ⌥⌘B stay as they were.
+    /// They are here because a collapsed sidebar takes the chat list and the settings gear
+    /// in its footer accessory with it, and AppKit collapses the sidebar on its own when the
+    /// window gets narrow; the toolbar is where the column comes back from. Settings is
+    /// also in the Echo menu. ⌘B / ⌥⌘B stay as they were.
     ///
     /// Their labels and tooltips are AppKit's, in whatever language the system is running;
     /// Echo does not localize the bundle and must not rewrite the tooltip, which the system
