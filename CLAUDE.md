@@ -3,6 +3,8 @@
 本项目配置了 Xcode MCP。构建、测试、诊断一律用它，
 不要用 Computer Use 操作 Xcode 界面。
 工具调不通时报告具体错误，不要绕路。
+MCP 只能运行 scheme 默认测试计划里的 target，切换测试计划无效；
+跑非默认计划里的 target 要先切到以该计划为默认的 scheme（如 EchoOffline 用 Echo-Offline）。
 
 ## Git 工作流
 
