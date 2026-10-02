@@ -104,6 +104,82 @@ import SwiftUI
         XCTAssertTrue(samples == reopened + 1, "Reopening installs exactly one local monitor")
     }
 
+    func testPetClickAndDragGestures() async throws {
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let panel = PetPanel(store: pet, pointerLocation: { .zero })
+        // AppKit presents the context menu itself; record each one as it opens and dismiss it
+        // from inside menu tracking so the synthetic events below are not blocked.
+        final class OpenedMenus: @unchecked Sendable { var count = 0 }
+        let opened = OpenedMenus()
+        let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
+                                                              object: nil, queue: nil) { note in
+            guard let menu = note.object as? NSMenu, menu.items.map(\.title) == ["关闭精灵"] else { return }
+            opened.count += 1
+            menu.perform(#selector(NSMenu.cancelTracking), with: nil, afterDelay: 0.1, inModes: [.common])
+        }
+        defer { NotificationCenter.default.removeObserver(observer); panel.close(); pet.stop() }
+        var clicks = 0, moves = 0
+        var constrained: [NSPoint] = []
+        panel.onClick = { clicks += 1 }
+        panel.orderFrontRegardless()
+        let view = try XCTUnwrap(panel.contentView)
+        let start = panel.frame.origin
+        panel.onMove = { moves += 1 }
+        panel.constrainOrigin = { constrained.append($0); return NSPoint(x: min($0.x, start.x + 30), y: $0.y) }
+        // Screen-space pointer, converted per event so the panel can move underneath it.
+        var timestamp = ProcessInfo.processInfo.systemUptime
+        func send(_ type: NSEvent.EventType, _ screen: NSPoint, _ flags: NSEvent.ModifierFlags = []) {
+            timestamp += 0.016
+            NSApp.sendEvent(NSEvent.mouseEvent(with: type, location: panel.convertPoint(fromScreen: screen),
+                modifierFlags: flags, timestamp: timestamp, windowNumber: panel.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!)
+        }
+        func gesture(by offset: NSPoint, steps: Int, _ flags: NSEvent.ModifierFlags = []) {
+            let press = panel.convertPoint(toScreen: NSPoint(x: view.bounds.midX, y: view.bounds.midY))
+            send(.leftMouseDown, press, flags)
+            var current = press
+            for step in stride(from: 1, through: steps, by: 1) {
+                current = NSPoint(x: press.x + offset.x * CGFloat(step) / CGFloat(steps),
+                                  y: press.y + offset.y * CGFloat(step) / CGFloat(steps))
+                send(.leftMouseDragged, current, flags)
+            }
+            send(.leftMouseUp, current, flags)
+        }
+        gesture(by: .zero, steps: 0)
+        XCTAssertTrue(clicks == 1, "A still press and release is one click, clicks=\(clicks)")
+        gesture(by: NSPoint(x: 3, y: -3), steps: 3)
+        XCTAssertTrue(clicks == 2, "Moving under 4pt is still a click, clicks=\(clicks)")
+        XCTAssertTrue(panel.frame.origin == start && constrained.isEmpty, "A click does not move the pet")
+        gesture(by: NSPoint(x: 20, y: 12), steps: 5)
+        XCTAssertTrue(clicks == 2, "A drag is not a click, clicks=\(clicks)")
+        XCTAssertTrue(panel.frame.origin == NSPoint(x: start.x + 20, y: start.y + 12),
+                      "The pet follows the drag, origin=\(panel.frame.origin) start=\(start)")
+        XCTAssertTrue(!constrained.isEmpty && moves > 0, "Dragging goes through setFrameOrigin's constraint and onMove")
+        gesture(by: NSPoint(x: 40, y: 0), steps: 10)
+        XCTAssertTrue(panel.frame.origin.x == start.x + 30, "The constraint limits the dragged origin, origin=\(panel.frame.origin)")
+        let local = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
+        for (type, flags) in [(NSEvent.EventType.rightMouseDown, NSEvent.ModifierFlags()), (.leftMouseDown, .control)] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: local, modifierFlags: flags, timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            let menu = view.menu(for: event)
+            XCTAssertTrue(menu?.items.map(\.title) == ["关闭精灵"], "The context menu only offers closing the pet, type=\(type)")
+            XCTAssertTrue(menu?.items.first?.target === view, "Closing goes through the pet view, type=\(type)")
+        }
+        let center = panel.convertPoint(toScreen: local)
+        send(.leftMouseDown, center, .control)
+        XCTAssertTrue(opened.count == 1, "Control+press opens the menu on press, opened=\(opened.count)")
+        send(.leftMouseUp, center, .control)
+        send(.rightMouseDown, center)
+        XCTAssertTrue(opened.count == 2, "Right press opens the menu on press, opened=\(opened.count)")
+        send(.rightMouseUp, center)
+        XCTAssertTrue(clicks == 2, "Menu clicks are not pet clicks, clicks=\(clicks)")
+        let beforeControlDrag = panel.frame.origin
+        gesture(by: NSPoint(x: -20, y: 0), steps: 5, .control)
+        XCTAssertTrue(panel.frame.origin == beforeControlDrag && clicks == 2,
+                      "Control+drag neither moves nor clicks the pet, origin=\(panel.frame.origin)")
+        XCTAssertFalse(panel.isKeyWindow, "The pet panel never becomes key")
+    }
+
     func testTranscriptTailAnchors() async throws {
         let source = PreviewSource()
         let store = TaskStore(source: source)

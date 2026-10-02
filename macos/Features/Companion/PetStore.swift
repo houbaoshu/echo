@@ -174,8 +174,9 @@ struct PetView: View {
     @ObservedObject var store: PetStore
     var body: some View {
         // Keep SwiftUI hit testing enabled: disabling it also makes WindowServer
-        // pass through this hosting view, before PetPanel.sendEvent can run.
-        // PetInteractionView.hitTest routes the delivered gestures to AppKit.
+        // pass clicks through this hosting view, so the pet panel never sees them.
+        // PetInteractionView.hitTest then sends delivered clicks to its gesture
+        // recognizers and its context menu.
         Image(decorative: store.image, scale: 1, orientation: .up)
             .resizable()
             .interpolation(.high)

@@ -1,8 +1,6 @@
 import AppKit
 import SwiftUI
 
-typealias PetMenuPresenter = (NSMenu, NSEvent, NSView) -> Void
-
 @MainActor
 final class PetPanel: NSPanel {
     var onClick: (() -> Void)?
@@ -12,20 +10,15 @@ final class PetPanel: NSPanel {
     private var globalPointerMonitor: Any?
     private var localPointerMonitor: Any?
     private let pointerLocation: () -> NSPoint
-    private let menuPresenter: PetMenuPresenter
     private let terminateApplication: () -> Void
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
     init(store: PetStore,
          pointerLocation: @escaping () -> NSPoint = { NSEvent.mouseLocation },
-         showMenu: @escaping PetMenuPresenter = { menu, event, view in
-             // `popUpContextMenu(_:with:for:)` has been discouraged since 10.11.
-             _ = menu.popUp(positioning: nil, at: view.convert(event.locationInWindow, from: nil), in: view)
-         },
          terminate: @escaping () -> Void = { NSApplication.shared.terminate(nil) }) {
         self.pointerLocation = pointerLocation
-        self.menuPresenter = showMenu; self.terminateApplication = terminate
+        self.terminateApplication = terminate
         super.init(
             contentRect: NSRect(origin: .zero, size: store.size),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
@@ -39,7 +32,7 @@ final class PetPanel: NSPanel {
         isFloatingPanel = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         title = store.displayName
-        contentView = PetInteractionView(store: store, showMenu: showMenu, onClick: { [weak self] in self?.onClick?() }) { [weak self] in
+        contentView = PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() }) { [weak self] in
             store.stop()
             self?.close()
             terminate()
@@ -53,8 +46,7 @@ final class PetPanel: NSPanel {
     func replacePet(with store: PetStore) {
         let center = NSPoint(x: frame.midX, y: frame.midY)
         title = store.displayName
-        contentView = PetInteractionView(store: store, showMenu: menuPresenter,
-                                        onClick: { [weak self] in self?.onClick?() }) { [weak self] in
+        contentView = PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() }) { [weak self] in
             store.stop(); self?.close(); self?.terminateApplication()
         }
         setContentSize(store.size)
@@ -115,20 +107,13 @@ final class PetPanel: NSPanel {
     }
 
     override func sendEvent(_ event: NSEvent) {
-        // This panel deliberately never becomes key. Route its gestures directly
-        // so AppKit's key-window dispatch cannot discard a click or its mouse-up.
+        // Presses, drags and context clicks reach the pet view's gesture recognizers and
+        // menu(for:) through NSWindow.sendEvent; only hover is still routed by hand.
         guard let interaction = contentView as? PetInteractionView else {
             super.sendEvent(event)
             return
         }
         switch event.type {
-        case .leftMouseDown, .rightMouseDown:
-            let point = interaction.convert(event.locationInWindow, from: nil)
-            guard interaction.bounds.contains(point) else { return }
-            if event.type == .leftMouseDown { interaction.mouseDown(with: event) }
-            else { interaction.rightMouseDown(with: event) }
-        case .leftMouseDragged: interaction.mouseDragged(with: event)
-        case .leftMouseUp: interaction.mouseUp(with: event)
         case .mouseEntered: interaction.mouseEntered(with: event)
         case .mouseExited: interaction.mouseExited(with: event)
         default: super.sendEvent(event)
@@ -138,10 +123,9 @@ final class PetPanel: NSPanel {
 
 // AppKit handles the window gesture; SwiftUI only displays the image.
 @MainActor
-final class PetInteractionView: NSView {
+final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     private let store: PetStore
     private let closePet: () -> Void
-    private let showMenu: PetMenuPresenter
     private let onClick: () -> Void
     private var mouseStart: NSPoint?
     private var windowStart: NSPoint?
@@ -152,10 +136,8 @@ final class PetInteractionView: NSView {
     private var lastLookOffset: NSPoint?
     private var hoverTrackingArea: NSTrackingArea?
 
-    init(store: PetStore, showMenu: @escaping PetMenuPresenter, onClick: @escaping () -> Void,
-         closePet: @escaping () -> Void) {
+    init(store: PetStore, onClick: @escaping () -> Void, closePet: @escaping () -> Void) {
         self.store = store
-        self.showMenu = showMenu
         self.closePet = closePet
         self.onClick = onClick
         super.init(frame: NSRect(origin: .zero, size: store.size))
@@ -167,6 +149,32 @@ final class PetInteractionView: NSView {
         setAccessibilityRole(.button)
         setAccessibilityLabel(store.displayName)
         setAccessibilityHelp("移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键显示关闭精灵菜单")
+        let primaryClick = NSClickGestureRecognizer(target: self, action: #selector(primaryClicked(_:)))
+        primaryClick.buttonMask = 0x1
+        primaryClick.delegate = self
+        addGestureRecognizer(primaryClick)
+        let pan = NSPanGestureRecognizer(target: self, action: #selector(panned(_:)))
+        pan.buttonMask = 0x1
+        pan.delegate = self
+        addGestureRecognizer(pan)
+    }
+
+    @objc private func primaryClicked(_ recognizer: NSClickGestureRecognizer) {
+        store.wave()
+        onClick()
+    }
+
+    // Control+press is AppKit's context click (menu(for:)), never a pet click or drag.
+    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        !event.modifierFlags.contains(.control)
+    }
+
+    // AppKit asks on right-click and Control+click, and presents the menu itself.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let close = menu.addItem(withTitle: "关闭精灵", action: #selector(closeFromMenu(_:)), keyEquivalent: "")
+        close.target = self
+        return menu
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -216,23 +224,33 @@ final class PetInteractionView: NSView {
 
     func setPaused(_ paused: Bool) { store.isPaused = paused }
 
-    override func mouseDown(with event: NSEvent) {
+    // The pan recognizer begins on the first drag event and fails the click recognizer,
+    // so it applies the 4pt click threshold itself.
+    @objc private func panned(_ recognizer: NSPanGestureRecognizer) {
         guard let window else { return }
-        if event.modifierFlags.contains(.control) {
-            rightMouseDown(with: event)
-            return
+        let location = recognizer.location(in: nil)
+        switch recognizer.state {
+        case .began:
+            // The window has not moved yet, so this is the press point in window coordinates.
+            let translation = recognizer.translation(in: nil)
+            mouseStart = window.convertPoint(toScreen: NSPoint(x: location.x - translation.x, y: location.y - translation.y))
+            lastDragPoint = mouseStart
+            windowStart = window.frame.origin
+            dragging = false
+            direction = 0
+            store.interact(hovered: hovered, direction: direction)
+            drag(to: window.convertPoint(toScreen: location))
+        case .changed:
+            drag(to: window.convertPoint(toScreen: location))
+        case .ended:
+            endDrag(at: window.convertPoint(toScreen: location))
+        default:
+            resetGesture()
         }
-        mouseStart = window.convertPoint(toScreen: event.locationInWindow)
-        lastDragPoint = mouseStart
-        windowStart = window.frame.origin
-        dragging = false
-        direction = 0
-        store.interact(hovered: hovered, direction: direction)
     }
 
-    override func mouseDragged(with event: NSEvent) {
+    private func drag(to current: NSPoint) {
         guard let window, let mouseStart, let windowStart, let lastDragPoint else { return }
-        let current = window.convertPoint(toScreen: event.locationInWindow)
         let deltaX = current.x - lastDragPoint.x
         let deltaY = current.y - lastDragPoint.y
         guard abs(deltaX) >= 4 || abs(deltaY) >= 4 else { return }
@@ -245,9 +263,8 @@ final class PetInteractionView: NSView {
                                       y: windowStart.y + current.y - mouseStart.y))
     }
 
-    override func mouseUp(with event: NSEvent) {
+    private func endDrag(at current: NSPoint) {
         guard let mouseStart, let window else { return }
-        let current = window.convertPoint(toScreen: event.locationInWindow)
         let moved = dragging || abs(current.x - mouseStart.x) >= 4 || abs(current.y - mouseStart.y) >= 4
         if moved && !dragging, let windowStart {
             window.setFrameOrigin(NSPoint(x: windowStart.x + current.x - mouseStart.x,
@@ -267,14 +284,6 @@ final class PetInteractionView: NSView {
         lastDragPoint = nil
         direction = 0
         store.interact(hovered: hovered, direction: direction)
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        resetGesture()
-        let menu = NSMenu()
-        let close = menu.addItem(withTitle: "关闭精灵", action: #selector(closeFromMenu(_:)), keyEquivalent: "")
-        close.target = self
-        showMenu(menu, event, self)
     }
 
     @objc private func closeFromMenu(_ sender: NSMenuItem) {
