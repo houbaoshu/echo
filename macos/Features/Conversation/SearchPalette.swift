@@ -59,7 +59,7 @@ struct WorkspaceSearchField: NSViewRepresentable {
         let field = NSSearchField()
         field.delegate = context.coordinator
         field.placeholderString = "搜索聊天"
-        // The sidebar runs one point larger than the AppKit default.
+        // The same body size as the palette's SwiftUI rows.
         field.font = .systemFont(ofSize: WorkspaceStyle.bodySize)
         field.setAccessibilityLabel("搜索聊天")
         field.setAccessibilityIdentifier("workspace.search")
@@ -156,8 +156,9 @@ struct ChatSearchPalette: View {
                     }
                     .listStyle(.inset).scrollContentBackground(.hidden)
                     // A list cannot size itself, so the panel's height comes from here.
-                    // 24pt is what an inset row of this content measures at 14pt body.
-                    .frame(height: min(CGFloat(results.count) * 24 + 14, 360))
+                    // Measured on macOS 27 at the 13pt body: an inset row of this content is
+                    // 24pt and the list adds 10pt above and 10pt below.
+                    .frame(height: min(CGFloat(results.count) * 24 + 20, 360))
                     .onChange(of: highlighted) { _, value in if let value { proxy.scrollTo(value) } }
                 }
                 .padding(.bottom, 8)

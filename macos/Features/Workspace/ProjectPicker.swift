@@ -45,7 +45,7 @@ struct ConversationProjectPicker: View {
                             workspace.requestComposerFocus(conversationID: conversationID)
                         }
                     } label: {
-                        Image(systemName: "xmark").font(.system(size: 10))
+                        Image(systemName: "xmark").font(.caption)
                             .frame(width: 24, height: 28).contentShape(Rectangle())
                     }.buttonStyle(.plain).focused($detachFocused)
                         .foregroundStyle(WorkspaceStyle.secondary)
@@ -69,7 +69,7 @@ struct ConversationProjectPicker: View {
             Image(systemName: project?.isAvailable == false ? "folder.badge.questionmark" : "folder")
             Text(project?.name ?? "选择项目").lineLimit(1)
             if project?.isAvailable == false { Text("不可用").foregroundStyle(WorkspaceStyle.warning) }
-            if editable { Image(systemName: "chevron.down").font(.system(size: 9)) }
+            if editable { Image(systemName: "chevron.down").font(.caption2) }
         }.font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
             .padding(.horizontal, 7).frame(height: 28).contentShape(Rectangle())
     }
@@ -128,9 +128,11 @@ struct ProjectSelectionPanel: View {
                     }
                 }.listStyle(.sidebar).scrollContentBackground(.hidden)
                 // A list cannot size itself to its rows, so the panel's height comes from
-                // here — the same reason SearchPalette computes its own. Measured for
-                // `.listStyle(.sidebar)` at 14pt body: a row is 32pt, the list adds 20pt
-                // of its own insets, and vertical intercell spacing is 0. Left to a bare
+                // here — the same reason SearchPalette computes its own. Measured on
+                // macOS 27 for `.listStyle(.sidebar)` at the medium sidebar size, where the
+                // rows draw at 13pt: a row is 32pt, the list adds 10pt above and 10pt below,
+                // and vertical intercell spacing is 0. The rows follow the sidebar size
+                // setting (24pt small, 40pt large), so only medium fits exactly. Left to a bare
                 // `maxHeight:` the list fills instead of hugging, which moves the popover
                 // off its anchor.
                 .frame(height: min(CGFloat(options.count) * 32 + 20, 280))
@@ -200,7 +202,7 @@ struct HoverRevealButton: View {
     @FocusState private var focused: Bool
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 13)).frame(width: 24, height: 24).contentShape(Rectangle())
+            Image(systemName: symbol).font(.body).frame(width: 24, height: 24).contentShape(Rectangle())
         }.buttonStyle(.plain).focused($focused).foregroundStyle(WorkspaceStyle.secondary)
             .opacity(visible || focused ? 1 : 0).allowsHitTesting(visible || focused)
             .help(help ?? label).accessibilityLabel(label)

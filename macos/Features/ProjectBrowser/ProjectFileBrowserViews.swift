@@ -28,7 +28,7 @@ private struct ProjectFileBrowserView: View {
                 if browser.state.showingFile { filePage }
                 else { directoryPage }
             }
-        }.font(WorkspaceStyle.body).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("workspace.projectFiles")
     }
@@ -152,6 +152,8 @@ private struct ProjectFileBrowserView: View {
             }
         }
     }
+    /// Only the file page takes the body font. The tree is a source list, whose rows take
+    /// their size from the sidebar size setting and must not inherit one.
     private var filePage: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
@@ -166,7 +168,7 @@ private struct ProjectFileBrowserView: View {
                     // than by mirroring the opposite one.
                     Image(systemName: browser.isPreviewExpanded
                           ? "arrow.up.right.and.arrow.down.left" : "arrow.down.left.and.arrow.up.right")
-                        .font(.system(size: 12)).frame(width: 24, height: 24).contentShape(Rectangle())
+                        .font(.callout).frame(width: 24, height: 24).contentShape(Rectangle())
                 }.buttonStyle(.borderless).foregroundStyle(WorkspaceStyle.secondary)
                     .help(browser.isPreviewExpanded ? "收起预览" : "展开预览")
                     .accessibilityLabel(browser.isPreviewExpanded ? "收起预览" : "展开预览")
@@ -208,7 +210,7 @@ private struct ProjectFileBrowserView: View {
                 }.padding(14)
                 Spacer()
             }
-        }
+        }.font(WorkspaceStyle.body)
     }
 }
 

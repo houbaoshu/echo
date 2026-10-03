@@ -36,7 +36,7 @@ struct SettingsSidebar: View {
                 .accessibilityLabel("设置分区").accessibilityIdentifier("settings.sections")
         }.padding(.vertical, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
+            .foregroundStyle(WorkspaceStyle.primary)
     }
     @ViewBuilder private func icon(_ name: String) -> some View {
         switch name {

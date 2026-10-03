@@ -62,7 +62,7 @@ struct AssistantMarkdown: View, Equatable {
                         MarkdownCodeBlock(text: block.text)
                     } else {
                         Text(block.text)
-                            .font(block.heading.map { .system(size: $0 == 1 ? 22 : $0 == 2 ? 19 : 16, weight: .semibold) } ?? WorkspaceStyle.body)
+                            .font(block.heading.map { ($0 == 1 ? Font.title : $0 == 2 ? .title2 : .title3).weight(.semibold) } ?? WorkspaceStyle.body)
                             .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -98,7 +98,7 @@ private struct MarkdownCodeBlock: View {
                     .accessibilityIdentifier("conversation.code.copy")
             }.padding(.horizontal, 12).padding(.top, 8)
             ScrollView(.horizontal) {
-                Text(text).font(.system(size: WorkspaceStyle.bodySize, design: .monospaced))
+                Text(text).font(.system(.body, design: .monospaced))
                     .fixedSize(horizontal: true, vertical: true).padding(12)
             }.fixedSize(horizontal: false, vertical: true)
         }.background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))

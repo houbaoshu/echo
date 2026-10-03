@@ -1,16 +1,16 @@
 import AppKit
 import SwiftUI
 
-// Codex desktop uses a 14 pt UI scale, 12 pt supporting text and a 65% secondary tone.
+// Type comes from the system's text styles; the secondary tone is a 65% label colour.
 // Keep AppKit and SwiftUI typography in sync, including the native text editor.
 enum WorkspaceStyle {
-    static let bodySize: CGFloat = 14
-    static let body = Font.system(size: bodySize)
-    static let medium = Font.system(size: bodySize, weight: .medium)
-    static let caption = Font.system(size: 12)
-    static let section = Font.system(size: 12, weight: .medium)
-    static let heading = Font.system(size: 16, weight: .medium)
-    static let pageTitle = Font.system(size: 24, weight: .semibold)
+    /// The point size of the system `.body` style, for AppKit text — the composer, the
+    /// search field and code — that has to match SwiftUI's `.body`.
+    static let bodySize = NSFont.preferredFont(forTextStyle: .body).pointSize
+    static let body = Font.body
+    static let medium = Font.body.weight(.medium)
+    static let caption = Font.callout
+    static let pageTitle = Font.title2
     static let primary = Color(nsColor: .labelColor)
     static let secondary = Color(nsColor: secondaryTextColor)
     static let tertiary = Color(nsColor: tertiaryTextColor)
@@ -70,8 +70,8 @@ extension NSFont {
     /// TextKit 2 has no `defaultLineHeight(for:)`, and reaching for `NSLayoutManager`
     /// only to read one would migrate a text view back to TextKit 1. Measured against
     /// `NSLayoutManager.defaultLineHeight(for:)` on macOS 27.0: identical for the
-    /// 11-14 pt system fonts this app draws with. The composer measures at 14 pt
-    /// (`WorkspaceStyle.bodySize`) and 13 pt; check the font size before adding a caller
+    /// 11-14 pt system fonts this app draws with. Every composer measures at 13 pt
+    /// (`WorkspaceStyle.bodySize`, and the pet's fields); check the font size before adding a caller
     /// outside that range.
     var defaultLineHeight: CGFloat { ceil(ascender - descender + leading) }
 }
@@ -145,7 +145,7 @@ struct WorkspaceSidebarHeader: View {
                 // palette's open flag IS the button's on state, which is the one thing
                 // the style needs to be told.
                 Toggle(isOn: $palette.isOpen) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 14))
+                    Image(systemName: "magnifyingglass").font(.body)
                 }.toggleStyle(.button).buttonStyle(.accessoryBar)
                     .help("搜索聊天 ⌘K").accessibilityLabel("搜索聊天")
                     .accessibilityValue(palette.isOpen ? "已打开" : "已关闭")
@@ -226,7 +226,6 @@ struct WorkspaceSidebar: View {
                     recentHeader
                 }
             }.listStyle(.sidebar).scrollContentBackground(.hidden)
-                .font(WorkspaceStyle.body)
                 // The chat rows' menu belongs to the list, so right-clicking one that is
                 // not selected selects it first and the menu acts on the selection — the
                 // system's own semantics rather than a per-row menu that ignores both.
@@ -400,7 +399,7 @@ struct ProjectFolderIcon: View {
     let isAvailable: Bool
     var body: some View {
         if !isAvailable {
-            Image(systemName: "folder.badge.questionmark").font(.system(size: 14))
+            Image(systemName: "folder.badge.questionmark").font(.body)
         } else if isExpanded {
             Path { path in
                 path.move(to: CGPoint(x: 1, y: 13))
@@ -418,7 +417,7 @@ struct ProjectFolderIcon: View {
                 path.addQuadCurve(to: CGPoint(x: 1, y: 13), control: CGPoint(x: 1, y: 14))
             }.stroke(style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
         } else {
-            Image(systemName: "folder").font(.system(size: 14))
+            Image(systemName: "folder").font(.body)
         }
     }
 }
@@ -776,7 +775,7 @@ struct ConversationView: View {
                                 // Includes drafts: a pet-started session owns one until it speaks.
                                 Text("\(ws.conversation(id: owner.conversationID)?.title ?? "会话") 的 Live Voice")
                                     .font(WorkspaceStyle.caption).lineLimit(1).truncationMode(.middle)
-                                Image(systemName: "arrow.right").font(.system(size: 9))
+                                Image(systemName: "arrow.right").font(.caption2)
                             }
                         }.buttonStyle(.borderless).help("返回语音会话")
                             .accessibilityLabel("返回语音会话").accessibilityIdentifier("voice.reveal")
@@ -840,7 +839,7 @@ struct ConversationView: View {
                         case .resume: Image(systemName: "play.fill").offset(x: 1)
                         case .endVoice: Image(systemName: "xmark")
                         }
-                    }.font(.system(size: 14, weight: .semibold))
+                    }.font(.body.weight(.semibold))
                         // The system border adds 4 pt per side; the outer control stays 32 pt.
                         .frame(width: 24, height: 24)
                 }.buttonStyle(.borderedProminent).buttonBorderShape(.circle).controlSize(.regular)
@@ -880,7 +879,7 @@ struct ConversationView: View {
 /// Compensate for the system style's 4 pt inset rather than expanding the hit area.
 private extension View {
     func composerSecondaryLabel() -> some View {
-        font(.system(size: 14, weight: .medium))
+        font(.body.weight(.medium))
             .frame(width: 20, height: 20)
     }
     func composerSecondaryControl() -> some View {
