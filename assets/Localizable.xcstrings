@@ -16,6 +16,12 @@
     },
     "%@ · %@%@" : {
       "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · %2$@%3$@"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "new",
@@ -25,7 +31,14 @@
       }
     },
     "%@ 的 Live Voice" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live Voice in %@"
+          }
+        }
+      }
     },
     "%@，%@" : {
       "localizations" : {
@@ -46,14 +59,38 @@
     "API Key" : {
 
     },
+    "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The agent history can’t be read, so running is blocked. Restore the conversation file, then reopen the app."
+          }
+        }
+      }
+    },
     "Base URL" : {
 
     },
     "Echo" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Echo"
+          }
+        }
+      }
     },
     "Live Voice" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live Voice"
+          }
+        }
+      }
     },
     "Provider" : {
 
@@ -61,17 +98,175 @@
     "https://api.openai.com/v1" : {
 
     },
+    "stderr 已截断" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "stderr truncated"
+          }
+        }
+      }
+    },
+    "stdout 已截断" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "stdout truncated"
+          }
+        }
+      }
+    },
     "不可用" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unavailable"
+          }
+        }
+      }
     },
     "中断前可能已产生修改；继续处理时需先检查现场。" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Changes may have been made before the interruption. Check the current state before you continue."
+          }
+        }
+      }
+    },
+    "二进制文件或不支持的文本编码。支持 UTF-8 和带 BOM 的 UTF-16。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This is a binary file or uses an unsupported text encoding. UTF-8, and UTF-16 with a BOM, are supported."
+          }
+        }
+      }
+    },
+    "仅支持预览普通文本和图片文件。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only plain text and image files can be previewed."
+          }
+        }
+      }
+    },
+    "任务活动期间不能解除项目关联。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A project can’t be removed while one of its tasks is running."
+          }
+        }
+      }
+    },
+    "任务活动期间不能重新定位项目。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A project can’t be relocated while one of its tasks is running."
+          }
+        }
+      }
+    },
+    "会话" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversation"
+          }
+        }
+      }
+    },
+    "会话保存失败，已停止后续执行：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t save the conversation, so the rest of this run was stopped: %@"
+          }
+        }
+      }
+    },
+    "会话保存失败：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t save the conversation: %@"
+          }
+        }
+      }
+    },
+    "会话文件无法读取，原文件已保留。已打开空白工作区。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The conversation file couldn’t be read. The original file was kept and an empty workspace was opened."
+          }
+        }
+      }
+    },
+    "会话文件无法读取，已从备份恢复；原文件已保留。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The conversation file couldn’t be read, so it was restored from a backup. The original file was kept."
+          }
+        }
+      }
     },
     "会话记录" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcript"
+          }
+        }
+      }
+    },
+    "会话记录删除失败：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t delete the conversation history: %@"
+          }
+        }
+      }
+    },
+    "会话输入框" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Message"
+          }
+        }
+      }
     },
     "保存" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save"
+          }
+        }
+      }
     },
     "停止回复" : {
       "localizations" : {
@@ -104,10 +299,24 @@
       }
     },
     "关联项目" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link Project"
+          }
+        }
+      }
     },
     "关闭保存提示" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dismiss Save Notice"
+          }
+        }
+      }
     },
     "关闭窗口" : {
       "localizations" : {
@@ -120,13 +329,44 @@
       }
     },
     "关闭语音提示" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dismiss Voice Notice"
+          }
+        }
+      }
     },
     "关闭转写提示" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dismiss Dictation Notice"
+          }
+        }
+      }
     },
     "关闭麦克风" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mute Microphone"
+          }
+        }
+      }
+    },
+    "准备开始" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Getting ready"
+          }
+        }
+      }
     },
     "切换 Live Voice" : {
       "localizations" : {
@@ -148,6 +388,16 @@
         }
       }
     },
+    "列出" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "List"
+          }
+        }
+      }
+    },
     "删除" : {
       "localizations" : {
         "en" : {
@@ -158,8 +408,25 @@
         }
       }
     },
+    "删除“%@”？" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete “%@”?"
+          }
+        }
+      }
+    },
     "删除会话…" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete Conversation…"
+          }
+        }
+      }
     },
     "前置全部窗口" : {
       "localizations" : {
@@ -187,29 +454,108 @@
     "发送" : {
 
     },
+    "发送消息" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send Message"
+          }
+        }
+      }
+    },
     "取消" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        }
+      }
     },
     "取消关联项目" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unlink Project"
+          }
+        }
+      }
     },
     "取消执行" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel Run"
+          }
+        }
+      }
     },
     "取消跟进" : {
 
     },
     "取消转写" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel Dictation"
+          }
+        }
+      }
     },
     "可选择项目" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can choose a project"
+          }
+        }
+      }
     },
     "回到最新消息" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jump to Latest"
+          }
+        }
+      }
+    },
+    "图片超过 32 MiB，无法预览。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Images larger than 32 MiB can’t be previewed."
+          }
+        }
+      }
     },
     "在 Finder 中显示" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show in Finder"
+          }
+        }
+      }
+    },
+    "在此项目中新建对话" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Conversation in This Project"
+          }
+        }
+      }
     },
     "复制" : {
       "localizations" : {
@@ -222,7 +568,14 @@
       }
     },
     "复制代码" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Code"
+          }
+        }
+      }
     },
     "复制日志" : {
 
@@ -244,31 +597,157 @@
 
     },
     "展开预览" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expand Preview"
+          }
+        }
+      }
+    },
+    "已中断" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interrupted"
+          }
+        }
+      }
+    },
+    "已中断 · 可继续跟进" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interrupted · Follow up to continue"
+          }
+        }
+      }
+    },
+    "已停止" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopped"
+          }
+        }
+      }
+    },
+    "已停止 · 可继续处理" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopped · Can be continued"
+          }
+        }
+      }
+    },
+    "已停止 · 可继续跟进" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopped · Follow up to continue"
+          }
+        }
+      }
     },
     "已关闭" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closed"
+          }
+        }
+      }
     },
     "已复制" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copied"
+          }
+        }
+      }
+    },
+    "已完成" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Completed"
+          }
+        }
+      }
     },
     "已展开" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expanded"
+          }
+        }
+      }
     },
     "已展开聊天" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversations shown"
+          }
+        }
+      }
+    },
+    "已截断" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "truncated"
+          }
+        }
+      }
     },
     "已打开" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open"
+          }
+        }
+      }
     },
     "已折叠" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapsed"
+          }
+        }
+      }
     },
     "已收起" : {
 
     },
     "已收起聊天" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversations hidden"
+          }
+        }
+      }
     },
     "帮助" : {
       "localizations" : {
@@ -281,10 +760,34 @@
       }
     },
     "开启扬声器" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unmute Speaker"
+          }
+        }
+      }
     },
     "开启麦克风" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unmute Microphone"
+          }
+        }
+      }
+    },
+    "开始 Live Voice" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Live Voice"
+          }
+        }
+      }
     },
     "开始新聊天" : {
 
@@ -294,6 +797,26 @@
     },
     "录音音量" : {
 
+    },
+    "待处理" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Queued"
+          }
+        }
+      }
+    },
+    "待执行" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pending"
+          }
+        }
+      }
     },
     "快速打开会话…" : {
       "localizations" : {
@@ -311,20 +834,95 @@
     "我的精灵" : {
 
     },
+    "所选文件夹不可用，请重新选择。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected folder isn’t available. Choose another one."
+          }
+        }
+      }
+    },
     "打开或关闭聊天搜索" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens or closes conversation search."
+          }
+        }
+      }
+    },
+    "执行中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Running"
+          }
+        }
+      }
+    },
+    "执行结束" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finished"
+          }
+        }
+      }
+    },
+    "执行结果未知" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Result unknown"
+          }
+        }
+      }
     },
     "拷贝路径" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Path"
+          }
+        }
+      }
     },
     "搜索聊天" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search Conversations"
+          }
+        }
+      }
     },
     "搜索聊天 ⌘K" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search Conversations ⌘K"
+          }
+        }
+      }
     },
     "搜索项目名称或路径" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search project names or paths"
+          }
+        }
+      }
     },
     "撤销" : {
       "localizations" : {
@@ -337,7 +935,14 @@
       }
     },
     "收起预览" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapse Preview"
+          }
+        }
+      }
     },
     "文件" : {
       "localizations" : {
@@ -345,6 +950,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "File"
+          }
+        }
+      }
+    },
+    "文件夹不可用或已被替换。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The folder is unavailable or has been replaced."
+          }
+        }
+      }
+    },
+    "文件或文件夹已删除或不可用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The file or folder has been deleted or is unavailable."
+          }
+        }
+      }
+    },
+    "文件超过 1 MiB，无法预览。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Files larger than 1 MiB can’t be previewed."
           }
         }
       }
@@ -360,7 +995,71 @@
       }
     },
     "新对话 ⌘N" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Conversation ⌘N"
+          }
+        }
+      }
+    },
+    "新对话|未命名会话标题" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Conversation"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "新对话"
+          }
+        }
+      }
+    },
+    "无法启动桌面精灵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t Start the Desktop Pet"
+          }
+        }
+      }
+    },
+    "无法备份损坏的会话文件：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t back up the damaged conversation file: %@"
+          }
+        }
+      }
+    },
+    "无法备份损坏的会话文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t back up the damaged conversation file, so saving is paused to keep the original. Restore write access to its folder, then reopen the app."
+          }
+        }
+      }
+    },
+    "无法预览图片：文件已损坏或格式不受支持。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can’t preview the image: the file is damaged or its format isn’t supported."
+          }
+        }
+      }
     },
     "显示" : {
       "localizations" : {
@@ -406,7 +1105,14 @@
       }
     },
     "最近" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recents"
+          }
+        }
+      }
     },
     "服务" : {
       "localizations" : {
@@ -414,6 +1120,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Services"
+          }
+        }
+      }
+    },
+    "未执行" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not run"
           }
         }
       }
@@ -473,17 +1189,221 @@
     "模型不完整：%@" : {
 
     },
+    "模型尚未配置，请打开设置并保存默认模型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No model is set up yet. Open Settings and save a default model."
+          }
+        }
+      }
+    },
+    "模型未返回文本回复，请重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model didn’t return a text response. Try again."
+          }
+        }
+      }
+    },
+    "正在停止…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopping…"
+          }
+        }
+      }
+    },
+    "正在准备工具…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing tools…"
+          }
+        }
+      }
+    },
+    "正在准备麦克风…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing the microphone…"
+          }
+        }
+      }
+    },
+    "正在取消未执行的调用…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Canceling tool calls that haven’t run…"
+          }
+        }
+      }
+    },
     "正在回复" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Responding"
+          }
+        }
+      }
+    },
+    "正在回复…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Responding…"
+          }
+        }
+      }
+    },
+    "正在完成转写…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finishing dictation…"
+          }
+        }
+      }
     },
     "正在测试…" : {
 
     },
+    "正在等待回复…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for a response…"
+          }
+        }
+      }
+    },
+    "正在等待模型回复…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for the model to respond…"
+          }
+        }
+      }
+    },
+    "正在聆听…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listening…"
+          }
+        }
+      }
+    },
+    "正在请求模型…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending to the model…"
+          }
+        }
+      }
+    },
+    "正在运行命令" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Running a command"
+          }
+        }
+      }
+    },
+    "正在运行命令 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Running a command · %@"
+          }
+        }
+      }
+    },
+    "此会话使用旧版聊天记录格式，当前版本已不再支持，无法继续。可以在会话列表中删除它。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This conversation uses an old history format that this version no longer supports, so it can’t continue. You can delete it from the conversation list."
+          }
+        }
+      }
+    },
+    "此会话由 Foundation Models Agent 创建，当前无法打开，已禁止执行。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This conversation was created by the Foundation Models agent and can’t be opened right now, so running is blocked."
+          }
+        }
+      }
+    },
+    "此会话的消息和草稿将被删除，正在进行的模型请求也会停止。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This conversation’s messages and draft will be deleted, and any model request in progress will stop."
+          }
+        }
+      }
+    },
     "没有匹配的会话" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No matching conversations"
+          }
+        }
+      }
+    },
+    "没有权限读取此文件或文件夹。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You don’t have permission to read this file or folder."
+          }
+        }
+      }
     },
     "测试连接" : {
 
+    },
+    "添加项目文件夹" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Project Folder"
+          }
+        }
+      }
     },
     "添加项目文件夹…" : {
       "localizations" : {
@@ -502,7 +1422,14 @@
 
     },
     "点击展开或收起项目聊天" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shows or hides the project’s conversations."
+          }
+        }
+      }
     },
     "用所选内容查找" : {
       "localizations" : {
@@ -515,13 +1442,34 @@
       }
     },
     "移除项目，保留会话" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove Project, Keep Conversations"
+          }
+        }
+      }
     },
     "空文件" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empty file"
+          }
+        }
+      }
     },
     "空文件夹" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empty folder"
+          }
+        }
+      }
     },
     "窗口" : {
       "localizations" : {
@@ -529,6 +1477,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Window"
+          }
+        }
+      }
+    },
+    "符号链接不跟随，请在 Finder 中查看。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Symbolic links aren’t followed. View this one in Finder."
+          }
+        }
+      }
+    },
+    "等待选择项目文件夹" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for a project folder"
+          }
+        }
+      }
+    },
+    "等待项目空闲…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for the project to be free…"
           }
         }
       }
@@ -544,10 +1522,71 @@
       }
     },
     "结束录音" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop Recording"
+          }
+        }
+      }
+    },
+    "结束录音并发送" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop Recording and Send"
+          }
+        }
+      }
+    },
+    "结束语音" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "End Live Voice"
+          }
+        }
+      }
+    },
+    "继续回复" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue Responding"
+          }
+        }
+      }
     },
     "继续处理" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        }
+      }
+    },
+    "继续处理|任务标题" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "继续处理"
+          }
+        }
+      }
     },
     "继续跟进" : {
 
@@ -573,13 +1612,34 @@
       }
     },
     "聊天" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversations"
+          }
+        }
+      }
     },
     "设置" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings"
+          }
+        }
+      }
     },
     "设置 ⌘," : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings ⌘,"
+          }
+        }
+      }
     },
     "设置…" : {
       "localizations" : {
@@ -600,11 +1660,78 @@
     "试听音色" : {
 
     },
+    "该文件夹已属于另一个项目。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That folder already belongs to another project."
+          }
+        }
+      }
+    },
     "语音转文字" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dictate"
+          }
+        }
+      }
+    },
+    "请求失败" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Request failed"
+          }
+        }
+      }
+    },
+    "读取" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Read"
+          }
+        }
+      }
+    },
+    "读取失败：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read: %@"
+          }
+        }
+      }
+    },
+    "超时" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "timed out"
+          }
+        }
+      }
     },
     "跟进" : {
 
+    },
+    "路径不属于当前项目。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The path isn’t inside the current project."
+          }
+        }
+      }
     },
     "跳到所选内容" : {
       "localizations" : {
@@ -626,10 +1753,24 @@
 
     },
     "返回目录" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back to Folder"
+          }
+        }
+      }
     },
     "返回语音会话" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return to Live Voice"
+          }
+        }
+      }
     },
     "还原修改" : {
 
@@ -640,6 +1781,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enter Full Screen"
+          }
+        }
+      }
+    },
+    "退出" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quit"
           }
         }
       }
@@ -664,11 +1815,55 @@
         }
       }
     },
+    "退出码 %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "exit code %lld"
+          }
+        }
+      }
+    },
+    "选择文件夹" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose"
+          }
+        }
+      }
+    },
     "选择文件夹…" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose Folder…"
+          }
+        }
+      }
+    },
+    "选择项目" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose Project"
+          }
+        }
+      }
     },
     "选择项目文件夹" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose Project Folder"
+          }
+        }
+      }
     },
     "重做" : {
       "localizations" : {
@@ -681,19 +1876,71 @@
       }
     },
     "重命名" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rename…"
+          }
+        }
+      }
+    },
+    "重命名|对话框标题" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rename"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "重命名"
+          }
+        }
+      }
     },
     "重新定位文件夹…" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relocate Folder…"
+          }
+        }
+      }
     },
     "重试" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try Again"
+          }
+        }
+      }
     },
     "重试保存" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try Saving Again"
+          }
+        }
+      }
     },
     "随心输入" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Type anything"
+          }
+        }
+      }
     },
     "隐藏 API Key" : {
 
@@ -719,19 +1966,47 @@
       }
     },
     "需要项目文件夹才能继续" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A project folder is needed to continue."
+          }
+        }
+      }
     },
     "静音扬声器" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mute Speaker"
+          }
+        }
+      }
     },
     "音色 ID" : {
 
     },
     "项目" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Projects"
+          }
+        }
+      }
     },
     "项目不可用" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Project unavailable"
+          }
+        }
+      }
     },
     "验证当前协议的工具调用能力，不执行命令，也不自动保存" : {
 
@@ -740,10 +2015,27 @@
 
     },
     "麦克风正在被占用" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The microphone is in use"
+          }
+        }
+      }
     },
     "默认模型" : {
 
+    },
+    "（空文件夹）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(empty folder)"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

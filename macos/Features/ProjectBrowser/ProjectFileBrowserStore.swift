@@ -206,11 +206,11 @@ enum ProjectFileIO {
     static let imagePreviewLimit = 32 * 1_048_576
     private static func errorMessage(_ code: Int32) -> String {
         switch code {
-        case ENOENT: return "文件或文件夹已删除或不可用。"
-        case EACCES, EPERM: return "没有权限读取此文件或文件夹。"
-        case ELOOP: return "符号链接不跟随，请在 Finder 中查看。"
-        case ENOTDIR: return "文件夹不可用或已被替换。"
-        default: return "读取失败：\(String(cString: strerror(code)))"
+        case ENOENT: return String(localized: "文件或文件夹已删除或不可用。")
+        case EACCES, EPERM: return String(localized: "没有权限读取此文件或文件夹。")
+        case ELOOP: return String(localized: "符号链接不跟随，请在 Finder 中查看。")
+        case ENOTDIR: return String(localized: "文件夹不可用或已被替换。")
+        default: return String(localized: "读取失败：\(String(cString: strerror(code)))")
         }
     }
     private struct ReadError: Error {
@@ -222,7 +222,7 @@ enum ProjectFileIO {
     }
     private static func descriptor(root: String, path: String, directory: Bool) throws -> Int32 {
         do { return try ProjectPath.open(root: root, path: path, directory: directory) }
-        catch .outsideProject { throw ReadError(message: "路径不属于当前项目。") }
+        catch .outsideProject { throw ReadError(message: String(localized: "路径不属于当前项目。")) }
         catch .system(let code) { throw ReadError(code: code) }
     }
     static func directory(root: String, path: String) -> ProjectDirectoryState {
@@ -270,12 +270,12 @@ enum ProjectFileIO {
             defer { close(fd) }
             var info = stat()
             guard fstat(fd, &info) == 0 else { throw ReadError(code: errno) }
-            guard info.st_mode & S_IFMT == S_IFREG else { return .information("仅支持预览普通文本和图片文件。") }
+            guard info.st_mode & S_IFMT == S_IFREG else { return .information(String(localized: "仅支持预览普通文本和图片文件。")) }
             let ext = (path as NSString).pathExtension.lowercased()
             let isImage = UTType(filenameExtension: ext)?.conforms(to: .image) == true
                 || ["png", "jpg", "jpeg", "webp", "gif"].contains(ext)
             let limit = isImage ? imagePreviewLimit : previewLimit
-            let sizeMessage = isImage ? "图片超过 32 MiB，无法预览。" : "文件超过 1 MiB，无法预览。"
+            let sizeMessage = isImage ? String(localized: "图片超过 32 MiB，无法预览。") : String(localized: "文件超过 1 MiB，无法预览。")
             guard info.st_size <= limit else { return .information(sizeMessage) }
             var bytes = [UInt8](repeating: 0, count: limit + 1)
             var total = 0
@@ -302,7 +302,7 @@ enum ProjectFileIO {
                         kCGImageSourceThumbnailMaxPixelSize: 4096,
                         kCGImageSourceShouldCacheImmediately: true
                       ] as CFDictionary) else {
-                    return .information("无法预览图片：文件已损坏或格式不受支持。")
+                    return .information(String(localized: "无法预览图片：文件已损坏或格式不受支持。"))
                 }
                 return .image(image)
             }
@@ -312,7 +312,7 @@ enum ProjectFileIO {
             else { text = String(data: data.starts(with: [0xEF, 0xBB, 0xBF]) ? data.dropFirst(3) : data, encoding: .utf8) }
             guard let text, !text.unicodeScalars.contains(where: {
                 ($0.value < 32 && $0.value != 9 && $0.value != 10 && $0.value != 13) || $0.value == 127
-            }) else { return .information("二进制文件或不支持的文本编码。支持 UTF-8 和带 BOM 的 UTF-16。") }
+            }) else { return .information(String(localized: "二进制文件或不支持的文本编码。支持 UTF-8 和带 BOM 的 UTF-16。")) }
             return .text(text)
         } catch let error as ReadError {
             // A link is not followed on purpose, so it is information rather than a failure.

@@ -134,7 +134,7 @@ import Combine
         }
         // AppKit draws the title in a unified toolbar; Echo used to hide it and repaint it
         // in a custom toolbar item.
-        window.title = "新会话"; window.titleVisibility = .visible
+        window.title = WorkspaceConversation.untitledTitle; window.titleVisibility = .visible
         window.titlebarAppearsTransparent = true; window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false; window.minSize = NSSize(width: 720, height: 520)
         window.collectionBehavior = [.fullScreenPrimary]; window.delegate = self
@@ -368,7 +368,7 @@ import Combine
         }
     }
     private func refreshTitle() {
-        window?.title = workspace.selected?.title ?? "新会话"
+        window?.title = workspace.selected?.displayTitle ?? WorkspaceConversation.untitledTitle
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { hideMainWindow(); return false }
     func windowDidMiniaturize(_ notification: Notification) { workspace.isMainWindowVisible = false; workspace.flush() }

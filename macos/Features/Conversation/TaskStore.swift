@@ -15,12 +15,12 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         case pending, streaming, completed, stopped, failed, interrupted
         var label: String {
             switch self {
-            case .pending: "正在等待回复…"
-            case .streaming: "正在回复…"
-            case .completed: "已完成"
-            case .stopped: "已停止"
-            case .failed: "请求失败"
-            case .interrupted: "已中断"
+            case .pending: String(localized: "正在等待回复…")
+            case .streaming: String(localized: "正在回复…")
+            case .completed: String(localized: "已完成")
+            case .stopped: String(localized: "已停止")
+            case .failed: String(localized: "请求失败")
+            case .interrupted: String(localized: "已中断")
             }
         }
     }
@@ -37,8 +37,8 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         case queued = "待处理", interrupted = "已中断"
         var label: String {
             switch self {
-            case .queued: "待处理"
-            case .interrupted: "已中断"
+            case .queued: String(localized: "待处理")
+            case .interrupted: String(localized: "已中断")
             }
         }
     }
@@ -166,11 +166,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         case waiting = "待执行", running = "执行中", finished = "执行结束", notExecuted = "未执行", unknown = "执行结果未知"
         var label: String {
             switch self {
-            case .waiting: "待执行"
-            case .running: "执行中"
-            case .finished: "执行结束"
-            case .notExecuted: "未执行"
-            case .unknown: "执行结果未知"
+            case .waiting: String(localized: "待执行")
+            case .running: String(localized: "执行中")
+            case .finished: String(localized: "执行结束")
+            case .notExecuted: String(localized: "未执行")
+            case .unknown: String(localized: "执行结果未知")
             }
         }
     }
@@ -218,11 +218,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     private var cardReply = ""
     /// Uses the latest reply and execution step, without a summarization request.
     var cardSummary: String {
-        if isGenerating { return cardProgress.isEmpty ? task?.summary ?? "正在回复…" : cardProgress }
+        if isGenerating { return cardProgress.isEmpty ? task?.summary ?? String(localized: "正在回复…") : cardProgress }
         let reply = cardReply.isEmpty
             ? messages.last(where: { $0.role == .assistant && !$0.content.isEmpty })?.content ?? ""
             : cardReply
-        let text = reply.isEmpty ? task?.summary ?? "准备开始" : reply
+        let text = reply.isEmpty ? task?.summary ?? String(localized: "准备开始") : reply
         // The card truncates the combined title and result; the chat retains the full reply.
         return text
     }
@@ -273,12 +273,12 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         if task?.status == .running || task?.status == .stopping {
             task?.status = .interrupted
             task?.runID = UUID()
-            task?.summary = "已中断 · 可继续跟进"
+            task?.summary = String(localized: "已中断 · 可继续跟进")
         }
         messages = snapshot.messages
         tools = snapshot.tools ?? []; agentLoadError = snapshot.loadError
         agentStored = snapshot.agentStored
-        if usesAgent, task?.status == .completed { task?.summary = "已完成" }
+        if usesAgent, task?.status == .completed { task?.summary = String(localized: "已完成") }
         // The engine rebuilds messages and tools from its transcript, closing calls left without a result.
         harness?.restore(snapshot.native)
         for index in tools.indices where tools[index].result == nil { tools[index].state = .unknown }
@@ -332,7 +332,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         let line = command.split(whereSeparator: \.isNewline).first.map(String.init) ?? command
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         let preview = trimmed.count > 60 ? String(trimmed.prefix(60)) + "…" : trimmed
-        return preview.isEmpty ? "正在运行命令" : "正在运行命令 · \(preview)"
+        return preview.isEmpty ? String(localized: "正在运行命令") : String(localized: "正在运行命令 · \(preview)")
     }
     var isGenerating: Bool { task?.status == .running || task?.status == .stopping }
     var canSubmit: Bool { !retired && task?.status != .stopping && agentLoadError == nil }
@@ -353,7 +353,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             updateResponse(text, status: .streaming)
         case .completed(let text):
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                receive(.failed("模型未返回文本回复，请重试。"), runID: runID); return
+                receive(.failed(String(localized: "模型未返回文本回复，请重试。")), runID: runID); return
             }
             cardReply = text
             task?.summary = String(text.prefix(180)); task?.status = .completed
@@ -388,7 +388,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         task?.runID = UUID()
         task?.status = .running
         cardReply = ""; cardProgress = ""
-        task?.summary = "正在回复…"
+        task?.summary = String(localized: "正在回复…")
         responseMessageID = nil
         messages.append(.init(role: .user, content: text))
         activeRequestMessages = requestMessages
@@ -406,7 +406,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         if harness != nil { return beginNative(text: nil) }
         source?.cancel()
         cardReply = ""; cardProgress = ""
-        task?.runID = UUID(); task?.status = .running; task?.summary = "正在等待模型回复…"
+        task?.runID = UUID(); task?.status = .running; task?.summary = String(localized: "正在等待模型回复…")
         responseMessageID = messages.last?.id
         updateResponse("", status: .pending)
         activeRequestMessages = requestMessages
@@ -417,7 +417,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     private func beginSource() {
         guard let runID = task?.runID else { return }
         guard let source else {
-            receive(.failed("模型尚未配置，请打开设置并保存默认模型。"), runID: runID)
+            receive(.failed(String(localized: "模型尚未配置，请打开设置并保存默认模型。")), runID: runID)
             return
         }
         source.start(messages: activeRequestMessages) { [weak self] event in self?.receive(event, runID: runID) }
@@ -426,12 +426,12 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         guard isGenerating, let runID = task?.runID else { return }
         if let harness {
             guard task?.status != .stopping else { return }
-            task?.status = .stopping; task?.summary = "正在停止…"
+            task?.status = .stopping; task?.summary = String(localized: "正在停止…")
             needsDirectory = false; waitingForProject = false
             cancelDirectoryWait?(); harness.stop(); return
         }
         // Close the event gate before cancellation, including synchronous callbacks.
-        task?.status = .stopped; task?.summary = "已停止 · 可继续跟进"
+        task?.status = .stopped; task?.summary = String(localized: "已停止 · 可继续跟进")
         updateResponse(status: .stopped)
         source?.cancel()
         lifecycle.send(.stopped(runID))
@@ -487,14 +487,14 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     /// Keeps a failed save's message: once a save fails, nothing more runs this turn.
     private func recordSaveFailure(_ error: any Error) -> String {
-        let failure = "会话保存失败，已停止后续执行：\(error.localizedDescription)"
+        let failure = String(localized: "会话保存失败，已停止后续执行：\(error.localizedDescription)")
         storageFailure = failure; notice = failure
         return failure
     }
     func provideDirectory(_ url: URL?) {
         guard needsDirectory, task?.status == .running else { return }
         guard let harness else { return }
-        needsDirectory = false; task?.summary = url == nil ? "正在取消未执行的调用…" : "正在准备工具…"
+        needsDirectory = false; task?.summary = url == nil ? String(localized: "正在取消未执行的调用…") : String(localized: "正在准备工具…")
         harness.provideDirectory(url)
     }
 
@@ -503,9 +503,9 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     private func beginNative(text: String?) -> Bool {
         guard let harness, !harness.isRunning else { return false }
         storageFailure = nil; notice = nil; responseMessageID = nil
-        if task == nil { task = .init(id: UUID(), runID: UUID(), title: String((text ?? "继续处理").prefix(80)), summary: "", status: .running) }
+        if task == nil { task = .init(id: UUID(), runID: UUID(), title: String((text ?? String(localized: "继续处理|任务标题", defaultValue: "继续处理")).prefix(80)), summary: "", status: .running) }
         cardReply = ""; cardProgress = ""
-        task?.runID = UUID(); task?.status = .running; task?.summary = "正在请求模型…"
+        task?.runID = UUID(); task?.status = .running; task?.summary = String(localized: "正在请求模型…")
         if let text {
             let message = ConversationMessage(role: .user, content: text)
             messages.append(message)
@@ -556,7 +556,7 @@ extension TaskStore: AgentHarnessHost {
         guard !retired else { return }
         let value = needed && task?.status == .running
         if needsDirectory != value { needsDirectory = value }
-        if value { task?.summary = "等待选择项目文件夹"; cardProgress = "等待选择项目文件夹" }
+        if value { task?.summary = String(localized: "等待选择项目文件夹"); cardProgress = String(localized: "等待选择项目文件夹") }
     }
     func harnessProjectDirectory() -> URL? { projectDirectory?() }
     func harnessAcquireLease(_ path: String, ready: @escaping () -> Void) {
@@ -567,7 +567,7 @@ extension TaskStore: AgentHarnessHost {
         guard !retired else { return }
         let value = waiting && task?.status == .running
         if waitingForProject != value { waitingForProject = value }
-        if value { task?.summary = "等待项目空闲…"; cardProgress = "等待项目空闲…" }
+        if value { task?.summary = String(localized: "等待项目空闲…"); cardProgress = String(localized: "等待项目空闲…") }
     }
     func harnessSave() throws {
         guard !retired else { throw CancellationError() }
@@ -582,7 +582,7 @@ extension TaskStore: AgentHarnessHost {
         guard !retired, isGenerating, let runID = task?.runID else { return }
         needsDirectory = false; waitingForProject = false
         for index in messages.indices where messages[index].steering == .queued { messages[index].steering = .interrupted }
-        let stoppedSummary = harness?.continuable == true ? "已停止 · 可继续处理" : "已停止"
+        let stoppedSummary = harness?.continuable == true ? String(localized: "已停止 · 可继续处理") : String(localized: "已停止")
         var event: TaskLifecycleEvent
         switch ending {
         case .completed(let reply, let text):
@@ -592,7 +592,7 @@ extension TaskStore: AgentHarnessHost {
                 // A Stop admitted while the reply was applied lands on a completed turn.
                 task?.status = .stopped; task?.summary = stoppedSummary; event = .stopped(runID)
             } else {
-                task?.status = .completed; task?.summary = "已完成"; event = .reply(runID, .completed(text))
+                task?.status = .completed; task?.summary = String(localized: "已完成"); event = .reply(runID, .completed(text))
             }
         case .stopped(let reply):
             if let reply { responseMessageID = reply } else { replyStream.abandon() }

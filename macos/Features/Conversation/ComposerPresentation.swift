@@ -7,12 +7,12 @@ struct ComposerPresentation {
         case startVoice, send, stop, resume, sendRecording, endVoice
         var label: String {
             switch self {
-            case .startVoice: "开始 Live Voice"
-            case .send: "发送消息"
-            case .stop: "停止回复"
-            case .resume: "继续回复"
-            case .sendRecording: "结束录音并发送"
-            case .endVoice: "结束语音"
+            case .startVoice: String(localized: "开始 Live Voice")
+            case .send: String(localized: "发送消息")
+            case .stop: String(localized: "停止回复")
+            case .resume: String(localized: "继续回复")
+            case .sendRecording: String(localized: "结束录音并发送")
+            case .endVoice: String(localized: "结束语音")
             }
         }
         var identifier: String {

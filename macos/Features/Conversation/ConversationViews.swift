@@ -84,7 +84,7 @@ extension NSFont {
                              completion: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false; panel.prompt = "选择文件夹"
+        panel.allowsMultipleSelection = false; panel.prompt = String(localized: "选择文件夹")
         if asSheet, let window = NSApp.keyWindow {
             panel.beginSheetModal(for: window) { response in
                 if response == .OK, let url = panel.url { completion(url) } else { cancelled?() }
@@ -95,9 +95,10 @@ extension NSFont {
         if panel.runModal() == .OK, let url = panel.url { completion(url) } else { cancelled?() }
     }
     static func rename(_ current: String, completion: @escaping (String) -> Void) {
-        let alert = NSAlert(); alert.messageText = "重命名"
+        let alert = NSAlert(); alert.messageText = String(localized: "重命名|对话框标题", defaultValue: "重命名")
         let field = NSTextField(string: current); field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
-        alert.accessoryView = field; alert.addButton(withTitle: "保存"); alert.addButton(withTitle: "取消")
+        alert.accessoryView = field
+        alert.addButton(withTitle: String(localized: "保存")); alert.addButton(withTitle: String(localized: "取消"))
         guard let window = NSApp.keyWindow else { return }
         alert.beginSheetModal(for: window) { response in
             if response == .alertFirstButtonReturn { completion(field.stringValue) }
@@ -105,9 +106,9 @@ extension NSFont {
         alert.window.makeFirstResponder(field); field.selectText(nil)
     }
     static func delete(_ conversation: WorkspaceConversation, workspace: WorkspaceStore) {
-        let alert = NSAlert(); alert.messageText = "删除“\(conversation.title)”？"
-        alert.informativeText = "此会话的消息和草稿将被删除，正在进行的模型请求也会停止。"
-        alert.addButton(withTitle: "删除"); alert.addButton(withTitle: "取消")
+        let alert = NSAlert(); alert.messageText = String(localized: "删除“\(conversation.displayTitle)”？")
+        alert.informativeText = String(localized: "此会话的消息和草稿将被删除，正在进行的模型请求也会停止。")
+        alert.addButton(withTitle: String(localized: "删除")); alert.addButton(withTitle: String(localized: "取消"))
         alert.buttons.first?.hasDestructiveAction = true
         guard let window = NSApp.keyWindow else { return }
         alert.beginSheetModal(for: window) { response in
@@ -313,7 +314,7 @@ struct WorkspaceSidebar: View {
         ForEach(conversations) { conversation in
             let rowID = RowID(conversationID: conversation.id, projectID: projectID)
             HStack(spacing: 8) {
-                Text(conversation.title).lineLimit(1)
+                Text(conversation.displayTitle).lineLimit(1)
                 Spacer(minLength: 0)
                 if conversation.store.task?.status == .running,
                    projectID != nil || conversation.projectID == nil {
@@ -325,7 +326,7 @@ struct WorkspaceSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .tag(rowID)
-            .help(conversation.title)
+            .help(conversation.displayTitle)
             .accessibilityIdentifier("conversation.\(projectID?.uuidString ?? "recent").\(conversation.id)")
         }
     }
@@ -335,7 +336,7 @@ struct WorkspaceSidebar: View {
     /// that would silently pick one of them.
     @ViewBuilder private func conversationMenu(_ rows: Set<RowID>) -> some View {
         if rows.count == 1, let row = rows.first, let conversation = workspace.conversation(id: row.conversationID) {
-            Button("重命名") { WorkspaceActions.rename(conversation.title) { workspace.renameConversation(conversation.id, to: $0) } }
+            Button("重命名") { WorkspaceActions.rename(conversation.displayTitle) { workspace.renameConversation(conversation.id, to: $0) } }
             Button("删除会话…", role: .destructive) { WorkspaceActions.delete(conversation, workspace: workspace) }
         }
     }
@@ -710,9 +711,9 @@ struct ConversationView: View {
                 .accessibilityHidden(presentation.isDictating)
                 .overlay(alignment: .topLeading) {
                     if presentation.isDictating {
-                        Text(presentation.mode == .dictationFinalizing ? "正在完成转写…" :
-                             presentation.mode == .dictationPreparing ? "正在准备麦克风…" :
-                             dictation.subtitle.isEmpty ? "正在聆听…" : dictation.subtitle)
+                        Text(presentation.mode == .dictationFinalizing ? String(localized: "正在完成转写…") :
+                             presentation.mode == .dictationPreparing ? String(localized: "正在准备麦克风…") :
+                             dictation.subtitle.isEmpty ? String(localized: "正在聆听…") : dictation.subtitle)
                             .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.secondary)
                             .lineLimit(3).padding(.top, 4)
                             .accessibilityIdentifier("dictation.subtitle")
@@ -772,7 +773,7 @@ struct ConversationView: View {
                             HStack(spacing: 4) {
                                 VoiceWaveform().frame(width: 14, height: 14)
                                 // Includes drafts: a pet-started session owns one until it speaks.
-                                Text("\(ws.conversation(id: owner.conversationID)?.title ?? "会话") 的 Live Voice")
+                                Text("\(ws.conversation(id: owner.conversationID)?.displayTitle ?? String(localized: "会话")) 的 Live Voice")
                                     .font(WorkspaceStyle.caption).lineLimit(1).truncationMode(.middle)
                                 Image(systemName: "arrow.right").font(.caption2)
                             }
@@ -905,7 +906,7 @@ struct AgentToolView: View {
                             Text(stderr).font(.system(.caption, design: .monospaced)).foregroundStyle(WorkspaceStyle.warning).textSelection(.enabled)
                         }
                         if let files = json["files"] as? [String] {
-                            Text(files.isEmpty ? "（空文件夹）" : files.joined(separator: "\n"))
+                            Text(files.isEmpty ? String(localized: "（空文件夹）") : files.joined(separator: "\n"))
                                 .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                         }
                         if let content = json["content"] as? String, !content.isEmpty {
@@ -928,8 +929,8 @@ struct AgentToolView: View {
     private var action: String {
         switch tool.tool {
         case nil: ""
-        case "list_files": "列出 "
-        case "read_file": "读取 "
+        case "list_files": String(localized: "列出") + " "
+        case "read_file": String(localized: "读取") + " "
         case let name?: "\(name) "
         }
     }
@@ -943,11 +944,11 @@ struct AgentToolView: View {
     }
     private func resultSummary(_ json: [String: Any]) -> String {
         var parts = [tool.state.label]
-        if json["truncated"] as? Bool == true { parts.append("已截断") }
-        if let code = json["exit_code"] as? Int { parts.append("退出码 \(code)") }
-        if json["timed_out"] as? Bool == true { parts.append("超时") }
-        if json["stdout_truncated"] as? Bool == true { parts.append("stdout 已截断") }
-        if json["stderr_truncated"] as? Bool == true { parts.append("stderr 已截断") }
+        if json["truncated"] as? Bool == true { parts.append(String(localized: "已截断")) }
+        if let code = json["exit_code"] as? Int { parts.append(String(localized: "退出码 \(code)")) }
+        if json["timed_out"] as? Bool == true { parts.append(String(localized: "超时")) }
+        if json["stdout_truncated"] as? Bool == true { parts.append(String(localized: "stdout 已截断")) }
+        if json["stderr_truncated"] as? Bool == true { parts.append(String(localized: "stderr 已截断")) }
         return parts.joined(separator: " · ")
     }
 }
@@ -1073,7 +1074,7 @@ struct NativeComposer: NSViewRepresentable {
     var fontSize = WorkspaceStyle.bodySize
     var minHeight: CGFloat = 44
     var maxLines = 6
-    var label = "会话输入框"
+    var label = String(localized: "会话输入框")
     var identifier = "conversation.composer"
     var onFocusChange: ((Bool) -> Void)?
     /// Nil keeps the system caret, which follows the accent color.

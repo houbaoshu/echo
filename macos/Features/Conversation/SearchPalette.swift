@@ -58,10 +58,10 @@ struct WorkspaceSearchField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
         field.delegate = context.coordinator
-        field.placeholderString = "搜索聊天"
+        field.placeholderString = String(localized: "搜索聊天")
         // The same body size as the palette's SwiftUI rows.
         field.font = .systemFont(ofSize: WorkspaceStyle.bodySize)
-        field.setAccessibilityLabel("搜索聊天")
+        field.setAccessibilityLabel(String(localized: "搜索聊天"))
         field.setAccessibilityIdentifier("workspace.search")
         focus.field = field
         return field
@@ -139,7 +139,7 @@ struct ChatSearchPalette: View {
                 ScrollViewReader { proxy in
                     List(results, selection: Binding(get: { highlighted }, set: { highlighted = $0 })) { conversation in
                         HStack(spacing: 8) {
-                            Text(conversation.title).lineLimit(1)
+                            Text(conversation.displayTitle).lineLimit(1)
                             Spacer(minLength: 8)
                             if let project = workspace.project(for: conversation.id) {
                                 Text(project.name).font(WorkspaceStyle.caption)

@@ -16,7 +16,8 @@ struct WorkspaceProject: Identifiable, Codable, Equatable {
     fileprivate(set) var projectID: UUID?
     var title: String
     var manuallyNamed: Bool
-    /// Still showing a default title, so its first message names it. `title` is display text only.
+    /// Still showing a default title, so its first message names it. `title` is what the archive
+    /// holds; an untitled conversation shows `untitledTitle` instead, in the current language.
     var untitled: Bool
     var lastUsed: Date
     let store: TaskStore
@@ -25,6 +26,9 @@ struct WorkspaceProject: Identifiable, Codable, Equatable {
         self.id = id; self.projectID = projectID; self.title = title
         self.manuallyNamed = manuallyNamed; self.untitled = untitled; self.lastUsed = lastUsed; self.store = store
     }
+    /// A title, not the 新对话 command, so the two can be translated apart.
+    static var untitledTitle: String { String(localized: "新对话|未命名会话标题", defaultValue: "新对话") }
+    var displayTitle: String { untitled ? Self.untitledTitle : title }
 }
 
 struct WorkspaceSnapshot: Codable {
@@ -86,7 +90,7 @@ struct WorkspaceSnapshot: Codable {
          legacySessionsDirectory.appendingPathComponent("\(id.uuidString).v1-migrated.json"),
          sessionsDirectory.appendingPathComponent("\(id.uuidString).v2-stale.json")]
     }
-    static let unsupportedFormat = "此会话使用旧版聊天记录格式，当前版本已不再支持，无法继续。可以在会话列表中删除它。"
+    static var unsupportedFormat: String { String(localized: "此会话使用旧版聊天记录格式，当前版本已不再支持，无法继续。可以在会话列表中删除它。") }
     func saveSession(_ state: TaskStore.Snapshot, id: UUID) throws {
         let target = sessionURL(id)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -136,7 +140,7 @@ struct WorkspaceSnapshot: Codable {
     /// left, as unreadable otherwise. Conversations kept in the manifest come back as saved; the
     /// workspace decides whether their engine can open them.
     func restoreSession(_ saved: WorkspaceSnapshot.Conversation) -> TaskStore.Snapshot {
-        let unreadable = "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。"
+        let unreadable = String(localized: "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。")
         let fm = FileManager.default
         if fm.fileExists(atPath: sessionURL(saved.id).path) {
             do {
@@ -169,9 +173,9 @@ struct WorkspaceSnapshot: Codable {
         case unreadable
         var message: String {
             switch self {
-            case .preservationFailed(let reason): "无法备份损坏的会话文件：\(reason)"
-            case .restoredFromBackup: "会话文件无法读取，已从备份恢复；原文件已保留。"
-            case .unreadable: "会话文件无法读取，原文件已保留。已打开空白工作区。"
+            case .preservationFailed(let reason): String(localized: "无法备份损坏的会话文件：\(reason)")
+            case .restoredFromBackup: String(localized: "会话文件无法读取，已从备份恢复；原文件已保留。")
+            case .unreadable: String(localized: "会话文件无法读取，原文件已保留。已打开空白工作区。")
             }
         }
     }
@@ -429,7 +433,7 @@ struct WorkspaceSnapshot: Codable {
         if restored.native != nil, !agent {
             restored = saved.state
             restored.agentStored = true
-            restored.loadError = "此会话由 Foundation Models Agent 创建，当前无法打开，已禁止执行。"
+            restored.loadError = String(localized: "此会话由 Foundation Models Agent 创建，当前无法打开，已禁止执行。")
         } else if agent, restored.native == nil, restored.loadError == nil, !restored.messages.isEmpty {
             restored.loadError = WorkspacePersistence.unsupportedFormat
         }
@@ -688,7 +692,7 @@ struct WorkspaceSnapshot: Codable {
         guard flush(), let persistence else { return }
         persistedAgentIDs.remove(id)
         do { try persistence.refreshBackup(); try persistence.removeSession(id) }
-        catch { persistenceNotice = "会话记录删除失败：\(error.localizedDescription)" }
+        catch { persistenceNotice = String(localized: "会话记录删除失败：\(error.localizedDescription)") }
     }
     /// The sidebar always lists everything. Searching is a separate surface — a palette
     /// with its own query and its own results — so the column never hides chats behind a
@@ -704,7 +708,7 @@ struct WorkspaceSnapshot: Codable {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return byRecency(conversations) }
         return byRecency(conversations.filter {
-            $0.title.localizedStandardContains(query)
+            $0.displayTitle.localizedStandardContains(query)
                 || $0.store.messages.contains { $0.content.localizedStandardContains(query) }
         })
     }
@@ -736,16 +740,16 @@ struct WorkspaceSnapshot: Codable {
         projects[index].name = name; scheduleSave()
     }
     func relocateProject(_ id: UUID, to url: URL) {
-        guard !projectIsActive(id) else { persistenceNotice = "任务活动期间不能重新定位项目。"; return }
+        guard !projectIsActive(id) else { persistenceNotice = String(localized: "任务活动期间不能重新定位项目。"); return }
         let path = url.standardizedFileURL.resolvingSymlinksInPath().path
         guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
         guard !projects.contains(where: { $0.id != id && $0.path == path }) else {
-            persistenceNotice = "该文件夹已属于另一个项目。"; return
+            persistenceNotice = String(localized: "该文件夹已属于另一个项目。"); return
         }
         projects[index].path = path; scheduleSave()
     }
     func removeProject(_ id: UUID) {
-        guard !projectIsActive(id) else { persistenceNotice = "任务活动期间不能解除项目关联。"; return }
+        guard !projectIsActive(id) else { persistenceNotice = String(localized: "任务活动期间不能解除项目关联。"); return }
         objectWillChange.send()
         (conversations + drafts).filter { $0.projectID == id }.forEach { $0.projectID = nil }
         projects.removeAll { $0.id == id }; flush()
@@ -775,7 +779,7 @@ struct WorkspaceSnapshot: Codable {
         if let url {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-                persistenceNotice = "所选文件夹不可用，请重新选择。"; return
+                persistenceNotice = String(localized: "所选文件夹不可用，请重新选择。"); return
             }
             guard !saveBlocked else {
                 persistenceNotice = Self.saveBlockedNotice; conversation.store.stopTask(); return
@@ -831,9 +835,9 @@ struct WorkspaceSnapshot: Codable {
             try VoiceDiagnostics.shared.measure("WorkspaceStore.flush", quietAfter: .seconds(10)) { try persistence.save(snapshot) }
             return true
         }
-        catch { persistenceNotice = "会话保存失败：\(error.localizedDescription)"; return false }
+        catch { persistenceNotice = String(localized: "会话保存失败：\(error.localizedDescription)"); return false }
     }
-    private static let saveBlockedNotice = "无法备份损坏的会话文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。"
+    private static var saveBlockedNotice: String { String(localized: "无法备份损坏的会话文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。") }
     func shutdown() {
         fileBrowser.select(project: nil)
         dictation.shutdown()

@@ -67,7 +67,7 @@ struct ConversationProjectPicker: View {
     private var label: some View {
         HStack(spacing: 6) {
             Image(systemName: project?.isAvailable == false ? "folder.badge.questionmark" : "folder")
-            Text(project?.name ?? "选择项目").lineLimit(1)
+            Text(project?.name ?? String(localized: "选择项目")).lineLimit(1)
             if project?.isAvailable == false { Text("不可用").foregroundStyle(WorkspaceStyle.warning) }
             if editable { Image(systemName: "chevron.down").font(.caption2) }
         }.font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
@@ -154,7 +154,7 @@ struct ProjectSelectionPanel: View {
     private func row(_ option: ProjectPickerOption) -> some View {
         HStack(spacing: 8) {
             Image(systemName: option == .add ? "folder.badge.plus" : "folder")
-            Text(project(option)?.name ?? "添加项目文件夹…").lineLimit(1)
+            Text(project(option)?.name ?? String(localized: "添加项目文件夹…")).lineLimit(1)
             Spacer(minLength: 0)
             if !enabled(option) { Text("不可用").font(WorkspaceStyle.caption) }
             if selected(option) { Image(systemName: "checkmark") }
@@ -195,8 +195,8 @@ struct ProjectSelectionPanel: View {
 /// keyboard focus, so Tab still reaches it on rows nobody is pointing at.
 struct HoverRevealButton: View {
     let symbol: String
-    let label: String
-    var help: String?
+    let label: LocalizedStringKey
+    var help: LocalizedStringKey?
     let visible: Bool
     let action: () -> Void
     @FocusState private var focused: Bool

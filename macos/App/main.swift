@@ -247,10 +247,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showFailure(_ error: Error) {
         let alert = NSAlert()
-        alert.messageText = "无法启动桌面精灵"
+        alert.messageText = String(localized: "无法启动桌面精灵")
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .critical
-        alert.addButton(withTitle: "退出")
+        alert.addButton(withTitle: String(localized: "退出"))
         ActivationPolicyController.activate(for: alert.window)
         alert.runModal()
         NSApp.terminate(nil)
