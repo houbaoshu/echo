@@ -1452,7 +1452,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Start a new chat"
+            "value" : "Start new chat"
           }
         }
       }
@@ -1866,7 +1866,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "New chat"
+            "value" : "Start new chat"
           }
         }
       }
@@ -3230,7 +3230,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Send a follow-up"
+            "value" : "Follow up"
           }
         }
       }
