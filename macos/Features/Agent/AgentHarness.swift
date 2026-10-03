@@ -120,9 +120,9 @@ enum AgentInstructions {
 
     static let generationLimit = 30
     static let formatErrorLimit = 3
-    static let stepLimitMessage = "已达到本轮 \(generationLimit) 次模型请求限制。"
-    static let formatErrorMessage = "模型连续返回无效工具格式，已停止。"
-    static let offlineAfterOutputMessage = "网络已断开，本轮已有输出或执行过工具，未自动改用本地模型。联网后点“继续处理”。"
+    static var stepLimitMessage: String { String(localized: "已达到本轮 \(generationLimit) 次模型请求限制。") }
+    static var formatErrorMessage: String { String(localized: "模型连续返回无效工具格式，已停止。") }
+    static var offlineAfterOutputMessage: String { String(localized: "网络已断开，本轮已有输出或执行过工具，未自动改用本地模型。联网后点“继续处理”。") }
 
     weak var host: (any AgentHarnessHost)?
     private(set) var state = NativeAgentState()
@@ -210,7 +210,7 @@ enum AgentInstructions {
     // MARK: TaskSource
 
     func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
-        receive(.failed("Agent 需要统一会话入口。"))
+        receive(.failed(String(localized: "Agent 需要统一会话入口。")))
     }
     func cancel() { stop() }
 
@@ -297,9 +297,9 @@ enum AgentInstructions {
                 switch local!.backend.availability() {
                 case .ready: route = .local(local!)
                 case .missing:
-                    return finish(.failed("尚未配置模型。请在设置中配置并保存默认模型，或导入本地模型。", notice: true))
+                    return finish(.failed(String(localized: "尚未配置模型。请在设置中配置并保存默认模型，或导入本地模型。"), notice: true))
                 case .invalid(let reason):
-                    return finish(.failed("尚未配置默认模型，本地模型也不完整（\(reason)）。请在设置中配置默认模型，或重新导入本地模型。", notice: true))
+                    return finish(.failed(String(localized: "尚未配置默认模型，本地模型也不完整（\(reason)）。请在设置中配置默认模型，或重新导入本地模型。"), notice: true))
                 }
             }
             catch { return finish(.failed(error.localizedDescription, notice: true)) }
@@ -338,7 +338,7 @@ enum AgentInstructions {
             runningPrompt = (userPrompt ?? marker).map { .prompt($0) }
             live = []; checkpointed = []; dispatched = []; operations = [:]
             project()
-            host?.harnessStatus("正在请求模型…")
+            host?.harnessStatus(String(localized: "正在请求模型…"))
 
             let ledger = GenerationLedger()
             var modelHistory = history
@@ -463,10 +463,10 @@ enum AgentInstructions {
                             continue
                         case .missing:
                             state.entries = entries
-                            return finish(.failed("当前离线，本地模型未安装。请联网后重试，或在设置中导入本地模型。", notice: false))
+                            return finish(.failed(String(localized: "当前离线，本地模型未安装。请联网后重试，或在设置中导入本地模型。"), notice: false))
                         case .invalid(let reason):
                             state.entries = entries
-                            return finish(.failed("当前离线，本地模型不完整（\(reason)）。请联网后重试，或在设置中重新导入本地模型。", notice: false))
+                            return finish(.failed(String(localized: "当前离线，本地模型不完整（\(reason)）。请联网后重试，或在设置中重新导入本地模型。"), notice: false))
                         }
                     }
                     state.entries = closingInterruptedCalls(Self.trimmingUnfinished(entries, base: history.count, ledger: ledger))
@@ -949,7 +949,7 @@ enum AgentInstructions {
     private nonisolated static func message(for error: any Error) -> String {
         let error = unwrap(error)
         if let model = error as? AgentModelError { return model.message }
-        if error is CancellationError { return "Agent 请求已取消。" }
+        if error is CancellationError { return String(localized: "Agent 请求已取消。") }
         return (error as? LocalizedError)?.errorDescription ?? String(describing: error)
     }
 }
@@ -1059,9 +1059,9 @@ extension AgentToolRecord {
     static func summary(_ call: Transcript.ToolCall) -> String {
         switch call.toolName {
         case "bash": TaskStore.toolSummary(display(call))
-        case "list_files": "正在列出文件 · \(display(call).prefix(60))"
-        case "read_file": "正在读取文件 · \(display(call).prefix(60))"
-        default: "正在调用工具 · \(call.toolName)"
+        case "list_files": String(localized: "正在列出文件 · \(String(display(call).prefix(60)))")
+        case "read_file": String(localized: "正在读取文件 · \(String(display(call).prefix(60)))")
+        default: String(localized: "正在调用工具 · \(call.toolName)")
         }
     }
     static func state(forResult result: String) -> State {

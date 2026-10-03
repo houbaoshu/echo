@@ -40,12 +40,32 @@
         }
       }
     },
-    "%@，%@" : {
+    "%@，当前星球" : {
       "localizations" : {
-        "zh-Hans" : {
+        "en" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@，%2$@"
+            "state" : "translated",
+            "value" : "%@, current planet"
+          }
+        }
+      }
+    },
+    "%@，当前精灵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, current pet"
+          }
+        }
+      }
+    },
+    "%@，点击切换" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, click to use"
           }
         }
       }
@@ -57,7 +77,24 @@
 
     },
     "API Key" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API key"
+          }
+        }
+      }
+    },
+    "API Key 不能包含换行。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The API key can’t contain line breaks."
+          }
+        }
+      }
     },
     "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。" : {
       "localizations" : {
@@ -69,8 +106,35 @@
         }
       }
     },
+    "Agent 请求已取消。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The request was canceled."
+          }
+        }
+      }
+    },
+    "Agent 需要统一会话入口。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The agent can only run from a chat."
+          }
+        }
+      }
+    },
     "Base URL" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base URL"
+          }
+        }
+      }
     },
     "Echo" : {
       "localizations" : {
@@ -93,10 +157,27 @@
       }
     },
     "Provider" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Provider"
+          }
+        }
+      }
     },
     "https://api.openai.com/v1" : {
 
+    },
+    "metadata.json 不是语言模型的描述" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "metadata.json doesn’t describe a language model"
+          }
+        }
+      }
     },
     "stderr 已截断" : {
       "localizations" : {
@@ -124,6 +205,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unavailable"
+          }
+        }
+      }
+    },
+    "不是 %@ 模型" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "it isn’t a %@ model"
           }
         }
       }
@@ -268,6 +359,16 @@
         }
       }
     },
+    "保存失败，请检查设置目录的写入权限后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t save. Check that Echo can write to its settings folder, then try again."
+          }
+        }
+      }
+    },
     "停止回复" : {
       "localizations" : {
         "en" : {
@@ -320,7 +421,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Link project"
+            "value" : "Link Project"
           }
         }
       }
@@ -440,7 +541,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Delete chat…"
+            "value" : "Delete Chat…"
           }
         }
       }
@@ -466,7 +567,34 @@
       }
     },
     "协议" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Protocol"
+          }
+        }
+      }
+    },
+    "原 API Key 尚未读取，请重新填写密钥后保存。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The saved API key couldn’t be read. Enter it again and click Save."
+          }
+        }
+      }
+    },
+    "原语音密钥尚未读取，请重新填写后保存。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The saved voice key couldn’t be read. Enter it again and click Save."
+          }
+        }
+      }
     },
     "发送" : {
 
@@ -539,7 +667,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Jump to latest"
+            "value" : "Jump to Latest"
           }
         }
       }
@@ -607,11 +735,55 @@
         }
       }
     },
+    "导入失败：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t import the model: %@"
+          }
+        }
+      }
+    },
     "导入模型…" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Model…"
+          }
+        }
+      }
     },
     "导入精灵…" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Pet…"
+          }
+        }
+      }
+    },
+    "尚未配置模型。请在设置中配置并保存默认模型，或导入本地模型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No model is set up. Fill in Default model in Settings and click Save, or import a local model."
+          }
+        }
+      }
+    },
+    "尚未配置默认模型，本地模型也不完整（%@）。请在设置中配置默认模型，或重新导入本地模型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No default model is set up, and the local model is incomplete (%@). Fill in Default model in Settings, or import the local model again."
+          }
+        }
+      }
     },
     "展开预览" : {
       "localizations" : {
@@ -639,6 +811,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Interrupted · Follow up to continue"
+          }
+        }
+      }
+    },
+    "已保存的 API Key 无效，请重新设置。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The saved API key isn’t valid. Enter it again in Settings."
           }
         }
       }
@@ -699,6 +881,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Done"
+          }
+        }
+      }
+    },
+    "已导入本地模型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local model imported"
           }
         }
       }
@@ -766,6 +958,16 @@
         }
       }
     },
+    "已达到本轮 %lld 次模型请求限制。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This turn reached its limit of %lld model requests."
+          }
+        }
+      }
+    },
     "帮助" : {
       "localizations" : {
         "en" : {
@@ -809,6 +1011,26 @@
     "开始新聊天" : {
 
     },
+    "当前离线，本地模型不完整（%@）。请联网后重试，或在设置中重新导入本地模型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You’re offline and the local model is incomplete (%@). Try again when you’re online, or import the model again in Settings."
+          }
+        }
+      }
+    },
+    "当前离线，本地模型未安装。请联网后重试，或在设置中导入本地模型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You’re offline and no local model is installed. Try again when you’re online, or click Import Model in Settings."
+          }
+        }
+      }
+    },
     "录音已暂停" : {
 
     },
@@ -846,10 +1068,24 @@
       }
     },
     "我的星球" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "My planets"
+          }
+        }
+      }
     },
     "我的精灵" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "My pets"
+          }
+        }
+      }
     },
     "所选文件夹不可用，请重新选择。" : {
       "localizations" : {
@@ -906,7 +1142,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Copy path"
+            "value" : "Copy Path"
           }
         }
       }
@@ -1006,7 +1242,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "New chat"
+            "value" : "New Chat"
           }
         }
       }
@@ -1027,7 +1263,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "New chat"
+            "value" : "New Chat"
           }
         },
         "zh-Hans" : {
@@ -1055,12 +1291,22 @@
         }
       }
     },
+    "无法保存 API Key 到钥匙串。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t save the API key to the keychain."
+          }
+        }
+      }
+    },
     "无法启动桌面精灵" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Couldn’t start the desktop pet"
+            "value" : "Couldn’t Start the Desktop Pet"
           }
         }
       }
@@ -1085,12 +1331,92 @@
         }
       }
     },
+    "无法导入：%@。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t import the model: %@."
+          }
+        }
+      }
+    },
+    "无法清除旧的钥匙串凭据。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t remove the old key from the keychain."
+          }
+        }
+      }
+    },
+    "无法读取共用的模型 API Key，请在模型设置中重新保存。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read the shared model API key. Save it again in the Model section of Settings."
+          }
+        }
+      }
+    },
+    "无法读取已保存的 API Key，请在设置中重新填写并保存。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read the saved API key. Enter it again in Settings and click Save."
+          }
+        }
+      }
+    },
+    "无法读取已保存的语音密钥，请检查钥匙串访问权限。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read the saved voice key. Check Echo’s keychain access."
+          }
+        }
+      }
+    },
+    "无法读取此 provider 的 API Key，请检查钥匙串权限或重新填写后保存。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read this provider’s API key. Check Echo’s keychain access, or enter the key again and click Save."
+          }
+        }
+      }
+    },
+    "无法读取钥匙串中的 API Key（OSStatus %d），请检查钥匙串访问权限。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read the API key from the keychain (OSStatus %d). Check Echo’s keychain access."
+          }
+        }
+      }
+    },
     "无法预览图片：文件已损坏或格式不受支持。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Can’t preview this image. It’s damaged or in an unsupported format."
+          }
+        }
+      }
+    },
+    "星球" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Planet"
           }
         }
       }
@@ -1106,7 +1432,14 @@
       }
     },
     "显示 API Key" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show API key"
+          }
+        }
+      }
     },
     "显示检查器" : {
       "localizations" : {
@@ -1158,6 +1491,16 @@
         }
       }
     },
+    "未导入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not imported"
+          }
+        }
+      }
+    },
     "未执行" : {
       "localizations" : {
         "en" : {
@@ -1168,8 +1511,65 @@
         }
       }
     },
+    "未收到有效的 bash 工具调用，请检查模型、额度及 %@ 工具调用支持。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Didn’t get a valid bash tool call. Check the model, your quota, and whether the model supports %@ tool calling."
+          }
+        }
+      }
+    },
     "本地模型" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use local model"
+          }
+        }
+      }
+    },
+    "本地模型不完整（%@）。请在设置中重新导入模型文件夹。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The local model is incomplete (%@). Import the model folder again in Settings."
+          }
+        }
+      }
+    },
+    "本地模型加载失败：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t load the local model: %@"
+          }
+        }
+      }
+    },
+    "本地模型未安装。请在设置中导入模型文件夹后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The local model isn’t installed. Click Import Model in Settings, then try again."
+          }
+        }
+      }
+    },
+    "本地模型没有给出有效回复，请重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The local model didn’t return a usable reply. Try again."
+          }
+        }
+      }
     },
     "查找" : {
       "localizations" : {
@@ -1218,10 +1618,24 @@
 
     },
     "模型" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model"
+          }
+        }
+      }
     },
     "模型不完整：%@" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incomplete model: %@"
+          }
+        }
+      }
     },
     "模型尚未配置，请打开设置并保存默认模型。" : {
       "localizations" : {
@@ -1239,6 +1653,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The model didn’t return any text. Try again."
+          }
+        }
+      }
+    },
+    "模型请求失败，请检查服务地址、密钥、模型及 %@ 工具调用支持。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model request failed. Check Base URL, the API key, the model, and whether the model supports %@ tool calling."
+          }
+        }
+      }
+    },
+    "模型连续返回无效工具格式，已停止。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopped because the model kept returning malformed tool calls."
           }
         }
       }
@@ -1269,6 +1703,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Starting microphone…"
+          }
+        }
+      }
+    },
+    "正在列出文件 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listing files · %@"
           }
         }
       }
@@ -1314,7 +1758,14 @@
       }
     },
     "正在测试…" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Testing…"
+          }
+        }
+      }
     },
     "正在等待回复…" : {
       "localizations" : {
@@ -1352,6 +1803,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Thinking…"
+          }
+        }
+      }
+    },
+    "正在读取文件 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reading file · %@"
+          }
+        }
+      }
+    },
+    "正在调用工具 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calling tool · %@"
           }
         }
       }
@@ -1426,8 +1897,25 @@
         }
       }
     },
+    "测试已取消。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Test canceled"
+          }
+        }
+      }
+    },
     "测试连接" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Test Connection"
+          }
+        }
+      }
     },
     "添加项目文件夹" : {
       "localizations" : {
@@ -1444,7 +1932,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Add project folder…"
+            "value" : "Add Project Folder…"
           }
         }
       }
@@ -1467,10 +1955,24 @@
       }
     },
     "清除 API Key" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear API key"
+          }
+        }
+      }
     },
     "清除 API Key，保存后生效" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear API key (takes effect when you save)"
+          }
+        }
+      }
     },
     "点击展开或收起项目聊天" : {
       "localizations" : {
@@ -1497,7 +1999,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Remove project, keep chats"
+            "value" : "Remove Project, Keep Chats"
           }
         }
       }
@@ -1568,6 +2070,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Paste"
+          }
+        }
+      }
+    },
+    "精灵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pet"
           }
         }
       }
@@ -1662,12 +2174,82 @@
         }
       }
     },
+    "缺少 metadata.json" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "metadata.json is missing"
+          }
+        }
+      }
+    },
+    "缺少内嵌 tokenizer" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "the embedded tokenizer is missing"
+          }
+        }
+      }
+    },
+    "缺少当前 provider 配置。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The settings file has no configuration for the selected provider."
+          }
+        }
+      }
+    },
+    "缺少模型文件 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "the model file %@ is missing"
+          }
+        }
+      }
+    },
+    "网络已断开，本轮已有输出或执行过工具，未自动改用本地模型。联网后点“继续处理”。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You’re offline. This turn already wrote output or ran tools, so it didn’t switch to the local model. When you’re back online, click Continue."
+          }
+        }
+      }
+    },
+    "网络连接失败，请检查服务地址、证书和网络。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t connect. Check Base URL, the server’s certificate, and your network."
+          }
+        }
+      }
+    },
     "聊天" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chats"
+          }
+        }
+      }
+    },
+    "自定义（兼容 API）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Custom (Compatible API)"
           }
         }
       }
@@ -1702,8 +2284,55 @@
         }
       }
     },
+    "设置保存失败，请检查目录写入权限。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t save settings. Check that Echo can write to its settings folder."
+          }
+        }
+      }
+    },
     "设置分区" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings sections"
+          }
+        }
+      }
+    },
+    "设置文件无法读取，原文件保留。请修复或移走 settings.json 后重启应用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read the settings file, so it was left as is. Fix or move settings.json, then restart Echo."
+          }
+        }
+      }
+    },
+    "设置文件无法读取，暂不能覆盖原文件。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The settings file couldn’t be read, so Echo won’t overwrite it."
+          }
+        }
+      }
+    },
+    "设置文件版本不受支持。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This version of the settings file isn’t supported."
+          }
+        }
+      }
     },
     "诊断日志" : {
 
@@ -1721,6 +2350,26 @@
         }
       }
     },
+    "语音" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voice"
+          }
+        }
+      }
+    },
+    "语音 API Key 不能包含换行。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice API key can’t contain line breaks."
+          }
+        }
+      }
+    },
     "语音转文字" : {
       "localizations" : {
         "en" : {
@@ -1731,12 +2380,72 @@
         }
       }
     },
+    "语音配置保存失败，请检查目录写入权限。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t save voice settings. Check that Echo can write to its settings folder."
+          }
+        }
+      }
+    },
+    "语音配置已保存，但旧密钥清理失败，请检查钥匙串。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voice settings were saved, but the old key couldn’t be removed from the keychain."
+          }
+        }
+      }
+    },
+    "请先在设置中配置并保存默认模型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No default model is saved. Fill in Default model in Settings and click Save."
+          }
+        }
+      }
+    },
+    "请在模型设置中保存可用于语音服务的 API Key。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save an API key that works with the voice service in the Model section of Settings."
+          }
+        }
+      }
+    },
     "请求失败" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Request failed"
+          }
+        }
+      }
+    },
+    "请输入 HTTPS API 根地址；本机服务可使用 HTTP。地址不能包含凭据、查询参数或片段。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base URL must be an HTTPS address (HTTP is fine for a service on this Mac) and can’t include credentials, a query, or a fragment."
+          }
+        }
+      }
+    },
+    "请输入默认模型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a model ID in Default model."
           }
         }
       }
@@ -1795,10 +2504,24 @@
       }
     },
     "输入 API Key" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter API key"
+          }
+        }
+      }
     },
     "输入 Model ID" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter model ID"
+          }
+        }
+      }
     },
     "输入音色 ID" : {
 
@@ -1824,7 +2547,34 @@
       }
     },
     "还原修改" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revert Changes"
+          }
+        }
+      }
+    },
+    "这一轮已有回复或执行过工具，本地模型无法接着处理。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This turn already has a reply or ran tools, so the local model can’t continue it."
+          }
+        }
+      }
+    },
+    "这条消息太长，本地模型无法处理。请缩短后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This message is too long for the local model. Shorten it and try again."
+          }
+        }
+      }
     },
     "进入全屏幕" : {
       "localizations" : {
@@ -1832,6 +2582,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enter Full Screen"
+          }
+        }
+      }
+    },
+    "连接成功，指定协议已返回有效的 bash 工具调用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected · tool calling works"
+          }
+        }
+      }
+    },
+    "连接超时，请检查服务地址与网络后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The connection timed out. Check Base URL and your network, then try again."
           }
         }
       }
@@ -1891,7 +2661,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose folder…"
+            "value" : "Choose Folder…"
           }
         }
       }
@@ -1901,7 +2671,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose project"
+            "value" : "Choose Project"
           }
         }
       }
@@ -1912,6 +2682,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choose project folder"
+          }
+        }
+      }
+    },
+    "配置已保存，但旧密钥清理失败，请检查钥匙串访问权限。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings were saved, but the old key couldn’t be removed. Check Echo’s keychain access."
           }
         }
       }
@@ -1958,7 +2738,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Relocate folder…"
+            "value" : "Relocate Folder…"
           }
         }
       }
@@ -1978,7 +2758,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Retry save"
+            "value" : "Retry Save"
           }
         }
       }
@@ -1994,7 +2774,14 @@
       }
     },
     "隐藏 API Key" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide API key"
+          }
+        }
+      }
     },
     "隐藏检查器" : {
       "localizations" : {
@@ -2060,7 +2847,14 @@
       }
     },
     "验证当前协议的工具调用能力，不执行命令，也不自动保存" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checks tool calling with the selected protocol. Runs no commands and doesn’t save."
+          }
+        }
+      }
     },
     "验证语音识别与合成连接，使用静音样本，不录音" : {
 
@@ -2076,7 +2870,14 @@
       }
     },
     "默认模型" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default model"
+          }
+        }
+      }
     },
     "（空文件夹）" : {
       "localizations" : {

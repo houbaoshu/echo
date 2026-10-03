@@ -37,7 +37,7 @@ enum LocalModelLocation {
     /// Echo expects. Whatever was at `destination` goes to the Trash (a link is removed, not what it
     /// points to). Returns the failure to show, or nil.
     static func install(from source: URL, to destination: URL = installURL) -> String? {
-        if let problem = problem(in: source) { return "无法导入：\(problem)。" }
+        if let problem = problem(in: source) { return String(localized: "无法导入：\(problem)。") }
         let files = FileManager.default
         let partial = destination.deletingLastPathComponent().appendingPathComponent(".\(name).importing-\(UUID().uuidString)")
         do {
@@ -50,7 +50,7 @@ enum LocalModelLocation {
             return nil
         } catch {
             try? files.removeItem(at: partial)
-            return "导入失败：\(error.localizedDescription)"
+            return String(localized: "导入失败：\(error.localizedDescription)")
         }
     }
 
@@ -58,15 +58,15 @@ enum LocalModelLocation {
     /// tokenizer, or nil.
     static func problem(in url: URL) -> String? {
         let files = FileManager.default
-        guard let metadata = metadata(in: url) else { return "缺少 metadata.json" }
-        guard metadata["name"] as? String == name else { return "不是 \(name) 模型" }
+        guard let metadata = metadata(in: url) else { return String(localized: "缺少 metadata.json") }
+        guard metadata["name"] as? String == name else { return String(localized: "不是 \(name) 模型") }
         guard metadata["kind"] as? String == "llm",
               let main = (metadata["assets"] as? [String: Any])?["main"] as? String,
-              let language = metadata["language"] as? [String: Any] else { return "metadata.json 不是语言模型的描述" }
-        guard files.fileExists(atPath: url.appendingPathComponent(main).path) else { return "缺少模型文件 \(main)" }
+              let language = metadata["language"] as? [String: Any] else { return String(localized: "metadata.json 不是语言模型的描述") }
+        guard files.fileExists(atPath: url.appendingPathComponent(main).path) else { return String(localized: "缺少模型文件 \(main)") }
         // Without its own tokenizer, Core AI would fetch one from Hugging Face.
         guard language["embedded_tokenizer"] as? Bool == true,
-              files.fileExists(atPath: url.appendingPathComponent("tokenizer/tokenizer.json").path) else { return "缺少内嵌 tokenizer" }
+              files.fileExists(atPath: url.appendingPathComponent("tokenizer/tokenizer.json").path) else { return String(localized: "缺少内嵌 tokenizer") }
         return nil
     }
 }
@@ -104,12 +104,12 @@ enum LocalChatError: Error, LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .modelMissing: "本地模型未安装。请在设置中导入模型文件夹后重试。"
-        case .modelInvalid(let reason): "本地模型不完整（\(reason)）。请在设置中重新导入模型文件夹。"
-        case .loadFailed(let reason): "本地模型加载失败：\(reason)"
-        case .messageTooLong: "这条消息太长，本地模型无法处理。请缩短后重试。"
-        case .noReply: "本地模型没有给出有效回复，请重试。"
-        case .cannotContinue: "这一轮已有回复或执行过工具，本地模型无法接着处理。"
+        case .modelMissing: String(localized: "本地模型未安装。请在设置中导入模型文件夹后重试。")
+        case .modelInvalid(let reason): String(localized: "本地模型不完整（\(reason)）。请在设置中重新导入模型文件夹。")
+        case .loadFailed(let reason): String(localized: "本地模型加载失败：\(reason)")
+        case .messageTooLong: String(localized: "这条消息太长，本地模型无法处理。请缩短后重试。")
+        case .noReply: String(localized: "本地模型没有给出有效回复，请重试。")
+        case .cannotContinue: String(localized: "这一轮已有回复或执行过工具，本地模型无法接着处理。")
         }
     }
 }

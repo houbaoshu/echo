@@ -109,7 +109,7 @@ final class CoreAILocalChatBackend: LocalChatBackend {
         let bundle: LanguageBundle
         do { bundle = try LanguageBundle(at: url) } catch { throw LocalChatError.modelInvalid(error.localizedDescription) }
         // Without its own tokenizer, Core AI would fetch one from Hugging Face.
-        guard bundle.hasEmbeddedTokenizer else { throw LocalChatError.modelInvalid("缺少内嵌 tokenizer") }
+        guard bundle.hasEmbeddedTokenizer else { throw LocalChatError.modelInvalid(String(localized: "缺少内嵌 tokenizer")) }
         do {
             let model = try await CoreAILanguageModel(resourcesAt: url, mode: .lazy)
             try await model.load()

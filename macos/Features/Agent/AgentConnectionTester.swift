@@ -6,14 +6,14 @@ import FoundationModels
 struct NativeConnectionTester: ConnectionTesting {
     @MainActor func test(configuration: ModelConfiguration, key: String) async throws {
         let configuration = try configuration.validated()
-        guard !key.contains("\r"), !key.contains("\n") else { throw SettingsError("API Key 不能包含换行。") }
+        guard !key.contains("\r"), !key.contains("\n") else { throw SettingsError(String(localized: "API Key 不能包含换行。")) }
         try Task.checkCancellation()
         let endpoint = AgentEndpoint(configuration, key: key)
         let model = EchoLanguageModel(endpoint: endpoint, transport: AgentTransport.make(for: endpoint),
                                       ledger: GenerationLedger(), budget: GenerationBudget(limit: 1))
         let session = LanguageModelSession(profile: ProbeProfile(model: model), history: [])
         let title = configuration.apiProtocol.title
-        let noValidCall = SettingsError("未收到有效的 bash 工具调用，请检查模型、额度及 \(title) 工具调用支持。")
+        let noValidCall = SettingsError(String(localized: "未收到有效的 bash 工具调用，请检查模型、额度及 \(title) 工具调用支持。"))
         do {
             _ = try await Self.respond(session)
             throw noValidCall
@@ -27,7 +27,7 @@ struct NativeConnectionTester: ConnectionTesting {
         } catch {
             try Task.checkCancellation()
             // Provider errors can contain arbitrary response bodies; do not show them.
-            throw SettingsError("模型请求失败，请检查服务地址、密钥、模型及 \(title) 工具调用支持。")
+            throw SettingsError(String(localized: "模型请求失败，请检查服务地址、密钥、模型及 \(title) 工具调用支持。"))
         }
     }
 

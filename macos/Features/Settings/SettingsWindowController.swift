@@ -16,7 +16,7 @@ import SwiftUI
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         super.init(window: window)
-        window.title = "设置"
+        window.title = String(localized: "设置")
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 720, height: 520)
         window.toolbarStyle = .preference

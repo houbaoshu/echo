@@ -217,7 +217,7 @@ struct LocalModelSection: View {
                 .toggleStyle(.switch).accessibilityIdentifier("settings.localModel.only")
             // Only one model can be imported for now, so the menu lists exactly what is
             // there and choosing is a no-op; it is a picker so the row reads like the others.
-            let title = settings.localModelName ?? "未导入"
+            let title = settings.localModelName ?? String(localized: "未导入")
             Picker("模型", selection: .constant(title)) {
                 Text(title).tag(title)
             }.disabled(settings.localModelName == nil).accessibilityIdentifier("settings.localModel.model")
@@ -263,7 +263,7 @@ struct PetSettingsView: View {
                     LazyVGrid(columns: SpriteCard.columns, spacing: 16) {
                         ForEach(pets.entries) { pet in
                             SpriteCard(name: pet.name, preview: pet.preview, selected: pets.selectedID == pet.id,
-                                       currentLabel: "当前精灵", identifier: "settings.pet.\(pet.id)") { pets.activate(pet.id) }
+                                       currentLabel: String(localized: "\(pet.name)，当前精灵"), identifier: "settings.pet.\(pet.id)") { pets.activate(pet.id) }
                                 .id(pet.id)
                         }
                     }.onChange(of: pets.highlightedID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
@@ -295,7 +295,7 @@ struct PlanetSettingsView: View {
                 LazyVGrid(columns: SpriteCard.columns, spacing: 16) {
                     ForEach(planets.entries) { planet in
                         SpriteCard(name: planet.name, preview: planet.preview, selected: planets.selectedID == planet.id,
-                                   currentLabel: "当前星球", identifier: "settings.planet.\(planet.id)") { planets.select(planet.id) }
+                                   currentLabel: String(localized: "\(planet.name)，当前星球"), identifier: "settings.planet.\(planet.id)") { planets.select(planet.id) }
                             .id(planet.id)
                     }
                 }
@@ -315,7 +315,8 @@ struct SpriteCard: View {
     let name: String
     let preview: CGImage
     let selected: Bool
-    /// How VoiceOver names the selected card: 当前精灵 or 当前星球.
+    /// How VoiceOver names the card while it is selected — its name and 当前精灵 or 当前星球 —
+    /// as one localized sentence, since the two halves do not join the same way in every language.
     let currentLabel: String
     let identifier: String
     let action: () -> Void
@@ -334,7 +335,7 @@ struct SpriteCard: View {
             // Keep the system focus ring on the card's own shape.
             .contentShape(.focusEffect, RoundedRectangle(cornerRadius: 16))
             .accessibilityAddTraits(selected ? [.isSelected] : [])
-            .accessibilityLabel("\(name)，\(selected ? currentLabel : "点击切换")")
+            .accessibilityLabel(selected ? currentLabel : String(localized: "\(name)，点击切换"))
             .accessibilityIdentifier(identifier)
     }
 }
