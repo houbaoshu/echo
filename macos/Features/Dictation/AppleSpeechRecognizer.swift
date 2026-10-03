@@ -63,7 +63,7 @@ import Speech
             locale.identifier.replacingOccurrences(of: "_", with: "-").lowercased()
         }
         guard let supported = supportedLocales.first(where: { identifier($0) == identifier(target) }) else {
-            throw SettingsError("Apple 语音识别不支持听写语言 \(target.identifier)，请检查首选语言。")
+            throw SettingsError(localized: "Apple 语音识别不支持听写语言 \(target.identifier)，请检查首选语言。")
         }
         return supported
     }
@@ -74,7 +74,7 @@ import Speech
     static func prepare(preferredLanguages: [String] = ["zh-CN"]) async throws -> AppleSpeechRecognizer {
         let locale = try speechLocale(preferredLanguages: preferredLanguages, supportedLocales: SFSpeechRecognizer.supportedLocales())
         guard let engine = SystemAppleSpeechEngine(locale: locale) else {
-            throw SettingsError("无法初始化 Apple 语音识别（\(locale.identifier)），请检查本地语音资源。")
+            throw SettingsError(localized: "无法初始化 Apple 语音识别（\(locale.identifier)），请检查本地语音资源。")
         }
         return try await prepare(engine: engine) {
             await requestSpeechAuthorization()
@@ -97,16 +97,16 @@ import Speech
     static func prepare(engine: (any AppleSpeechEngine)?,
                         permission: () async -> SFSpeechRecognizerAuthorizationStatus) async throws -> AppleSpeechRecognizer {
         try Task.checkCancellation()
-        guard let engine else { throw SettingsError("无法初始化 Apple 语音识别的听写语言，请检查本地语音资源。") }
+        guard let engine else { throw SettingsError(localized: "无法初始化 Apple 语音识别的听写语言，请检查本地语音资源。") }
         try validate(engine)
         let authorization = await permission()
         try Task.checkCancellation()
         switch authorization {
         case .authorized: break
-        case .denied: throw SettingsError("Apple 语音识别权限未开启，请在系统设置 → 隐私与安全性 → 语音识别中允许 Echo。")
-        case .restricted: throw SettingsError("此 Mac 的 Apple 语音识别权限受到系统限制。")
-        case .notDetermined: throw SettingsError("Apple 语音识别尚未获得授权，请重新开始转写。")
-        @unknown default: throw SettingsError("无法确认 Apple 语音识别权限，请检查系统设置。")
+        case .denied: throw SettingsError(localized: "Apple 语音识别权限未开启，请在系统设置 → 隐私与安全性 → 语音识别中允许 Echo。")
+        case .restricted: throw SettingsError(localized: "此 Mac 的 Apple 语音识别权限受到系统限制。")
+        case .notDetermined: throw SettingsError(localized: "Apple 语音识别尚未获得授权，请重新开始转写。")
+        @unknown default: throw SettingsError(localized: "无法确认 Apple 语音识别权限，请检查系统设置。")
         }
         try validate(engine)
         return AppleSpeechRecognizer(engine: engine)
@@ -114,9 +114,9 @@ import Speech
 
     private static func validate(_ engine: any AppleSpeechEngine) throws {
         guard engine.supportsOnDeviceRecognition else {
-            throw SettingsError("此 Mac 不支持 Apple 本地语音识别（\(engine.locale.identifier)）；不会使用 Apple 云端识别。请检查该语言的本地语音资源。")
+            throw SettingsError(localized: "此 Mac 不支持 Apple 本地语音识别（\(engine.locale.identifier)）；不会使用 Apple 云端识别。请检查该语言的本地语音资源。")
         }
-        guard engine.isAvailable else { throw SettingsError("Apple 本地语音识别当前不可用（\(engine.locale.identifier)），请检查该语言的本地语音资源后重试。") }
+        guard engine.isAvailable else { throw SettingsError(localized: "Apple 本地语音识别当前不可用（\(engine.locale.identifier)），请检查该语言的本地语音资源后重试。") }
     }
 
     static func pcmBuffer(_ data: Data) throws -> AVAudioPCMBuffer {
@@ -124,7 +124,7 @@ import Speech
               let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(data.count / 2)),
               let samples = buffer.int16ChannelData?[0] else {
-            throw SettingsError("Apple 本地识别收到无效的麦克风音频。")
+            throw SettingsError(localized: "Apple 本地识别收到无效的麦克风音频。")
         }
         buffer.frameLength = AVAudioFrameCount(data.count / 2)
         data.withUnsafeBytes { bytes in
@@ -150,11 +150,11 @@ import Speech
         engine.start(request: request) { result, error in
             if let result {
                 if case .dropped = continuation.yield(result) {
-                    continuation.finish(throwing: SettingsError("Apple 本地转写结果处理过慢，请重试。")); return
+                    continuation.finish(throwing: SettingsError(localized: "Apple 本地转写结果处理过慢，请重试。")); return
                 }
                 if result.streamFinal { continuation.finish(); return }
             }
-            if let error { continuation.finish(throwing: SettingsError("Apple 本地语音识别失败：\(error)")) }
+            if let error { continuation.finish(throwing: SettingsError(localized: "Apple 本地语音识别失败：\(String(describing: error))")) }
         }
         try await withThrowingTaskGroup(of: Bool.self) { group in
             group.addTask { @MainActor @Sendable in
@@ -175,14 +175,14 @@ import Speech
                     self.onSpeechResult?(result)
                     let text = transcript.accept(result)
                     if result.streamFinal {
-                        guard !text.isEmpty else { throw SettingsError("Apple 本地识别未识别到清晰语音，请重新录音。") }
+                        guard !text.isEmpty else { throw SettingsError(localized: "Apple 本地识别未识别到清晰语音，请重新录音。") }
                         receive(ASRResult(result: .init(text: text, utterances: nil), streamFinal: true))
                         return true
                     }
                     if !text.isEmpty { receive(ASRResult(result: .init(text: text, utterances: nil))) }
                 }
                 try Task.checkCancellation()
-                throw SettingsError("Apple 本地语音识别提前结束，请重新录音。")
+                throw SettingsError(localized: "Apple 本地语音识别提前结束，请重新录音。")
             }
             defer { group.cancelAll() }
             while let finished = try await group.next() {

@@ -21,7 +21,7 @@ struct ModelConfiguration: Codable, Equatable, Sendable {
               let host = parts.host, !host.isEmpty,
               parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
               parts.scheme == "https" || (parts.scheme == "http" && ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host.lowercased())),
-              let url = parts.url else { throw SettingsError(String(localized: "请输入 HTTPS API 根地址；本机服务可使用 HTTP。地址不能包含凭据、查询参数或片段。")) }
+              let url = parts.url else { throw SettingsError(localized: "请输入 HTTPS API 根地址；本机服务可使用 HTTP。地址不能包含凭据、查询参数或片段。") }
         return url
     }
     func endpoint() throws -> URL { try rootURL().appendingPathComponent(apiProtocol.path) }
@@ -31,7 +31,7 @@ struct ModelConfiguration: Codable, Equatable, Sendable {
         result.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while result.baseURL.hasSuffix("/") { result.baseURL.removeLast() }
         result.model = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !requiresModel || !result.model.isEmpty else { throw SettingsError(String(localized: "请输入默认模型。")) }
+        guard !requiresModel || !result.model.isEmpty else { throw SettingsError(localized: "请输入默认模型。") }
         return result
     }
 }
@@ -47,11 +47,28 @@ extension ModelConfiguration {
 }
 
 struct SettingsError: LocalizedError, Equatable {
+    /// What the interface shows, in the interface language.
     let message: String
-    init(_ message: String) { self.message = message }
+    /// What diagnostics record: the zh-Hans source text, so the voice log reads the same in
+    /// every interface language. Equal to `message` for text that is not localized.
+    let diagnostic: String
+    init(_ message: String) { self.message = message; diagnostic = message }
+    init(message: String, diagnostic: String) { self.message = message; self.diagnostic = diagnostic }
+    init(localized resource: LocalizedStringResource) {
+        self.init(message: String(localized: resource), diagnostic: resource.sourceText)
+    }
     var errorDescription: String? { message }
     /// No default model is saved: a turn may use the local model instead.
-    static let modelNotConfigured = SettingsError(String(localized: "请先在设置中配置并保存默认模型。"))
+    static let modelNotConfigured = SettingsError(localized: "请先在设置中配置并保存默认模型。")
+}
+
+extension LocalizedStringResource {
+    /// The text in the source language, zh-Hans, whatever the interface language is.
+    var sourceText: String {
+        var source = self
+        source.locale = Locale(identifier: "zh-Hans")
+        return String(localized: source)
+    }
 }
 
 @MainActor protocol SecretStore {
@@ -72,7 +89,7 @@ struct SettingsError: LocalizedError, Equatable {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
-            throw SettingsError(String(localized: "无法读取钥匙串中的 API Key（OSStatus \(status)），请检查钥匙串访问权限。"))
+            throw SettingsError(localized: "无法读取钥匙串中的 API Key（OSStatus \(status)），请检查钥匙串访问权限。")
         }
         return value
     }
@@ -81,12 +98,12 @@ struct SettingsError: LocalizedError, Equatable {
         query[kSecValueData as String] = Data(value.utf8)
         query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else {
-            throw SettingsError(String(localized: "无法保存 API Key 到钥匙串。"))
+            throw SettingsError(localized: "无法保存 API Key 到钥匙串。")
         }
     }
     func remove(_ account: String) throws {
         let status = SecItemDelete(query(account) as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw SettingsError(String(localized: "无法清除旧的钥匙串凭据。")) }
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw SettingsError(localized: "无法清除旧的钥匙串凭据。") }
     }
 }
 
@@ -154,7 +171,7 @@ struct SettingsSnapshot: Codable {
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let version = try values.decode(Int.self, forKey: .version)
-        guard version == 1 || version == 2 else { throw SettingsError(String(localized: "设置文件版本不受支持。")) }
+        guard version == 1 || version == 2 else { throw SettingsError(localized: "设置文件版本不受支持。") }
         selectedPetID = try values.decode(String.self, forKey: .selectedPetID)
         selectedPlanetID = try values.decodeIfPresent(String.self, forKey: .selectedPlanetID) ?? SettingsSnapshot.defaultPlanetID
         voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
@@ -170,7 +187,7 @@ struct SettingsSnapshot: Codable {
         } else {
             activeProvider = try values.decode(ModelProvider.self, forKey: .activeProvider)
             providers = try values.decode([String: ProviderSettings].self, forKey: .providers)
-            guard providers[activeProvider.rawValue] != nil else { throw SettingsError(String(localized: "缺少当前 provider 配置。")) }
+            guard providers[activeProvider.rawValue] != nil else { throw SettingsError(localized: "缺少当前 provider 配置。") }
         }
     }
 }
@@ -292,7 +309,7 @@ protocol ConnectionTesting: Sendable {
         loadProvider(provider)
     }
     func savedVoiceCredentials() throws -> (configuration: VoiceConfiguration, key: String) {
-        guard voiceKeyLoaded else { throw SettingsError(String(localized: "无法读取已保存的语音密钥，请检查钥匙串访问权限。")) }
+        guard voiceKeyLoaded else { throw SettingsError(localized: "无法读取已保存的语音密钥，请检查钥匙串访问权限。") }
         let key = try resolvedVoiceKey(savedVoiceKey)
         VoiceDiagnostics.shared.record("1 API Key", "PASS", "来源=\(savedVoiceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "已保存的模型密钥" : "语音专用密钥")；非空且格式有效，服务端鉴权待连接验证")
         return (try (snapshot.voice ?? VoiceConfiguration()).validated(), key)
@@ -303,12 +320,12 @@ protocol ConnectionTesting: Sendable {
         let key: String
         if !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { key = override }
         else {
-            guard keyLoaded else { throw SettingsError(String(localized: "无法读取共用的模型 API Key，请在模型设置中重新保存。")) }
+            guard keyLoaded else { throw SettingsError(localized: "无法读取共用的模型 API Key，请在模型设置中重新保存。") }
             key = savedKey
         }
         let value = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !value.contains("\r"), !value.contains("\n") else {
-            throw SettingsError(String(localized: "请在模型设置中保存可用于语音服务的 API Key。"))
+            throw SettingsError(localized: "请在模型设置中保存可用于语音服务的 API Key。")
         }
         return value
     }
@@ -321,8 +338,8 @@ protocol ConnectionTesting: Sendable {
         do {
             let value = try voiceDraft.validated()
             let key = voiceAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.contains("\r"), !key.contains("\n") else { throw SettingsError(String(localized: "语音 API Key 不能包含换行。")) }
-            guard voiceKeyLoaded || !key.isEmpty else { throw SettingsError(String(localized: "原语音密钥尚未读取，请重新填写后保存。")) }
+            guard !key.contains("\r"), !key.contains("\n") else { throw SettingsError(localized: "语音 API Key 不能包含换行。") }
+            guard voiceKeyLoaded || !key.isEmpty else { throw SettingsError(localized: "原语音密钥尚未读取，请重新填写后保存。") }
             let changed = key != savedVoiceKey || !voiceKeyLoaded
             let oldAccount = snapshot.voiceSecretAccount
             var next = snapshot; next.voice = value
@@ -366,12 +383,12 @@ protocol ConnectionTesting: Sendable {
     }
     func savedModelCredentials() throws -> (configuration: ModelConfiguration, key: String) {
         guard !snapshot.model.model.isEmpty else { throw SettingsError.modelNotConfigured }
-        guard keyLoaded else { throw SettingsError(String(localized: "无法读取已保存的 API Key，请在设置中重新填写并保存。")) }
-        guard !savedKey.contains("\n"), !savedKey.contains("\r") else { throw SettingsError(String(localized: "已保存的 API Key 无效，请重新设置。")) }
+        guard keyLoaded else { throw SettingsError(localized: "无法读取已保存的 API Key，请在设置中重新填写并保存。") }
+        guard !savedKey.contains("\n"), !savedKey.contains("\r") else { throw SettingsError(localized: "已保存的 API Key 无效，请重新设置。") }
         return (try snapshot.model.validated(), savedKey)
     }
     private func persist(_ value: SettingsSnapshot) throws {
-        guard !loadBlocked else { throw SettingsError(String(localized: "设置文件无法读取，暂不能覆盖原文件。")) }
+        guard !loadBlocked else { throw SettingsError(localized: "设置文件无法读取，暂不能覆盖原文件。") }
         guard let url else { return }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -381,8 +398,8 @@ protocol ConnectionTesting: Sendable {
         do {
             let value = try draft.validated(requiresModel: false)
             let key = selectedProvider.requiresKey ? apiKey : ""
-            guard !key.contains("\n"), !key.contains("\r") else { throw SettingsError(String(localized: "API Key 不能包含换行。")) }
-            guard selectedCredential.loaded || !key.isEmpty else { throw SettingsError(String(localized: "原 API Key 尚未读取，请重新填写密钥后保存。")) }
+            guard !key.contains("\n"), !key.contains("\r") else { throw SettingsError(localized: "API Key 不能包含换行。") }
+            guard selectedCredential.loaded || !key.isEmpty else { throw SettingsError(localized: "原 API Key 尚未读取，请重新填写密钥后保存。") }
             var next = snapshot
             next.activeProvider = selectedProvider
             let oldAccount = snapshot.settings(for: selectedProvider).secretAccount
@@ -436,7 +453,7 @@ protocol ConnectionTesting: Sendable {
         invalidateTest()
         do {
             let configuration = try draft.validated()
-            guard !apiKey.contains("\r"), !apiKey.contains("\n") else { throw SettingsError(String(localized: "API Key 不能包含换行。")) }
+            guard !apiKey.contains("\r"), !apiKey.contains("\n") else { throw SettingsError(localized: "API Key 不能包含换行。") }
             let key = selectedProvider.requiresKey ? apiKey : ""; let current = revision; let tester = tester
             testing = true
             task = Task { [weak self] in

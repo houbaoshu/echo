@@ -9,7 +9,7 @@ func voiceDeadline<T: Sendable>(_ seconds: Double = 30, socket: URLSessionWebSoc
             group.addTask {
                 try await Task.sleep(for: .seconds(seconds))
                 socket.cancel(with: .goingAway, reason: nil)
-                throw SettingsError("语音连接超时，请检查网络后重新开始通话。")
+                throw SettingsError(localized: "语音连接超时，请检查网络后重新开始通话。")
             }
             defer { group.cancelAll() }
             return try await group.next()!
@@ -79,7 +79,7 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
     private var closing = false
     init(path: String, resource: String, key: String) throws {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !key.contains("\r"), !key.contains("\n") else { throw SettingsError("请在模型设置中保存可用于语音服务的 API Key。") }
+              !key.contains("\r"), !key.contains("\n") else { throw SettingsError(localized: "请在模型设置中保存可用于语音服务的 API Key。") }
         label = path.hasPrefix("tts") ? "TTS" : "ASR"
         let connectID = UUID().uuidString
         connection = String(connectID.prefix(8))
@@ -140,7 +140,7 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
         } catch { note(.receive, error); throw error }
         lastReceive = .now
         guard case .data(let data) = message else {
-            let failure = SettingsError("语音服务没有返回二进制数据。")
+            let failure = SettingsError(localized: "语音服务没有返回二进制数据。")
             note(.receive, failure); throw failure
         }
         // A type 15 frame decodes into the service's own refusal code. That is the first
@@ -181,18 +181,18 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
         closing = true
         task.cancel(with: .goingAway, reason: nil); session.invalidateAndCancel()
     }
-    func friendlyError(_ error: Error) -> String {
+    func friendlyError(_ error: Error) -> SettingsError {
         VoiceDiagnostics.shared.record("3 连接", "FAIL", "\(label) [\(connection)] 上报 HTTP=\((task.response as? HTTPURLResponse)?.statusCode ?? 0) close=\(task.closeCode.rawValue) \(counters)；\(VoiceDiagnostics.reason(error))")
         if let http = task.response as? HTTPURLResponse {
             switch http.statusCode {
-            case 401, 403: return "语音鉴权失败，请检查 Agent Plan 专属密钥和套餐权限。"
-            case 429: return "语音请求受限或套餐额度不足，请稍后重试。"
-            case 400, 404: return "语音接口或参数不可用，请检查语音配置。"
+            case 401, 403: return SettingsError(localized: "语音鉴权失败，请检查 Agent Plan 专属密钥和套餐权限。")
+            case 429: return SettingsError(localized: "语音请求受限或套餐额度不足，请稍后重试。")
+            case 400, 404: return SettingsError(localized: "语音接口或参数不可用，请检查语音配置。")
             case 101: break
-            default: return "语音连接失败（HTTP \(http.statusCode)），请检查接口和套餐状态。"
+            default: return SettingsError(localized: "语音连接失败（HTTP \(http.statusCode)），请检查接口和套餐状态。")
             }
         }
-        return error is SettingsError ? error.localizedDescription : "语音连接中断（网络错误 \((error as NSError).code)，关闭码 \(task.closeCode.rawValue)），请检查网络、设备和套餐状态后重新开始。"
+        return (error as? SettingsError) ?? SettingsError(localized: "语音连接中断（网络错误 \((error as NSError).code)，关闭码 \(task.closeCode.rawValue)），请检查网络、设备和套餐状态后重新开始。")
     }
 }
 
@@ -257,10 +257,10 @@ extension VoiceRecognizing {
                         try Task.checkCancellation()
                         var result: ASRResult
                         do { result = try JSONDecoder().decode(ASRResult.self, from: frame.payload) }
-                        catch DecodingError.keyNotFound(let key, _) { throw SettingsError("语音识别结果缺少字段：\(key.stringValue)。") }
-                        catch DecodingError.typeMismatch(_, let context) { throw SettingsError("语音识别字段类型不兼容：\(context.codingPath.map(\.stringValue).joined(separator: "."))。") }
-                        catch DecodingError.valueNotFound(_, let context) { throw SettingsError("语音识别字段为空：\(context.codingPath.map(\.stringValue).joined(separator: "."))。") }
-                        catch { throw SettingsError("语音识别返回的数据格式不兼容。") }
+                        catch DecodingError.keyNotFound(let key, _) { throw SettingsError(localized: "语音识别结果缺少字段：\(key.stringValue)。") }
+                        catch DecodingError.typeMismatch(_, let context) { throw SettingsError(localized: "语音识别字段类型不兼容：\(context.codingPath.map(\.stringValue).joined(separator: "."))。") }
+                        catch DecodingError.valueNotFound(_, let context) { throw SettingsError(localized: "语音识别字段为空：\(context.codingPath.map(\.stringValue).joined(separator: "."))。") }
+                        catch { throw SettingsError(localized: "语音识别返回的数据格式不兼容。") }
                         if frame.final || result.result?.utterances?.contains(where: { $0.definite == true }) == true {
                             VoiceDiagnostics.shared.record("4 音频输入", "PASS", "ASR 返回识别结果；final=\(frame.final) utterances=\(result.result?.utterances?.count ?? 0)")
                         }
@@ -285,7 +285,7 @@ extension VoiceRecognizing {
             }
         } catch {
             if Task.isCancelled { throw CancellationError() }
-            throw SettingsError(socket.friendlyError(error))
+            throw socket.friendlyError(error)
         }
     }
     func cancel() { socket?.close() }
@@ -327,7 +327,7 @@ extension VoiceSynthesizing {
     private func expect(_ event: Int, socket: VoiceSocket, session: String? = nil) async throws {
         let frame = try await socket.receive(tts: true)
         guard frame.event == event, session == nil || frame.sessionID == session else {
-            throw SettingsError("语音合成会话未能建立（事件 \(frame.event ?? -1)），请检查音色与套餐权限。")
+            throw SettingsError(localized: "语音合成会话未能建立（事件 \(frame.event ?? -1)），请检查音色与套餐权限。")
         }
     }
     func run(configuration: VoiceConfiguration, key: String, text: AsyncThrowingStream<String, Error>,
@@ -359,8 +359,8 @@ extension VoiceSynthesizing {
                     while true {
                         let frame = try await socket.receive(tts: true, timeout: 120)
                         try Task.checkCancellation()
-                        guard frame.sessionID == sessionID else { throw SettingsError("语音合成返回了不匹配的会话。") }
-                        if frame.event == 153 || frame.event == 151 { throw SettingsError("语音合成未完成，请检查音色与套餐额度。") }
+                        guard frame.sessionID == sessionID else { throw SettingsError(localized: "语音合成返回了不匹配的会话。") }
+                        if frame.event == 153 || frame.event == 151 { throw SettingsError(localized: "语音合成未完成，请检查音色与套餐额度。") }
                         if frame.type == 11, frame.event == 352 {
                             receivedAudio = receivedAudio || !frame.payload.isEmpty
                             chunks += 1; bytes += frame.payload.count
@@ -373,7 +373,7 @@ extension VoiceSynthesizing {
                         }
                         if frame.event == 152 {
                             VoiceDiagnostics.shared.record("5 返回音频流", receivedAudio ? "PASS" : "FAIL", "SessionFinished(152) chunks=\(chunks) bytes=\(bytes) duration=\(Double(bytes) / 48000)s")
-                            guard receivedAudio else { throw SettingsError("语音合成没有返回音频，请检查音色。") }
+                            guard receivedAudio else { throw SettingsError(localized: "语音合成没有返回音频，请检查音色。") }
                             return
                         }
                     }
@@ -385,7 +385,7 @@ extension VoiceSynthesizing {
             try await expect(52, socket: socket)
         } catch {
             if Task.isCancelled { throw CancellationError() }
-            throw SettingsError(socket.friendlyError(error))
+            throw socket.friendlyError(error)
         }
     }
     func cancel() { socket?.close() }

@@ -33,7 +33,7 @@ final class VoicePCMConverter: @unchecked Sendable {
     var pending = Data()
     init(source: AVAudioFormat, continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation, initialEpoch: Int = 1) throws {
         target = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
-        guard let converter = AVAudioConverter(from: source, to: target) else { throw SettingsError("麦克风音频格式无法转换。") }
+        guard let converter = AVAudioConverter(from: source, to: target) else { throw SettingsError(localized: "麦克风音频格式无法转换。") }
         self.converter = converter; self.continuation = continuation
         self.epoch = initialEpoch
     }
@@ -53,7 +53,7 @@ final class VoicePCMConverter: @unchecked Sendable {
         guard !finished, !paused else { return }
         let capacity = AVAudioFrameCount(ceil(Double(input.frameLength) * 16000 / input.format.sampleRate)) + 32
         guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else {
-            continuation.finish(throwing: SettingsError("麦克风转换缓冲区分配失败。")); return
+            continuation.finish(throwing: SettingsError(localized: "麦克风转换缓冲区分配失败。")); return
         }
         let source = VoiceConverterInput(input)
         var error: NSError?
@@ -62,14 +62,14 @@ final class VoicePCMConverter: @unchecked Sendable {
             source.supplied = true; inputStatus.pointee = .haveData; return source.buffer
         }
         guard status != .error, error == nil, let samples = output.int16ChannelData?[0] else {
-            continuation.finish(throwing: SettingsError("麦克风音频转换失败（code=\(error?.code ?? 0) status=\(status.rawValue)）。")); return
+            continuation.finish(throwing: SettingsError(localized: "麦克风音频转换失败（code=\(error?.code ?? 0) status=\(status.rawValue)）。")); return
         }
         pending.append(Data(bytes: samples, count: Int(output.frameLength) * 2))
         while pending.count >= packetBytes {
             let packet = Data(pending.prefix(packetBytes)); pending.removeFirst(packetBytes)
             let capturePacket = VoiceCapturePacket(data: packet, epoch: epoch)
             if case .dropped = continuation.yield(capturePacket) {
-                continuation.finish(throwing: SettingsError("语音上传跟不上录音速度，请检查网络后重试。")); return
+                continuation.finish(throwing: SettingsError(localized: "语音上传跟不上录音速度，请检查网络后重试。")); return
             }
         }
     }
@@ -80,7 +80,7 @@ final class VoicePCMConverter: @unchecked Sendable {
         if flush, !paused, !pending.isEmpty {
             let capturePacket = VoiceCapturePacket(data: pending, epoch: epoch)
             if case .dropped = continuation.yield(capturePacket) {
-                continuation.finish(throwing: SettingsError("录音尾包处理过慢，已保留识别到的文字。"))
+                continuation.finish(throwing: SettingsError(localized: "录音尾包处理过慢，已保留识别到的文字。"))
             }
         }
         pending.removeAll(); continuation.finish()
@@ -400,7 +400,7 @@ extension AVAudioNode {
         guard let player else { return }
         do { try player.playAudio() } catch {
             VoiceDiagnostics.shared.record("6 播放器", "FAIL", "\(operation)：\(VoiceDiagnostics.reason(error))")
-            onFailure?("音频播放器无法恢复，请重新开始。", .player)
+            onFailure?(LocalizedStringResource("音频播放器无法恢复，请重新开始。").sourceText, .player)
         }
     }
 
@@ -485,7 +485,7 @@ extension AVAudioNode {
             defer { graph.steps.append(.init(name: name, start: start, duration: start.duration(to: .now))) }
             return try body()
         }
-        var operation = "创建音频引擎"
+        var operation: LocalizedStringResource = "创建音频引擎"
         log("2 服务初始化", "START", "AVAudioEngine capture=\(request.capture)")
         do {
             var duplexFormat: AVAudioFormat?
@@ -493,14 +493,14 @@ extension AVAudioNode {
                 // Materialize both I/O nodes before configuring the duplex graph.
                 let input = step("ioNodes") { _ = engine.outputNode; return engine.inputNode }
                 operation = "启用系统语音处理（回声消除）"
-                log("2 服务初始化", "START", operation)
+                log("2 服务初始化", "START", operation.sourceText)
                 try step("setVoiceProcessingEnabled") { try input.setVoiceProcessingEnabled(true) }
-                log("2 服务初始化", "PASS", operation)
+                log("2 服务初始化", "PASS", operation.sourceText)
                 operation = "读取麦克风格式并安装采集 tap"
                 try step("tap") {
                     let deviceFormat = input.outputFormat(forBus: 0)
                     log("4 音频输入", "INFO", "设备格式 rate=\(deviceFormat.sampleRate) channels=\(deviceFormat.channelCount)")
-                    guard deviceFormat.sampleRate > 0, deviceFormat.channelCount > 0 else { throw SettingsError("没有可用的麦克风。") }
+                    guard deviceFormat.sampleRate > 0, deviceFormat.channelCount > 0 else { throw SettingsError(localized: "没有可用的麦克风。") }
                     // VoiceProcessingIO requires the input node output and output node
                     // input to have the same format (AVAudioIONode.h). The default
                     // mixer route may otherwise keep 44.1 kHz stereo while capture is
@@ -525,7 +525,7 @@ extension AVAudioNode {
             }
             let output = step("outputFormat") { engine.outputNode.inputFormat(forBus: 0) }
             log("6 播放器", "INFO", "输出 rate=\(output.sampleRate) channels=\(output.channelCount)")
-            guard output.sampleRate > 0, output.channelCount > 0 else { throw SettingsError("没有可用的音频输出设备。") }
+            guard output.sampleRate > 0, output.channelCount > 0 else { throw SettingsError(localized: "没有可用的音频输出设备。") }
             // From here the engine can reconfigure itself; until VoiceAudio's own observer is
             // installed at handover, a change is only recorded and replayed then.
             graph.setupObserver = NotificationCenter.default.addObserver(
@@ -543,10 +543,11 @@ extension AVAudioNode {
             graph.startedAt = Date()
             return graph
         } catch {
-            let reason = "\(operation)：\(VoiceDiagnostics.reason(error))"
-            log("2 服务初始化", "FAIL", reason)
+            let reason = VoiceDiagnostics.reason(error)
+            log("2 服务初始化", "FAIL", "\(operation.sourceText)：\(reason)")
             graph.teardown()
-            throw SettingsError(reason)
+            throw SettingsError(message: String(localized: "\(String(localized: operation))：\(reason)"),
+                                diagnostic: "\(operation.sourceText)：\(reason)")
         }
     }
 
@@ -650,7 +651,7 @@ extension AVAudioNode {
     }
     private func endCall(reason: String) {
         VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", "AVAudioEngineConfigurationChange：音频设备变化（\(reason)）")
-        onFailure?("音频设备已变化，通话已结束，请重新开始。", .deviceChange)
+        onFailure?(LocalizedStringResource("音频设备已变化，通话已结束，请重新开始。").sourceText, .deviceChange)
     }
     private func scheduleRestart(_ engine: AVAudioEngine) {
         restartTask?.cancel()
@@ -694,7 +695,7 @@ extension AVAudioNode {
         if case .failure(let error) = result {
             deferredOutputMuted = nil; deferredInterrupt = false; changedDuringRestart = false
             VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", "恢复引擎失败：\(VoiceDiagnostics.reason(error))")
-            onFailure?("音频设备恢复失败，通话已结束，请重新开始。", .recoveryFailed)
+            onFailure?(LocalizedStringResource("音频设备恢复失败，通话已结束，请重新开始。").sourceText, .recoveryFailed)
             return
         }
         captureRestartedAt = .now
@@ -740,7 +741,7 @@ extension AVAudioNode {
             self.livenessTask = nil
             guard converter.deliveredBuffers == delivered else { return }
             VoiceDiagnostics.shared.record("4 音频输入", "FAIL", "设备切换恢复后 \(Self.seconds(captureResumeTimeout)) 秒内没有麦克风数据")
-            self.onFailure?("音频设备恢复失败，通话已结束，请重新开始。", .recoveryFailed)
+            self.onFailure?(LocalizedStringResource("音频设备恢复失败，通话已结束，请重新开始。").sourceText, .recoveryFailed)
         }
     }
     private static func seconds(_ duration: Duration) -> String {
@@ -764,7 +765,7 @@ extension AVAudioNode {
             if queuedFrames != lastFrames { lastFrames = queuedFrames; progressAt = .now }
             guard progressAt.duration(to: .now) < playbackStallTimeout else {
                 VoiceDiagnostics.shared.record("6 播放器", "FAIL", "队列 \(Self.seconds(playbackStallTimeout)) 秒无进展 queuedFrames=\(queuedFrames) 等待引擎启动=\(pendingStart != nil) 等待引擎恢复=\(isRestartingCapture) 引擎已停止=\(engineStopped)")
-                throw SettingsError("播放器队列停滞，请检查音频输出设备。")
+                throw SettingsError(localized: "播放器队列停滞，请检查音频输出设备。")
             }
             try await Task.sleep(for: .milliseconds(40))
             guard epoch == generation else { throw CancellationError() }
@@ -776,7 +777,7 @@ extension AVAudioNode {
         let count = bytes.count / 2
         guard count > 0, let buffer = AVAudioPCMBuffer(pcmFormat: playbackFormat, frameCapacity: AVAudioFrameCount(count)),
               let samples = buffer.floatChannelData?[0] else {
-            if count > 0 { throw SettingsError("播放器缓冲区分配失败。") }; return
+            if count > 0 { throw SettingsError(localized: "播放器缓冲区分配失败。") }; return
         }
         buffer.frameLength = AVAudioFrameCount(count)
         for i in 0..<count { samples[i] = Float(Int16(bitPattern: UInt16(bytes[i * 2]) | UInt16(bytes[i * 2 + 1]) << 8)) / 32768 }
@@ -827,7 +828,7 @@ extension AVAudioNode {
     }
     func drain() async throws {
         let epoch = generation
-        guard trailingByte.isEmpty else { throw SettingsError("语音音频数据被截断。") }
+        guard trailingByte.isEmpty else { throw SettingsError(localized: "语音音频数据被截断。") }
         var lastFrames = queuedFrames
         var progressAt = ContinuousClock.now
         while queuedFrames > 0 {
@@ -836,7 +837,7 @@ extension AVAudioNode {
             // A single scheduled buffer can contain a full diagnostic phrase.
             guard progressAt.duration(to: .now) < .seconds(Double(lastFrames) / 24000) + playbackStallTimeout else {
                 VoiceDiagnostics.shared.record("6 播放器", "FAIL", "等待 dataPlayedBack 超时 queuedFrames=\(queuedFrames)")
-                throw SettingsError("播放器未完成音频输出，请检查输出设备。")
+                throw SettingsError(localized: "播放器未完成音频输出，请检查输出设备。")
             }
             try await Task.sleep(for: .milliseconds(40))
             // A restarting engine is the queue's to ask; it counts as running until it is handed

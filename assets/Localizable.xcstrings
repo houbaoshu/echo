@@ -30,6 +30,46 @@
         }
       }
     },
+    "%@ · 可打断" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · Speak to interrupt"
+          }
+        }
+      }
+    },
+    "%@ · 可补充语音" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · Speak to add more"
+          }
+        }
+      }
+    },
+    "%@ · 暂停聆听" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · Listening paused"
+          }
+        }
+      }
+    },
+    "%@ · 麦克风已静音" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · Microphone muted"
+          }
+        }
+      }
+    },
     "%@ 的 Live Voice" : {
       "localizations" : {
         "en" : {
@@ -66,6 +106,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@, click to use"
+          }
+        }
+      }
+    },
+    "%@：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@: %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@：%2$@"
           }
         }
       }
@@ -126,6 +182,106 @@
         }
       }
     },
+    "Apple 本地识别收到无效的麦克风音频。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On-device speech recognition received invalid microphone audio."
+          }
+        }
+      }
+    },
+    "Apple 本地识别未识别到清晰语音，请重新录音。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No clear speech was recognized. Record again."
+          }
+        }
+      }
+    },
+    "Apple 本地语音识别失败，请重新开始转写。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On-device speech recognition failed. Start dictation again."
+          }
+        }
+      }
+    },
+    "Apple 本地语音识别失败：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On-device speech recognition failed: %@"
+          }
+        }
+      }
+    },
+    "Apple 本地语音识别当前不可用（%@），请检查该语言的本地语音资源后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On-device speech recognition isn’t available right now (%@). Check the speech assets for this language, then try again."
+          }
+        }
+      }
+    },
+    "Apple 本地语音识别提前结束，请重新录音。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On-device speech recognition ended early. Record again."
+          }
+        }
+      }
+    },
+    "Apple 本地转写结果处理过慢，请重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On-device transcription fell behind. Try again."
+          }
+        }
+      }
+    },
+    "Apple 语音识别不支持听写语言 %@，请检查首选语言。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple speech recognition doesn’t support the dictation language %@. Check your preferred languages."
+          }
+        }
+      }
+    },
+    "Apple 语音识别尚未获得授权，请重新开始转写。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech recognition isn’t authorized yet. Start dictation again."
+          }
+        }
+      }
+    },
+    "Apple 语音识别权限未开启，请在系统设置 → 隐私与安全性 → 语音识别中允许 Echo。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Echo doesn’t have speech recognition access. Allow it in System Settings > Privacy & Security > Speech Recognition."
+          }
+        }
+      }
+    },
     "Base URL" : {
       "localizations" : {
         "en" : {
@@ -175,6 +331,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "metadata.json doesn’t describe a language model"
+          }
+        }
+      }
+    },
+    "prepare / start 音频引擎" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "preparing and starting the audio engine"
+          }
+        }
+      }
+    },
+    "start 音频引擎" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "starting the audio engine"
           }
         }
       }
@@ -516,6 +692,16 @@
         }
       }
     },
+    "创建音频引擎" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "creating the audio engine"
+          }
+        }
+      }
+    },
     "删除" : {
       "localizations" : {
         "en" : {
@@ -662,6 +848,16 @@
         }
       }
     },
+    "启用系统语音处理（回声消除）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "turning on voice processing (echo cancellation)"
+          }
+        }
+      }
+    },
     "回到最新消息" : {
       "localizations" : {
         "en" : {
@@ -723,7 +919,14 @@
       }
     },
     "复制日志" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Log"
+          }
+        }
+      }
     },
     "对话" : {
       "localizations" : {
@@ -1031,11 +1234,65 @@
         }
       }
     },
+    "录音失败，请检查麦克风。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recording failed. Check your microphone."
+          }
+        }
+      }
+    },
+    "录音尾包处理过慢，已保留识别到的文字。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The end of the recording took too long to process. The recognized text was kept."
+          }
+        }
+      }
+    },
+    "录音已中断，请重新开始转写。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recording stopped unexpectedly. Start dictation again."
+          }
+        }
+      }
+    },
+    "录音已中断，请重新开始通话。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recording stopped unexpectedly. Start Live Voice again."
+          }
+        }
+      }
+    },
     "录音已暂停" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recording paused"
+          }
+        }
+      }
     },
     "录音音量" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recording level"
+          }
+        }
+      }
     },
     "待处理" : {
       "localizations" : {
@@ -1072,7 +1329,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "My planets"
+            "value" : "My Planets"
           }
         }
       }
@@ -1082,7 +1339,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "My pets"
+            "value" : "My Pets"
           }
         }
       }
@@ -1183,6 +1440,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Undo"
+          }
+        }
+      }
+    },
+    "播放器未完成音频输出，请检查输出设备。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Playback didn’t finish. Check your output device."
+          }
+        }
+      }
+    },
+    "播放器缓冲区分配失败。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t allocate the playback buffer."
+          }
+        }
+      }
+    },
+    "播放器队列停滞，请检查音频输出设备。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Playback stalled. Check your audio output device."
           }
         }
       }
@@ -1301,12 +1588,52 @@
         }
       }
     },
+    "无法初始化 Apple 语音识别的听写语言，请检查本地语音资源。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t set up the dictation language for Apple speech recognition. Check the on-device speech assets."
+          }
+        }
+      }
+    },
+    "无法初始化 Apple 语音识别（%@），请检查本地语音资源。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t set up Apple speech recognition (%@). Check the on-device speech assets."
+          }
+        }
+      }
+    },
     "无法启动桌面精灵" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t Start the Desktop Pet"
+          }
+        }
+      }
+    },
+    "无法启动音频设备：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t start the audio device: %@"
+          }
+        }
+      }
+    },
+    "无法启动麦克风，请检查输入设备。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t start the microphone. Check your input device."
           }
         }
       }
@@ -1341,12 +1668,42 @@
         }
       }
     },
+    "无法开始语音：缺少会话或设置。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t start Live Voice because the chat or settings are missing."
+          }
+        }
+      }
+    },
     "无法清除旧的钥匙串凭据。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t remove the old key from the keychain."
+          }
+        }
+      }
+    },
+    "无法确认 Apple 语音识别权限，请检查系统设置。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t check speech recognition access. Check System Settings."
+          }
+        }
+      }
+    },
+    "无法解压语音数据。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t decompress the voice data."
           }
         }
       }
@@ -1461,6 +1818,16 @@
         }
       }
     },
+    "暂停聆听" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listening paused"
+          }
+        }
+      }
+    },
     "最小化" : {
       "localizations" : {
         "en" : {
@@ -1517,6 +1884,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Didn’t get a valid bash tool call. Check the model, your quota, and whether the model supports %@ tool calling."
+          }
+        }
+      }
+    },
+    "未知语音消息类型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice service sent an unknown message type."
           }
         }
       }
@@ -1647,6 +2024,16 @@
         }
       }
     },
+    "模型改写了已播报的文本，语音通话已结束；完整回复保留在会话中。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live Voice ended because the model changed text it had already spoken. The full reply is kept in the chat."
+          }
+        }
+      }
+    },
     "模型未返回文本回复，请重试。" : {
       "localizations" : {
         "en" : {
@@ -1693,6 +2080,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Preparing tools…"
+          }
+        }
+      }
+    },
+    "正在准备播报…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing to speak…"
           }
         }
       }
@@ -1757,12 +2154,62 @@
         }
       }
     },
+    "正在思考" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thinking"
+          }
+        }
+      }
+    },
+    "正在思考…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thinking…"
+          }
+        }
+      }
+    },
+    "正在恢复聆听" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resuming listening"
+          }
+        }
+      }
+    },
+    "正在播报" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speaking"
+          }
+        }
+      }
+    },
     "正在测试…" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Testing…"
+          }
+        }
+      }
+    },
+    "正在确认讲话…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checking for speech…"
           }
         }
       }
@@ -1783,6 +2230,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Waiting for model…"
+          }
+        }
+      }
+    },
+    "正在结束" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ending"
+          }
+        }
+      }
+    },
+    "正在结束…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ending…"
+          }
+        }
+      }
+    },
+    "正在聆听" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listening"
           }
         }
       }
@@ -1847,6 +2324,46 @@
         }
       }
     },
+    "正在连接" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting"
+          }
+        }
+      }
+    },
+    "正在连接…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting…"
+          }
+        }
+      }
+    },
+    "此 Mac 不支持 Apple 本地语音识别（%@）；不会使用 Apple 云端识别。请检查该语言的本地语音资源。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Mac doesn’t support on-device speech recognition for %@, and Echo won’t use Apple’s server-based recognition. Check the on-device speech assets for this language."
+          }
+        }
+      }
+    },
+    "此 Mac 的 Apple 语音识别权限受到系统限制。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech recognition is restricted on this Mac."
+          }
+        }
+      }
+    },
     "此会话使用旧版聊天记录格式，当前版本已不再支持，无法继续。可以在会话列表中删除它。" : {
       "localizations" : {
         "en" : {
@@ -1883,6 +2400,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No chats found"
+          }
+        }
+      }
+    },
+    "没有可用的音频输出设备。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No audio output device is available."
+          }
+        }
+      }
+    },
+    "没有可用的麦克风。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No microphone is available."
           }
         }
       }
@@ -2040,6 +2577,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Symbolic links aren’t followed. Open it in Finder instead."
+          }
+        }
+      }
+    },
+    "等待最终转写超时，已保留识别到的文字。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Timed out waiting for the final transcript. The recognized text was kept."
           }
         }
       }
@@ -2334,11 +2881,45 @@
         }
       }
     },
+    "识别与合成连接成功（使用静音样本，未录音）。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected · recognition and synthesis work"
+          }
+        }
+      }
+    },
     "诊断日志" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagnostic Log"
+          }
+        }
+      }
+    },
+    "试听完成。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preview finished"
+          }
+        }
+      }
     },
     "试听音色" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preview Voice"
+          }
+        }
+      }
     },
     "该文件夹已属于另一个项目。" : {
       "localizations" : {
@@ -2370,12 +2951,338 @@
         }
       }
     },
+    "语音上传跟不上录音速度，请检查网络后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Audio can’t upload as fast as it’s recorded. Check your network, then try again."
+          }
+        }
+      }
+    },
+    "语音上传过慢，通话已结束，请检查网络。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live Voice ended because audio uploaded too slowly. Check your network."
+          }
+        }
+      }
+    },
+    "语音事件标识无效。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice service sent an invalid event ID."
+          }
+        }
+      }
+    },
+    "语音压缩数据无效或过大。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The compressed voice data is invalid or too large."
+          }
+        }
+      }
+    },
+    "语音合成会话未能建立（事件 %lld），请检查音色与套餐权限。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t start a speech synthesis session (event %lld). Check the voice and your plan permissions."
+          }
+        }
+      }
+    },
+    "语音合成文本积压过多，请稍后重新开始通话。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Too much text is waiting to be spoken. Start Live Voice again in a moment."
+          }
+        }
+      }
+    },
+    "语音合成未完成，请检查音色与套餐额度。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech synthesis didn’t finish. Check the voice and your plan quota."
+          }
+        }
+      }
+    },
+    "语音合成没有返回音频，请检查音色。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech synthesis returned no audio. Check the voice."
+          }
+        }
+      }
+    },
+    "语音合成返回了不匹配的会话。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech synthesis returned a mismatched session."
+          }
+        }
+      }
+    },
+    "语音接口或参数不可用，请检查语音配置。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice endpoint or its parameters aren’t available. Check your voice settings."
+          }
+        }
+      }
+    },
+    "语音播放失败，请检查网络与设备。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Playback failed. Check your network and audio devices."
+          }
+        }
+      }
+    },
+    "语音数据包长度不匹配。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A voice packet had the wrong length."
+          }
+        }
+      }
+    },
+    "语音服务拒绝请求（错误码 %u），请检查密钥、音色和套餐额度。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice service rejected the request (error %u). Check your key, the voice, and your plan quota."
+          }
+        }
+      }
+    },
+    "语音服务没有返回二进制数据。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice service didn’t return binary data."
+          }
+        }
+      }
+    },
+    "语音服务的数据协议不兼容。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice service uses an incompatible protocol."
+          }
+        }
+      }
+    },
+    "语音服务返回了不完整的数据包。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice service returned an incomplete packet."
+          }
+        }
+      }
+    },
+    "语音未开始" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live Voice off"
+          }
+        }
+      }
+    },
+    "语音测试失败，请检查专属密钥和网络。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice test failed. Check your Agent Plan key and network."
+          }
+        }
+      }
+    },
+    "语音测试失败：服务未返回音频。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice test failed: the service returned no audio."
+          }
+        }
+      }
+    },
+    "语音测试超时，请检查网络和套餐后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice test timed out. Check your network and plan, then try again."
+          }
+        }
+      }
+    },
+    "语音识别处理过慢，请重新开始转写。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech recognition fell behind. Start dictation again."
+          }
+        }
+      }
+    },
+    "语音识别失败，请检查网络和套餐。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech recognition failed. Check your network and plan."
+          }
+        }
+      }
+    },
+    "语音识别字段为空：%@。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A speech recognition field is empty: %@."
+          }
+        }
+      }
+    },
+    "语音识别字段类型不兼容：%@。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A speech recognition field has an unexpected type: %@."
+          }
+        }
+      }
+    },
+    "语音识别已提前结束，请重新开始转写。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech recognition ended early. Start dictation again."
+          }
+        }
+      }
+    },
+    "语音识别结果缺少字段：%@。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The speech recognition result is missing a field: %@."
+          }
+        }
+      }
+    },
+    "语音识别返回的数据格式不兼容。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech recognition returned data in an incompatible format."
+          }
+        }
+      }
+    },
+    "语音识别连接已结束，请重新开始通话。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The speech recognition connection closed. Start Live Voice again."
+          }
+        }
+      }
+    },
+    "语音请求受限或套餐额度不足，请稍后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voice requests are rate-limited or your plan quota is used up. Try again later."
+          }
+        }
+      }
+    },
     "语音转文字" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dictate"
+          }
+        }
+      }
+    },
+    "语音连接中断（网络错误 %lld，关闭码 %lld），请检查网络、设备和套餐状态后重新开始。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice connection dropped (network error %1$lld, close code %2$lld). Check your network, devices, and plan, then start again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "语音连接中断（网络错误 %1$lld，关闭码 %2$lld），请检查网络、设备和套餐状态后重新开始。"
+          }
+        }
+      }
+    },
+    "语音连接失败（HTTP %lld），请检查接口和套餐状态。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice connection failed (HTTP %lld). Check the endpoint and your plan."
+          }
+        }
+      }
+    },
+    "语音连接超时，请检查网络后重新开始通话。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice connection timed out. Check your network and start Live Voice again."
           }
         }
       }
@@ -2400,12 +3307,62 @@
         }
       }
     },
+    "语音鉴权失败，请检查 Agent Plan 专属密钥和套餐权限。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voice authentication failed. Check your Agent Plan key and plan permissions."
+          }
+        }
+      }
+    },
+    "语音音频数据被截断。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The voice audio was cut off."
+          }
+        }
+      }
+    },
     "请先在设置中配置并保存默认模型。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "No default model is saved. Fill in Default model in Settings and click Save."
+          }
+        }
+      }
+    },
+    "请先结束 Live Voice 或语音测试，再开始转写。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "End Live Voice or the voice test before dictating."
+          }
+        }
+      }
+    },
+    "请先结束语音或转写再测试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "End Live Voice or dictation before testing."
+          }
+        }
+      }
+    },
+    "请先结束语音转写或语音测试，再开始语音。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "End dictation or the voice test before starting Live Voice."
           }
         }
       }
@@ -2440,6 +3397,16 @@
         }
       }
     },
+    "请输入有效的音色 ID。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a valid Voice ID."
+          }
+        }
+      }
+    },
     "请输入默认模型。" : {
       "localizations" : {
         "en" : {
@@ -2466,6 +3433,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t read: %@"
+          }
+        }
+      }
+    },
+    "读取麦克风格式并安装采集 tap" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "reading the microphone format and installing the capture tap"
           }
         }
       }
@@ -2524,7 +3501,14 @@
       }
     },
     "输入音色 ID" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter voice ID"
+          }
+        }
+      }
     },
     "返回目录" : {
       "localizations" : {
@@ -2592,6 +3576,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Connected · tool calling works"
+          }
+        }
+      }
+    },
+    "连接播放器与输出设备" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "connecting the player to the output device"
           }
         }
       }
@@ -2824,7 +3818,74 @@
       }
     },
     "音色 ID" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voice ID"
+          }
+        }
+      }
+    },
+    "音频播放器无法恢复，请重新开始。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The audio player couldn’t recover. Start Live Voice again."
+          }
+        }
+      }
+    },
+    "音频设备已变化，录音已结束，已保留识别到的文字。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dictation stopped because the audio device changed. The recognized text was kept."
+          }
+        }
+      }
+    },
+    "音频设备已变化，通话已结束，请重新开始。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live Voice ended because the audio device changed. Start it again."
+          }
+        }
+      }
+    },
+    "音频设备异常，录音已结束，已保留识别到的文字。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dictation stopped because of an audio device problem. The recognized text was kept."
+          }
+        }
+      }
+    },
+    "音频设备恢复失败，录音已结束，已保留识别到的文字。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dictation stopped because the audio device couldn’t recover. The recognized text was kept."
+          }
+        }
+      }
+    },
+    "音频设备恢复失败，通话已结束，请重新开始。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live Voice ended because the audio device couldn’t recover. Start it again."
+          }
+        }
+      }
     },
     "项目" : {
       "localizations" : {
@@ -2857,7 +3918,44 @@
       }
     },
     "验证语音识别与合成连接，使用静音样本，不录音" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checks speech recognition and synthesis with a silent sample. Nothing is recorded."
+          }
+        }
+      }
+    },
+    "麦克风启动后没有返回音频，请检查输入设备。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The microphone started but sent no audio. Check your input device."
+          }
+        }
+      }
+    },
+    "麦克风已静音" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone muted"
+          }
+        }
+      }
+    },
+    "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Echo doesn’t have microphone access. Allow it in System Settings > Privacy & Security > Microphone."
+          }
+        }
+      }
     },
     "麦克风正在被占用" : {
       "localizations" : {
@@ -2865,6 +3963,52 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Microphone in use"
+          }
+        }
+      }
+    },
+    "麦克风没有返回音频，请检查输入设备。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The microphone sent no audio. Check your input device."
+          }
+        }
+      }
+    },
+    "麦克风转换缓冲区分配失败。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t allocate the microphone conversion buffer."
+          }
+        }
+      }
+    },
+    "麦克风音频格式无法转换。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t convert the microphone’s audio format."
+          }
+        }
+      }
+    },
+    "麦克风音频转换失败（code=%lld status=%lld）。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone audio conversion failed (code=%1$lld status=%2$lld)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "麦克风音频转换失败（code=%1$lld status=%2$lld）。"
           }
         }
       }

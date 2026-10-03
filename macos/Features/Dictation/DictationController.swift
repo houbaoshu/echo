@@ -58,9 +58,9 @@ import Combine
     /// VoiceAudio words its failures for a call; a dictation reports its own recording.
     static func message(for failure: VoiceAudioFailure) -> String {
         switch failure {
-        case .deviceChange: "音频设备已变化，录音已结束，已保留识别到的文字。"
-        case .recoveryFailed: "音频设备恢复失败，录音已结束，已保留识别到的文字。"
-        case .player: "音频设备异常，录音已结束，已保留识别到的文字。"
+        case .deviceChange: String(localized: "音频设备已变化，录音已结束，已保留识别到的文字。")
+        case .recoveryFailed: String(localized: "音频设备恢复失败，录音已结束，已保留识别到的文字。")
+        case .player: String(localized: "音频设备异常，录音已结束，已保留识别到的文字。")
         }
     }
     func attach(workspace: WorkspaceStore) { self.workspace = workspace }
@@ -73,7 +73,7 @@ import Combine
         ])
         guard !retired, !isActive else { return }
         guard workspace?.voice.isActive != true, workspace?.voice.testing != true else {
-            error = "请先结束 Live Voice 或语音测试，再开始转写。"; state = .failed; return
+            error = String(localized: "请先结束 Live Voice 或语音测试，再开始转写。"); state = .failed; return
         }
         generation = UUID(); let current = generation
         captureReady = false; levels = []
@@ -111,7 +111,7 @@ import Combine
             let allowed = await self.permission()
             trace?.record("capture.permission", ["allowed": allowed])
             guard self.generation == current, !Task.isCancelled else { return }
-            guard allowed else { self.complete(error: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。"); return }
+            guard allowed else { self.complete(error: String(localized: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。")); return }
             do {
                 // Follows a switch of the default devices at the same sample rate, as a call does.
                 let captured = try self.audio.start(capture: true, recoversDeviceSwitch: true)
@@ -143,21 +143,21 @@ import Combine
                         trace?.record("recognizer.return", self.diagnosticState)
                         guard self.generation == current, !Task.isCancelled else { return }
                         let completed = self.state == .finalizing || self.finalTranscript != nil
-                        self.complete(error: completed ? nil : "语音识别已提前结束，请重新开始转写。", finished: completed)
+                        self.complete(error: completed ? nil : String(localized: "语音识别已提前结束，请重新开始转写。"), finished: completed)
                     } catch {
                         trace?.record("recognizer.error", self.diagnosticState.merging([
                             "errorDomain": (error as NSError).domain, "errorCode": (error as NSError).code,
                             "cancelled": Task.isCancelled
                         ]) { _, new in new })
                         guard self.generation == current, !Task.isCancelled else { return }
-                        self.complete(error: error is SettingsError ? error.localizedDescription : "Apple 本地语音识别失败，请重新开始转写。")
+                        self.complete(error: error is SettingsError ? error.localizedDescription : String(localized: "Apple 本地语音识别失败，请重新开始转写。"))
                     }
                 }
                 // Like the call's, the first-packet timeout pauses while VoiceAudio restarts the
                 // engine and gives the recovered microphone a full timeout of its own.
                 self.watchdog = VoiceCaptureWatchdog.watch(self.audio, timeout: self.captureTimeout,
                     isCurrent: { [weak self] in self?.generation == current && self?.state == .recording },
-                    onTimeout: { [weak self] in self?.complete(error: "麦克风没有返回音频，请检查输入设备。") })
+                    onTimeout: { [weak self] in self?.complete(error: String(localized: "麦克风没有返回音频，请检查输入设备。")) })
                 self.captureTask = Task { [weak self] in
                     do {
                         for try await packet in captured {
@@ -166,17 +166,17 @@ import Combine
                                 self.watchdog?.cancel(); self.watchdog = nil
                                 self.appendLevels(packet.data)
                             }
-                            if case .dropped = input.yield(packet.data) { throw SettingsError("语音识别处理过慢，请重新开始转写。") }
+                            if case .dropped = input.yield(packet.data) { throw SettingsError(localized: "语音识别处理过慢，请重新开始转写。") }
                         }
                         guard let self, self.generation == current, !Task.isCancelled else { return }
                         if self.state == .finalizing { input.finish() }
-                        else { self.complete(error: "录音已中断，请重新开始转写。") }
+                        else { self.complete(error: String(localized: "录音已中断，请重新开始转写。")) }
                     } catch {
                         guard let self, self.generation == current, !Task.isCancelled else { return }
-                        self.complete(error: error is SettingsError ? error.localizedDescription : "录音失败，请检查麦克风。")
+                        self.complete(error: error is SettingsError ? error.localizedDescription : String(localized: "录音失败，请检查麦克风。"))
                     }
                 }
-            } catch { self.complete(error: "无法启动麦克风，请检查输入设备。") }
+            } catch { self.complete(error: String(localized: "无法启动麦克风，请检查输入设备。")) }
         }
     }
     /// Ends this recording. With `send`, the final transcript is sent once recognized instead of left for editing.
@@ -191,7 +191,7 @@ import Combine
         watchdog = Task { [weak self, finalizationTimeout] in
             do { try await Task.sleep(for: finalizationTimeout) } catch { return }
             guard let self, self.generation == current else { return }
-            self.complete(error: "等待最终转写超时，已保留识别到的文字。")
+            self.complete(error: String(localized: "等待最终转写超时，已保留识别到的文字。"))
         }
     }
     func cancel(discard: Bool = false) {

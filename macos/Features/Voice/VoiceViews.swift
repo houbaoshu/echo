@@ -150,12 +150,12 @@ struct VoicePlanet: View {
     }
     static func label(_ indicator: PetSurfacePresentation.VoiceIndicator, muted: Bool) -> String {
         switch indicator {
-        case .inactive: "语音未开始"
-        case .connecting: "正在连接"
-        case .listening: muted ? "麦克风已静音" : "正在聆听"
-        case .thinking: "正在思考"
-        case .speaking: "正在播报"
-        case .ending: "正在结束"
+        case .inactive: String(localized: "语音未开始")
+        case .connecting: String(localized: "正在连接")
+        case .listening: muted ? String(localized: "麦克风已静音") : String(localized: "正在聆听")
+        case .thinking: String(localized: "正在思考")
+        case .speaking: String(localized: "正在播报")
+        case .ending: String(localized: "正在结束")
         }
     }
 }

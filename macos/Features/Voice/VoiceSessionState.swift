@@ -67,36 +67,36 @@ struct VoiceSessionSnapshot: Equatable {
         let status: String
         switch session {
         case .inactive: status = ""
-        case .starting: status = "正在连接…"
-        case .ending: status = "正在结束…"
+        case .starting: status = String(localized: "正在连接…")
+        case .ending: status = String(localized: "正在结束…")
         case .active:
             if case .checking = bargeIn, !isMuted {
-                status = "正在确认讲话…"
+                status = String(localized: "正在确认讲话…")
                 break
             }
             let replyStatus: String?
             switch replyAudio {
-            case .none: replyStatus = agentActivity ?? (modelIsGenerating ? "正在思考…" : nil)
-            case .preparing: replyStatus = "正在准备播报…"
-            case .playing, .draining: replyStatus = "正在播报"
+            case .none: replyStatus = agentActivity ?? (modelIsGenerating ? String(localized: "正在思考…") : nil)
+            case .preparing: replyStatus = String(localized: "正在准备播报…")
+            case .playing, .draining: replyStatus = String(localized: "正在播报")
             }
             if let replyStatus {
-                if isMuted { status = replyStatus + " · 麦克风已静音" }
-                else if case .armed = bargeIn { status = replyStatus + " · 可打断" }
-                else if case .off(.currentReply) = recognition { status = replyStatus + " · 暂停聆听" }
-                else if agentActivity != nil, recognition == .listening { status = replyStatus + " · 可补充语音" }
+                if isMuted { status = String(localized: "\(replyStatus) · 麦克风已静音") }
+                else if case .armed = bargeIn { status = String(localized: "\(replyStatus) · 可打断") }
+                else if case .off(.currentReply) = recognition { status = String(localized: "\(replyStatus) · 暂停聆听") }
+                else if agentActivity != nil, recognition == .listening { status = String(localized: "\(replyStatus) · 可补充语音") }
                 else { status = replyStatus }
             } else if isMuted {
-                status = "麦克风已静音"
+                status = String(localized: "麦克风已静音")
             } else {
                 switch recognition {
-                case .off(.recovery): status = "正在恢复聆听"
-                case .off(.currentReply): status = "暂停聆听"
-                case .off(.ending): status = "正在结束…"
-                case .off(.stopping): status = "正在停止…"
-                case .off(.idle), .connecting: status = "正在连接…"
-                case .off(.muted): status = "暂停聆听"
-                case .listening: status = "正在聆听"
+                case .off(.recovery): status = String(localized: "正在恢复聆听")
+                case .off(.currentReply): status = String(localized: "暂停聆听")
+                case .off(.ending): status = String(localized: "正在结束…")
+                case .off(.stopping): status = String(localized: "正在停止…")
+                case .off(.idle), .connecting: status = String(localized: "正在连接…")
+                case .off(.muted): status = String(localized: "暂停聆听")
+                case .listening: status = String(localized: "正在聆听")
                 }
             }
         }

@@ -137,10 +137,12 @@ enum VoiceCaptureWatchdog {
         self.probeTimeout = probeTimeout; self.captureTimeout = captureTimeout; self.tailProtectionDuration = tailProtectionDuration
         self.bargeInTimeout = bargeInTimeout
         super.init()
+        // The audio side words its failure in the source language: shown localized, logged as is.
         audio.onFailure = { [weak self] message, failure in
             guard let self else { return }
-            if self.isActive { self.end(error: message, reason: VoiceEndReason(failure)) }
-            else if self.testing { self.cancelTest(); self.testResult = message }
+            let error = SettingsError(message: String(localized: String.LocalizationValue(message)), diagnostic: message)
+            if self.isActive { self.end(error: error, reason: VoiceEndReason(failure)) }
+            else if self.testing { self.cancelTest(); self.testResult = error.message }
         }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
     }
@@ -157,8 +159,8 @@ enum VoiceCaptureWatchdog {
         guard next != snapshot else { return }
         snapshot = next
     }
-    private func reportError(_ message: String, conversationID: UUID?) {
-        updateSnapshot { $0.error = .init(conversationID: conversationID, message: message) }
+    private func reportError(_ error: SettingsError, conversationID: UUID?) {
+        updateSnapshot { $0.error = .init(conversationID: conversationID, message: error.message) }
     }
 
     /// `entry` only labels the diagnostics timeline; it does not change how the call starts.
@@ -167,8 +169,9 @@ enum VoiceCaptureWatchdog {
         VoiceDiagnostics.shared.beginTimeline(entry)
         guard let conversation, let settings else {
             VoiceDiagnostics.shared.cancelTimeline()
-            reportError("无法开始语音：缺少会话或设置。", conversationID: conversation?.id)
-            VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", error!)
+            let failure = SettingsError(localized: "无法开始语音：缺少会话或设置。")
+            reportError(failure, conversationID: conversation?.id)
+            VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", failure.diagnostic)
             return false
         }
         do {
@@ -181,7 +184,7 @@ enum VoiceCaptureWatchdog {
             return started
         } catch {
             VoiceDiagnostics.shared.cancelTimeline()
-            reportError(error.localizedDescription, conversationID: conversation.id)
+            reportError((error as? SettingsError) ?? SettingsError(error.localizedDescription), conversationID: conversation.id)
             VoiceDiagnostics.shared.record("1 API Key", "FAIL", VoiceDiagnostics.reason(error))
             return false
         }
@@ -190,7 +193,7 @@ enum VoiceCaptureWatchdog {
     @discardableResult func start(conversation: WorkspaceConversation, configuration: VoiceConfiguration, key: String) -> Bool {
         guard snapshot.session.owner == nil, conversation.store.canSubmit else { return false }
         guard canStartCall else {
-            reportError("请先结束语音转写或语音测试，再开始语音。", conversationID: conversation.id)
+            reportError(SettingsError(localized: "请先结束语音转写或语音测试，再开始语音。"), conversationID: conversation.id)
             return false
         }
         cancelTest()
@@ -233,7 +236,7 @@ enum VoiceCaptureWatchdog {
             VoiceDiagnostics.shared.mark("麦克风权限返回")
             VoiceDiagnostics.shared.record("4 音频输入", allowed ? "PASS" : "FAIL", allowed ? "麦克风权限已允许" : "麦克风权限被拒绝")
             guard self.sessionID == call, !Task.isCancelled else { return }
-            guard allowed else { self.end(error: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。", reason: .permissionDenied); return }
+            guard allowed else { self.end(error: SettingsError(localized: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。"), reason: .permissionDenied); return }
             do {
                 // The engine is built off the main actor; the call can be ended meanwhile, which
                 // makes this throw CancellationError or, at the latest, fail the check below.
@@ -277,21 +280,27 @@ enum VoiceCaptureWatchdog {
                                 self.inspectBargeIn(packet.data)
                             } else if case .dropped = self.audioInput?.yield(packet.data) {
                                 uploadBacklog = true
-                                throw SettingsError("语音上传过慢，通话已结束，请检查网络。")
+                                throw SettingsError(localized: "语音上传过慢，通话已结束，请检查网络。")
                             }
                         }
                         guard let self, self.sessionID == call, !Task.isCancelled else { return }
-                        self.end(error: "录音已中断，请重新开始通话。", reason: .captureEnded)
+                        self.end(error: SettingsError(localized: "录音已中断，请重新开始通话。"), reason: .captureEnded)
                     } catch {
                         guard let self, self.sessionID == call, !Task.isCancelled else { return }
                         if error is CancellationError { return }
-                        self.end(error: error is SettingsError ? error.localizedDescription : "录音失败，请检查麦克风。",
+                        self.end(error: (error as? SettingsError) ?? SettingsError(localized: "录音失败，请检查麦克风。"),
                                  reason: uploadBacklog ? .uploadBacklog : .captureFailed)
                     }
                 }
             } catch is CancellationError {
                 return
-            } catch { if self.sessionID == call { self.end(error: "无法启动音频设备：\(error.localizedDescription)", reason: .audioStartFailed) } }
+            } catch {
+                guard self.sessionID == call else { return }
+                let cause = (error as? SettingsError) ?? SettingsError(error.localizedDescription)
+                self.end(error: SettingsError(message: String(localized: "无法启动音频设备：\(cause.message)"),
+                                              diagnostic: LocalizedStringResource("无法启动音频设备：\(cause.diagnostic)").sourceText),
+                         reason: .audioStartFailed)
+            }
         }
         VoiceDiagnostics.shared.mark("start() 返回")
         return true
@@ -323,11 +332,11 @@ enum VoiceCaptureWatchdog {
                     self.accept(result)
                 })
                 guard self.sessionID == call, self.recognitionID == recognition, !Task.isCancelled else { return }
-                self.end(error: "语音识别连接已结束，请重新开始通话。", reason: .recognitionClosed)
+                self.end(error: SettingsError(localized: "语音识别连接已结束，请重新开始通话。"), reason: .recognitionClosed)
             } catch {
                 guard self.sessionID == call, self.recognitionID == recognition, !Task.isCancelled else { return }
                 if error is CancellationError { return }
-                self.end(error: error is SettingsError ? error.localizedDescription : "语音识别失败，请检查网络和套餐。",
+                self.end(error: (error as? SettingsError) ?? SettingsError(localized: "语音识别失败，请检查网络和套餐。"),
                          reason: .recognitionFailed)
             }
         }
@@ -346,7 +355,7 @@ enum VoiceCaptureWatchdog {
             detail += "（引擎恢复于 \(Int(restartedAt.duration(to: .now) / .milliseconds(1))) ms 前）"
         }
         VoiceDiagnostics.shared.record("4 音频输入", "FAIL", detail)
-        end(error: "麦克风启动后没有返回音频，请检查输入设备。", reason: .firstPacketTimeout)
+        end(error: SettingsError(localized: "麦克风启动后没有返回音频，请检查输入设备。"), reason: .firstPacketTimeout)
     }
     private func stopRecognition(reason: VoiceSessionSnapshot.Recognition.OffReason) {
         bargeInEchoGuard = nil
@@ -491,7 +500,7 @@ enum VoiceCaptureWatchdog {
                 case .completed:
                     textOnlyRunID = nil
                     scheduleListeningRecovery(runID: nil, playedAudio: false)
-                case .failed(let message): end(error: message, reason: .replyFailed)
+                case .failed(let message): end(error: SettingsError(message), reason: .replyFailed)
                 }
                 return
             }
@@ -503,7 +512,7 @@ enum VoiceCaptureWatchdog {
                 if synthesizer == nil && synthesisTask == nil {
                     scheduleListeningRecovery(runID: id, playedAudio: false)
                 }
-            case .failed(let message): end(error: message, reason: .replyFailed)
+            case .failed(let message): end(error: SettingsError(message), reason: .replyFailed)
             }
         case .stopped(let id):
             if textOnlyRunID == id {
@@ -532,7 +541,7 @@ enum VoiceCaptureWatchdog {
                 // Still starting: activation speaks it once audio is up, from the store's state.
                 if case .starting = snapshot.session { return }
                 speakFinal(id)
-            case .failed(let message): end(error: message, reason: .replyFailed)
+            case .failed(let message): end(error: SettingsError(message), reason: .replyFailed)
             }
         case .stopped(let id):
             guard store?.task?.runID == id else { return }
@@ -566,8 +575,8 @@ enum VoiceCaptureWatchdog {
             let addition = try delta.append(text)
             guard !addition.isEmpty else { return }
             if textInput == nil { beginSynthesis() }
-            if case .dropped = textInput?.yield(addition) { throw SettingsError("语音合成文本积压过多，请稍后重新开始通话。") }
-        } catch { end(error: error.localizedDescription, reason: .synthesisInput) }
+            if case .dropped = textInput?.yield(addition) { throw SettingsError(localized: "语音合成文本积压过多，请稍后重新开始通话。") }
+        } catch { end(error: (error as? SettingsError) ?? SettingsError(error.localizedDescription), reason: .synthesisInput) }
     }
     private func beginSynthesis() {
         guard let runID else { return }
@@ -614,7 +623,7 @@ enum VoiceCaptureWatchdog {
             } catch {
                 guard self.sessionID == call, self.turnID == turn, !Task.isCancelled else { return }
                 if error is CancellationError { return }
-                self.end(error: error is SettingsError ? error.localizedDescription : "语音播放失败，请检查网络与设备。",
+                self.end(error: (error as? SettingsError) ?? SettingsError(localized: "语音播放失败，请检查网络与设备。"),
                          reason: .playbackFailed)
             }
         }
@@ -751,11 +760,11 @@ enum VoiceCaptureWatchdog {
     }
     /// `reason` and `origin` are diagnostics only: which path ended the call, and for a user
     /// end, which control's call site asked for it.
-    func end(error: String? = nil, reason: VoiceEndReason = .unspecified, origin: String? = nil) {
+    func end(error: SettingsError? = nil, reason: VoiceEndReason = .unspecified, origin: String? = nil) {
         if case .ending = snapshot.session { return }
-        if let error { VoiceDiagnostics.shared.record("通话", "FAIL", error) }
+        if let error { VoiceDiagnostics.shared.record("通话", "FAIL", error.diagnostic) }
         let owner = snapshot.session.owner
-        if owner != nil { recordTermination(reason, origin: origin, error: error) }
+        if owner != nil { recordTermination(reason, origin: origin, failed: error != nil) }
         if let owner {
             updateSnapshot {
                 $0.session = .ending(owner)
@@ -773,7 +782,7 @@ enum VoiceCaptureWatchdog {
         store = nil; key = ""
         textOnlyRunID = nil; handledFinalRunID = nil; submitting = false; submissionHadAudio = false
         spoken = nil
-        let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0) } ?? snapshot.error
+        let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0.message) } ?? snapshot.error
         if let owner, endingAnimationDuration > .zero {
             let reviewDuration = endingAnimationDuration
             Task { [weak self] in
@@ -787,7 +796,7 @@ enum VoiceCaptureWatchdog {
     }
     /// The state the call was in when it ended. For a user end, `indicator` names the control the
     /// pet strip was drawing in the end slot: `connecting` is the cancel dot, anything else the planet.
-    private func recordTermination(_ reason: VoiceEndReason, origin: String?, error: String?) {
+    private func recordTermination(_ reason: VoiceEndReason, origin: String?, failed: Bool) {
         let phase: String
         switch snapshot.session {
         case .inactive: phase = "inactive"
@@ -801,7 +810,7 @@ enum VoiceCaptureWatchdog {
         }
         var detail = "phase=\(phase) indicator=\(PetSurfacePresentation.indicator(for: snapshot))"
         detail += " recognition=\(compact(snapshot.recognition)) replyAudio=\(compact(snapshot.replyAudio))"
-        detail += " 首包=\(receivedCapturePacket ? "已收到" : "未收到") error=\(error == nil ? "无" : "有")"
+        detail += " 首包=\(receivedCapturePacket ? "已收到" : "未收到") error=\(failed ? "有" : "无")"
         if let origin { detail += " origin=\(origin)" }
         VoiceDiagnostics.shared.endTimeline(reason, detail: detail)
     }
@@ -818,7 +827,7 @@ enum VoiceCaptureWatchdog {
     /// cancels on disappear — cannot turn a success into something else.
     func invalidateTest() { cancelTest(); testResult = nil; testSucceeded = false }
     func test(configuration: VoiceConfiguration, key: String, preview: Bool) {
-        guard !isActive, !isDictating else { testSucceeded = false; testResult = "请先结束语音或转写再测试。"; return }
+        guard !isActive, !isDictating else { testSucceeded = false; testResult = String(localized: "请先结束语音或转写再测试。"); return }
         cancelTest(); testResult = nil; testSucceeded = false; testing = true
         let id = probeID
         probeWatchdog = Task { [weak self, probeTimeout] in
@@ -826,7 +835,7 @@ enum VoiceCaptureWatchdog {
             guard let self, self.probeID == id, self.testing else { return }
             self.cancelTest()
             VoiceDiagnostics.shared.record("连接测试", "FAIL", "总时限已到，取消 ASR/TTS 和播放器")
-            self.testResult = "语音测试超时，请检查网络和套餐后重试。"
+            self.testResult = String(localized: "语音测试超时，请检查网络和套餐后重试。")
         }
         probe = Task { [weak self] in
             guard let self else { return }
@@ -853,18 +862,18 @@ enum VoiceCaptureWatchdog {
                     if preview { try await self.audio.play(data) }
                 }
                 if !receivedAudio {
-                    throw SettingsError("语音测试失败：服务未返回音频。")
+                    throw SettingsError(localized: "语音测试失败：服务未返回音频。")
                 }
                 if preview { try await self.audio.drain() }
                 guard self.probeID == id, !Task.isCancelled else { return }
                 self.cancelTest()
-                self.testResult = preview ? "试听完成。" : "识别与合成连接成功（使用静音样本，未录音）。"
+                self.testResult = preview ? String(localized: "试听完成。") : String(localized: "识别与合成连接成功（使用静音样本，未录音）。")
                 self.testSucceeded = true
             } catch {
                 guard self.probeID == id, !Task.isCancelled else { return }
                 self.cancelTest()
                 VoiceDiagnostics.shared.record("连接测试", "FAIL", VoiceDiagnostics.reason(error))
-                self.testResult = error is SettingsError ? error.localizedDescription : "语音测试失败，请检查专属密钥和网络。"
+                self.testResult = (error as? SettingsError)?.message ?? String(localized: "语音测试失败，请检查专属密钥和网络。")
             }
         }
     }

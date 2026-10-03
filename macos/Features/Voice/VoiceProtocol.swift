@@ -8,7 +8,7 @@ struct VoiceConfiguration: Codable, Equatable, Sendable {
         var value = self
         value.speaker = speaker.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.speaker.isEmpty, value.speaker.utf8.count <= 256 else {
-            throw SettingsError("请输入有效的音色 ID。")
+            throw SettingsError(localized: "请输入有效的音色 ID。")
         }
         return value
     }
@@ -34,7 +34,7 @@ enum VoiceWire {
         var offset = 0
         mutating func take(_ count: Int) throws -> Data {
             guard count >= 0, count <= VoiceWire.limit, offset <= data.count - count else {
-                throw SettingsError("语音服务返回了不完整的数据包。")
+                throw SettingsError(localized: "语音服务返回了不完整的数据包。")
             }
             defer { offset += count }
             return data.subdata(in: offset..<(offset + count))
@@ -44,14 +44,14 @@ enum VoiceWire {
         }
         mutating func blob() throws -> Data { try take(Int(try uint())) }
         mutating func string() throws -> String {
-            guard let value = String(data: try blob(), encoding: .utf8) else { throw SettingsError("语音事件标识无效。") }
+            guard let value = String(data: try blob(), encoding: .utf8) else { throw SettingsError(localized: "语音事件标识无效。") }
             return value
         }
     }
     static func unzip(_ data: Data) throws -> Data {
         var stream = z_stream()
         guard inflateInit2_(&stream, 15 + 32, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else {
-            throw SettingsError("无法解压语音数据。")
+            throw SettingsError(localized: "无法解压语音数据。")
         }
         defer { inflateEnd(&stream) }
         return try data.withUnsafeBytes { input in
@@ -68,7 +68,7 @@ enum VoiceWire {
                     return output.count - Int(stream.avail_out)
                 }
                 guard status == Z_OK || status == Z_STREAM_END, written > 0 || status == Z_STREAM_END,
-                      result.count + written <= limit else { throw SettingsError("语音压缩数据无效或过大。") }
+                      result.count + written <= limit else { throw SettingsError(localized: "语音压缩数据无效或过大。") }
                 result.append(contentsOf: chunk.prefix(written))
             } while status != Z_STREAM_END
             return result
@@ -76,17 +76,17 @@ enum VoiceWire {
     }
     static func decode(_ data: Data, tts: Bool) throws -> Frame {
         guard data.count >= 4, data.count <= limit, data[0] >> 4 == 1, data[0] & 15 >= 1 else {
-            throw SettingsError("语音服务的数据协议不兼容。")
+            throw SettingsError(localized: "语音服务的数据协议不兼容。")
         }
         let type = data[1] >> 4, flags = data[1] & 15, compression = data[2] & 15
-        guard [UInt8(9), 11, 15].contains(type), compression <= 1 else { throw SettingsError("未知语音消息类型。") }
+        guard [UInt8(9), 11, 15].contains(type), compression <= 1 else { throw SettingsError(localized: "未知语音消息类型。") }
         var reader = Reader(data: data)
         _ = try reader.take(Int(data[0] & 15) * 4)
         var frame = Frame(type: type, payload: Data())
         if type == 15 {
             let code = try reader.uint()
             // Never surface an arbitrary remote payload, which may echo credentials.
-            throw SettingsError("语音服务拒绝请求（错误码 \(code)），请检查密钥、音色和套餐额度。")
+            throw SettingsError(localized: "语音服务拒绝请求（错误码 \(code)），请检查密钥、音色和套餐额度。")
         }
         if flags & 1 != 0 { frame.sequence = Int32(bitPattern: try reader.uint()) }
         frame.final = flags & 2 != 0
@@ -96,7 +96,7 @@ enum VoiceWire {
             else { frame.sessionID = try reader.string() }
         }
         frame.payload = try reader.blob()
-        guard reader.offset == data.count else { throw SettingsError("语音数据包长度不匹配。") }
+        guard reader.offset == data.count else { throw SettingsError(localized: "语音数据包长度不匹配。") }
         if compression == 1 { frame.payload = try unzip(frame.payload) }
         return frame
     }
@@ -183,7 +183,7 @@ struct VoiceTextDelta {
     private(set) var previous = ""
     mutating func append(_ cumulative: String) throws -> String {
         guard cumulative.hasPrefix(previous) else {
-            throw SettingsError("模型改写了已播报的文本，语音通话已结束；完整回复保留在会话中。")
+            throw SettingsError(localized: "模型改写了已播报的文本，语音通话已结束；完整回复保留在会话中。")
         }
         let delta = String(cumulative.dropFirst(previous.count))
         previous = cumulative

@@ -133,7 +133,7 @@ extension VoiceEndReason {
     // `nonisolated` so a URLSession delegate callback, which never runs on the main actor,
     // can summarise its error there and hand the finished string over to be recorded.
     nonisolated static func reason(_ error: Error) -> String {
-        if let error = error as? SettingsError { return error.message }
+        if let error = error as? SettingsError { return error.diagnostic }
         let value = error as NSError
         var text = "domain=\(value.domain) code=\(value.code)"
         if value.code == -10875 { text += " (kAudioUnitErr_FailedInitialization：音频单元初始化失败)" }
