@@ -347,11 +347,11 @@ import SwiftUI
             main.showWorkspace()
             workspace.newConversation(projectID: workspace.selected?.projectID)
         })
-        let menu = NSMenu(title: ""), file = NSMenu(title: "文件"), columns = NSMenu(title: "窗口"), chat = NSMenu(title: "对话")
-        for submenu in [file, columns, chat] {
+        let menu = NSMenu(title: ""), file = NSMenu(title: "文件"), view = NSMenu(title: "显示"), chat = NSMenu(title: "对话")
+        for submenu in [file, view, chat] {
             let item = NSMenuItem(); item.submenu = submenu; menu.addItem(item)
         }
-        commands.install(fileMenu: file, windowMenu: columns, conversationMenu: chat)
+        commands.install(fileMenu: file, viewMenu: view, conversationMenu: chat)
         let oldMenu = NSApp.mainMenu
         NSApp.mainMenu = menu
         main.present()
@@ -378,15 +378,24 @@ import SwiftUI
             NSApp.sendEvent(event(key, code, modifiers))
         }
         try await refresh()
-        let items = file.items + columns.items + chat.items
-        XCTAssertTrue(items.count == 6)
-        let shortcuts: [(String, NSEvent.ModifierFlags)] = [
-            ("n", .command), ("b", .command), ("b", [.command, .option]),
-            ("d", [.control, .shift]), ("v", [.control, .shift]), (".", .command)
+        func describe(_ items: [NSMenuItem]) -> String {
+            items.map { "\($0.title) \($0.keyEquivalent) \($0.keyEquivalentModifierMask.rawValue) hidden=\($0.isHidden)" }
+                .joined(separator: "; ")
+        }
+        let items = (file.items + view.items + chat.items).filter { !$0.isSeparatorItem && !$0.isHidden }
+        XCTAssertTrue(items.count == 7, describe(items))
+        // AppKit shows full screen on 🌐F and keeps ⌃⌘F as a hidden copy of the item.
+        let shortcuts: [(String, [NSEvent.ModifierFlags])] = [
+            ("n", [.command]), ("s", [[.control, .command]]), ("i", [[.control, .command]]),
+            ("f", [[.control, .command], .function]),
+            ("d", [[.control, .shift]]), ("v", [[.control, .shift]]), (".", [.command])
         ]
         for (item, shortcut) in zip(items, shortcuts) {
-            XCTAssertTrue(item.keyEquivalent == shortcut.0 && item.keyEquivalentModifierMask == shortcut.1)
+            XCTAssertTrue(item.keyEquivalent == shortcut.0 && shortcut.1.contains(item.keyEquivalentModifierMask), describe([item]))
         }
+        let fullScreenItems = view.items.filter { $0.action == #selector(NSWindow.toggleFullScreen(_:)) }
+        XCTAssertTrue(fullScreenItems.contains { $0.keyEquivalent == "f" && $0.keyEquivalentModifierMask == [.control, .command] },
+                      "⌃⌘F stays bound: \(describe(fullScreenItems))")
         XCTAssertTrue(items.allSatisfy { $0.keyEquivalent != "\u{1b}" }, "Escape belongs to the responder chain, never a menu item")
         let projectID = workspace.addProject(url: root)
         workspace.newConversation(projectID: projectID)
@@ -399,14 +408,29 @@ import SwiftUI
         XCTAssertTrue(workspace.selectedID != original.id && workspace.selected?.projectID == projectID)
         XCTAssertTrue(workspace.selected?.store.mainDraft == "" && original.store.mainDraft == "保留草稿")
         try await refresh()
+        // The View menu titles follow the columns, and full screen keeps a Chinese title
+        // although the window's own validation would set it in English.
+        let (sidebarToggle, inspectorToggle, fullScreen) = (view.items[0], view.items[1], view.items[3])
+        func assertViewTitles() {
+            view.update()
+            XCTAssertEqual(sidebarToggle.title, main.sidebarItem.isCollapsed ? "显示边栏" : "隐藏边栏")
+            XCTAssertEqual(inspectorToggle.title, main.inspectorItem.isCollapsed ? "显示检查器" : "隐藏检查器")
+            XCTAssertEqual(fullScreen.title, "进入全屏幕")
+            XCTAssertTrue(fullScreen.isEnabled, "The main window can go full screen")
+        }
+        assertViewTitles()
+        var titles = Set<String>()
         for _ in 0..<2 {
             let left = main.sidebarItem.isCollapsed
-            press("b", 11, .command)
-            XCTAssertTrue(main.sidebarItem.isCollapsed != left, "Command+B works with composer focus")
+            press("s", 1, [.control, .command])
+            XCTAssertTrue(main.sidebarItem.isCollapsed != left, "Control+Command+S works with composer focus")
             let right = main.inspectorItem.isCollapsed
-            press("b", 11, [.command, .option])
-            XCTAssertTrue(main.inspectorItem.isCollapsed != right, "Command+Option+B works with composer focus")
+            press("i", 34, [.control, .command])
+            XCTAssertTrue(main.inspectorItem.isCollapsed != right, "Control+Command+I works with composer focus")
+            assertViewTitles()
+            titles.formUnion([sidebarToggle.title, inspectorToggle.title])
         }
+        XCTAssertEqual(titles, ["显示边栏", "隐藏边栏", "显示检查器", "隐藏检查器"], "Both states were titled")
         let selected = workspace.selected!
         selected.store.mainDraft = "未发送"
         press("d", 2, [.control, .shift])
@@ -597,14 +621,16 @@ import SwiftUI
                                         settings: settings, pets: pets)
         var window = main.window!
         let priorMenu = NSApp.mainMenu
-        let menu = NSMenu(), applicationMenu = NSMenu(title: "Echo"), windowMenu = NSMenu(title: "窗口")
-        for submenu in [applicationMenu, windowMenu] {
+        let menu = NSMenu(), applicationMenu = NSMenu(title: "Echo"), fileMenu = NSMenu(title: "文件"),
+            viewMenu = NSMenu(title: "显示")
+        for submenu in [applicationMenu, fileMenu, viewMenu] {
             let item = NSMenuItem(); item.submenu = submenu; menu.addItem(item)
         }
-        windowMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         let commands = WorkspaceCommands(controller: { main }, newConversation: { main.showWorkspace() })
-        let fileMenu = NSMenu(), conversationMenu = NSMenu()
-        commands.install(fileMenu: fileMenu, windowMenu: windowMenu, conversationMenu: conversationMenu)
+        let conversationMenu = NSMenu()
+        commands.install(fileMenu: fileMenu, viewMenu: viewMenu, conversationMenu: conversationMenu)
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         NSApp.mainMenu = menu
         defer { NSApp.mainMenu = priorMenu }
         main.present()
@@ -651,14 +677,16 @@ import SwiftUI
         workspace.requestComposerFocus(conversationID: conversation.id)
         try await settle()
         XCTAssertTrue(window.isKeyWindow && main.window!.isVisible)
-        windowMenu.update()
-        let workspaceItems = windowMenu.items.filter { $0.target === commands }
+        viewMenu.update()
+        let workspaceItems = viewMenu.items.filter {
+            $0.action == NSSelectorFromString("toggleSidebar") || $0.action == NSSelectorFromString("toggleInspector")
+        }
         XCTAssertTrue(workspaceItems.count == 2)
         XCTAssertTrue(workspaceItems.allSatisfy { !$0.isEnabled },
                      "Workspace commands are disabled in settings: \(workspaceItems.map { ($0.title, $0.isEnabled) })")
         main.present()
         try await settle()
-        windowMenu.update()
+        viewMenu.update()
         XCTAssertTrue(workspaceItems.allSatisfy { $0.isEnabled }, "Workspace commands work with settings still open")
         main.showSettings()
         try await settle()

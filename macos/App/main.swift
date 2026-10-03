@@ -118,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let commands = WorkspaceCommands(controller: { [weak self] in self?.companion?.mainController },
                                          newConversation: { [weak self] in self?.newConversation() })
         let menu = NSMenu(title: "")
-        // Standard macOS menu bar order: application, File, Edit, app-specific, Window.
+        // Standard macOS menu bar order: application, File, Edit, View, app-specific, Window, Help.
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu(title: "Echo")
         applicationMenu.addItem(withTitle: "关于 Echo",
@@ -135,31 +135,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applicationMenu.addItem(withTitle: "退出 Echo", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         applicationItem.submenu = applicationMenu
         menu.addItem(applicationItem)
-        let fileItem = NSMenuItem()
         let fileMenu = NSMenu(title: "文件")
-        fileItem.submenu = fileMenu; menu.addItem(fileItem)
-        let editItem = NSMenuItem()
         let editMenu = makeEditMenu()
-        editItem.submenu = editMenu
-        menu.addItem(editItem)
-        let conversationItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "显示")
         let conversationMenu = NSMenu(title: "对话")
-        conversationItem.submenu = conversationMenu
-        menu.addItem(conversationItem)
-        let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "窗口")
+        let helpMenu = NSMenu(title: "帮助")
+        for submenu in [fileMenu, editMenu, viewMenu, conversationMenu, windowMenu, helpMenu] {
+            let item = NSMenuItem(); item.submenu = submenu; menu.addItem(item)
+        }
+        commands.install(fileMenu: fileMenu, viewMenu: viewMenu, conversationMenu: conversationMenu)
+        // ⌘K, not ⌘F: this opens a palette that switches between chats, which is what ⌘K
+        // means across editors. ⌘F on macOS means "find inside what I am looking at", so it
+        // stays free for a find in the open conversation.
+        let quickOpen = fileMenu.addItem(withTitle: "快速打开会话…", action: #selector(search), keyEquivalent: "k")
+        quickOpen.keyEquivalentModifierMask = [.command]
+        quickOpen.target = self
+        fileMenu.addItem(withTitle: "添加项目文件夹…", action: #selector(addProject), keyEquivalent: "").target = self
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowMenu.addItem(.separator())
-        windowMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        windowItem.submenu = windowMenu
-        menu.addItem(windowItem)
-        commands.install(fileMenu: fileMenu, windowMenu: windowMenu, conversationMenu: conversationMenu)
-        fileMenu.addItem(withTitle: "添加项目文件夹…", action: #selector(addProject), keyEquivalent: "").target = self
         windowMenu.addItem(.separator())
         windowMenu.addItem(withTitle: "前置全部窗口", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         // AppKit appends its own separator and window list here. Borderless pet panels stay out.
         NSApp.windowsMenu = windowMenu
+        NSApp.helpMenu = helpMenu
         workspaceCommands = commands
         NSApp.mainMenu = menu
     }
@@ -176,17 +177,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             editMenu.addItem(withTitle: title, action: NSSelectorFromString(selector), keyEquivalent: key)
         }
         editMenu.addItem(withTitle: "查找", action: nil, keyEquivalent: "").submenu = Self.makeFindMenu()
-        editMenu.addItem(.separator())
-        // ⌘K, not ⌘F: this opens a palette that switches between chats, which is what ⌘K
-        // means across editors. ⌘F on macOS means "find inside what I am looking at", so it
-        // stays free for a find in the open conversation.
-        let quickOpen = editMenu.addItem(withTitle: "快速打开会话…", action: #selector(search), keyEquivalent: "k")
-        quickOpen.keyEquivalentModifierMask = [.command]
-        quickOpen.target = self
-        editMenu.addItem(.separator())
-        let palette = editMenu.addItem(withTitle: "表情与符号",
-                                       action: #selector(NSApplication.orderFrontCharacterPalette(_:)), keyEquivalent: " ")
-        palette.keyEquivalentModifierMask = [.control, .command]
         return editMenu
     }
 

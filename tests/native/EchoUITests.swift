@@ -115,7 +115,7 @@ import XCTest
             app.typeKey(.return, modifierFlags: [])
             XCTAssertTrue(picker.waitForExistence(timeout: 3))
             XCTAssertTrue(picker.label.contains("Project 18"), picker.label)
-            app.typeKey("b", modifierFlags: [.command, .option])
+            app.typeKey("i", modifierFlags: [.control, .command])
             let file = app.descendants(matching: .any)["projectFiles.entry.note.txt"].firstMatch
             XCTAssertTrue(file.waitForExistence(timeout: 5))
             file.doubleClick()
@@ -379,7 +379,7 @@ import XCTest
             let ids = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("fixture.json")))
             let projectID = try XCTUnwrap(ids["project"])
             // A first launch shows the conversation on its own.
-            app.typeKey("b", modifierFlags: .command)
+            app.typeKey("s", modifierFlags: [.control, .command])
             let outline = app.outlines["workspace.sidebar"]
             XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
             func label(_ title: String, project: Bool = false) -> XCUIElement {
@@ -431,7 +431,7 @@ import XCTest
             let ids = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("fixture.json")))
             let projectID = try XCTUnwrap(ids["project"])
             // A first launch shows the conversation on its own.
-            app.typeKey("b", modifierFlags: .command)
+            app.typeKey("s", modifierFlags: [.control, .command])
             let outline = app.outlines["workspace.sidebar"]
             XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
             func label(_ title: String, project: Bool = false) -> XCUIElement {

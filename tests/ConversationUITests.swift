@@ -306,7 +306,7 @@ private struct ComposerHeightHost: View {
         main.toggleSidebar()
         try await Task.sleep(for: .milliseconds(600))
         window.contentView?.layoutSubtreeIfNeeded()
-        XCTAssertTrue(!main.sidebarItem.isCollapsed, "⌘B opens the column for the rest of this test")
+        XCTAssertTrue(!main.sidebarItem.isCollapsed, "⌃⌘S opens the column for the rest of this test")
 
         // --- P1-1 / P1-2: the column's header and footer are accessories ---
         let header = main.sidebarItem.topAlignedAccessoryViewControllers
@@ -412,7 +412,7 @@ private struct ComposerHeightHost: View {
         main.toggleSidebar()
         try await Task.sleep(for: .milliseconds(600))
         window.contentView?.layoutSubtreeIfNeeded()
-        XCTAssertTrue(main.sidebarItem.isCollapsed, "⌘B collapses the column")
+        XCTAssertTrue(main.sidebarItem.isCollapsed, "⌃⌘S collapses the column")
         XCTAssertTrue(footer[0].view.isHiddenOrHasHiddenAncestor,
                      "The footer goes away with the column")
         main.toggleSidebar()

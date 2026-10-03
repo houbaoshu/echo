@@ -304,11 +304,11 @@ import Combine
         workspace.selected?.store.hideMainWindow()
         window?.orderOut(nil); workspace.flush()
     }
-    /// The chain's last stop for the toolbar's standard items and the Window menu: with
-    /// anything focused, the chain reaches the split view controller first and its own
-    /// toggles answer; with NOTHING focused, NSWindow forwards toggleSidebar: but NOT
-    /// toggleInspector:, so without an implementation here AppKit would draw the
-    /// inspector item disabled.
+    /// The View menu's column items call these through WorkspaceCommands. They are also the
+    /// chain's last stop for the toolbar's standard items: with anything focused, the chain
+    /// reaches the split view controller first and its own toggles answer; with NOTHING
+    /// focused, NSWindow forwards toggleSidebar: but NOT toggleInspector:, so without an
+    /// implementation here AppKit would draw the inspector item disabled.
     @objc func toggleSidebar(_ sender: Any? = nil) { splitController.toggleSidebar(sender) }
     @objc func toggleInspector(_ sender: Any? = nil) { splitController.toggleInspector(sender) }
     /// ⌘K. The palette is its own floating window, so it neither needs the sidebar to be
@@ -395,7 +395,7 @@ import Combine
     /// They are here because a collapsed sidebar takes the chat list and the settings gear
     /// in its footer accessory with it, and AppKit collapses the sidebar on its own when the
     /// window gets narrow; the toolbar is where the column comes back from. Settings is
-    /// also in the Echo menu. ⌘B / ⌥⌘B stay as they were.
+    /// also in the Echo menu. The View menu has the same toggles on ⌃⌘S / ⌃⌘I.
     ///
     /// Their labels and tooltips are AppKit's, in whatever language the system is running;
     /// Echo does not localize the bundle and must not rewrite the tooltip, which the system
