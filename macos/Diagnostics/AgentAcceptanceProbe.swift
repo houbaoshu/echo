@@ -38,7 +38,7 @@ import AppKit
         let work = workspace.newConversation(projectID: projectID)
         guard work.store.send("acceptance-quit-tool") else { throw SettingsError("未能创建验收任务。") }
         try await wait("真实子进程启动") {
-            work.store.tools.first?.state == "执行中"
+            work.store.tools.first?.state == .running
                 && FileManager.default.fileExists(atPath: project.appendingPathComponent("child.pid").path)
         }
         print("PASS: relocated bundle loaded pet and the Agent from empty cwd; requesting AppKit quit during bash")

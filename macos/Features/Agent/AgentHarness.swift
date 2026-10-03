@@ -796,7 +796,8 @@ enum AgentInstructions {
                 guard let id = Self.messageID(of: entry).flatMap(UUID.init(uuidString:)) else { continue }
                 var message = existing[id] ?? ConversationMessage(role: .user, content: Self.text(prompt.segments))
                 message.id = id
-                if message.steering == "待处理" || message.steering == "已中断" { message.steering = nil }
+                // Input in the transcript has been taken, so it is neither queued nor interrupted.
+                message.steering = nil
                 messages.append(message); anchor = id
             case .response(let response):
                 let text = Self.text(response.segments)
@@ -814,7 +815,7 @@ enum AgentInstructions {
                     record.tool = call.toolName == "bash" ? nil : call.toolName
                     record.afterMessageID = anchor; record.result = nil
                     let callKey = "\(index):\(call.id)"
-                    record.state = isRunning && (dispatched.contains(callKey) || started.contains(callKey)) ? "执行中" : "待执行"
+                    record.state = isRunning && (dispatched.contains(callKey) || started.contains(callKey)) ? .running : .waiting
                     if let directory = callDirectories[callKey] { record.directory = directory }
                     if let output = finishedOutputs[callKey] {
                         record.result = output; record.state = AgentToolRecord.state(forResult: output)
@@ -1063,12 +1064,12 @@ extension AgentToolRecord {
         default: "正在调用工具 · \(call.toolName)"
         }
     }
-    static func state(forResult result: String) -> String {
+    static func state(forResult result: String) -> State {
         struct ResultStatus: Decodable { var status: String? }
         switch (try? JSONDecoder().decode(ResultStatus.self, from: Data(result.utf8)))?.status {
-        case "not_executed": return "未执行"
-        case "unknown": return "执行结果未知"
-        default: return "执行结束"
+        case "not_executed": return .notExecuted
+        case "unknown": return .unknown
+        default: return .finished
         }
     }
 }

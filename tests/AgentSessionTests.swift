@@ -318,7 +318,7 @@ extension EchoIntegrationScenarios {
         #expect(chat.store.send("list-files please"))
         try await wait("list files") { !chat.store.isGenerating }
         #expect(chat.store.task?.status == .completed, "\(chat.store.task?.summary ?? "")")
-        #expect(chat.store.tools.map(\.tool) == ["list_files"] && chat.store.tools.first?.state == "执行结束")
+        #expect(chat.store.tools.map(\.tool) == ["list_files"] && chat.store.tools.first?.state == .finished)
         #expect(chat.store.tools.first?.result == #"{"files":["src/"],"truncated":false}"#)
         #expect(chat.store.messages.last?.content == "最终回复：已读取真实工具结果")
         let resultRequest = try #require(f.server.requests.last.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
@@ -376,7 +376,7 @@ extension EchoIntegrationScenarios {
         #expect(invalid.store.send("invalid-tool please"))
         try await wait("invalid tool calls") { !invalid.store.isGenerating }
         #expect(invalid.store.task?.status == .failed && invalid.store.task?.summary == "模型连续返回无效工具格式，已停止。")
-        #expect(invalid.store.tools.count == 3 && invalid.store.tools.allSatisfy { $0.state == "未执行" && $0.tool == "python" })
+        #expect(invalid.store.tools.count == 3 && invalid.store.tools.allSatisfy { $0.state == .notExecuted && $0.tool == "python" })
         #expect(invalid.store.messages.filter { $0.role == .user }.count == 1)
         #expect(!FileManager.default.fileExists(atPath: project.appendingPathComponent("trace").path))
       }
@@ -477,7 +477,7 @@ extension EchoIntegrationScenarios {
           persistence.load().0?.conversations.first { $0.id == first.id }?.projectID
             == first.projectID,
           "Directory exception saves association before tool execution")
-        try await wait("first tool starts") { first.store.tools.first?.state == "执行中" }
+        try await wait("first tool starts") { first.store.tools.first?.state == .running }
         let projectID = try #require(first.projectID)
         #expect(!workspace.associateProject(nil, conversationID: first.id))
         workspace.relocateProject(projectID, to: temp)
@@ -489,7 +489,7 @@ extension EchoIntegrationScenarios {
         try await wait("same directory queues") { second.store.waitingForProject }
         second.store.send("skip queued call")
         try await wait("queued steering") { !second.store.isGenerating }
-        #expect(second.store.tools.first?.state == "未执行")
+        #expect(second.store.tools.first?.state == .notExecuted)
         // Accepted steering leaves no caption behind: only a still-queued or interrupted
         // follow-up keeps one.
         #expect(second.store.messages.last(where: { $0.role == .user })?.steering == nil)
@@ -519,22 +519,22 @@ extension EchoIntegrationScenarios {
         try await Task.sleep(for: .milliseconds(100))
         modelSteer.store.send("skip old model call")
         try await wait("model steering") { !modelSteer.store.isGenerating }
-        #expect(modelSteer.store.tools.first?.state == "未执行")
+        #expect(modelSteer.store.tools.first?.state == .notExecuted)
 
         let cancelled = workspace.newConversation()
         cancelled.store.send("tool")
         try await wait("cancel directory") { cancelled.store.needsDirectory }
         workspace.provideDirectory(nil, conversationID: cancelled.id)
         try await wait("directory cancelled") { !cancelled.store.isGenerating }
-        #expect(cancelled.store.tools.first?.state == "未执行")
+        #expect(cancelled.store.tools.first?.state == .notExecuted)
 
         let stop = workspace.newConversation(projectID: projectID)
         stop.store.send("cancel-tool")
-        try await wait("cancellable command starts") { stop.store.tools.first?.state == "执行中" }
+        try await wait("cancellable command starts") { stop.store.tools.first?.state == .running }
         stop.store.stopTask()
         #expect(stop.store.task?.status == .stopping && !stop.store.send("must wait"))
         try await wait("cleanup acknowledged") { !stop.store.isGenerating }
-        #expect(stop.store.task?.status == .stopped && stop.store.tools.first?.state == "执行结果未知")
+        #expect(stop.store.task?.status == .stopped && stop.store.tools.first?.state == .unknown)
         let userCount = stop.store.messages.filter { $0.role == .user }.count
         #expect(stop.store.retry())
         try await wait("continue") { !stop.store.isGenerating }
@@ -626,7 +626,7 @@ extension EchoIntegrationScenarios {
         try await wait("storage failure stops") { !failed.store.isGenerating }
         #expect(
           failed.store.task?.status == .failed && failed.store.notice?.contains("保存失败") == true)
-        #expect(failed.store.tools.first?.state != "执行结束")
+        #expect(failed.store.tools.first?.state != .finished)
 
         // A completed tool result must survive Stop, but cannot feed a new
         // model request until Swift has successfully saved that result.
@@ -663,7 +663,7 @@ extension EchoIntegrationScenarios {
         let parallelID = workspace.addProject(url: parallelPath)
         let holder = workspace.newConversation(projectID: projectID)
         holder.store.send("cancel-tool")
-        try await wait("lease held") { holder.store.tools.first?.state == "执行中" }
+        try await wait("lease held") { holder.store.tools.first?.state == .running }
         let crashPersistence = WorkspacePersistence(
           url: temp.appendingPathComponent("crash/workspace.json"))
         var crashSnapshot = workspace.snapshot
@@ -682,7 +682,7 @@ extension EchoIntegrationScenarios {
         #expect(holder.store.isGenerating && queued.store.waitingForProject)
         queued.store.stopTask()
         try await wait("queue stop") { !queued.store.isGenerating }
-        #expect(queued.store.tools.first?.state == "未执行")
+        #expect(queued.store.tools.first?.state == .notExecuted)
         let afterDelete = workspace.newConversation(projectID: projectID)
         afterDelete.store.send("tool")
         try await wait("delete waiter") { afterDelete.store.waitingForProject }
@@ -694,7 +694,7 @@ extension EchoIntegrationScenarios {
         defer { crashRecovery.shutdown() }
         let interrupted = (try #require(crashRecovery.conversation(id: holder.id)))
         #expect(interrupted.store.task?.status == .interrupted)
-        #expect(interrupted.store.tools.first?.state == "执行结果未知")
+        #expect(interrupted.store.tools.first?.state == .unknown)
         #expect(interrupted.store.retry())
         try await wait("unknown result recovery") { !interrupted.store.isGenerating }
         #expect(interrupted.store.tools.first?.result?.contains("unknown") == true)
@@ -705,7 +705,7 @@ extension EchoIntegrationScenarios {
         // gate must re-enter directory selection, not fail or run in a moved cwd.
         let invalidHolder = workspace.newConversation(projectID: parallelID)
         invalidHolder.store.send("cancel-tool")
-        try await wait("invalid holder") { invalidHolder.store.tools.first?.state == "执行中" }
+        try await wait("invalid holder") { invalidHolder.store.tools.first?.state == .running }
         let invalidWaiter = workspace.newConversation(projectID: parallelID)
         invalidWaiter.store.send("tool")
         try await wait("invalid waiter") { invalidWaiter.store.waitingForProject }

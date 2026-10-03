@@ -696,9 +696,9 @@ import SwiftUI
         XCTAssertTrue(isSectionList(responder()),
                      "Opening settings focuses its section list, not the host: \(String(describing: responder()))")
         try await key(125)
-        XCTAssertTrue(settings.selectedSection == "语音", "↓ moves sections as soon as the page opens")
+        XCTAssertTrue(settings.selectedSection == .voice, "↓ moves sections as soon as the page opens")
         try await key(126)
-        XCTAssertTrue(settings.selectedSection == "模型")
+        XCTAssertTrue(settings.selectedSection == .model)
         try await key(0)
         try await key(1)
         XCTAssertTrue(conversation.store.mainDraft.isEmpty,
@@ -709,8 +709,9 @@ import SwiftUI
                 ?? (findView(window.contentView!) { $0.accessibilityRole() == .outline }) as? NSTableView else {
             throw SettingsError("Settings sections must be a system list")
         }
-        XCTAssertTrue(list.selectedRow == 0 && settings.selectedSection == "模型")
-        for name in SettingsView.sections {
+        XCTAssertTrue(list.selectedRow == 0 && settings.selectedSection == .model)
+        // The identifiers stay in Chinese whatever the interface language is.
+        for name in ["模型", "语音", "星球", "精灵"] {
             XCTAssertTrue(findAccessibility("settings.section.\(name)", in: window.contentView!) != nil,
                          "Section row \(name) is missing from the list")
         }
@@ -726,14 +727,14 @@ import SwiftUI
 
         // 5. Arrow keys move the selection the way a source list does.
         try await key(125)
-        XCTAssertTrue(settings.selectedSection == "语音" && list.selectedRow == 1, "Down arrow selects the next section")
+        XCTAssertTrue(settings.selectedSection == .voice && list.selectedRow == 1, "Down arrow selects the next section")
         try await key(125)
-        XCTAssertTrue(settings.selectedSection == "星球" && list.selectedRow == 2)
+        XCTAssertTrue(settings.selectedSection == .planet && list.selectedRow == 2)
         try await key(125)
-        XCTAssertTrue(settings.selectedSection == "精灵" && list.selectedRow == 3)
+        XCTAssertTrue(settings.selectedSection == .pet && list.selectedRow == 3)
         try await key(126)
         try await key(126)
-        XCTAssertTrue(settings.selectedSection == "语音" && list.selectedRow == 1, "Up arrow selects the previous section")
+        XCTAssertTrue(settings.selectedSection == .voice && list.selectedRow == 1, "Up arrow selects the previous section")
 
         // 6. The swapped pane rejoins the key view loop, so Tab still leaves the list.
         try await tab(until: isFieldEditor(responder()), "the voice speaker field")
@@ -754,7 +755,7 @@ import SwiftUI
         settings.restoreVoice()
 
         // 7. Typing reaches the model fields, including the secure field.
-        settings.selectedSection = "模型"
+        settings.selectedSection = .model
         try await settle()
         try await tab(until: isFieldEditor(responder()), "the Base URL field")
         let baseURL = settings.draft.baseURL
@@ -794,7 +795,7 @@ import SwiftUI
             XCTAssertTrue(settings.snapshot.localModelOnly != localOnly, "Space flips the focused switch")
             try await key(49)
             XCTAssertTrue(settings.snapshot.localModelOnly == localOnly)
-            settings.selectedSection = "精灵"
+            settings.selectedSection = .pet
             try await settle()
             let pet = pets.selectedID
             try await tab(until: (responder()?.frame.width ?? 0) > 150 && (responder()?.frame.height ?? 0) > 150,
@@ -808,11 +809,11 @@ import SwiftUI
         // recognizer never returns, so only a cancel can end it. While it runs the
         // chat cannot start Live Voice.
         // Both pages call the same thing by the same name.
-        settings.selectedSection = "模型"
+        settings.selectedSection = .model
         try await settle()
         let modelTestLabel = findAccessibility("settings.test", in: window.contentView!)?.accessibilityLabel?()
         XCTAssertTrue(modelTestLabel == "测试连接", "The model page names its connection test 测试连接: \(modelTestLabel ?? "nil")")
-        settings.selectedSection = "语音"
+        settings.selectedSection = .voice
         try await settle()
         XCTAssertTrue(settings.canTestVoice, "The saved model credential is the voice test's fallback key")
         let voiceTest = findAccessibility("voiceSettings.test", in: window.contentView!)
@@ -857,7 +858,7 @@ import SwiftUI
         XCTAssertTrue(main.window!.isVisible, "Escape leaves the conversation open")
         main.showSettings()
         try await settle()
-        XCTAssertTrue(settings.selectedSection == "语音" && settings.voiceDraft.speaker == "unsaved-speaker",
+        XCTAssertTrue(settings.selectedSection == .voice && settings.voiceDraft.speaker == "unsaved-speaker",
                      "Reopening preserves the selected section and unsaved edits")
         let focused = window.firstResponder
         main.showSettings()

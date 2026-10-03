@@ -785,7 +785,7 @@ private struct ComposerHeightHost: View {
         try await puppet.answer(.call(name: "bash", arguments: #"{"command":"sleep 60"}"#))
         try await eventually("the command asks for a folder") { agentStore.needsDirectory }
         workspace.provideDirectory(project, conversationID: conversation.id)
-        try await eventually("the command runs") { agentStore.tools.first?.state == "执行中" && !agentStore.needsDirectory }
+        try await eventually("the command runs") { agentStore.tools.first?.state == .running && !agentStore.needsDirectory }
         agentStore.mainDraft = "steer"
         try await refresh()
         XCTAssertTrue(node("conversation.send")?.isAccessibilityEnabled?() == true)
@@ -1977,7 +1977,7 @@ private struct ComposerHeightHost: View {
         try await puppet.answer(.stream(proposal))
         proposal.send("我先检查文件。"); proposal.call("bash", #"{"command":"printf probe"}"#); proposal.finish()
         try await eventually("the call waits for a folder") { store.needsDirectory }
-        XCTAssertTrue(store.tools.map(\.state) == ["待执行"], "\(store.tools.map(\.state))")
+        XCTAssertTrue(store.tools.map(\.state) == [.waiting], "\(store.tools.map(\.state))")
         let waiting = try await texts(of: store, workspace: workspace)
         XCTAssertTrue(waiting.contains { $0.contains("我先检查文件。") }, "Text beside the call stays in the chat: \(waiting)")
         XCTAssertTrue(waiting.contains { $0.contains("待执行 · printf probe") }, "The pending call shows its command: \(waiting)")
@@ -1994,7 +1994,7 @@ private struct ComposerHeightHost: View {
         print("Tool card test project: \(project.path)")
         workspace.provideDirectory(project, conversationID: try XCTUnwrap(workspace.selected?.id))
         try await eventually("the command runs") { !store.needsDirectory && store.tools.first?.directory != nil }
-        XCTAssertTrue(store.tools.first?.state == "执行中" && store.tools.first?.directory == ExecutionService.canonicalPath(project.path),
+        XCTAssertTrue(store.tools.first?.state == .running && store.tools.first?.directory == ExecutionService.canonicalPath(project.path),
                       "\(String(describing: store.tools.first))")
         let running = try await texts(of: store, workspace: workspace)
         XCTAssertTrue(running.contains { $0.contains("执行中 · printf probe") }, "The call shows it is running: \(running)")
@@ -2027,7 +2027,7 @@ private struct ComposerHeightHost: View {
             messages: [user, reply], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
             tools: [], native: ran), source: idleAgent())
         defer { finished.shutdown() }
-        XCTAssertEqual(finished.tools.map(\.state), ["执行结束", "未执行", "执行结果未知", "执行结果未知"],
+        XCTAssertEqual(finished.tools.map(\.state), [.finished, .notExecuted, .unknown, .unknown],
                        "A call restored without a result is unknown")
         let restored = try await texts(of: finished)
         for label in ["执行结束 · cmd-done", "未执行 · cmd-skipped", "执行结果未知 · cmd-cut", "执行结果未知 · cmd-lost"] {
@@ -2263,7 +2263,7 @@ private struct ComposerHeightHost: View {
         // A task that did not finish is not commentary either, so Live Voice keeps its row —
         // and an input that never got its turn keeps the caption saying so.
         var queued = ConversationMessage(role: .user, content: "跑个任务")
-        queued.steering = "已中断"
+        queued.steering = .interrupted
         let archive = TaskStore.Snapshot(
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已中断 · 可继续跟进", status: .interrupted),
             messages: [queued, .init(role: .assistant, content: "只写了一半", status: .interrupted)],
@@ -2449,7 +2449,7 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(abs(waiting.width - settledFrame.width) < 1
                      && abs(waiting.height - settledFrame.height) < 1,
                      "The stand-in and the message it became occupy one rectangle: \(waiting) vs \(settledFrame)")
-        XCTAssertTrue(follow.steering == "待处理" && !visibleText(in: view).contains { $0.contains("待处理") },
+        XCTAssertTrue(follow.steering == .queued && !visibleText(in: view).contains { $0.contains("待处理") },
                      "The follow-up is queued without a caption of its own: \(visibleText(in: view))")
 
         // Stopping the turn takes half-heard words with it: nothing unsent is left in the chat
@@ -2474,7 +2474,7 @@ private struct ComposerHeightHost: View {
                      "The messages it produced are untouched: \(store.messages.map(\.content))")
         // Stop settled the turn, so the follow-up that never got its turn is interrupted, and
         // outside Live Voice its caption shows.
-        XCTAssertTrue(store.messages.last { $0.role == .user }?.steering == "已中断"
+        XCTAssertTrue(store.messages.last { $0.role == .user }?.steering == .interrupted
                      && visibleText(in: view).contains { $0.contains("已中断") },
                      "Outside Live Voice the follow-up's caption is there: \(visibleText(in: view))")
     }

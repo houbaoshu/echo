@@ -30,7 +30,18 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
     var status: Status = .completed
     var timestamp = Date()
     var errorMessage: String?
-    var steering: String?
+    var steering: Steering?
+    /// Where a follow-up sent while a turn runs stands. Accepted input carries no steering at all.
+    /// Raw values are what archives store.
+    enum Steering: String, Codable, Sendable {
+        case queued = "待处理", interrupted = "已中断"
+        var label: String {
+            switch self {
+            case .queued: "待处理"
+            case .interrupted: "已中断"
+            }
+        }
+    }
 
     private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, text, steering }
     init(role: Role, content: String, status: Status = .completed) {
@@ -47,7 +58,9 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         status = try values.decodeIfPresent(Status.self, forKey: .status) ?? .completed
         timestamp = try values.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date(timeIntervalSince1970: 0)
         errorMessage = try values.decodeIfPresent(String.self, forKey: .errorMessage)
-        steering = try values.decodeIfPresent(String.self, forKey: .steering)
+        // Builds before the native engine also wrote 已接收 for accepted input, which today has
+        // no steering; it and any other unrecognised value read as none.
+        steering = try values.decodeIfPresent(String.self, forKey: .steering).flatMap(Steering.init(rawValue:))
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -144,10 +157,44 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     /// For bash, the command; for other tools, what the card shows of the call.
     var command: String
     var result: String?
-    var state = "待执行"
+    var state = State.waiting
     var directory: String?
     /// The tool's name; nil for bash, the only tool before the native engine.
     var tool: String?
+    /// Raw values are what archives store; what a card shows is `label`.
+    enum State: String, Codable, Sendable {
+        case waiting = "待执行", running = "执行中", finished = "执行结束", notExecuted = "未执行", unknown = "执行结果未知"
+        var label: String {
+            switch self {
+            case .waiting: "待执行"
+            case .running: "执行中"
+            case .finished: "执行结束"
+            case .notExecuted: "未执行"
+            case .unknown: "执行结果未知"
+            }
+        }
+    }
+    private enum CodingKeys: String, CodingKey { case callID, entryID, turnID, afterMessageID, command, result, state, directory, tool }
+    init(callID: String, entryID: UInt64, turnID: UInt64, afterMessageID: UUID? = nil, command: String,
+         result: String? = nil, state: State = .waiting, directory: String? = nil, tool: String? = nil) {
+        self.callID = callID; self.entryID = entryID; self.turnID = turnID; self.afterMessageID = afterMessageID
+        self.command = command; self.result = result; self.state = state; self.directory = directory; self.tool = tool
+    }
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        callID = try values.decode(String.self, forKey: .callID)
+        entryID = try values.decode(UInt64.self, forKey: .entryID)
+        turnID = try values.decode(UInt64.self, forKey: .turnID)
+        afterMessageID = try values.decodeIfPresent(UUID.self, forKey: .afterMessageID)
+        command = try values.decode(String.self, forKey: .command)
+        result = try values.decodeIfPresent(String.self, forKey: .result)
+        directory = try values.decodeIfPresent(String.self, forKey: .directory)
+        tool = try values.decodeIfPresent(String.self, forKey: .tool)
+        // A state this build does not know is worked out again from the record, so the
+        // conversation still loads.
+        state = try values.decodeIfPresent(String.self, forKey: .state).flatMap(State.init(rawValue:))
+            ?? result.map(Self.state(forResult:)) ?? .unknown
+    }
 }
 
 @MainActor final class TaskStore: ObservableObject {
@@ -234,8 +281,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         if usesAgent, task?.status == .completed { task?.summary = "已完成" }
         // The engine rebuilds messages and tools from its transcript, closing calls left without a result.
         harness?.restore(snapshot.native)
-        for index in tools.indices where tools[index].result == nil { tools[index].state = "执行结果未知" }
-        for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
+        for index in tools.indices where tools[index].result == nil { tools[index].state = .unknown }
+        for index in messages.indices where messages[index].steering == .queued { messages[index].steering = .interrupted }
         // A turn that ended before any reply has no assistant message. Materialize that
         // terminal state so the conversation itself can show Retry.
         if messages.last?.role == .user, let task, [.failed, .stopped, .interrupted].contains(task.status) {
@@ -475,7 +522,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     private func steerNative(_ text: String) -> Bool {
         guard let harness else { return false }
         var message = ConversationMessage(role: .user, content: text)
-        message.steering = "待处理"; messages.append(message)
+        message.steering = .queued; messages.append(message)
         harness.enqueue(messageID: message.id, text: text)
         needsDirectory = false; waitingForProject = false
         onUserAction?()
@@ -534,7 +581,7 @@ extension TaskStore: AgentHarnessHost {
     func harnessFinish(_ ending: AgentTurnEnding) {
         guard !retired, isGenerating, let runID = task?.runID else { return }
         needsDirectory = false; waitingForProject = false
-        for index in messages.indices where messages[index].steering == "待处理" { messages[index].steering = "已中断" }
+        for index in messages.indices where messages[index].steering == .queued { messages[index].steering = .interrupted }
         let stoppedSummary = harness?.continuable == true ? "已停止 · 可继续处理" : "已停止"
         var event: TaskLifecycleEvent
         switch ending {

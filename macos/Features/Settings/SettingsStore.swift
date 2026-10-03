@@ -175,6 +175,22 @@ struct SettingsSnapshot: Codable {
     }
 }
 
+/// A page of the settings window. Declaration order is the order the sidebar and its keyboard
+/// traversal follow.
+enum SettingsSection: String, CaseIterable, Hashable {
+    /// Raw values only name the section in accessibility identifiers (`settings.section.模型`),
+    /// which must not follow the interface language; what the sidebar shows is `title`.
+    case model = "模型", voice = "语音", planet = "星球", pet = "精灵"
+    var title: String {
+        switch self {
+        case .model: "模型"
+        case .voice: "语音"
+        case .planet: "星球"
+        case .pet: "精灵"
+        }
+    }
+}
+
 protocol ConnectionTesting: Sendable {
     func test(configuration: ModelConfiguration, key: String) async throws
 }
@@ -186,7 +202,7 @@ protocol ConnectionTesting: Sendable {
     private var savedVoiceKey = ""
     private var voiceKeyLoaded = true
     var isVoiceDirty: Bool { voiceDraft != (snapshot.voice ?? VoiceConfiguration()) || voiceAPIKey != savedVoiceKey }
-    @Published var selectedSection = "模型"
+    @Published var selectedSection = SettingsSection.model
     @Published var presentationRevision = 0
     @Published private(set) var selectedProvider: ModelProvider = .openAI
     @Published var draft = ModelConfiguration() { didSet { invalidateTest() } }

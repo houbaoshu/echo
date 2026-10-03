@@ -15,7 +15,7 @@ struct SettingsSidebar: View {
     let sectionFocus: SidebarListFocus
     /// The sidebar is a system source list, so it hands back an optional selection.
     /// Clearing it (⌘-click on the selected row) keeps the current section.
-    private var sectionSelection: Binding<String?> {
+    private var sectionSelection: Binding<SettingsSection?> {
         Binding(get: { settings.selectedSection },
                 set: { if let value = $0 { settings.selectedSection = value } })
     }
@@ -24,12 +24,12 @@ struct SettingsSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             List(selection: sectionSelection) {
-                ForEach(SettingsView.sections, id: \.self) { name in
-                    Label { Text(name) } icon: { icon(name).accessibilityHidden(true) }
+                ForEach(SettingsSection.allCases, id: \.self) { section in
+                    Label { Text(section.title) } icon: { icon(section).accessibilityHidden(true) }
                         // Fill the row so the blank space beside the label selects too.
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
-                        .accessibilityIdentifier("settings.section.\(name)")
+                        .accessibilityIdentifier("settings.section.\(section.rawValue)")
                 }
             }.listStyle(.sidebar).scrollContentBackground(.hidden)
                 .modifier(SidebarListFocusBinding(focus: sectionFocus))
@@ -38,12 +38,12 @@ struct SettingsSidebar: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .foregroundStyle(WorkspaceStyle.primary)
     }
-    @ViewBuilder private func icon(_ name: String) -> some View {
-        switch name {
-        case "模型": Image(systemName: "slider.horizontal.3")
-        case "语音": Image(systemName: "waveform")
-        case "星球": Image("custom.spaceship")
-        default: Image("custom.capsule").frame(width: 20, height: 20)
+    @ViewBuilder private func icon(_ section: SettingsSection) -> some View {
+        switch section {
+        case .model: Image(systemName: "slider.horizontal.3")
+        case .voice: Image(systemName: "waveform")
+        case .planet: Image("custom.spaceship")
+        case .pet: Image("custom.capsule").frame(width: 20, height: 20)
         }
     }
 }
@@ -56,9 +56,7 @@ struct SettingsView: View {
     @ObservedObject var voice: VoiceSessionController
     @ObservedObject var pets: PetCatalog
     @ObservedObject var planets: PlanetStore
-    /// The section order the sidebar and its keyboard traversal both follow.
-    static let sections = ["模型", "语音", "星球", "精灵"]
-    private var section: String { settings.selectedSection }
+    private var section: SettingsSection { settings.selectedSection }
     var body: some View {
         VStack(spacing: 0) {
             // Each section is its own `Form`, so the card grouping, the label column and
@@ -67,15 +65,17 @@ struct SettingsView: View {
             // which is why there is no ScrollView here any more; the page title sits
             // above it and stays put, the way a System Settings pane's title does.
             VStack(alignment: .leading, spacing: 0) {
-                Text(section).font(WorkspaceStyle.pageTitle)
+                Text(section.title).font(WorkspaceStyle.pageTitle)
                     .padding(.horizontal, 32).padding(.top, 28).padding(.bottom, 4)
                 Group {
                     // Closing a retained settings window does not unmount its views.
                     // Reset revealed credentials and field focus on close/reopen while
                     // leaving the store's unsaved form values intact.
-                    if section == "模型" { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
-                    else if section == "语音" { VoiceSettingsView(settings: settings, voice: voice) }
-                    else if section == "星球" { PlanetSettingsView(planets: planets) }
+                    // Keep the if/else chain: written as a switch, a swapped-in pane no longer
+                    // rejoins the key view loop (NativeAppKitEventTests.testSettingsKeyboardAndFocus).
+                    if section == .model { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
+                    else if section == .voice { VoiceSettingsView(settings: settings, voice: voice) }
+                    else if section == .planet { PlanetSettingsView(planets: planets) }
                     else { PetSettingsView(pets: pets, settings: settings) }
                 }.formStyle(.grouped)
             }.frame(maxWidth: 820, alignment: .leading)

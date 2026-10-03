@@ -1253,7 +1253,7 @@ extension EchoVoiceScenarios {
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer }, synthesizer: { synth })
         defer { voice.shutdown() }
         let pets = PetCatalog(settings: settings, builtinRoot: EchoTestResources.resource("pets"))
-        settings.selectedSection = "语音"
+        settings.selectedSection = .voice
         let view = NSHostingView(rootView: SettingsView(settings: settings, voice: voice, pets: pets, planets: PlanetStore())
             .frame(width: 820, height: 640))
         view.frame = NSRect(x: 0, y: 0, width: 820, height: 640)
@@ -1270,9 +1270,9 @@ extension EchoVoiceScenarios {
         await waitUntil { !voice.testing }
         let result = voice.testResult
         check(voice.testSucceeded && result?.contains("识别与合成连接成功") == true, "the page starts from a successful test")
-        settings.selectedSection = "模型"
+        settings.selectedSection = .model
         try await settle()
-        settings.selectedSection = "语音"
+        settings.selectedSection = .voice
         try await settle()
         check(voice.testSucceeded && voice.testResult == result,
               "returning to the voice page keeps the same result and its success styling")

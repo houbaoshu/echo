@@ -29,7 +29,7 @@ extension EchoIntegrationScenarios {
             holder = f.workspace.newConversation(projectID: projectID)
             holder!.store.send("cancel-tool")
             try await waitForAgentVoice("queue holder starts") {
-              holder!.store.tools.first?.state == "执行中"
+              holder!.store.tools.first?.state == .running
             }
           }
         }
@@ -55,7 +55,7 @@ extension EchoIntegrationScenarios {
           #expect(f.voice.status == "等待项目空闲… · 可补充语音", "project queue exposes live voice input")
         default:
           try await waitForAgentVoice("voice command starts") {
-            f.store.tools.first?.state == "执行中"
+            f.store.tools.first?.state == .running
           }
           #expect(
             f.voice.status.contains("正在运行命令") && f.synths.isEmpty,
@@ -106,7 +106,7 @@ extension EchoIntegrationScenarios {
               "voice follow-up lets the running bash finish and preserves its real result")
           } else {
             #expect(
-              f.store.tools.first?.state == "未执行",
+              f.store.tools.first?.state == .notExecuted,
               "voice steering prevents the obsolete tool proposal")
           }
           if scenario == "queue" {

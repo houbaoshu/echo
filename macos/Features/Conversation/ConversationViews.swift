@@ -915,12 +915,12 @@ struct AgentToolView: View {
                             Text(detail).font(.caption).textSelection(.enabled)
                         }
                     } else { Text(result).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
-                } else if tool.state == "执行结果未知" {
+                } else if tool.state == .unknown {
                     Text("中断前可能已产生修改；继续处理时需先检查现场。").font(.caption)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
         } label: {
-            Label("\(tool.state) · \(action)\(tool.command.prefix(90))", systemImage: icon)
+            Label("\(tool.state.label) · \(action)\(tool.command.prefix(90))", systemImage: icon)
                 .font(.caption).lineLimit(2)
         }.padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
@@ -942,7 +942,7 @@ struct AgentToolView: View {
         }
     }
     private func resultSummary(_ json: [String: Any]) -> String {
-        var parts = [tool.state]
+        var parts = [tool.state.label]
         if json["truncated"] as? Bool == true { parts.append("已截断") }
         if let code = json["exit_code"] as? Int { parts.append("退出码 \(code)") }
         if json["timed_out"] as? Bool == true { parts.append("超时") }

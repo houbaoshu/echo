@@ -129,7 +129,7 @@ struct ConversationMessageView: View {
     /// the input never got its turn, which nothing else on screen says, so it stays.
     private var steeringCaption: String? {
         guard let steering = message.steering else { return nil }
-        return showsProgress || steering != "待处理" ? steering : nil
+        return showsProgress || steering != .queued ? steering.label : nil
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

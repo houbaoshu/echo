@@ -36,7 +36,7 @@ extension VoiceTests {
         f.speak("补充一", start: 600); f.speak("补充二", start: 900); f.speak("补充二", start: 900)
         check(f.userTexts == ["开始检查", "先回答问题", "补充一", "补充二"] && f.store.task?.status == .running,
               "ordered voice follow-ups steer without cancellation or duplicate ASR finals")
-        check(f.store.messages.suffix(2).allSatisfy { $0.steering == "待处理" }, "queued follow-ups keep their pending marker")
+        check(f.store.messages.suffix(2).allSatisfy { $0.steering == .queued }, "queued follow-ups keep their pending marker")
         f.voice.toggleMute()
         f.speak("静音不能提交", start: 1200)
         check(f.userTexts.count == 4 && f.audio.capturePaused && f.store.task?.status == .running,
@@ -470,7 +470,7 @@ extension VoiceTests {
         try await waitForAgentVoice("model request") { gate.arrivals == 1 }
         #expect(f.voice.snapshot.recognition == .listening, "Recognition stays open during the model request")
         f.speak("补充一", start: 300)
-        #expect(f.store.task?.runID == run && f.store.messages.last?.steering == "待处理", "Speech steers the same run")
+        #expect(f.store.task?.runID == run && f.store.messages.last?.steering == .queued, "Speech steers the same run")
         gate.open()
         try await waitForAgentVoice("final reply") { !f.store.isGenerating }
         await tick()

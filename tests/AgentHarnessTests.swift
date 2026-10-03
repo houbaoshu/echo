@@ -156,7 +156,7 @@ import Testing
         #expect(chat.assistantTexts.count == 2 && chat.assistantTexts.first == "我先看看。")
         let tool = try #require(chat.store.tools.first)
         #expect(chat.store.tools.count == 1 && tool.tool == "read_file" && tool.command == "./src/main.txt")
-        #expect(tool.state == "执行结束" && tool.afterMessageID == chat.store.messages.first { $0.content == "我先看看。" }?.id)
+        #expect(tool.state == .finished && tool.afterMessageID == chat.store.messages.first { $0.content == "我先看看。" }?.id)
         let output = try #require(tool.result)
         #expect(output == #"{"content":"line one\nline two","start_line":1,"truncated":false}"#)
         #expect(chat.store.responseMessage?.content.hasPrefix("final: {") == true)
@@ -188,7 +188,7 @@ import Testing
             let last = try #require(chat.model.requests.last)
             switch mode {
             case "unknown-tool":
-                #expect(chat.store.tools.count == 3 && chat.store.tools.allSatisfy { $0.state == "未执行" && $0.tool == "python" })
+                #expect(chat.store.tools.count == 3 && chat.store.tools.allSatisfy { $0.state == .notExecuted && $0.tool == "python" })
                 #expect(last.toolOutputs.count == 2 && last.toolOutputs.allSatisfy { $0.contains("unknown tool python") })
             default:
                 #expect(chat.store.tools.isEmpty && last.feedback.count == 2 && last.feedback.allSatisfy { $0.contains("not_executed") })
@@ -210,7 +210,7 @@ import Testing
         #expect(looping.store.send("loop"))
         try await looping.idle()
         #expect(looping.store.task?.summary == "已达到本轮 30 次模型请求限制。" && looping.model.requests.count == 30)
-        #expect(looping.store.tools.count == 30 && looping.store.tools.allSatisfy { $0.state == "执行结束" })
+        #expect(looping.store.tools.count == 30 && looping.store.tools.allSatisfy { $0.state == .finished })
         #expect(looping.store.canRetry && looping.native.turns.last?.outcome == .stepLimit)
 
         let unset = TaskStore(source: AgentHarness(resolveModel: { throw SettingsError("请先在设置中配置并保存默认模型。") }))
@@ -271,7 +271,7 @@ import Testing
         chat.store.stopTask()
         try await chat.idle()
         #expect(chat.store.task?.status == .stopped && chat.store.canRetry)
-        #expect(chat.store.tools.count == 1 && chat.store.tools[0].state == "执行结束" && chat.store.tools[0].result?.contains(".env") == true)
+        #expect(chat.store.tools.count == 1 && chat.store.tools[0].state == .finished && chat.store.tools[0].result?.contains(".env") == true)
         #expect(chat.native.entries.map(Self.kind) == ["prompt", "toolCalls", "toolOutput"], "Only the cut-off reply is dropped")
         gate.open()
 
@@ -326,7 +326,7 @@ import Testing
         #expect(chat.store.send("first"))
         try await Self.wait("generating") { gate.arrivals == 1 }
         #expect(chat.store.send("also this"))
-        #expect(chat.store.messages.last?.steering == "待处理")
+        #expect(chat.store.messages.last?.steering == .queued)
         gate.open()
         try await chat.idle()
         #expect(chat.assistantTexts == ["first answer", "final first+also this"])
@@ -342,10 +342,10 @@ import Testing
         }
         #expect(chat.store.send("read"))
         try await Self.wait("folder requested") { chat.store.needsDirectory }
-        #expect(chat.store.task?.summary == "等待选择项目文件夹" && chat.store.tools.first?.state == "执行中")
+        #expect(chat.store.task?.summary == "等待选择项目文件夹" && chat.store.tools.first?.state == .running)
         #expect(chat.store.send("never mind"))
         try await chat.idle()
-        #expect(!chat.store.needsDirectory && chat.store.tools.first?.state == "未执行")
+        #expect(!chat.store.needsDirectory && chat.store.tools.first?.state == .notExecuted)
         #expect(chat.store.tools.first?.result == AgentToolResult.superseded)
         let last = try #require(chat.model.requests.last)
         #expect(last.kinds == ["instructions", "prompt", "toolCalls", "toolOutput", "prompt"] && last.userTexts == ["read", "never mind"])
@@ -401,7 +401,7 @@ import Testing
         try await Self.wait("folder requested again") { chat.store.needsDirectory }
         chat.store.provideDirectory(nil)
         try await chat.idle()
-        #expect(chat.store.tools.last?.state == "未执行" && chat.store.tools.last?.result == AgentToolResult.directoryDeclined)
+        #expect(chat.store.tools.last?.state == .notExecuted && chat.store.tools.last?.result == AgentToolResult.directoryDeclined)
         #expect(chat.store.task?.status == .completed)
     }
 
@@ -440,7 +440,7 @@ import Testing
         let restored = Chat({ request, emit, _ in try await emit.text("resumed after \(request.toolOutputs.joined())") },
                             project: root, snapshot: dangling)
         #expect(restored.store.task?.status == .interrupted && restored.store.canRetry)
-        #expect(restored.store.tools.first?.state == "执行结果未知")
+        #expect(restored.store.tools.first?.state == .unknown)
         #expect(restored.native.turns.last?.outcome == .interrupted)
         #expect(restored.store.retry())
         try await restored.idle()
@@ -714,7 +714,7 @@ import Testing
     @Test func aCommandRunsAfterItsFolderLeaseAndSave() async throws {
         let root = try AgentHarnessTests.project()
         defer { try? FileManager.default.removeItem(at: root) }
-        let seen = Mutex<(saved: String?, shown: String?)>((nil, nil))
+        let seen = Mutex<(saved: AgentToolRecord.State?, shown: AgentToolRecord.State?)>((nil, nil))
         var chat: Chat!
         let output = #"{"stdout":"built","stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}"#
         let runner = AgentHarnessTests.FakeRunner { _, _, _ in
@@ -730,11 +730,11 @@ import Testing
         let directory = Self.canonical(root)
         #expect(runner.runs.map(\.command) == ["make"] && runner.runs.first?.directory == directory)
         #expect(directory.hasPrefix("/private/"), "The core gets the resolved path, not URL's /var alias")
-        #expect(seen.withLock { $0.saved } == "待执行", "The call was saved before its command started")
-        #expect(seen.withLock { $0.shown } == "执行中")
+        #expect(seen.withLock { $0.saved } == .waiting, "The call was saved before its command started")
+        #expect(seen.withLock { $0.shown } == .running)
         #expect(chat.leases == ["acquire \(directory)", "release"], "The lease is taken before the command and released with the turn")
         let record = try #require(chat.store.tools.first)
-        #expect(record.tool == nil && record.command == "make" && record.state == "执行结束" && record.directory == directory)
+        #expect(record.tool == nil && record.command == "make" && record.state == .finished && record.directory == directory)
         #expect(record.result == output && chat.model.requests.last?.toolOutputs == [output], "The model sees the core's output byte for byte")
         #expect(chat.store.task?.status == .completed)
     }
@@ -747,7 +747,7 @@ import Testing
         let running = Mutex<[Int: [String]]>([:])
         var chat: Chat!
         let runner = AgentHarnessTests.FakeRunner { _, _, index in
-            let ids = await MainActor.run { chat.store.tools.filter { $0.state == "执行中" }.map(\.callID) }
+            let ids = await MainActor.run { chat.store.tools.filter { $0.state == .running }.map(\.callID) }
             running.withLock { $0[index] = ids }
             try? await Task.sleep(for: .milliseconds(40))
             return .completed(#"{"run":\#(index)}"#)
@@ -766,7 +766,7 @@ import Testing
             let record = try #require(chat.store.tools.first { $0.callID == ids.first })
             #expect(record.result == #"{"run":\#(index)}"#, "call \(record.callID) got its own output")
         }
-        #expect(chat.store.tools.map(\.state) == ["执行结束", "执行结束"])
+        #expect(chat.store.tools.map(\.state) == [.finished, .finished])
     }
 
     /// A finished command shows its result before Foundation Models writes the batch's results, and
@@ -786,8 +786,8 @@ import Testing
             } else { try await emit.text("continued") }
         }, project: root, runner: runner)
         #expect(chat.store.send("run"))
-        try await Self.wait("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == "执行中" } }
-        #expect(chat.store.tools.contains { $0.result == #"{"stdout":"first"}"# && $0.state == "执行结束" },
+        try await Self.wait("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == .running } }
+        #expect(chat.store.tools.contains { $0.result == #"{"stdout":"first"}"# && $0.state == .finished },
                 "A finished command shows its result before the batch is written")
         chat.store.stopTask()
         try await chat.idle()
@@ -813,7 +813,7 @@ import Testing
             }
         }, project: root, runner: runner)
         #expect(chat.store.send("run"))
-        try await Self.wait("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == "执行中" } }
+        try await Self.wait("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == .running } }
         chat.store.stopTask()
         try await chat.idle()
         #expect(chat.store.tools.map(\.command) == ["first", "second"])
@@ -839,8 +839,8 @@ import Testing
             } else { try await emit.text("continued") }
         }, project: root, runner: runner)
         #expect(chat.store.send("run"))
-        try await Self.wait("command starts") { chat.store.tools.contains { $0.state == "执行中" } }
-        let runningID = try #require(chat.store.tools.first { $0.state == "执行中" }?.callID)
+        try await Self.wait("command starts") { chat.store.tools.contains { $0.state == .running } }
+        let runningID = try #require(chat.store.tools.first { $0.state == .running }?.callID)
         chat.store.stopTask()
         #expect(chat.store.task?.status == .stopping && !chat.store.canSubmit)
         try await chat.idle()
@@ -848,8 +848,8 @@ import Testing
         #expect(runner.runs.count == 1, "The second identical call never started")
         let running = try #require(chat.store.tools.first { $0.callID == runningID })
         let other = try #require(chat.store.tools.first { $0.callID != runningID })
-        #expect(running.state == "执行结果未知" && running.result == AgentToolResult.cancelledDuring)
-        #expect(other.state == "未执行" && other.result == AgentToolResult.cancelledBefore)
+        #expect(running.state == .unknown && running.result == AgentToolResult.cancelledDuring)
+        #expect(other.state == .notExecuted && other.result == AgentToolResult.cancelledBefore)
         #expect(chat.store.task?.status == .stopped && chat.store.canRetry && chat.leases.last == "release")
     }
 
@@ -867,11 +867,11 @@ import Testing
         chat.store.releaseDirectory = { scheduler.release(owner) }
         #expect(chat.store.send("make"))
         try await Self.wait("queued behind another conversation") { chat.store.waitingForProject }
-        #expect(chat.store.task?.summary == "等待项目空闲…" && chat.store.tools.first?.state == "待执行")
+        #expect(chat.store.task?.summary == "等待项目空闲…" && chat.store.tools.first?.state == .waiting)
         #expect(chat.store.send("never mind"))
         try await chat.idle()
         #expect(!chat.store.waitingForProject && chat.runner.runs.isEmpty)
-        #expect(chat.store.tools.first?.state == "未执行" && chat.store.tools.first?.result == AgentToolResult.superseded)
+        #expect(chat.store.tools.first?.state == .notExecuted && chat.store.tools.first?.result == AgentToolResult.superseded)
         #expect(chat.assistantTexts.last == "after make+never mind")
         scheduler.release(other)
     }
@@ -887,7 +887,7 @@ import Testing
         try await chat.idle()
         #expect(chat.runner.runs.isEmpty && chat.model.requests.count == 1)
         #expect(chat.store.task?.status == .failed && chat.store.notice?.contains("保存失败") == true)
-        #expect(chat.store.tools.first?.state == "未执行")
+        #expect(chat.store.tools.first?.state == .notExecuted)
     }
 
     @Test func aMovedFolderAsksWhereToRun() async throws {
@@ -901,7 +901,7 @@ import Testing
         }, project: root, runner: runner)
         #expect(chat.store.send("make"))
         try await Self.wait("asks for a folder") { chat.store.needsDirectory }
-        #expect(chat.store.tools.first?.state == "待执行", "Nothing ran in the moved folder")
+        #expect(chat.store.tools.first?.state == .waiting, "Nothing ran in the moved folder")
         chat.project = elsewhere
         chat.store.provideDirectory(elsewhere)
         try await chat.idle()
@@ -940,7 +940,7 @@ import Testing
         #expect(chat.store.send("with a blank call"))
         try await chat.idle()
         #expect(runner.runs.map(\.command) == ["first", "third"])
-        #expect(chat.store.tools.first { $0.callID == "c2" }?.state == "未执行" && chat.store.task?.status == .completed)
+        #expect(chat.store.tools.first { $0.callID == "c2" }?.state == .notExecuted && chat.store.task?.status == .completed)
     }
 
     /// A failed save stops the whole turn: no call later in the same batch runs either.
@@ -962,7 +962,7 @@ import Testing
             #expect(chat.store.send("two commands"))
             try await chat.idle()
             #expect(chat.runner.runs.isEmpty, "attempt \(attempt) ran \(chat.runner.runs.map(\.command))")
-            #expect(chat.store.task?.status == .failed && chat.store.tools.allSatisfy { $0.state == "未执行" })
+            #expect(chat.store.task?.status == .failed && chat.store.tools.allSatisfy { $0.state == .notExecuted })
             #expect(chat.model.requests.count == 1)
         }
     }
@@ -986,7 +986,7 @@ import Testing
         })
         #expect(beforeSecond.native!.entries.toolOutputs == [#"{"stdout":"run 0"}"#], "The finished command's result is in the saved model context")
         let restored = Chat({ _, emit, _ in try await emit.text("x") }, project: root, snapshot: beforeSecond)
-        #expect(restored.store.tools.map(\.state) == ["执行结束", "执行结果未知"])
+        #expect(restored.store.tools.map(\.state) == [.finished, .unknown])
         #expect(restored.store.tools.first?.result == #"{"stdout":"run 0"}"#)
     }
 

@@ -401,7 +401,7 @@ import Testing
         #expect(tooled.store.send("读一下"))
         try await tooled.idle()
         #expect(tooled.store.task?.summary == AgentHarness.offlineAfterOutputMessage)
-        #expect(tooled.store.tools.count == 1 && tooled.store.tools.first?.state == "执行结束")
+        #expect(tooled.store.tools.count == 1 && tooled.store.tools.first?.state == .finished)
         #expect(tooled.backend.requests.isEmpty)
         // Continuing while still offline does not hand the half-done turn to the local model.
         #expect(tooled.store.retry())

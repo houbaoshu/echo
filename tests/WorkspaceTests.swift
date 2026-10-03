@@ -613,7 +613,7 @@ import Foundation
 
         // Tool-only archives remain fixed even if no messages were retained.
         var snapshot = second.store.snapshot
-        snapshot.tools = [.init(callID: "tool", entryID: 1, turnID: 1, command: "pwd", result: "done", state: "已完成")]
+        snapshot.tools = [.init(callID: "tool", entryID: 1, turnID: 1, command: "pwd", result: "done", state: .finished)]
         let toolStore = TaskStore(snapshot: snapshot, source: source)
         let toolWorkspace = WorkspaceStore(initialStore: toolStore)
         #expect(!toolWorkspace.canAssociateProject(conversationID: toolWorkspace.selectedID!))
@@ -742,5 +742,80 @@ import Foundation
         check(finished?.state.task?.status == .completed && finished?.state.messages.last?.content == text + "完成",
               "The final response saves promptly after streaming stops")
         check(workspace.persistenceNotice == nil, "Streaming persistence completes without a save error")
+    }
+
+    /// An archive written before steering, tool states and the untitled state had types of their
+    /// own stored them as the text the interface showed. It reads back with the same meaning.
+    @Test(.tags(.fast)) @MainActor static func archiveWithTextStatesReadsBackUnchanged() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-text-state-archive-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let persistence = WorkspacePersistence(url: directory.appendingPathComponent("workspace.json"))
+        let unnamed = UUID(), draftTitled = UUID(), renamed = UUID()
+        func message(_ n: Int, _ role: String, _ steering: String? = nil) -> String {
+            #"{"id":"00000000-0000-0000-0000-00000000000\#(n)","role":"\#(role)","content":"m\#(n)","status":"completed","timestamp":0"#
+                + (steering.map { #","steering":"\#($0)""# } ?? "") + "}"
+        }
+        func tool(_ id: String, _ state: String, _ result: String?) -> String {
+            let result = result.map { #","result":"\#($0.replacingOccurrences(of: "\"", with: "\\\""))""# } ?? ""
+            return #"{"callID":"\#(id)","entryID":1,"turnID":0,"command":"cmd-\#(id)","state":"\#(state)"\#(result)}"#
+        }
+        let task = #"{"id":"00000000-0000-0000-0000-0000000000a1","runID":"00000000-0000-0000-0000-0000000000a2","title":"t","summary":"已完成","status":"completed"}"#
+        func conversation(_ id: UUID, _ title: String, manuallyNamed: Bool, messages: [String], tools: [String]? = nil) -> String {
+            #"{"id":"\#(id)","title":"\#(title)","manuallyNamed":\#(manuallyNamed),"lastUsed":0,"state":{"task":\#(task),"#
+                + #""messages":[\#(messages.joined(separator: ","))],"mainDraft":"","followUpDraft":"","activityDismissed":false,"#
+                + #""activitiesCollapsed":false"# + (tools.map { #","tools":[\#($0.joined(separator: ","))]"# } ?? "") + "}}"
+        }
+        let archive = #"{"version":1,"projects":[],"conversations":["#
+            + conversation(unnamed, "新会话", manuallyNamed: false,
+                           messages: [message(1, "user"), message(2, "user", "待处理"), message(3, "user", "已中断"),
+                                      message(4, "user", "已接收"), message(5, "assistant")],
+                           tools: [tool("cut", "执行结果未知", #"{"status":"unknown"}"#), tool("lost", "执行中", nil),
+                                   tool("queued", "待执行", nil), tool("done", "执行结束", #"{"exit_code":0}"#),
+                                   tool("skipped", "未执行", #"{"status":"not_executed"}"#), tool("old", "已完成", #"{"exit_code":0}"#)]) + ","
+            + conversation(draftTitled, "新对话", manuallyNamed: false, messages: [message(6, "user"), message(7, "assistant")]) + ","
+            + conversation(renamed, "新对话", manuallyNamed: true, messages: [message(8, "user"), message(9, "assistant")])
+            + "]}"
+        try Data(archive.utf8).write(to: persistence.url)
+
+        let source = WorkspaceTestSource()
+        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        defer { workspace.shutdown() }
+        #expect(workspace.persistenceNotice == nil)
+        let first = try #require(workspace.conversation(id: unnamed))
+        // Queued at quit reopens as interrupted; 已接收 is what builds before the native engine
+        // wrote for accepted input, which carries no steering.
+        #expect(first.store.messages.map(\.steering) == [nil, .interrupted, .interrupted, nil, nil])
+        #expect(first.store.messages.map(\.content) == ["m1", "m2", "m3", "m4", "m5"])
+        // A call without a result reopens as unknown, as before; an unrecognised state is worked
+        // out from the result.
+        #expect(first.store.tools.map(\.state) == [.unknown, .unknown, .unknown, .finished, .notExecuted, .finished])
+        #expect(first.store.tools.map(\.state.label) == ["执行结果未知", "执行结果未知", "执行结果未知", "执行结束", "未执行", "执行结束"])
+
+        // Default titles still read as untitled, unless the person chose that name.
+        let second = try #require(workspace.conversation(id: draftTitled))
+        let third = try #require(workspace.conversation(id: renamed))
+        #expect([first, second, third].map(\.title) == ["新会话", "新对话", "新对话"])
+        #expect(first.untitled && second.untitled && !third.untitled)
+        #expect(workspace.send("给第一个会话起名", conversationID: unnamed))
+        source.receive?(.completed("好"))
+        #expect(workspace.send("改名过的会话", conversationID: renamed))
+        source.receive?(.completed("好"))
+        #expect(first.title == "m1" && !first.untitled, "The first user message names an untitled conversation")
+        #expect(third.title == "新对话", "A chosen name stays even when it reads like a default")
+
+        // The archive keeps storing the same text for these states.
+        #expect(workspace.flush())
+        let saved = try String(contentsOf: persistence.url, encoding: .utf8)
+        #expect(saved.contains(#""steering" : "已中断""#), "\(saved)")
+        // Only Agent conversations save tool records, so encode them directly.
+        let tools = String(decoding: try JSONEncoder().encode(first.store.tools), as: UTF8.self)
+        for stored in [#""state":"执行结果未知""#, #""state":"未执行""#, #""state":"执行结束""#] {
+            #expect(tools.contains(stored), "\(stored) in \(tools)")
+        }
+        let reloaded = try #require(persistence.load().0)
+        #expect(reloaded.conversations.first { $0.id == draftTitled }?.untitled == true)
+        #expect(reloaded.conversations.first { $0.id == unnamed }?.untitled == nil)
+        #expect(reloaded.conversations.first { $0.id == renamed }?.untitled == nil)
     }
 }

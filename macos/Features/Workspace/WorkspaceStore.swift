@@ -16,12 +16,14 @@ struct WorkspaceProject: Identifiable, Codable, Equatable {
     fileprivate(set) var projectID: UUID?
     var title: String
     var manuallyNamed: Bool
+    /// Still showing a default title, so its first message names it. `title` is display text only.
+    var untitled: Bool
     var lastUsed: Date
     let store: TaskStore
     init(id: UUID = UUID(), projectID: UUID? = nil, title: String = "新会话",
-         manuallyNamed: Bool = false, lastUsed: Date = Date(), store: TaskStore) {
+         manuallyNamed: Bool = false, untitled: Bool = true, lastUsed: Date = Date(), store: TaskStore) {
         self.id = id; self.projectID = projectID; self.title = title
-        self.manuallyNamed = manuallyNamed; self.lastUsed = lastUsed; self.store = store
+        self.manuallyNamed = manuallyNamed; self.untitled = untitled; self.lastUsed = lastUsed; self.store = store
     }
 }
 
@@ -31,8 +33,13 @@ struct WorkspaceSnapshot: Codable {
         var projectID: UUID?
         var title: String
         var manuallyNamed: Bool
+        /// Written only while the conversation is untitled; builds before it recognised that
+        /// state by the default title, which `isUntitled` still does for their archives.
+        var untitled: Bool? = nil
         var lastUsed: Date
         var state: TaskStore.Snapshot
+        var isUntitled: Bool { untitled ?? (!manuallyNamed && Self.legacyDefaultTitles.contains(title)) }
+        private static let legacyDefaultTitles: Set = ["新会话", "新对话"]
     }
     var version = 1
     var projects: [WorkspaceProject]
@@ -154,18 +161,30 @@ struct WorkspaceSnapshot: Codable {
         }
         return state
     }
-    func load() -> (WorkspaceSnapshot?, String?) {
+    /// Why `load` did not hand back the archive as it is on disk.
+    enum LoadProblem {
+        /// The unreadable archive could not be set aside, so nothing may save over it.
+        case preservationFailed(String)
+        case restoredFromBackup
+        case unreadable
+        var message: String {
+            switch self {
+            case .preservationFailed(let reason): "无法备份损坏的会话文件：\(reason)"
+            case .restoredFromBackup: "会话文件无法读取，已从备份恢复；原文件已保留。"
+            case .unreadable: "会话文件无法读取，原文件已保留。已打开空白工作区。"
+            }
+        }
+    }
+    func load() -> (WorkspaceSnapshot?, LoadProblem?) {
         guard FileManager.default.fileExists(atPath: url.path) else { return (nil, nil) }
         do { return (try decode(url), nil) }
         catch {
             // Preserve the unreadable archive before any subsequent save replaces it.
             let preserved = url.deletingPathExtension().appendingPathExtension("corrupt-\(UUID().uuidString).json")
             do { try FileManager.default.copyItem(at: url, to: preserved) }
-            catch { return (nil, "无法备份损坏的会话文件：\(error.localizedDescription)") }
-            if let backup = try? decode(backupURL) {
-                return (backup, "会话文件无法读取，已从备份恢复；原文件已保留。")
-            }
-            return (nil, "会话文件无法读取，原文件已保留。已打开空白工作区。")
+            catch { return (nil, .preservationFailed(error.localizedDescription)) }
+            if let backup = try? decode(backupURL) { return (backup, .restoredFromBackup) }
+            return (nil, .unreadable)
         }
     }
     func save(_ snapshot: WorkspaceSnapshot) throws {
@@ -324,19 +343,19 @@ struct WorkspaceSnapshot: Codable {
             if initialStore.task != nil { petActivityIDs = [conversation.id] }
             bind(conversation)
         } else if let persistence {
-            let (snapshot, notice) = persistence.load()
-            persistenceNotice = notice
+            let (snapshot, problem) = persistence.load()
+            persistenceNotice = problem?.message
             // A failed preservation must never be followed by overwriting the original archive.
-            saveBlocked = notice?.hasPrefix("无法备份损坏") == true
+            if case .preservationFailed = problem { saveBlocked = true }
             if let snapshot {
-                if notice == nil {
+                if problem == nil {
                     persistence.pruneSessions(keeping: Set((snapshot.conversations + (snapshot.drafts ?? [])).map(\.id)))
                 }
                 projects = snapshot.projects
                 conversations = snapshot.conversations.map { saved in
                     WorkspaceConversation(id: saved.id,
                         projectID: projects.contains(where: { project in project.id == saved.projectID }) ? saved.projectID : nil,
-                        title: saved.title, manuallyNamed: saved.manuallyNamed, lastUsed: saved.lastUsed,
+                        title: saved.title, manuallyNamed: saved.manuallyNamed, untitled: saved.isUntitled, lastUsed: saved.lastUsed,
                         store: restoredStore(saved, persistence: persistence))
                 }
                 drafts = (snapshot.drafts ?? []).map { saved in
@@ -526,7 +545,7 @@ struct WorkspaceSnapshot: Codable {
     var snapshot: WorkspaceSnapshot {
         WorkspaceSnapshot(projects: projects, conversations: conversations.map {
             .init(id: $0.id, projectID: $0.projectID, title: $0.title, manuallyNamed: $0.manuallyNamed,
-                  lastUsed: pendingRecency[$0.id] ?? $0.lastUsed, state: $0.store.snapshot)
+                  untitled: $0.untitled ? true : nil, lastUsed: pendingRecency[$0.id] ?? $0.lastUsed, state: $0.store.snapshot)
         }, selectedID: selectedID, activityID: activityID, drafts: drafts.map {
             .init(id: $0.id, projectID: $0.projectID, title: $0.title, manuallyNamed: false,
                   lastUsed: $0.lastUsed, state: $0.store.snapshot)
@@ -617,8 +636,10 @@ struct WorkspaceSnapshot: Codable {
         guard let conversation = conversations.first(where: { $0.id == id }) else { return }
         objectWillChange.send()
         pendingRecency[id] = usedAt
-        if !conversation.manuallyNamed, conversation.title == "新会话" || conversation.title == "新对话" {
-            conversation.title = String((conversation.store.messages.first(where: { $0.role == .user })?.content ?? "新会话").prefix(60))
+        if conversation.untitled {
+            if let first = conversation.store.messages.first(where: { $0.role == .user }) {
+                conversation.title = String(first.content.prefix(60)); conversation.untitled = false
+            } else { conversation.title = "新会话" }
         }
         activityID = id
         scheduleSave()
@@ -648,7 +669,7 @@ struct WorkspaceSnapshot: Codable {
     func renameConversation(_ id: UUID, to title: String) {
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, let conversation = conversations.first(where: { $0.id == id }) else { return }
-        objectWillChange.send(); conversation.title = name; conversation.manuallyNamed = true
+        objectWillChange.send(); conversation.title = name; conversation.manuallyNamed = true; conversation.untitled = false
         scheduleSave()
     }
     func deleteConversation(_ id: UUID) {

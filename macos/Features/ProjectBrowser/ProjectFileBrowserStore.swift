@@ -213,22 +213,28 @@ enum ProjectFileIO {
         default: return "读取失败：\(String(cString: strerror(code)))"
         }
     }
-    private struct ReadError: Error { let message: String }
+    private struct ReadError: Error {
+        let message: String
+        /// The errno behind `message`, when there is one.
+        var code: Int32?
+        init(message: String) { self.message = message }
+        init(code: Int32) { message = errorMessage(code); self.code = code }
+    }
     private static func descriptor(root: String, path: String, directory: Bool) throws -> Int32 {
         do { return try ProjectPath.open(root: root, path: path, directory: directory) }
         catch .outsideProject { throw ReadError(message: "路径不属于当前项目。") }
-        catch .system(let code) { throw ReadError(message: errorMessage(code)) }
+        catch .system(let code) { throw ReadError(code: code) }
     }
     static func directory(root: String, path: String) -> ProjectDirectoryState {
         do {
             let fd = try descriptor(root: root, path: path, directory: true)
-            guard let dir = fdopendir(fd) else { let code = errno; close(fd); throw ReadError(message: errorMessage(code)) }
+            guard let dir = fdopendir(fd) else { let code = errno; close(fd); throw ReadError(code: code) }
             defer { closedir(dir) }
             var entries: [ProjectFileEntry] = []
             while true {
                 errno = 0
                 guard let entry = readdir(dir) else {
-                    if errno != 0 { throw ReadError(message: errorMessage(errno)) }
+                    if errno != 0 { throw ReadError(code: errno) }
                     break
                 }
                 let name = withUnsafePointer(to: &entry.pointee.d_name) {
@@ -238,7 +244,7 @@ enum ProjectFileIO {
                 var info = stat()
                 guard fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {
                     if errno == ENOENT { continue }
-                    throw ReadError(message: errorMessage(errno))
+                    throw ReadError(code: errno)
                 }
                 if info.st_flags & UInt32(UF_HIDDEN) != 0 { continue }
                 let kind: ProjectFileEntry.Kind
@@ -263,7 +269,7 @@ enum ProjectFileIO {
             let fd = try descriptor(root: root, path: path, directory: false)
             defer { close(fd) }
             var info = stat()
-            guard fstat(fd, &info) == 0 else { throw ReadError(message: errorMessage(errno)) }
+            guard fstat(fd, &info) == 0 else { throw ReadError(code: errno) }
             guard info.st_mode & S_IFMT == S_IFREG else { return .information("仅支持预览普通文本和图片文件。") }
             let ext = (path as NSString).pathExtension.lowercased()
             let isImage = UTType(filenameExtension: ext)?.conforms(to: .image) == true
@@ -279,7 +285,7 @@ enum ProjectFileIO {
                 }
                 if count < 0 {
                     if errno == EINTR { continue }
-                    throw ReadError(message: errorMessage(errno))
+                    throw ReadError(code: errno)
                 }
                 if count == 0 { break }
                 total += count
@@ -309,7 +315,8 @@ enum ProjectFileIO {
             }) else { return .information("二进制文件或不支持的文本编码。支持 UTF-8 和带 BOM 的 UTF-16。") }
             return .text(text)
         } catch let error as ReadError {
-            if error.message.hasPrefix("符号链接") { return .information(error.message) }
+            // A link is not followed on purpose, so it is information rather than a failure.
+            if error.code == ELOOP { return .information(error.message) }
             return .failed(error.message)
         } catch { return .failed(error.localizedDescription) }
     }

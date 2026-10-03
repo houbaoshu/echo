@@ -89,11 +89,11 @@ import Testing
         let encodedText = String(decoding: try JSONEncoder().encode(earliest), as: UTF8.self)
         #expect(!encodedText.contains("\"text\"") && encodedText.contains("\"content\""))
         let queuedSteering = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000005","role":"user","content":"follow up","steering":"待处理"}"#.utf8))
-        #expect(queuedSteering.steering == "待处理", "A queued follow-up keeps its caption")
+        #expect(queuedSteering.steering == .queued, "A queued follow-up keeps its caption")
         var queuedArchive = archiveSource
         queuedArchive.messages = [queuedSteering]
         let reopened = TaskStore(snapshot: queuedArchive, source: nil)
-        #expect(reopened.messages.first?.steering == "已中断", "A follow-up left queued at quit reopens as interrupted")
+        #expect(reopened.messages.first?.steering == .interrupted, "A follow-up left queued at quit reopens as interrupted")
         reopened.shutdown()
         var archive = archiveSource
         archive.messages = [seed.messages[0]]
