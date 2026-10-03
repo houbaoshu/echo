@@ -9,6 +9,7 @@
   ],
   "defaultOptions": {
     "codeCoverage": false,
+    "language": "zh-Hans",
     "environmentVariableEntries": [
       {
         "key": "ECHO_TEST_MODE",

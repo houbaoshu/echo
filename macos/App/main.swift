@@ -121,26 +121,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Standard macOS menu bar order: application, File, Edit, View, app-specific, Window, Help.
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu(title: "Echo")
-        applicationMenu.addItem(withTitle: "关于 Echo",
+        applicationMenu.addItem(withTitle: String(localized: "关于 Echo"),
                                 action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         applicationMenu.addItem(.separator())
-        applicationMenu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        applicationMenu.addItem(withTitle: String(localized: "设置…"), action: #selector(showSettings), keyEquivalent: ",").target = self
         applicationMenu.addItem(.separator())
-        let servicesMenu = NSMenu(title: "服务")
-        applicationMenu.addItem(withTitle: "服务", action: nil, keyEquivalent: "").submenu = servicesMenu
+        let servicesMenu = NSMenu(title: String(localized: "服务"))
+        applicationMenu.addItem(withTitle: String(localized: "服务"), action: nil, keyEquivalent: "").submenu = servicesMenu
         NSApp.servicesMenu = servicesMenu
         applicationMenu.addItem(.separator())
         // No Hide items. Hiding an app hides every window it owns, and the pet is one of them,
         // whether Echo is an accessory or, with a window open, a regular app.
-        applicationMenu.addItem(withTitle: "退出 Echo", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        applicationMenu.addItem(withTitle: String(localized: "退出 Echo"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         applicationItem.submenu = applicationMenu
         menu.addItem(applicationItem)
-        let fileMenu = NSMenu(title: "文件")
+        let fileMenu = NSMenu(title: String(localized: "文件"))
         let editMenu = makeEditMenu()
-        let viewMenu = NSMenu(title: "显示")
-        let conversationMenu = NSMenu(title: "对话")
-        let windowMenu = NSMenu(title: "窗口")
-        let helpMenu = NSMenu(title: "帮助")
+        let viewMenu = NSMenu(title: String(localized: "显示"))
+        let conversationMenu = NSMenu(title: String(localized: "对话"))
+        let windowMenu = NSMenu(title: String(localized: "窗口"))
+        let helpMenu = NSMenu(title: String(localized: "帮助"))
         for submenu in [fileMenu, editMenu, viewMenu, conversationMenu, windowMenu, helpMenu] {
             let item = NSMenuItem(); item.submenu = submenu; menu.addItem(item)
         }
@@ -148,16 +148,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⌘K, not ⌘F: this opens a palette that switches between chats, which is what ⌘K
         // means across editors. ⌘F on macOS means "find inside what I am looking at", so it
         // stays free for a find in the open conversation.
-        let quickOpen = fileMenu.addItem(withTitle: "快速打开会话…", action: #selector(search), keyEquivalent: "k")
+        let quickOpen = fileMenu.addItem(withTitle: String(localized: "快速打开会话…"), action: #selector(search), keyEquivalent: "k")
         quickOpen.keyEquivalentModifierMask = [.command]
         quickOpen.target = self
-        fileMenu.addItem(withTitle: "添加项目文件夹…", action: #selector(addProject), keyEquivalent: "").target = self
+        fileMenu.addItem(withTitle: String(localized: "添加项目文件夹…"), action: #selector(addProject), keyEquivalent: "").target = self
         fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        fileMenu.addItem(withTitle: String(localized: "关闭窗口"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: String(localized: "最小化"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: String(localized: "缩放"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
-        windowMenu.addItem(withTitle: "前置全部窗口", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        windowMenu.addItem(withTitle: String(localized: "前置全部窗口"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         // AppKit appends its own separator and window list here. Borderless pet panels stay out.
         NSApp.windowsMenu = windowMenu
         NSApp.helpMenu = helpMenu
@@ -166,17 +166,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func makeEditMenu() -> NSMenu {
-        let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(withTitle: "撤销", action: NSSelectorFromString("undo:"), keyEquivalent: "z")
-        let redo = editMenu.addItem(withTitle: "重做", action: NSSelectorFromString("redo:"), keyEquivalent: "z")
+        let editMenu = NSMenu(title: String(localized: "编辑"))
+        editMenu.addItem(withTitle: String(localized: "撤销"), action: NSSelectorFromString("undo:"), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: String(localized: "重做"), action: NSSelectorFromString("redo:"), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(.separator())
-        for (title, selector, key) in [("剪切", "cut:", "x"), ("复制", "copy:", "c"),
-                                       ("粘贴", "paste:", "v"), ("删除", "delete:", ""),
-                                       ("全选", "selectAll:", "a")] {
+        for (title, selector, key) in [(String(localized: "剪切"), "cut:", "x"),
+                                       (String(localized: "复制"), "copy:", "c"),
+                                       (String(localized: "粘贴"), "paste:", "v"),
+                                       (String(localized: "删除"), "delete:", ""),
+                                       (String(localized: "全选"), "selectAll:", "a")] {
             editMenu.addItem(withTitle: title, action: NSSelectorFromString(selector), keyEquivalent: key)
         }
-        editMenu.addItem(withTitle: "查找", action: nil, keyEquivalent: "").submenu = Self.makeFindMenu()
+        editMenu.addItem(withTitle: String(localized: "查找"), action: nil, keyEquivalent: "").submenu = Self.makeFindMenu()
         return editMenu
     }
 
@@ -184,19 +186,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the find commands enable only in a text view with `usesFindBar` (the file preview),
     /// and the composer, which has neither find bar nor find panel, leaves them disabled.
     static func makeFindMenu() -> NSMenu {
-        let findMenu = NSMenu(title: "查找")
+        let findMenu = NSMenu(title: String(localized: "查找"))
         let finderAction = #selector(NSResponder.performTextFinderAction(_:))
         for (title, action, key, modifiers) in [
-            ("查找…", NSTextFinder.Action.showFindInterface, "f", NSEvent.ModifierFlags.command),
-            ("查找下一个", .nextMatch, "g", .command),
-            ("查找上一个", .previousMatch, "g", [.command, .shift]),
-            ("用所选内容查找", .setSearchString, "e", .command),
+            (String(localized: "查找…"), NSTextFinder.Action.showFindInterface, "f", NSEvent.ModifierFlags.command),
+            (String(localized: "查找下一个"), .nextMatch, "g", .command),
+            (String(localized: "查找上一个"), .previousMatch, "g", [.command, .shift]),
+            (String(localized: "用所选内容查找"), .setSearchString, "e", .command),
         ] {
             let item = findMenu.addItem(withTitle: title, action: finderAction, keyEquivalent: key)
             item.keyEquivalentModifierMask = modifiers
             item.tag = action.rawValue
         }
-        findMenu.addItem(withTitle: "跳到所选内容", action: #selector(NSTextView.centerSelectionInVisibleArea(_:)),
+        findMenu.addItem(withTitle: String(localized: "跳到所选内容"), action: #selector(NSTextView.centerSelectionInVisibleArea(_:)),
                          keyEquivalent: "j")
         return findMenu
     }

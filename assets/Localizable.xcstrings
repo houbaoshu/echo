@@ -1,0 +1,750 @@
+{
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "" : {
+
+    },
+    "%@  %@  ·  %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@  %2$@  ·  %3$@"
+          }
+        }
+      }
+    },
+    "%@ · %@%@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@%3$@"
+          }
+        }
+      }
+    },
+    "%@ 的 Live Voice" : {
+
+    },
+    "%@，%@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@，%2$@"
+          }
+        }
+      }
+    },
+    "%lld" : {
+
+    },
+    "%lld 个已完成任务未查看" : {
+
+    },
+    "API Key" : {
+
+    },
+    "Base URL" : {
+
+    },
+    "Echo" : {
+
+    },
+    "Live Voice" : {
+
+    },
+    "Provider" : {
+
+    },
+    "https://api.openai.com/v1" : {
+
+    },
+    "不可用" : {
+
+    },
+    "中断前可能已产生修改；继续处理时需先检查现场。" : {
+
+    },
+    "会话记录" : {
+
+    },
+    "保存" : {
+
+    },
+    "停止回复" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop Responding"
+          }
+        }
+      }
+    },
+    "全选" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select All"
+          }
+        }
+      }
+    },
+    "关于 Echo" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About Echo"
+          }
+        }
+      }
+    },
+    "关联项目" : {
+
+    },
+    "关闭保存提示" : {
+
+    },
+    "关闭窗口" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close Window"
+          }
+        }
+      }
+    },
+    "关闭语音提示" : {
+
+    },
+    "关闭转写提示" : {
+
+    },
+    "关闭麦克风" : {
+
+    },
+    "切换 Live Voice" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Toggle Live Voice"
+          }
+        }
+      }
+    },
+    "切换普通听写" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Toggle Dictation"
+          }
+        }
+      }
+    },
+    "删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete"
+          }
+        }
+      }
+    },
+    "删除会话…" : {
+
+    },
+    "前置全部窗口" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bring All to Front"
+          }
+        }
+      }
+    },
+    "剪切" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cut"
+          }
+        }
+      }
+    },
+    "协议" : {
+
+    },
+    "发送" : {
+
+    },
+    "取消" : {
+
+    },
+    "取消关联项目" : {
+
+    },
+    "取消执行" : {
+
+    },
+    "取消跟进" : {
+
+    },
+    "取消转写" : {
+
+    },
+    "可选择项目" : {
+
+    },
+    "回到最新消息" : {
+
+    },
+    "在 Finder 中显示" : {
+
+    },
+    "复制" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy"
+          }
+        }
+      }
+    },
+    "复制代码" : {
+
+    },
+    "复制日志" : {
+
+    },
+    "对话" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversation"
+          }
+        }
+      }
+    },
+    "导入模型…" : {
+
+    },
+    "导入精灵…" : {
+
+    },
+    "展开预览" : {
+
+    },
+    "已关闭" : {
+
+    },
+    "已复制" : {
+
+    },
+    "已展开" : {
+
+    },
+    "已展开聊天" : {
+
+    },
+    "已打开" : {
+
+    },
+    "已折叠" : {
+
+    },
+    "已收起" : {
+
+    },
+    "已收起聊天" : {
+
+    },
+    "帮助" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Help"
+          }
+        }
+      }
+    },
+    "开启扬声器" : {
+
+    },
+    "开启麦克风" : {
+
+    },
+    "开始新聊天" : {
+
+    },
+    "录音已暂停" : {
+
+    },
+    "录音音量" : {
+
+    },
+    "快速打开会话…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Quickly…"
+          }
+        }
+      }
+    },
+    "我的星球" : {
+
+    },
+    "我的精灵" : {
+
+    },
+    "打开或关闭聊天搜索" : {
+
+    },
+    "拷贝路径" : {
+
+    },
+    "搜索聊天" : {
+
+    },
+    "搜索聊天 ⌘K" : {
+
+    },
+    "搜索项目名称或路径" : {
+
+    },
+    "撤销" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undo"
+          }
+        }
+      }
+    },
+    "收起预览" : {
+
+    },
+    "文件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "File"
+          }
+        }
+      }
+    },
+    "新对话" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Conversation"
+          }
+        }
+      }
+    },
+    "新对话 ⌘N" : {
+
+    },
+    "显示" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View"
+          }
+        }
+      }
+    },
+    "显示 API Key" : {
+
+    },
+    "显示检查器" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Inspector"
+          }
+        }
+      }
+    },
+    "显示边栏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Sidebar"
+          }
+        }
+      }
+    },
+    "最小化" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Minimize"
+          }
+        }
+      }
+    },
+    "最近" : {
+
+    },
+    "服务" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Services"
+          }
+        }
+      }
+    },
+    "本地模型" : {
+
+    },
+    "查找" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find"
+          }
+        }
+      }
+    },
+    "查找…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find…"
+          }
+        }
+      }
+    },
+    "查找上一个" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find Previous"
+          }
+        }
+      }
+    },
+    "查找下一个" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find Next"
+          }
+        }
+      }
+    },
+    "查看聊天" : {
+
+    },
+    "桌宠快捷控件" : {
+
+    },
+    "模型" : {
+
+    },
+    "模型不完整：%@" : {
+
+    },
+    "正在回复" : {
+
+    },
+    "正在测试…" : {
+
+    },
+    "没有匹配的会话" : {
+
+    },
+    "测试连接" : {
+
+    },
+    "添加项目文件夹…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Project Folder…"
+          }
+        }
+      }
+    },
+    "清除 API Key" : {
+
+    },
+    "清除 API Key，保存后生效" : {
+
+    },
+    "点击展开或收起项目聊天" : {
+
+    },
+    "用所选内容查找" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use Selection for Find"
+          }
+        }
+      }
+    },
+    "移除项目，保留会话" : {
+
+    },
+    "空文件" : {
+
+    },
+    "空文件夹" : {
+
+    },
+    "窗口" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Window"
+          }
+        }
+      }
+    },
+    "粘贴" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste"
+          }
+        }
+      }
+    },
+    "结束录音" : {
+
+    },
+    "继续处理" : {
+
+    },
+    "继续跟进" : {
+
+    },
+    "编辑" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit"
+          }
+        }
+      }
+    },
+    "缩放" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zoom"
+          }
+        }
+      }
+    },
+    "聊天" : {
+
+    },
+    "设置" : {
+
+    },
+    "设置 ⌘," : {
+
+    },
+    "设置…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings…"
+          }
+        }
+      }
+    },
+    "设置分区" : {
+
+    },
+    "诊断日志" : {
+
+    },
+    "试听音色" : {
+
+    },
+    "语音转文字" : {
+
+    },
+    "跟进" : {
+
+    },
+    "跳到所选内容" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jump to Selection"
+          }
+        }
+      }
+    },
+    "输入 API Key" : {
+
+    },
+    "输入 Model ID" : {
+
+    },
+    "输入音色 ID" : {
+
+    },
+    "返回目录" : {
+
+    },
+    "返回语音会话" : {
+
+    },
+    "还原修改" : {
+
+    },
+    "进入全屏幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter Full Screen"
+          }
+        }
+      }
+    },
+    "退出 Echo" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quit Echo"
+          }
+        }
+      }
+    },
+    "退出全屏幕" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exit Full Screen"
+          }
+        }
+      }
+    },
+    "选择文件夹…" : {
+
+    },
+    "选择项目文件夹" : {
+
+    },
+    "重做" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Redo"
+          }
+        }
+      }
+    },
+    "重命名" : {
+
+    },
+    "重新定位文件夹…" : {
+
+    },
+    "重试" : {
+
+    },
+    "重试保存" : {
+
+    },
+    "随心输入" : {
+
+    },
+    "隐藏 API Key" : {
+
+    },
+    "隐藏检查器" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Inspector"
+          }
+        }
+      }
+    },
+    "隐藏边栏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Sidebar"
+          }
+        }
+      }
+    },
+    "需要项目文件夹才能继续" : {
+
+    },
+    "静音扬声器" : {
+
+    },
+    "音色 ID" : {
+
+    },
+    "项目" : {
+
+    },
+    "项目不可用" : {
+
+    },
+    "验证当前协议的工具调用能力，不执行命令，也不自动保存" : {
+
+    },
+    "验证语音识别与合成连接，使用静音样本，不录音" : {
+
+    },
+    "麦克风正在被占用" : {
+
+    },
+    "默认模型" : {
+
+    }
+  },
+  "version" : "1.0"
+}

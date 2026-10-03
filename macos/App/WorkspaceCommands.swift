@@ -17,16 +17,16 @@ import AppKit
             item.keyEquivalentModifierMask = modifiers
             item.target = self
         }
-        add(fileMenu, "新对话", #selector(newConversation), "n", .command)
+        add(fileMenu, String(localized: "新对话"), #selector(newConversation), "n", .command)
         // Titled by validateMenuItem from the column's state. These keep their own target
-        // rather than leaving the selectors to AppKit, which would retitle them in English.
-        add(viewMenu, "显示边栏", #selector(toggleSidebar), "s", [.control, .command])
-        add(viewMenu, "显示检查器", #selector(toggleInspector), "i", [.control, .command])
+        // rather than leaving the selectors to AppKit, which would retitle them in its own words.
+        add(viewMenu, String(localized: "显示边栏"), #selector(toggleSidebar), "s", [.control, .command])
+        add(viewMenu, String(localized: "显示检查器"), #selector(toggleInspector), "i", [.control, .command])
         viewMenu.addItem(.separator())
-        add(viewMenu, "进入全屏幕", #selector(toggleFullScreen), "f", [.control, .command])
-        add(conversationMenu, "切换普通听写", #selector(toggleDictation), "d", [.control, .shift])
-        add(conversationMenu, "切换 Live Voice", #selector(toggleVoice), "v", [.control, .shift])
-        add(conversationMenu, "停止回复", #selector(stop), ".", .command)
+        add(viewMenu, String(localized: "进入全屏幕"), #selector(toggleFullScreen), "f", [.control, .command])
+        add(conversationMenu, String(localized: "切换普通听写"), #selector(toggleDictation), "d", [.control, .shift])
+        add(conversationMenu, String(localized: "切换 Live Voice"), #selector(toggleVoice), "v", [.control, .shift])
+        add(conversationMenu, String(localized: "停止回复"), #selector(stop), ".", .command)
     }
 
     private var canStop: Bool {
@@ -41,17 +41,20 @@ import AppKit
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(newConversation) { return true }
         if menuItem.action == #selector(toggleFullScreen) {
-            // The window's own validation decides, and also retitles the item in the
-            // bundle's language, which is English. Every window does that, panels included.
-            guard let window = fullScreenWindow else { menuItem.title = "进入全屏幕"; return false }
+            // The window's own validation decides, and also retitles the item in AppKit's
+            // own words. Every window does that, panels included.
+            guard let window = fullScreenWindow else { menuItem.title = String(localized: "进入全屏幕"); return false }
             let enabled = window.validateUserInterfaceItem(menuItem)
-            menuItem.title = window.styleMask.contains(.fullScreen) ? "退出全屏幕" : "进入全屏幕"
+            menuItem.title = window.styleMask.contains(.fullScreen)
+                ? String(localized: "退出全屏幕") : String(localized: "进入全屏幕")
             return enabled
         }
         guard let main = controller() else { return false }
         switch menuItem.action {
-        case #selector(toggleSidebar): menuItem.title = main.sidebarItem.isCollapsed ? "显示边栏" : "隐藏边栏"
-        case #selector(toggleInspector): menuItem.title = main.inspectorItem.isCollapsed ? "显示检查器" : "隐藏检查器"
+        case #selector(toggleSidebar):
+            menuItem.title = main.sidebarItem.isCollapsed ? String(localized: "显示边栏") : String(localized: "隐藏边栏")
+        case #selector(toggleInspector):
+            menuItem.title = main.inspectorItem.isCollapsed ? String(localized: "显示检查器") : String(localized: "隐藏检查器")
         default: break
         }
         guard NSApp.keyWindow === main.window, main.window?.attachedSheet == nil else { return false }
