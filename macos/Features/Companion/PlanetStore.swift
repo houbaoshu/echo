@@ -96,7 +96,7 @@ struct PlanetEntry: Identifiable {
     func select(_ id: String) {
         guard id != selectedID else { return }
         guard let directory = directory(for: id) else {
-            notice = "所选星球不存在，请重新选择。"
+            notice = String(localized: "所选星球不存在，请重新选择。")
             return
         }
         do {
@@ -118,7 +118,7 @@ struct PlanetEntry: Identifiable {
             // itself. Without this the new planet sits in idle until Live Voice happens to move.
             apply(current, force: true)
         } catch {
-            notice = "切换失败，保留当前星球：\(error.localizedDescription)"
+            notice = String(localized: "切换失败，保留当前星球：\(error.localizedDescription)")
         }
     }
 
@@ -131,7 +131,7 @@ struct PlanetEntry: Identifiable {
             if let entry = entry(at: directory) { loaded.append(entry) } else { skipped = true }
         }
         entries = loaded
-        if skipped { notice = "部分星球素材无法读取，已跳过。" }
+        if skipped { notice = String(localized: "部分星球素材无法读取，已跳过。") }
     }
 
     // MARK: - Loading
@@ -154,7 +154,7 @@ struct PlanetEntry: Identifiable {
         } catch {
             // Every later voice state change retries the load; one line per retry shows if that happens.
             VoiceDiagnostics.shared.mark("PlanetStore.load 失败，下一次状态变化会重试")
-            notice = "星球素材无法加载：\(error.localizedDescription)"
+            notice = String(localized: "星球素材无法加载：\(error.localizedDescription)")
             return nil
         }
     }
@@ -163,7 +163,7 @@ struct PlanetEntry: Identifiable {
         let store = try PetStore(directory: directory)
         store.onFailure = { [weak self] error in
             MainActor.assumeIsolated {
-                self?.notice = "星球动画已停止：\(error.localizedDescription)"
+                self?.notice = String(localized: "星球动画已停止：\(error.localizedDescription)")
                 self?.unload()
             }
         }
@@ -176,7 +176,7 @@ struct PlanetEntry: Identifiable {
         if let directory = directory(for: selectedID) { return directory }
         guard let root, let first = directories(in: root).first else { return nil }
         selectedID = "builtin:\(first.lastPathComponent)"
-        notice = "上次选择的星球无法加载，已换成另一颗。"
+        notice = String(localized: "上次选择的星球无法加载，已换成另一颗。")
         try? settings?.selectPlanet(selectedID)
         return first
     }

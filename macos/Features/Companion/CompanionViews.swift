@@ -135,14 +135,16 @@ struct ActivityCapsule: View {
     }
     private var statusLabel: String {
         switch store.task?.status {
-        case .completed: "已完成"
-        case .failed: "失败"
-        case .stopped: "已停止"
-        case .interrupted: "已中断"
-        case .stopping: "正在停止"
-        default: "运行中"
+        case .completed: String(localized: "已完成")
+        case .failed: String(localized: "失败")
+        case .stopped: String(localized: "已停止")
+        case .interrupted: String(localized: "已中断")
+        case .stopping: String(localized: "正在停止")
+        default: String(localized: "运行中")
         }
     }
+    /// Without a title of its own the card reads like an untitled chat in the main window.
+    private var cardTitle: String { title ?? store.task?.title ?? WorkspaceConversation.untitledTitle }
     private var summary: String {
         let source = store.cardSummary
         let plain = (try? AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
@@ -151,7 +153,7 @@ struct ActivityCapsule: View {
     }
     private var summaryLabel: Text {
         let icon = Text(Image(systemName: statusSymbol)).foregroundColor(statusColor)
-        let heading = Text(title ?? store.task?.title ?? "新会话").fontWeight(.semibold).foregroundColor(.primary)
+        let heading = Text(cardTitle).fontWeight(.semibold).foregroundColor(.primary)
         let reply = Text(summary).foregroundColor(.secondary)
         return Text("\(icon)  \(heading)  ·  \(reply)")
     }
@@ -160,7 +162,7 @@ struct ActivityCapsule: View {
             .font(.system(size: 13))
             .lineLimit(2).truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel(statusLabel + "，" + (title ?? store.task?.title ?? "新会话") + "，" + summary)
+            .accessibilityLabel(String(localized: "\(statusLabel)，\(cardTitle)，\(summary)"))
             .padding(.trailing, hovered || store.isFollowUpExpanded ? 50 : 0)
     }
 
@@ -197,7 +199,7 @@ struct ActivityCapsule: View {
         NativeComposer(text: $store.followUpDraft, focusRequest: followUpFocusRequest,
                        onEscape: { (exit ?? store.toggleFollowUp)(); return true },
                        fontSize: 13, minHeight: 24, maxLines: 1,
-                       label: "继续跟进输入框", identifier: "activity.followUp", onSend: send)
+                       label: String(localized: "继续跟进输入框"), identifier: "activity.followUp", onSend: send)
             .overlay(alignment: .leading) {
                 if store.followUpDraft.isEmpty {
                     Text("继续跟进").font(.system(size: 13)).foregroundStyle(.tertiary)
@@ -223,7 +225,7 @@ struct ActivityCapsule: View {
         }
         .overlay(alignment: .topLeading) {
             if store.task != nil {
-                RoundControl(symbol: "xmark", label: "忽略任务通知", size: 20, identifier: "activity.dismiss") {
+                RoundControl(symbol: "xmark", label: String(localized: "忽略任务通知"), size: 20, identifier: "activity.dismiss") {
                     if let end { end() }
                     else { store.closeActivity() }
                 }
@@ -430,7 +432,7 @@ struct PetControls: View {
                             VoiceConnectingIndicator().frame(width: 20, height: 20)
                         }
                     } else {
-                        PetSegment(label: "开始 Live Voice", identifier: "voice.start", enabled: surface.canStartVoice,
+                        PetSegment(label: String(localized: "开始 Live Voice"), identifier: "voice.start", enabled: surface.canStartVoice,
                                    action: actions.startVoice) {
                             VoiceWaveform().frame(width: 15, height: 15)
                         }
@@ -456,21 +458,21 @@ struct PetControls: View {
             }
         case .voice:
             HStack(spacing: PetSurfacePresentation.gap) {
-                PetCircle(label: "新聊天", identifier: "pet.compose", action: presentation.openComposer) {
+                PetCircle(label: String(localized: "新聊天"), identifier: "pet.compose", action: presentation.openComposer) {
                     Image(systemName: "square.and.pencil")
                 }
                 if let owner = voice.snapshot.session.owner {
                     HStack(spacing: 0) {
-                        PetSegment(label: surface.micMuted ? "开启麦克风" : "关闭麦克风", identifier: "voice.mute",
+                        PetSegment(label: surface.micMuted ? String(localized: "开启麦克风") : String(localized: "关闭麦克风"), identifier: "voice.mute",
                                    enabled: surface.muteEnabled, action: { actions.toggleMute(owner) }) {
                             Image(systemName: surface.micMuted ? "mic.slash" : "mic")
                                 .foregroundStyle(surface.micMuted ? WorkspaceStyle.warning : .primary)
                         }
-                        PetSegment(label: "结束语音", identifier: "voice.end", action: { actions.endVoice(owner) }) {
+                        PetSegment(label: String(localized: "结束语音"), identifier: "voice.end", action: { actions.endVoice(owner) }) {
                             VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
                                         indicator: surface.voice, muted: surface.micMuted, size: 34)
                         }
-                        PetSegment(label: surface.speakerMuted ? "开启扬声器" : "静音扬声器", identifier: "voice.speaker",
+                        PetSegment(label: surface.speakerMuted ? String(localized: "开启扬声器") : String(localized: "静音扬声器"), identifier: "voice.speaker",
                                    enabled: surface.muteEnabled, action: { actions.toggleSpeaker(owner) }) {
                             Image(systemName: surface.speakerMuted ? "speaker.slash" : "speaker.wave.2")
                                 .foregroundStyle(surface.speakerMuted ? WorkspaceStyle.warning : .primary)
@@ -492,13 +494,13 @@ struct PetControls: View {
                     VoiceConnectingIndicator().frame(width: 20, height: 20)
                 }
             } else if voice.snapshot.session.owner != nil {
-                PetCircle(label: "显示语音控制", identifier: "pet.voice.show", action: presentation.closeComposer) {
+                PetCircle(label: String(localized: "显示语音控制"), identifier: "pet.voice.show", action: presentation.closeComposer) {
                     VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
                                 indicator: surface.voice, muted: surface.micMuted, size: 32)
                         .accessibilityHidden(true)
                 }
             } else {
-                PetCircle(label: "开始 Live Voice", identifier: "voice.start", enabled: surface.canStartVoice,
+                PetCircle(label: String(localized: "开始 Live Voice"), identifier: "voice.start", enabled: surface.canStartVoice,
                           action: actions.startVoice) {
                     VoiceWaveform().frame(width: 15, height: 15)
                 }
@@ -522,10 +524,10 @@ struct PetControls: View {
             .accessibilityIdentifier("pet.collapsed")
     }
 
-    private static let connectingLabel = "正在连接 Live Voice，点按取消"
+    private static var connectingLabel: String { String(localized: "正在连接 Live Voice，点按取消") }
 
     private var composeSegment: some View {
-        PetSegment(label: "新聊天", identifier: "pet.compose", action: presentation.openComposer) {
+        PetSegment(label: String(localized: "新聊天"), identifier: "pet.compose", action: presentation.openComposer) {
             Image(systemName: "square.and.pencil")
         }
     }
@@ -539,7 +541,7 @@ struct PetControls: View {
             NativeComposer(text: $presentation.draft, focusRequest: presentation.focusRequest,
                            onEscape: { presentation.closeComposer(); return true },
                            fontSize: 13, minHeight: 20, maxLines: 1,
-                           label: "新聊天输入框", identifier: "pet.composer",
+                           label: String(localized: "新聊天输入框"), identifier: "pet.composer",
                            caretColor: .labelColor, onSend: send)
                 .overlay(alignment: .leading) {
                     if presentation.draft.isEmpty {
@@ -574,14 +576,18 @@ struct PetControls: View {
                                   select: { presentation.projectID = $0 }, addFolder: actions.addProjectFolder,
                                   close: { presentation.isProjectPickerOpen = false })
         }
-        .help("关联项目").accessibilityLabel("关联项目").accessibilityIdentifier("pet.project")
+        .help(Self.projectButtonLabel).accessibilityLabel(Self.projectButtonLabel).accessibilityIdentifier("pet.project")
     }
+
+    /// A tooltip here, while the same Chinese names the main window's Link Project menu button,
+    /// so it has its own entry for sentence case.
+    private static var projectButtonLabel: String { String(localized: "关联项目|悬停提示", defaultValue: "关联项目") }
 
     private func projectChip(_ project: WorkspaceProject) -> some View {
         HStack(spacing: 3) {
             Image(systemName: project.isAvailable ? "folder" : "folder.badge.questionmark").accessibilityHidden(true)
             Text(project.name).lineLimit(1).truncationMode(.middle)
-                .accessibilityLabel(project.isAvailable ? project.name : "\(project.name)（不可用）")
+                .accessibilityLabel(project.isAvailable ? project.name : String(localized: "\(project.name)（不可用）"))
                 .accessibilityIdentifier("pet.project.name")
             Button {
                 presentation.projectID = nil; presentation.refocusComposer()
@@ -594,7 +600,7 @@ struct PetControls: View {
         .font(.system(size: 11)).foregroundStyle(project.isAvailable ? Color.secondary : WorkspaceStyle.warning)
         .padding(.leading, 6).padding(.trailing, 2).frame(height: 20).frame(maxWidth: 104)
         .background(.primary.opacity(0.06), in: Capsule())
-        .help(project.isAvailable ? project.path : "项目不可用：\(project.path)")
+        .help(project.isAvailable ? project.path : String(localized: "项目不可用：\(project.path)"))
     }
 
     private func send() {
@@ -635,16 +641,16 @@ struct PetControls: View {
     private func badgeValue(_ badge: PetSurfacePresentation.Badge) -> String {
         switch badge {
         case .none: ""
-        case .running(let count): "\(count) 个任务进行中"
-        case .completed(let count): "\(count) 个已完成任务未查看"
+        case .running(let count): String(localized: "\(count) 个任务进行中")
+        case .completed(let count): String(localized: "\(count) 个已完成任务未查看")
         }
     }
 
     private func trayLabel(_ tray: PetSurfacePresentation.Tray) -> String {
         switch tray {
         case .none: ""
-        case .bell(let unseen): unseen > 0 ? "展开活动（\(unseen) 个已完成任务未查看）" : "展开活动"
-        case .collapse: "收起活动"
+        case .bell(let unseen): unseen > 0 ? String(localized: "展开活动（\(unseen) 个已完成任务未查看）") : String(localized: "展开活动")
+        case .collapse: String(localized: "收起活动")
         }
     }
 
@@ -663,7 +669,7 @@ struct WorkspaceActivityCapsule: View {
             canStop: workspace.voice.conversationID == conversation.id && workspace.voice.presentation.isReplyAudioActive,
             send: { workspace.sendFollowUp(conversationID: conversation.id) },
             stop: { workspace.stop(conversationID: conversation.id) },
-            open: { workspace.openPetActivity(conversationID: conversation.id) }, placement: placement, title: conversation.title,
+            open: { workspace.openPetActivity(conversationID: conversation.id) }, placement: placement, title: conversation.displayTitle,
             followUp: { workspace.enterPetFollowUp(conversation.id) }, exit: { workspace.exitPetFollowUp() },
             end: { workspace.dismissPetActivity(conversationID: conversation.id) })
             .id(conversation.id)

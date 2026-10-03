@@ -41,18 +41,18 @@ final class PetStore: ObservableObject {
         struct Metadata: Decodable { var displayName: String? }
         let metadata = try? JSONDecoder().decode(Metadata.self, from: Data(contentsOf: directory.appendingPathComponent("pet.json")))
         let name = metadata?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.displayName = name.flatMap { $0.isEmpty ? nil : $0 } ?? "桌面精灵"
+        self.displayName = name.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "桌面精灵")
         let handle = try RuntimeHandle(directory: directory)
         var info = EchoInfo()
         guard echo_info(handle.pointer, &info), info.frame_count > 0 else {
-            throw PetError(message: "无法读取精灵帧信息。")
+            throw PetError(message: String(localized: "无法读取精灵帧信息。"))
         }
         let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
         var images: [CGImage] = []
         for index in 0..<info.frame_count {
             var frame = EchoFrame()
             guard echo_frame(handle.pointer, index, &frame), let bytes = frame.data else {
-                throw PetError(message: "无法读取第 \(index) 帧。")
+                throw PetError(message: String(localized: "无法读取第 \(index) 帧。"))
             }
             // Data(bytes:count:) copies Rust memory. CGDataProvider retains it.
             let data = Data(bytes: bytes, count: frame.length)
@@ -65,7 +65,7 @@ final class PetStore: ObservableObject {
                         .union(.byteOrder32Big),
                     provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
                   ) else {
-                throw PetError(message: "无法创建第 \(index) 帧图像。")
+                throw PetError(message: String(localized: "无法创建第 \(index) 帧图像。"))
             }
             images.append(image)
         }
@@ -85,7 +85,7 @@ final class PetStore: ObservableObject {
     func interact(hovered: Bool, direction: Int32) {
         guard let handle else { return }
         guard echo_set_interaction(handle.pointer, hovered, direction) else {
-            fail(PetError(message: "无法更新精灵交互状态。"))
+            fail(PetError(message: String(localized: "无法更新精灵交互状态。")))
             return
         }
         refresh()
@@ -94,7 +94,7 @@ final class PetStore: ObservableObject {
     func look(at offset: NSPoint) {
         guard let handle else { return }
         guard echo_look_at(handle.pointer, offset.x, offset.y) else {
-            fail(PetError(message: "无法更新精灵注视方向。"))
+            fail(PetError(message: String(localized: "无法更新精灵注视方向。")))
             return
         }
         refresh()
@@ -117,7 +117,7 @@ final class PetStore: ObservableObject {
     func play(_ animation: String) {
         guard let handle else { return }
         guard echo_set_animation(handle.pointer, animation) else {
-            fail(PetError(message: "无法播放动画：\(animation)。"))
+            fail(PetError(message: String(localized: "无法播放动画：\(animation)。")))
             return
         }
         refresh()
@@ -147,7 +147,7 @@ final class PetStore: ObservableObject {
         guard let handle else { return }
         var tick = EchoTick()
         guard advance(handle.pointer, &tick), Int(tick.sprite_index) < images.count else {
-            fail(PetError(message: "精灵动画推进失败。"))
+            fail(PetError(message: String(localized: "精灵动画推进失败。")))
             return
         }
         if spriteIndex != tick.sprite_index {

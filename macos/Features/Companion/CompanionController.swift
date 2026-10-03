@@ -79,16 +79,16 @@ import Combine
         let placement = ActivityPlacement()
         activityPlacement = placement
         petPanel = PetPanel(store: petStore)
-        activityPanel = CompanionSurface(title: "活动摘要",
+        activityPanel = CompanionSurface(title: String(localized: "活动摘要"),
                                          content: WorkspaceActivityCapsule(workspace: workspace, placement: placement))
         let controlsPresentation = PetControlsPresentation()
         self.controlsPresentation = controlsPresentation
         // Keyboard is only claimed while the quick composer is open.
-        controlsPanel = CompanionSurface(title: "活动控件", acceptsKeyboard: true,
+        controlsPanel = CompanionSurface(title: String(localized: "活动控件"), acceptsKeyboard: true,
                                          content: WorkspacePetControls(workspace: workspace, planets: planets,
                                                                        presentation: controlsPresentation,
                                                                        placement: placement))
-        bubblePanel = CompanionSurface(title: "语音气泡",
+        bubblePanel = CompanionSurface(title: String(localized: "语音气泡"),
                                        content: WorkspaceCompanionBubble(voice: workspace.voice,
                                                                          state: bubbleState, placement: placement))
         // The bubble only reports; clicks pass through to whatever is behind it.

@@ -2,7 +2,7 @@
   "sourceLanguage" : "zh-Hans",
   "strings" : {
     "" : {
-
+      "shouldTranslate" : false
     },
     "%@  %@  ·  %@" : {
       "localizations" : {
@@ -12,7 +12,8 @@
             "value" : "%1$@  %2$@  ·  %3$@"
           }
         }
-      }
+      },
+      "shouldTranslate" : false
     },
     "%@ · %@%@" : {
       "localizations" : {
@@ -80,6 +81,32 @@
         }
       }
     },
+    "%@（不可用）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (unavailable)"
+          }
+        }
+      }
+    },
+    "%@，%@，%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, %2$@, %3$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@，%2$@，%3$@"
+          }
+        }
+      }
+    },
     "%@，当前星球" : {
       "localizations" : {
         "en" : {
@@ -127,10 +154,51 @@
       }
     },
     "%lld" : {
-
+      "shouldTranslate" : false
+    },
+    "%lld 个任务进行中" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld task running"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld tasks running"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "%lld 个已完成任务未查看" : {
-
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld completed task unread"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld completed tasks unread"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "API Key" : {
       "localizations" : {
@@ -323,7 +391,7 @@
       }
     },
     "https://api.openai.com/v1" : {
-
+      "shouldTranslate" : false
     },
     "metadata.json 不是语言模型的描述" : {
       "localizations" : {
@@ -331,6 +399,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "metadata.json doesn’t describe a language model"
+          }
+        }
+      }
+    },
+    "pet.json 必须位于所选文件夹内。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pet.json must be inside the selected folder."
+          }
+        }
+      }
+    },
+    "pet.json 文件过大。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pet.json is too large."
           }
         }
       }
@@ -371,6 +459,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "stdout truncated"
+          }
+        }
+      }
+    },
+    "上次选择的星球无法加载，已换成另一颗。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The planet you chose last time couldn’t be loaded, so another one was selected."
+          }
+        }
+      }
+    },
+    "上次选择的精灵无法加载，已恢复为赤焰。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The pet you chose last time couldn’t be loaded, so Echo switched back to 赤焰."
           }
         }
       }
@@ -602,6 +710,23 @@
         }
       }
     },
+    "关联项目|悬停提示" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link project"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "关联项目"
+          }
+        }
+      }
+    },
     "关闭保存提示" : {
       "localizations" : {
         "en" : {
@@ -618,6 +743,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Close Window"
+          }
+        }
+      }
+    },
+    "关闭精灵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close Pet"
           }
         }
       }
@@ -668,6 +803,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Toggle Live Voice"
+          }
+        }
+      }
+    },
+    "切换失败，保留当前星球：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t switch planets, so the current one was kept: %@"
+          }
+        }
+      }
+    },
+    "切换失败，保留当前精灵：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t switch pets, so the current one was kept: %@"
           }
         }
       }
@@ -783,7 +938,14 @@
       }
     },
     "发送" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send"
+          }
+        }
+      }
     },
     "发送消息" : {
       "localizations" : {
@@ -826,7 +988,14 @@
       }
     },
     "取消跟进" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel follow-up"
+          }
+        }
+      }
     },
     "取消转写" : {
       "localizations" : {
@@ -928,6 +1097,16 @@
         }
       }
     },
+    "失败" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Failed"
+          }
+        }
+      }
+    },
     "对话" : {
       "localizations" : {
         "en" : {
@@ -984,6 +1163,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No default model is set up, and the local model is incomplete (%@). Fill in Default model in Settings, or import the local model again."
+          }
+        }
+      }
+    },
+    "展开活动" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show activity"
+          }
+        }
+      }
+    },
+    "展开活动（%lld 个已完成任务未查看）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show activity (%lld unread)"
           }
         }
       }
@@ -1088,6 +1287,16 @@
         }
       }
     },
+    "已导入“%@”，点击卡片即可切换。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imported “%@”. Click its card to switch to it."
+          }
+        }
+      }
+    },
     "已导入本地模型。" : {
       "localizations" : {
         "en" : {
@@ -1114,6 +1323,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chats shown"
+          }
+        }
+      }
+    },
+    "已恢复为赤焰，但无法保存选择。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switched back to 赤焰, but the choice couldn’t be saved."
           }
         }
       }
@@ -1149,7 +1368,14 @@
       }
     },
     "已收起" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapsed"
+          }
+        }
+      }
     },
     "已收起聊天" : {
       "localizations" : {
@@ -1177,6 +1403,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Help"
+          }
+        }
+      }
+    },
+    "应用内缺少有效的赤焰精灵素材。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The app is missing valid assets for 赤焰."
           }
         }
       }
@@ -1212,7 +1448,14 @@
       }
     },
     "开始新聊天" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start a new chat"
+          }
+        }
+      }
     },
     "当前离线，本地模型不完整（%@）。请联网后重试，或在设置中重新导入本地模型。" : {
       "localizations" : {
@@ -1324,6 +1567,16 @@
         }
       }
     },
+    "忽略任务通知" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dismiss notification"
+          }
+        }
+      }
+    },
     "我的星球" : {
       "localizations" : {
         "en" : {
@@ -1350,6 +1603,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "That folder isn’t available. Choose another one."
+          }
+        }
+      }
+    },
+    "所选星球不存在，请重新选择。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected planet doesn’t exist. Choose another one."
+          }
+        }
+      }
+    },
+    "所选精灵不存在，请重新导入。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected pet doesn’t exist. Import it again."
           }
         }
       }
@@ -1474,6 +1747,16 @@
         }
       }
     },
+    "收起活动" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide activity"
+          }
+        }
+      }
+    },
     "收起预览" : {
       "localizations" : {
         "en" : {
@@ -1578,12 +1861,42 @@
         }
       }
     },
+    "新聊天" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New chat"
+          }
+        }
+      }
+    },
+    "新聊天输入框" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New chat message"
+          }
+        }
+      }
+    },
     "无法保存 API Key 到钥匙串。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t save the API key to the keychain."
+          }
+        }
+      }
+    },
+    "无法创建第 %u 帧图像。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t create the image for frame %u."
           }
         }
       }
@@ -1678,6 +1991,36 @@
         }
       }
     },
+    "无法播放动画：%@。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t play the animation %@."
+          }
+        }
+      }
+    },
+    "无法更新精灵交互状态。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t update the pet’s interaction state."
+          }
+        }
+      }
+    },
+    "无法更新精灵注视方向。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t update where the pet is looking."
+          }
+        }
+      }
+    },
     "无法清除旧的钥匙串凭据。" : {
       "localizations" : {
         "en" : {
@@ -1748,6 +2091,26 @@
         }
       }
     },
+    "无法读取第 %u 帧。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read frame %u."
+          }
+        }
+      }
+    },
+    "无法读取精灵帧信息。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read the pet’s frame information."
+          }
+        }
+      }
+    },
     "无法读取钥匙串中的 API Key（OSStatus %d），请检查钥匙串访问权限。" : {
       "localizations" : {
         "en" : {
@@ -1778,6 +2141,26 @@
         }
       }
     },
+    "星球动画已停止：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The planet animation stopped: %@"
+          }
+        }
+      }
+    },
+    "星球素材无法加载：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t load the planet assets: %@"
+          }
+        }
+      }
+    },
     "显示" : {
       "localizations" : {
         "en" : {
@@ -1804,6 +2187,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Show Inspector"
+          }
+        }
+      }
+    },
+    "显示语音控制" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show voice controls"
           }
         }
       }
@@ -1989,10 +2382,34 @@
       }
     },
     "查看聊天" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open chat"
+          }
+        }
+      }
     },
     "桌宠快捷控件" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pet controls"
+          }
+        }
+      }
+    },
+    "桌面精灵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desktop Pet"
+          }
+        }
+      }
     },
     "模型" : {
       "localizations" : {
@@ -2060,6 +2477,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Stopped because the model kept returning malformed tool calls."
+          }
+        }
+      }
+    },
+    "正在停止" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopping"
           }
         }
       }
@@ -2334,6 +2761,16 @@
         }
       }
     },
+    "正在连接 Live Voice，点按取消" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting to Live Voice. Click to cancel."
+          }
+        }
+      }
+    },
     "正在连接…" : {
       "localizations" : {
         "en" : {
@@ -2434,6 +2871,26 @@
         }
       }
     },
+    "活动控件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activity Controls"
+          }
+        }
+      }
+    },
+    "活动摘要" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activity Summary"
+          }
+        }
+      }
+    },
     "测试已取消。" : {
       "localizations" : {
         "en" : {
@@ -2527,6 +2984,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use Selection for Find"
+          }
+        }
+      }
+    },
+    "移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键显示关闭精灵菜单" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hover to make it jump, drag to make it run, and move away to have it face the pointer. Click to open the chat; right-click for Close Pet."
           }
         }
       }
@@ -2631,6 +3098,66 @@
         }
       }
     },
+    "精灵动画推进失败。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The pet animation couldn’t advance."
+          }
+        }
+      }
+    },
+    "精灵图必须使用文件夹内的相对路径。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The sprite sheet must use a relative path inside the folder."
+          }
+        }
+      }
+    },
+    "精灵图必须是所选文件夹内的 WebP 文件。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The sprite sheet must be a WebP file inside the selected folder."
+          }
+        }
+      }
+    },
+    "精灵图损坏或尺寸过大（最多 1600 万像素）。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The sprite sheet is damaged or too large (16 megapixels at most)."
+          }
+        }
+      }
+    },
+    "精灵图文件不能超过 32 MB。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The sprite sheet can’t be larger than 32 MB."
+          }
+        }
+      }
+    },
+    "精灵导入目录不可用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The pet import folder isn’t available."
+          }
+        }
+      }
+    },
     "结束录音" : {
       "localizations" : {
         "en" : {
@@ -2699,7 +3226,24 @@
       }
     },
     "继续跟进" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send a follow-up"
+          }
+        }
+      }
+    },
+    "继续跟进输入框" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Follow-up message"
+          }
+        }
+      }
     },
     "编辑" : {
       "localizations" : {
@@ -3121,12 +3665,22 @@
         }
       }
     },
+    "语音气泡" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voice Bubble"
+          }
+        }
+      }
+    },
     "语音测试失败，请检查专属密钥和网络。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The voice test failed. Check your Agent Plan key and network."
+            "value" : "The voice test failed. Check your exclusive API key and network."
           }
         }
       }
@@ -3312,7 +3866,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Voice authentication failed. Check your Agent Plan key and plan permissions."
+            "value" : "Voice authentication failed. Check your Agent Plan exclusive API key and plan permissions."
           }
         }
       }
@@ -3458,7 +4012,14 @@
       }
     },
     "跟进" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Follow up"
+          }
+        }
+      }
     },
     "路径不属于当前项目。" : {
       "localizations" : {
@@ -3510,6 +4071,16 @@
         }
       }
     },
+    "运行中" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Running"
+          }
+        }
+      }
+    },
     "返回目录" : {
       "localizations" : {
         "en" : {
@@ -3546,6 +4117,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This turn already has a reply or ran tools, so the local model can’t continue it."
+          }
+        }
+      }
+    },
+    "这只精灵已在列表中。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This pet is already in the list."
           }
         }
       }
@@ -3676,6 +4257,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choose project folder"
+          }
+        }
+      }
+    },
+    "部分星球素材无法读取，已跳过。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Some planet assets couldn’t be read and were skipped."
+          }
+        }
+      }
+    },
+    "部分精灵素材无法加载，已跳过。可重新导入有效的精灵文件夹。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Some pet assets couldn’t be loaded and were skipped. Import a valid pet folder again."
           }
         }
       }
@@ -3903,6 +4504,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Project unavailable"
+          }
+        }
+      }
+    },
+    "项目不可用：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Project unavailable: %@"
           }
         }
       }

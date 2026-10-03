@@ -68,6 +68,7 @@
 		A2D38BC03062D573000AB0C0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2D38BBF3062D573000AB0C0 /* Assets.xcassets */; };
 		E06EB300CAB9163F9A75410B /* Echo.icon in Resources */ = {isa = PBXBuildFile; fileRef = F82E6758E135B6EA62E34341 /* Echo.icon */; };
 		C7A1D0E2F3B4C5D6E7F80912 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */; };
+		C7A1D0E2F3B4C5D6E7F80914 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */; };
 		A48445E581B7F7391D46A313 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		A90FABF2D2B029FA59548B59 /* VoiceSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12500000000000000000F00 /* VoiceSoakTests.swift */; };
 		AD3FBE99C14C991DB4E0DF5A /* tests/fixtures/speech/mixed.wav in Resources */ = {isa = PBXBuildFile; fileRef = B628CE43BFCAC712B3D75BF1 /* tests/fixtures/speech/mixed.wav */; };
@@ -285,6 +286,7 @@
 		A2D38BBF3062D573000AB0C0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = assets/Assets.xcassets; sourceTree = "<group>"; };
 		F82E6758E135B6EA62E34341 /* Echo.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = Echo.icon; path = assets/Echo.icon; sourceTree = "<group>"; };
 		C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = Localizable.xcstrings; path = assets/Localizable.xcstrings; sourceTree = "<group>"; };
+		C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = InfoPlist.xcstrings; path = assets/InfoPlist.xcstrings; sourceTree = "<group>"; };
 		A3C5FB9B86C9EE63938C7854 /* tests/native/PerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/PerformanceTests.swift; sourceTree = "<group>"; };
 		A3FF57E62DA09C501023D462 /* tests/native/EchoUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/EchoUITests.swift; sourceTree = "<group>"; };
 		A5C8CF99E608551A486FC246 /* EchoLiveTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoLiveTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -568,6 +570,7 @@
 				A2D38BBF3062D573000AB0C0 /* Assets.xcassets */,
 				F82E6758E135B6EA62E34341 /* Echo.icon */,
 				C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */,
+				C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */,
 				E0000000000000000000001C /* Echo-Development.xcconfig */,
 				E0000000000000000000001D /* pets */,
 				E0000000000000000000001E /* planets */,
@@ -1229,6 +1232,7 @@
 				A2D38BC03062D573000AB0C0 /* Assets.xcassets in Resources */,
 				E06EB300CAB9163F9A75410B /* Echo.icon in Resources */,
 				C7A1D0E2F3B4C5D6E7F80912 /* Localizable.xcstrings in Resources */,
+				C7A1D0E2F3B4C5D6E7F80914 /* InfoPlist.xcstrings in Resources */,
 				E00000000000000000000031 /* planets in Resources */,
 			);
 		};

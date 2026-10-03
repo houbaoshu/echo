@@ -148,7 +148,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel(store.displayName)
-        setAccessibilityHelp("移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键显示关闭精灵菜单")
+        setAccessibilityHelp(String(localized: "移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键显示关闭精灵菜单"))
         let primaryClick = NSClickGestureRecognizer(target: self, action: #selector(primaryClicked(_:)))
         primaryClick.buttonMask = 0x1
         primaryClick.delegate = self
@@ -172,7 +172,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     // AppKit asks on right-click and Control+click, and presents the menu itself.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        let close = menu.addItem(withTitle: "关闭精灵", action: #selector(closeFromMenu(_:)), keyEquivalent: "")
+        let close = menu.addItem(withTitle: String(localized: "关闭精灵"), action: #selector(closeFromMenu(_:)), keyEquivalent: "")
         close.target = self
         return menu
     }

@@ -32,7 +32,7 @@ struct PetEntry: Identifiable {
                 do {
                     let id = "\(builtin ? "builtin" : "imported"):\(directory.lastPathComponent)"
                     entries.append(try read(directory, id: id, builtin: builtin))
-                } catch { notice = "部分精灵素材无法加载，已跳过。可重新导入有效的精灵文件夹。" }
+                } catch { notice = String(localized: "部分精灵素材无法加载，已跳过。可重新导入有效的精灵文件夹。") }
             }
         }
     }
@@ -44,28 +44,28 @@ struct PetEntry: Identifiable {
     private func files(_ directory: URL) throws -> (Data, Data, URL, Manifest) {
         let root = directory.resolvingSymlinksInPath().standardizedFileURL
         let manifestURL = root.appendingPathComponent("pet.json").resolvingSymlinksInPath()
-        guard manifestURL.path.hasPrefix(root.path + "/") else { throw SettingsError("pet.json 必须位于所选文件夹内。") }
+        guard manifestURL.path.hasPrefix(root.path + "/") else { throw SettingsError(localized: "pet.json 必须位于所选文件夹内。") }
         let manifestSize = try manifestURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard manifestSize <= 1_048_576 else { throw SettingsError("pet.json 文件过大。") }
+        guard manifestSize <= 1_048_576 else { throw SettingsError(localized: "pet.json 文件过大。") }
         let data = try Data(contentsOf: manifestURL)
         let manifest = try JSONDecoder().decode(Manifest.self, from: data)
         let relative = manifest.spritesheetPath ?? "spritesheet.webp"
         guard !relative.isEmpty, !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") else {
-            throw SettingsError("精灵图必须使用文件夹内的相对路径。")
+            throw SettingsError(localized: "精灵图必须使用文件夹内的相对路径。")
         }
         let sheetURL = root.appendingPathComponent(relative).resolvingSymlinksInPath().standardizedFileURL
         guard sheetURL.path.hasPrefix(root.path + "/"), sheetURL.pathExtension.lowercased() == "webp" else {
-            throw SettingsError("精灵图必须是所选文件夹内的 WebP 文件。")
+            throw SettingsError(localized: "精灵图必须是所选文件夹内的 WebP 文件。")
         }
         let size = try sheetURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size <= 33_554_432 else { throw SettingsError("精灵图文件不能超过 32 MB。") }
+        guard size <= 33_554_432 else { throw SettingsError(localized: "精灵图文件不能超过 32 MB。") }
         let sheet = try Data(contentsOf: sheetURL)
         guard let source = CGImageSourceCreateWithData(sheet as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               width > 0, height > 0, width <= 8192, height <= 8192, width * height <= 16_777_216 else {
-            throw SettingsError("精灵图损坏或尺寸过大（最多 1600 万像素）。")
+            throw SettingsError(localized: "精灵图损坏或尺寸过大（最多 1600 万像素）。")
         }
         return (data, sheet, sheetURL, manifest)
     }
@@ -82,16 +82,16 @@ struct PetEntry: Identifiable {
         if let selected = entries.first(where: { $0.id == selectedID }), let store = try? PetStore(directory: selected.directory) {
             activeStore = store; store.onFailure = onFailure; return store
         }
-        guard let fallback = entries.first(where: { $0.id == "builtin:chiyan" }) else { throw SettingsError("应用内缺少有效的赤焰精灵素材。") }
+        guard let fallback = entries.first(where: { $0.id == "builtin:chiyan" }) else { throw SettingsError(localized: "应用内缺少有效的赤焰精灵素材。") }
         let store = try PetStore(directory: fallback.directory)
         activeStore = store; store.onFailure = onFailure; selectedID = fallback.id
-        notice = "上次选择的精灵无法加载，已恢复为赤焰。"
-        do { try settings.selectPet(fallback.id) } catch { notice = "已恢复为赤焰，但无法保存选择。" }
+        notice = String(localized: "上次选择的精灵无法加载，已恢复为赤焰。")
+        do { try settings.selectPet(fallback.id) } catch { notice = String(localized: "已恢复为赤焰，但无法保存选择。") }
         return store
     }
     @discardableResult func activate(_ id: String) -> Bool {
         guard id != selectedID || activeStore == nil else { return true }
-        guard let entry = entries.first(where: { $0.id == id }) else { notice = "所选精灵不存在，请重新导入。"; return false }
+        guard let entry = entries.first(where: { $0.id == id }) else { notice = String(localized: "所选精灵不存在，请重新导入。"); return false }
         do {
             _ = try files(entry.directory)
             let next = try PetStore(directory: entry.directory)
@@ -101,16 +101,16 @@ struct PetEntry: Identifiable {
             onActivate?(next)
             previous?.stop(); next.start(); notice = nil
             return true
-        } catch { notice = "切换失败，保留当前精灵：\(error.localizedDescription)"; return false }
+        } catch { notice = String(localized: "切换失败，保留当前精灵：\(error.localizedDescription)"); return false }
     }
     @discardableResult func importPet(from directory: URL) -> String? {
-        guard let importedRoot else { notice = "精灵导入目录不可用。"; return nil }
+        guard let importedRoot else { notice = String(localized: "精灵导入目录不可用。"); return nil }
         let fm = FileManager.default
         var staging: URL?
         do {
             let candidate = try read(directory, id: "candidate", builtin: false)
             if let existing = entries.first(where: { $0.fingerprint == candidate.fingerprint }) {
-                highlightedID = existing.id; notice = "这只精灵已在列表中。"; return existing.id
+                highlightedID = existing.id; notice = String(localized: "这只精灵已在列表中。"); return existing.id
             }
             let (manifest, sheet, _, metadata) = try files(directory)
             try fm.createDirectory(at: importedRoot, withIntermediateDirectories: true)
@@ -130,11 +130,11 @@ struct PetEntry: Identifiable {
             staging = destination
             let entry = try read(destination, id: id, builtin: false)
             entries.append(entry); highlightedID = id; staging = nil
-            notice = "已导入“\(entry.name)”，点击卡片即可切换。"
+            notice = String(localized: "已导入“\(entry.name)”，点击卡片即可切换。")
             return id
         } catch {
             if let staging { try? fm.removeItem(at: staging) }
-            notice = "导入失败：\(error.localizedDescription)"; return nil
+            notice = String(localized: "导入失败：\(error.localizedDescription)"); return nil
         }
     }
     func stop() { activeStore?.stop() }
