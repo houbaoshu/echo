@@ -312,19 +312,10 @@ struct PetControlActions {
     var toggleTray: (() -> Void)?
 }
 
-/// The surface behind the strip's pills and round controls. Unlike the activity card and the
-/// bubble, the strip floats directly over the desktop beside the pet, so it stays as quiet as a
-/// system surface can be: clear glass rather than the frosted regular pane, a hairline edge, and no
-/// drawn fill of its own. Swap the glass back to `.regular` if the controls ever need to carry their
-/// own contrast.
-private struct PetControlBackground<SurfaceShape: InsettableShape>: View {
-    var shape: SurfaceShape
-    var body: some View {
-        Color.clear
-            .glassEffect(.clear, in: shape)
-            .overlay { shape.strokeBorder(.primary.opacity(0.06), lineWidth: 0.5) }
-    }
-}
+/// The places in the strip's row, left to right: the voice bar's ✎ circle, the main pane (the
+/// hover pill, the composer or the voice bar), the status circle and the tray circle. A slot keeps
+/// its identity across forms, so the main pane reshapes instead of being replaced.
+private enum PetSlot: Hashable, Sendable { case compose, main, status, tray }
 
 /// One icon slot inside a pill. The pill draws the shared background, so a segment only tints the
 /// slot it occupies; a system glass style would put a second pane of glass inside the first one.
@@ -344,7 +335,8 @@ private struct PetSegmentStyle: ButtonStyle {
     }
 }
 
-/// One icon slot inside a pill; the pill draws the shared background.
+/// One icon slot, inside a pill or standing alone as a round control; the strip's glass row draws
+/// the pane behind it.
 private struct PetSegment<Label: View>: View {
     let label: String
     let identifier: String
@@ -357,27 +349,6 @@ private struct PetSegment<Label: View>: View {
             .buttonStyle(PetSegmentStyle(hovered: hovered)).disabled(!enabled).opacity(enabled ? 1 : 0.4)
             .onHover { hovered = $0 }
             .help(label).accessibilityLabel(label).accessibilityIdentifier(identifier)
-    }
-}
-
-/// A standalone round control beside a pill. It sits directly on the desktop rather than on another
-/// companion surface, so the system's clear glass button style draws the same material as the pills'
-/// background, and brings its own hover, pressed and disabled states.
-private struct PetCircle<Label: View>: View {
-    let label: String
-    let identifier: String
-    var enabled = true
-    let action: () -> Void
-    @ViewBuilder let content: () -> Label
-    var body: some View {
-        Button(action: action) {
-            content().font(.system(size: 15, weight: .medium))
-                .frame(width: PetSurfacePresentation.circle - systemButtonInset,
-                       height: PetSurfacePresentation.circle - systemButtonInset)
-        }
-        .buttonStyle(.glass(.clear)).buttonBorderShape(.circle)
-        .companionControlActive().disabled(!enabled)
-        .help(label).accessibilityLabel(label).accessibilityIdentifier(identifier)
     }
 }
 
@@ -395,6 +366,7 @@ struct PetControls: View {
     var planet: PetStore?
     var actions = PetControlActions()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var glassNamespace
     /// The planet the strip draws: none while suspended, so the hidden strip observes no frames.
     /// Resuming mounts a fresh `PlanetFrame`, which reads the store's current frame directly.
     static func visiblePlanet(_ planet: PetStore?, suspended: Bool) -> PetStore? { suspended ? nil : planet }
@@ -409,108 +381,208 @@ struct PetControls: View {
         content(surface)
             .onChange(of: voice.snapshot, initial: true) { _, snapshot in presentation.noteVoice(snapshot) }
             .frame(width: surface.width, height: PetSurfacePresentation.circle)
-            // A contact shadow, not a lift: the strip should sit in the desktop, not hover over it,
-            // and the idle bar carries none at all.
-            .shadow(color: .black.opacity(surface.isCollapsedBar ? 0.05 : 0.10),
-                    radius: surface.isCollapsedBar ? 2 : 4, y: 1)
             .position(x: PetSurfacePresentation.contentCenter(petCenter: presentation.petCenterX, width: surface.width),
                       y: PetSurfacePresentation.canvasHeight / 2)
             .frame(width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: surface.mode)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: surface.showsActions)
+            .animation(reduceMotion ? nil : .easeInOut(duration: Self.morphDuration), value: surface.mode)
+            .animation(reduceMotion ? nil : .easeInOut(duration: Self.morphDuration), value: surface.showsActions)
     }
 
-    @ViewBuilder private func content(_ surface: PetSurfacePresentation) -> some View {
+    /// The pill, the composer and the voice bar on screen at once share one glass container, so
+    /// they sample the desktop together. The container's spacing stays under the strip's gap: at
+    /// rest every pane keeps its own outline, and they only flow into each other while changing.
+    private static let glassSpacing: CGFloat = 4
+    private static let morphDuration = 0.18
+
+    /// Which form the strip's main pane takes; `nil` while only the status circles show.
+    private enum MainPane { case actions, composer, voice(VoiceSessionSnapshot.Owner) }
+
+    private func mainPane(_ surface: PetSurfacePresentation) -> MainPane? {
         switch surface.mode {
-        case .compact:
-            if surface.showsActions {
-                HStack(spacing: 0) {
-                    composeSegment
-                    Divider().frame(height: 14)
-                    if surface.voiceConnecting, let owner = voice.snapshot.session.owner {
-                        PetSegment(label: Self.connectingLabel, identifier: "voice.connecting", action: { actions.endVoice(owner) }) {
-                            VoiceConnectingIndicator().frame(width: 20, height: 20)
-                        }
-                    } else {
-                        PetSegment(label: String(localized: "开始 Live Voice"), identifier: "voice.start", enabled: surface.canStartVoice,
-                                   action: actions.startVoice) {
-                            VoiceWaveform().frame(width: 15, height: 15)
-                        }
-                    }
-                    if surface.tray != .none {
-                        Divider().frame(height: 14)
-                        PetSegment(label: trayLabel(surface.tray), identifier: trayIdentifier(surface.tray),
-                                   action: toggleTray) { trayIcon(surface) }
-                            .accessibilityValue(surface.tray == .collapse ? "" : badgeValue(surface.badge))
-                    }
-                }
-                .padding(.horizontal, PetSurfacePresentation.pillPadding)
-                .background { PetControlBackground(shape: Capsule()) }
-            } else if surface.showsStatus {
-                statusControls(surface)
-            } else {
-                collapsedBar(surface)
-            }
-        case .composer:
-            HStack(spacing: PetSurfacePresentation.gap) {
-                composerField(surface)
-                if surface.showsStatus { statusControls(surface) }
-            }
-        case .voice:
-            HStack(spacing: PetSurfacePresentation.gap) {
-                PetCircle(label: String(localized: "新聊天"), identifier: "pet.compose", action: presentation.openComposer) {
-                    Image(systemName: "square.and.pencil")
-                }
-                if let owner = voice.snapshot.session.owner {
-                    HStack(spacing: 0) {
-                        PetSegment(label: surface.micMuted ? String(localized: "开启麦克风") : String(localized: "关闭麦克风"), identifier: "voice.mute",
-                                   enabled: surface.muteEnabled, action: { actions.toggleMute(owner) }) {
-                            Image(systemName: surface.micMuted ? "mic.slash" : "mic")
-                                .foregroundStyle(surface.micMuted ? WorkspaceStyle.warning : .primary)
-                        }
-                        PetSegment(label: String(localized: "结束语音"), identifier: "voice.end", action: { actions.endVoice(owner) }) {
-                            VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
-                                        indicator: surface.voice, muted: surface.micMuted, size: 34)
-                        }
-                        PetSegment(label: surface.speakerMuted ? String(localized: "开启扬声器") : String(localized: "静音扬声器"), identifier: "voice.speaker",
-                                   enabled: surface.muteEnabled, action: { actions.toggleSpeaker(owner) }) {
-                            Image(systemName: surface.speakerMuted ? "speaker.slash" : "speaker.wave.2")
-                                .foregroundStyle(surface.speakerMuted ? WorkspaceStyle.warning : .primary)
+        case .compact: surface.showsActions ? .actions : nil
+        case .composer: .composer
+        case .voice: voice.snapshot.session.owner.map { .voice($0) }
+        }
+    }
+
+    private func slots(_ surface: PetSurfacePresentation) -> [PetSlot] {
+        let main = mainPane(surface) != nil
+        let status = surface.showsStatus && surface.mode != .voice
+        var slots: [PetSlot] = []
+        if surface.mode == .voice { slots.append(.compose) }
+        if main { slots.append(.main) }
+        if status { slots.append(.status) }
+        // The hover pill carries the tray as a segment of its own.
+        if surface.tray != .none, !main || status || surface.mode == .voice { slots.append(.tray) }
+        return slots
+    }
+
+    /// The glass and the controls are two rows built from the same slots. The glass row holds only
+    /// the panes, in one container, so they can flow into each other; the controls sit above it,
+    /// outside the container, and keep the colours they had on the old per-pill backgrounds — glass
+    /// that took the controls in would restyle their symbols and the composer.
+    ///
+    /// The row is one stable list rather than a view per form: the main pane stays the same view
+    /// while its contents change, and a circle that appears beside it slides out from under it, so
+    /// its glass starts inside the pane and splits off. Leaving, it slides back under the pane.
+    @ViewBuilder private func content(_ surface: PetSurfacePresentation) -> some View {
+        if surface.isCollapsedBar {
+            collapsedBar(surface)
+        } else {
+            let slots = slots(surface)
+            ZStack {
+                GlassEffectContainer(spacing: Self.glassSpacing) {
+                    HStack(spacing: PetSurfacePresentation.gap) {
+                        ForEach(slots, id: \.self) { slot in
+                            pane(slot, surface).transition(splitting(slot, in: slots))
                         }
                     }
-                    .padding(.horizontal, PetSurfacePresentation.pillPadding)
-                    .background { PetControlBackground(shape: Capsule()) }
-                    .help(voice.status.isEmpty ? "Live Voice" : voice.status)
                 }
-                if surface.tray != .none { trayCircle(surface) }
+                .allowsHitTesting(false).accessibilityHidden(true)
+                HStack(spacing: PetSurfacePresentation.gap) {
+                    ForEach(slots, id: \.self) { slot in
+                        control(slot, surface).background { clickSurface(slot) }
+                            .transition(splitting(slot, in: slots).combined(with: .opacity))
+                    }
+                }
             }
         }
     }
 
-    private func statusControls(_ surface: PetSurfacePresentation) -> some View {
-        HStack(spacing: PetSurfacePresentation.gap) {
-            if surface.voiceConnecting, let owner = voice.snapshot.session.owner {
-                PetCircle(label: Self.connectingLabel, identifier: "voice.connecting", action: { actions.endVoice(owner) }) {
-                    VoiceConnectingIndicator().frame(width: 20, height: 20)
-                }
-            } else if voice.snapshot.session.owner != nil {
-                PetCircle(label: String(localized: "显示语音控制"), identifier: "pet.voice.show", action: presentation.closeComposer) {
-                    VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
-                                indicator: surface.voice, muted: surface.micMuted, size: 32)
-                        .accessibilityHidden(true)
-                }
-            } else {
-                PetCircle(label: String(localized: "开始 Live Voice"), identifier: "voice.start", enabled: surface.canStartVoice,
-                          action: actions.startVoice) {
-                    VoiceWaveform().frame(width: 15, height: 15)
-                }
-            }
+    /// A circle beside the main pane enters from under it and leaves back under it; without a
+    /// pane it only fades. The glass needs nothing more, it emerges from the pane on its own; a
+    /// circle's symbol also fades, so it never shows beside the glass while the two still overlap.
+    private func splitting(_ slot: PetSlot, in slots: [PetSlot]) -> AnyTransition {
+        guard slot != .main, let main = slots.firstIndex(of: .main), let index = slots.firstIndex(of: slot) else { return .opacity }
+        return .offset(x: CGFloat(main - index) * (PetSurfacePresentation.circle + PetSurfacePresentation.gap))
+    }
+
+    /// The surface of the strip's pills and round controls. Unlike the activity card and the
+    /// bubble, the strip floats directly over the desktop beside the pet, so it stays as quiet as a
+    /// system surface can be: clear glass rather than the frosted regular pane, with only the edge
+    /// and shadow the glass brings itself. Swap the glass back to `.regular` if the controls ever
+    /// need to carry their own contrast.
+    @ViewBuilder private func pane(_ slot: PetSlot, _ surface: PetSurfacePresentation) -> some View {
+        if slot == .main {
+            Color.clear.frame(width: surface.mainWidth ?? 0, height: PetSurfacePresentation.circle)
+                .glassEffect(.clear, in: Capsule()).glassEffectID(slot, in: glassNamespace)
+        } else {
+            Color.clear.frame(width: PetSurfacePresentation.circle, height: PetSurfacePresentation.circle)
+                .glassEffect(.clear, in: Circle()).glassEffectID(slot, in: glassNamespace)
+        }
+    }
+
+    /// The panel is transparent, and the window server passes a click through wherever the
+    /// panel's own pixels are clear. The panes are drawn by the glass container rather than by the
+    /// panel's content, so without this a click on an empty part of the composer reached the app
+    /// behind it and closed the composer. The fill is too faint to see but keeps each control's
+    /// whole shape on the panel.
+    private func clickSurface(_ slot: PetSlot) -> some View {
+        let fill = Color.black.opacity(1 / 255)
+        return Group {
+            if slot == .main { Capsule().fill(fill) } else { Circle().fill(fill) }
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// A round control is a segment over its own pane. The system's glass button style would keep
+    /// its pane to itself, outside the strip's container, so it could neither split off the pill nor
+    /// merge back into it; the segment's hover and pressed states stand in for the button style's.
+    @ViewBuilder private func control(_ slot: PetSlot, _ surface: PetSurfacePresentation) -> some View {
+        switch slot {
+        case .compose:
+            composeSegment
+        case .main:
+            if let main = mainPane(surface) { mainContent(main, surface).transition(paneContentTransition) }
+        case .status:
+            statusCircle(surface)
+        case .tray:
             trayCircle(surface)
         }
     }
 
+    /// New contents arrive at their final width while the pane is still reshaping, and no clip or
+    /// mask on the pane holds back a view that is being inserted. So the old contents leave in the
+    /// first half of the change and the new ones fade in during the second, once the glass is
+    /// nearly as wide as they are. The transition brings its own animation, so it has to step aside
+    /// itself when motion is reduced.
+    private var paneContentTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let half = Self.morphDuration / 2
+        return .asymmetric(insertion: .opacity.animation(.easeIn(duration: half).delay(half)),
+                           removal: .opacity.animation(.easeOut(duration: half)))
+    }
+
+    @ViewBuilder private func mainContent(_ main: MainPane, _ surface: PetSurfacePresentation) -> some View {
+        switch main {
+        case .actions:
+            HStack(spacing: 0) {
+                composeSegment
+                Divider().frame(height: 14)
+                if surface.voiceConnecting, let owner = voice.snapshot.session.owner {
+                    PetSegment(label: Self.connectingLabel, identifier: "voice.connecting", action: { actions.endVoice(owner) }) {
+                        VoiceConnectingIndicator().frame(width: 20, height: 20)
+                    }
+                } else {
+                    PetSegment(label: String(localized: "开始 Live Voice"), identifier: "voice.start", enabled: surface.canStartVoice,
+                               action: actions.startVoice) {
+                        VoiceWaveform().frame(width: 15, height: 15)
+                    }
+                }
+                if surface.tray != .none {
+                    Divider().frame(height: 14)
+                    PetSegment(label: trayLabel(surface.tray), identifier: trayIdentifier(surface.tray),
+                               action: toggleTray) { trayIcon(surface) }
+                        .accessibilityValue(surface.tray == .collapse ? "" : badgeValue(surface.badge))
+                }
+            }
+            .padding(.horizontal, PetSurfacePresentation.pillPadding)
+        case .composer:
+            composerField(surface)
+        case .voice(let owner):
+            HStack(spacing: 0) {
+                PetSegment(label: surface.micMuted ? String(localized: "开启麦克风") : String(localized: "关闭麦克风"), identifier: "voice.mute",
+                           enabled: surface.muteEnabled, action: { actions.toggleMute(owner) }) {
+                    Image(systemName: surface.micMuted ? "mic.slash" : "mic")
+                        .foregroundStyle(surface.micMuted ? WorkspaceStyle.warning : .primary)
+                }
+                PetSegment(label: String(localized: "结束语音"), identifier: "voice.end", action: { actions.endVoice(owner) }) {
+                    VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
+                                indicator: surface.voice, muted: surface.micMuted, size: 34)
+                }
+                PetSegment(label: surface.speakerMuted ? String(localized: "开启扬声器") : String(localized: "静音扬声器"), identifier: "voice.speaker",
+                           enabled: surface.muteEnabled, action: { actions.toggleSpeaker(owner) }) {
+                    Image(systemName: surface.speakerMuted ? "speaker.slash" : "speaker.wave.2")
+                        .foregroundStyle(surface.speakerMuted ? WorkspaceStyle.warning : .primary)
+                }
+            }
+            .padding(.horizontal, PetSurfacePresentation.pillPadding)
+            .help(voice.status.isEmpty ? "Live Voice" : voice.status)
+        }
+    }
+
+    @ViewBuilder private func statusCircle(_ surface: PetSurfacePresentation) -> some View {
+        if surface.voiceConnecting, let owner = voice.snapshot.session.owner {
+            PetSegment(label: Self.connectingLabel, identifier: "voice.connecting", action: { actions.endVoice(owner) }) {
+                VoiceConnectingIndicator().frame(width: 20, height: 20)
+            }
+        } else if voice.snapshot.session.owner != nil {
+            PetSegment(label: String(localized: "显示语音控制"), identifier: "pet.voice.show", action: presentation.closeComposer) {
+                VoicePlanet(store: Self.visiblePlanet(planet, suspended: presentation.isSuspended),
+                            indicator: surface.voice, muted: surface.micMuted, size: 32)
+                    .accessibilityHidden(true)
+            }
+        } else {
+            PetSegment(label: String(localized: "开始 Live Voice"), identifier: "voice.start", enabled: surface.canStartVoice,
+                       action: actions.startVoice) {
+                VoiceWaveform().frame(width: 15, height: 15)
+            }
+        }
+    }
+
     /// Collapsed is the pet's own state: the controls shrink to a hairline that reads as a handle,
-    /// flat and unlit, so nothing but the completion green ever competes with the pet itself.
+    /// flat and unlit, so nothing but the completion green ever competes with the pet itself. It is
+    /// not glass and stays out of the container; a faint contact shadow seats it on the desktop.
     private func collapsedBar(_ surface: PetSurfacePresentation) -> some View {
         let size = PetSurfacePresentation.collapsedSize
         let fill: AnyShapeStyle = surface.unseenCompleted > 0
@@ -518,6 +590,7 @@ struct PetControls: View {
             : AnyShapeStyle(.primary.opacity(0.16))
         return Capsule().fill(fill)
             .frame(width: size.width, height: size.height)
+            .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
             .frame(maxHeight: .infinity, alignment: .top).padding(.top, 4)
             .accessibilityElement()
             .accessibilityLabel(surface.unseenCompleted > 0 ? "\(surface.unseenCompleted) 个已完成任务未查看" : "桌宠快捷控件")
@@ -560,7 +633,6 @@ struct PetControls: View {
         }
         .padding(.leading, workspace == nil ? 14 : 5).padding(.trailing, 5)
         .frame(width: PetSurfacePresentation.composerWidth, height: PetSurfacePresentation.circle)
-        .background { PetControlBackground(shape: Capsule()) }
     }
 
     private func projectButton(_ workspace: WorkspaceStore) -> some View {
@@ -610,7 +682,7 @@ struct PetControls: View {
 
     @ViewBuilder private func trayCircle(_ surface: PetSurfacePresentation) -> some View {
         if surface.tray != .none {
-            PetCircle(label: trayLabel(surface.tray), identifier: trayIdentifier(surface.tray), action: toggleTray) {
+            PetSegment(label: trayLabel(surface.tray), identifier: trayIdentifier(surface.tray), action: toggleTray) {
                 trayIcon(surface)
             }
             .accessibilityValue(surface.tray == .collapse ? "" : badgeValue(surface.badge))

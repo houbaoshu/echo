@@ -113,16 +113,26 @@ struct PetSurfacePresentation: Equatable {
     /// Nothing but the idle hairline bar is shown: no pill, no status circles.
     var isCollapsedBar: Bool { mode == .compact && !showsActions && !showsStatus }
 
+    /// Width of the main pane: the hover pill, the composer or the voice bar. `nil` while the strip
+    /// shows only round controls or the collapsed bar.
+    var mainWidth: CGFloat? {
+        switch mode {
+        case .compact: showsActions ? 2 * Self.pillPadding + Self.segment * (tray == .none ? 2 : 3) : nil
+        case .composer: Self.composerWidth
+        case .voice: 2 * Self.pillPadding + 3 * Self.segment
+        }
+    }
+
     /// Width of the visible controls, used for hover tracking and centering under the pet.
     var width: CGFloat {
         let trayWidth = tray == .none ? 0 : Self.gap + Self.circle
         switch mode {
         case .compact:
-            guard showsActions else { return showsStatus ? Self.circle + trayWidth : Self.collapsedSize.width }
-            return 2 * Self.pillPadding + Self.segment * (tray == .none ? 2 : 3)
+            guard let mainWidth else { return showsStatus ? Self.circle + trayWidth : Self.collapsedSize.width }
+            return mainWidth
         // Composing is a focus mode until the first send brings back the task status controls.
         case .composer: return Self.composerWidth + (showsStatus ? Self.gap + Self.circle + trayWidth : 0)
-        case .voice: return Self.circle + Self.gap + 2 * Self.pillPadding + 3 * Self.segment + trayWidth
+        case .voice: return Self.circle + Self.gap + (mainWidth ?? 0) + trayWidth
         }
     }
 }
