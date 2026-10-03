@@ -128,7 +128,7 @@ struct ChatSearchPalette: View {
                                  onMove: { move($0) }, onSubmit: { open(highlighted) }, onCancel: close)
                 .padding(.horizontal, 12).padding(.top, 12)
             if results.isEmpty {
-                Text("没有匹配的会话").font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                Text("没有匹配的会话").font(WorkspaceStyle.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 20).padding(.bottom, 12)
                     .accessibilityIdentifier("palette.empty")
@@ -143,7 +143,7 @@ struct ChatSearchPalette: View {
                             Spacer(minLength: 8)
                             if let project = workspace.project(for: conversation.id) {
                                 Text(project.name).font(WorkspaceStyle.caption)
-                                    .foregroundStyle(WorkspaceStyle.secondary).lineLimit(1)
+                                    .foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)

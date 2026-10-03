@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// Type comes from the system's text styles; the secondary tone is a 65% label colour.
+// Type comes from the system's text styles; the secondary and tertiary tones are the system's label colours.
 // Keep AppKit and SwiftUI typography in sync, including the native text editor.
 enum WorkspaceStyle {
     /// The point size of the system `.body` style, for AppKit text — the composer, the
@@ -12,14 +12,13 @@ enum WorkspaceStyle {
     static let caption = Font.callout
     static let pageTitle = Font.title2
     static let primary = Color(nsColor: .labelColor)
-    static let secondary = Color(nsColor: secondaryTextColor)
-    static let tertiary = Color(nsColor: tertiaryTextColor)
-    static let secondaryTextColor = NSColor(name: nil) { appearance in
-        NSColor.labelColor.withAlphaComponent(increasesContrast(appearance) ? 0.85 : 0.65)
-    }
-    static let tertiaryTextColor = NSColor(name: nil) { appearance in
-        NSColor.labelColor.withAlphaComponent(increasesContrast(appearance) ? 0.75 : 0.5)
-    }
+    /// For surfaces without a material of their own. On the sidebar, the project file
+    /// inspector and the search palette, call sites use the hierarchical `.secondary`
+    /// instead: measured on macOS 27, it does not draw the same as this fixed colour there.
+    /// In the sidebar-style lists it is lighter (light: 136 vs 119 on 238; dark: 120 vs 149
+    /// on 44); on the palette's material it is stronger (light: 112 vs 120; dark: 173 vs 152).
+    static let secondary = Color(nsColor: .secondaryLabelColor)
+    static let tertiary = Color(nsColor: .tertiaryLabelColor)
 
     // MARK: Status colours
     //
@@ -28,8 +27,8 @@ enum WorkspaceStyle {
     // `NSColor.systemOrange` / `.systemGreen` / `.systemBlue` already track light and
     // dark, which is why nothing below spells out components.
     //
-    // The ink deliberately does NOT get the Increase Contrast branch the text colours
-    // above have, and that is a measurement, not an oversight. Increase Contrast is a
+    // The ink deliberately does NOT get an Increase Contrast branch of its own — like the
+    // text colours above, it is a system colour — and that is a measurement, not an oversight. Increase Contrast is a
     // system-wide accessibility setting, not an appearance a view can be handed: with it
     // off, `NSAppearance(named: .accessibilityHighContrastAqua)` hands back plain aqua
     // on a machine with that setting off. Such a run cannot tell whether a system
@@ -283,7 +282,7 @@ struct WorkspaceSidebar: View {
         } label: {
             HStack(spacing: 8) {
                 ProjectFolderIcon(isExpanded: projectExpanded(project), isAvailable: project.isAvailable)
-                    .foregroundStyle(WorkspaceStyle.secondary).frame(width: 18, height: 16)
+                    .foregroundStyle(.secondary).frame(width: 18, height: 16)
                     .accessibilityHidden(true)
                 Text(project.name).lineLimit(1)
                 Spacer(minLength: 0)

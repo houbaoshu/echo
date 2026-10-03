@@ -203,7 +203,7 @@ struct HoverRevealButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol).font(.body).frame(width: 24, height: 24).contentShape(Rectangle())
-        }.buttonStyle(.plain).focused($focused).foregroundStyle(WorkspaceStyle.secondary)
+        }.buttonStyle(.plain).focused($focused).foregroundStyle(.secondary)
             .opacity(visible || focused ? 1 : 0).allowsHitTesting(visible || focused)
             .help(help ?? label).accessibilityLabel(label)
     }

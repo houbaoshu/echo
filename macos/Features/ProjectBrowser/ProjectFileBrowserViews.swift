@@ -104,7 +104,7 @@ private struct ProjectFileBrowserView: View {
             ProgressView().controlSize(.small)
         case .failed(let message):
             VStack(alignment: .leading, spacing: 8) {
-                Text(message).foregroundStyle(WorkspaceStyle.secondary)
+                Text(message).foregroundStyle(.secondary)
                 Button("重试") { browser.loadDirectory(path) }
                 if path.isEmpty, let project {
                     Button("重新定位文件夹…") {
@@ -114,7 +114,7 @@ private struct ProjectFileBrowserView: View {
             }.font(WorkspaceStyle.caption).padding(.vertical, 6)
         case .loaded(let entries):
             if entries.isEmpty {
-                Text("空文件夹").font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                Text("空文件夹").font(WorkspaceStyle.caption).foregroundStyle(.secondary)
             } else {
                 ForEach(entries) { entry in
                     if entry.kind == .directory {
@@ -169,7 +169,7 @@ private struct ProjectFileBrowserView: View {
                     Image(systemName: browser.isPreviewExpanded
                           ? "arrow.up.right.and.arrow.down.left" : "arrow.down.left.and.arrow.up.right")
                         .font(.callout).frame(width: 24, height: 24).contentShape(Rectangle())
-                }.buttonStyle(.borderless).foregroundStyle(WorkspaceStyle.secondary)
+                }.buttonStyle(.borderless).foregroundStyle(.secondary)
                     .help(browser.isPreviewExpanded ? "收起预览" : "展开预览")
                     .accessibilityLabel(browser.isPreviewExpanded ? "收起预览" : "展开预览")
                     .accessibilityIdentifier("projectFiles.toggleExpansion")
@@ -179,7 +179,7 @@ private struct ProjectFileBrowserView: View {
             case .loading: ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             case .text(let text):
                 if text.isEmpty {
-                    Text("空文件").foregroundStyle(WorkspaceStyle.secondary).padding(14)
+                    Text("空文件").foregroundStyle(.secondary).padding(14)
                     Spacer()
                 } else {
                     Group {
@@ -199,7 +199,7 @@ private struct ProjectFileBrowserView: View {
                     .accessibilityIdentifier("projectFiles.preview")
             case .information(let message), .failed(let message):
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(message).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                    Text(message).foregroundStyle(.secondary).textSelection(.enabled)
                     Button("在 Finder 中显示") {
                         guard let path = browser.state.selectedPath, let url = browser.url(for: path) else { return }
                         NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -224,8 +224,8 @@ private struct ProjectFileRow: View {
     /// The source list raises this on the row it fills with the accent colour, so the
     /// icons switch to the selected-row tint the way a label does.
     @Environment(\.backgroundProminence) private var prominence
-    private var secondary: Color {
-        prominence == .increased ? Color(nsColor: .alternateSelectedControlTextColor) : WorkspaceStyle.secondary
+    private var secondary: AnyShapeStyle {
+        prominence == .increased ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor)) : AnyShapeStyle(.secondary)
     }
     var body: some View {
         HStack(spacing: 6) {
