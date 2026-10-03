@@ -8,6 +8,7 @@
     }
   ],
   "defaultOptions": {
+    "language": "zh-Hans",
     "testTimeoutsEnabled": true,
     "defaultTestExecutionTimeAllowance": 900,
     "maximumTestExecutionTimeAllowance": 960,

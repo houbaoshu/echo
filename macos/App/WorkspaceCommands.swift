@@ -17,7 +17,7 @@ import AppKit
             item.keyEquivalentModifierMask = modifiers
             item.target = self
         }
-        add(fileMenu, String(localized: "新对话"), #selector(newConversation), "n", .command)
+        add(fileMenu, String(localized: "新对话|菜单栏", defaultValue: "新对话"), #selector(newConversation), "n", .command)
         // Titled by validateMenuItem from the column's state. These keep their own target
         // rather than leaving the selectors to AppKit, which would retitle them in its own words.
         add(viewMenu, String(localized: "显示边栏"), #selector(toggleSidebar), "s", [.control, .command])
@@ -26,7 +26,7 @@ import AppKit
         add(viewMenu, String(localized: "进入全屏幕"), #selector(toggleFullScreen), "f", [.control, .command])
         add(conversationMenu, String(localized: "切换普通听写"), #selector(toggleDictation), "d", [.control, .shift])
         add(conversationMenu, String(localized: "切换 Live Voice"), #selector(toggleVoice), "v", [.control, .shift])
-        add(conversationMenu, String(localized: "停止回复"), #selector(stop), ".", .command)
+        add(conversationMenu, String(localized: "停止回复|菜单栏", defaultValue: "停止回复"), #selector(stop), ".", .command)
     }
 
     private var canStop: Bool {

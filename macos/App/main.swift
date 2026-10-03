@@ -151,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let quickOpen = fileMenu.addItem(withTitle: String(localized: "快速打开会话…"), action: #selector(search), keyEquivalent: "k")
         quickOpen.keyEquivalentModifierMask = [.command]
         quickOpen.target = self
-        fileMenu.addItem(withTitle: String(localized: "添加项目文件夹…"), action: #selector(addProject), keyEquivalent: "").target = self
+        fileMenu.addItem(withTitle: String(localized: "添加项目文件夹…|菜单栏", defaultValue: "添加项目文件夹…"), action: #selector(addProject), keyEquivalent: "").target = self
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: String(localized: "关闭窗口"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         windowMenu.addItem(withTitle: String(localized: "最小化"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
