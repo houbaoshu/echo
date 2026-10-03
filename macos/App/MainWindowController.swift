@@ -58,38 +58,6 @@ import Combine
     }
 }
 
-/// Hosts SwiftUI in a split view item accessory — the system's own place for a column's
-/// permanent header and footer. AppKit supplies the standard content insets, the
-/// animatable `hidden`, and the soft scroll edge the list passes under; the hosted view
-/// only has to report its own height.
-@MainActor final class SidebarAccessoryController<Content: View>: NSSplitViewItemAccessoryViewController {
-    private let host: NSHostingController<Content>
-    init(rootView: Content) {
-        host = NSHostingController(rootView: rootView)
-        super.init(nibName: nil, bundle: nil)
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override func loadView() { view = NSView() }
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        // AppKit sizes the accessory from Auto Layout, so the hosted content has to carry
-        // an intrinsic height. The column supplies the width, which is why the hosted
-        // view must not also impose one.
-        host.sizingOptions = [.intrinsicContentSize]
-        addChild(host)
-        view.addSubview(host.view)
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-        host.view.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        host.view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        NSLayoutConstraint.activate([
-            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            host.view.topAnchor.constraint(equalTo: view.topAnchor),
-            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-    }
-}
-
 @MainActor final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     let workspace: WorkspaceStore
     let settings: SettingsStore
@@ -108,7 +76,7 @@ import Combine
     private var inspectorObservation: NSKeyValueObservation?
     private var widthsBeforeExpansion: (sidebar: CGFloat?, inspector: CGFloat?) = (nil, nil)
     /// Chat search is a command palette in a floating window of its own, not a field in
-    /// the column. ⌘K and the column header's magnifier both drive it through here.
+    /// the column. The File menu's ⌘K drives it through here.
     let searchPalette = SearchPalettePresentation()
     private var paletteController: SearchPaletteController!
     /// The workspace sidebar's chat list, so closing the search field can hand the
@@ -155,14 +123,9 @@ import Combine
         sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         sidebarItem.holdingPriority = .init(260)
         sidebarItem.preferredThicknessFraction = 0.15
-        // The column's permanent header and footer. AppKit pins them to the top and
-        // bottom of the column, insets the list's scroll content by their height and
-        // draws the scroll edge under them; both disappear with the column when it
-        // collapses, which is why the settings gear also has ⌘, and the Echo menu.
-        sidebarItem.addTopAlignedAccessoryViewController(
-            SidebarAccessoryController(rootView: WorkspaceSidebarHeader(workspace: workspace, palette: searchPalette)))
-        sidebarItem.addBottomAlignedAccessoryViewController(
-            SidebarAccessoryController(rootView: SettingsEntryButton { [weak self] in self?.showSettings() }))
+        // The column is the chat list and nothing else: no header or footer accessory.
+        // New chat, search and Settings live in the menu bar (⌘N, ⌘K, ⌘,), which works
+        // whether or not the column is open.
         let content = NSSplitViewItem(viewController: conversationHost)
         content.minimumThickness = 440; content.holdingPriority = .init(249)
         content.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
@@ -392,10 +355,9 @@ import Combine
     /// after a flexible space following its tracking separator. They carry the system icon,
     /// the stateful tooltip and the validation, and the title is drawn by the window.
     ///
-    /// They are here because a collapsed sidebar takes the chat list and the settings gear
-    /// in its footer accessory with it, and AppKit collapses the sidebar on its own when the
-    /// window gets narrow; the toolbar is where the column comes back from. Settings is
-    /// also in the Echo menu. The View menu has the same toggles on ⌃⌘S / ⌃⌘I.
+    /// They are here because a collapsed sidebar takes the chat list with it, and AppKit
+    /// collapses the sidebar on its own when the window gets narrow; the toolbar is where
+    /// the column comes back from. The View menu has the same toggles on ⌃⌘S / ⌃⌘I.
     ///
     /// Their labels and tooltips are AppKit's, in whatever language the system is running;
     /// Echo does not localize the bundle and must not rewrite the tooltip, which the system
@@ -408,23 +370,4 @@ import Combine
     /// identifiers included — unless the delegate answers this selector.
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? { nil }
-}
-
-/// The sidebar column's footer, carried by its bottom-aligned accessory. The accessory
-/// already contributes 10pt of leading inset, so the 2 here restores the 12 the floating
-/// button used to sit at.
-struct SettingsEntryButton: View {
-    var action: () -> Void
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "gearshape").font(.system(size: 17)).frame(width: 32, height: 32)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
-        }.buttonStyle(.plain).help("设置 ⌘,").accessibilityLabel("设置").accessibilityIdentifier("workspace.settings")
-            .padding(.leading, 2).frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-#Preview("设置入口") {
-    SettingsEntryButton(action: {})
-        .frame(width: 220, height: 60)
 }

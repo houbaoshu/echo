@@ -895,9 +895,6 @@ import SwiftUI
         main.sidebarItem.isCollapsed = false
         let window = main.window!
         let sidebar = main.sidebarItem.viewController.view
-        // The column's header is its own top-aligned accessory, so the search field is a
-        // sibling of the list rather than a view inside it.
-        let sidebarHeader = main.sidebarItem.topAlignedAccessoryViewControllers[0].view
         main.present()
         NSApp.activate(ignoringOtherApps: true)
         func settle() async throws {
@@ -972,8 +969,8 @@ import SwiftUI
             XCTAssertTrue(!editor.string.contains("\t"), "Tab moved on instead of typing into the composer")
         }
 
-        // 10. Search is a command palette in a floating panel, opened from the column
-        // header's magnifier or ⌘K.
+        // 10. Search is a command palette in a floating panel, opened from the File menu's
+        // ⌘K.
         // The main window carries no search field of its own, which is what keeps the
         // column's Tab order out of it.
         func paletteField() -> NSSearchField? {
@@ -995,14 +992,9 @@ import SwiftUI
                      "The main window has no search field")
         let restsClosed = try await paletteClosed()
         XCTAssertTrue(restsClosed, "The palette rests closed")
-        guard let magnifier = findAccessibility("workspace.search.toggle", in: sidebarHeader),
-              let magnifierFrame = magnifier.accessibilityFrame?(), magnifierFrame != .zero else {
-            throw SettingsError("The column header must carry the search entry")
-        }
-        // accessibilityFrame is in screen coordinates; click takes window coordinates.
-        XCTAssertTrue(magnifier.accessibilityPerformPress?() == true)
+        main.focusSearch()
         try await settle(); try await settle()
-        XCTAssertTrue(main.searchPalette.isOpen, "The magnifier opens the palette")
+        XCTAssertTrue(main.searchPalette.isOpen, "⌘K opens the palette")
         guard let query = paletteField(), let queryWindow = query.window else {
             throw SettingsError("The palette must carry a system NSSearchField")
         }

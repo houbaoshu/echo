@@ -462,7 +462,7 @@ import XCTest
             project().coordinate(withNormalizedOffset: .init(dx: 0.90, dy: 0.5)).click()
             XCTAssertTrue(app.buttons["conversation.project"].label.contains("Project 00"))
             let rowCount = outline.descendants(matching: .outlineRow).count
-            app.descendants(matching: .any)["workspace.search.toggle"].firstMatch.click()
+            app.typeKey("k", modifierFlags: .command)
             let search = app.searchFields["搜索聊天"]
             XCTAssertTrue(search.waitForExistence(timeout: 3)); search.typeText("Recent Gamma")
             XCTAssertEqual(outline.descendants(matching: .outlineRow).count, rowCount, "Palette filtering leaves the sidebar intact")

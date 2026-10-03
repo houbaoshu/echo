@@ -2,9 +2,8 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// Whether the palette is on screen. ⌘K, the column header's magnifier and the palette's
-/// own Escape / Return all drive it through here; `SearchPaletteController` is what turns
-/// that into a window.
+/// Whether the palette is on screen. ⌘K and the palette's own Escape / Return all drive
+/// it through here; `SearchPaletteController` is what turns that into a window.
 @MainActor final class SearchPalettePresentation: ObservableObject {
     @Published var isOpen = false
 }
@@ -224,7 +223,7 @@ struct ChatSearchPalette: View {
 
 /// Turns `SearchPalettePresentation.isOpen` into a window.
 ///
-/// Every entry point — ⌘K, the column header's magnifier — just flips `isOpen`, and every
+/// The entry point — ⌘K, from the File menu — just flips `isOpen`, and every
 /// exit — Return, the second Escape, a click outside, switching apps — comes back through
 /// the same flag, so there is one piece of state rather than a window and a boolean that
 /// can disagree.

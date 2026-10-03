@@ -360,16 +360,6 @@
         }
       }
     },
-    "Echo" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Echo"
-          }
-        }
-      }
-    },
     "Live Voice" : {
       "localizations" : {
         "en" : {
@@ -1257,16 +1247,6 @@
         }
       }
     },
-    "已关闭" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Closed"
-          }
-        }
-      }
-    },
     "已复制" : {
       "localizations" : {
         "en" : {
@@ -1343,16 +1323,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "truncated"
-          }
-        }
-      }
-    },
-    "已打开" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Open"
           }
         }
       }
@@ -1627,16 +1597,6 @@
         }
       }
     },
-    "打开或关闭聊天搜索" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Opens or closes chat search."
-          }
-        }
-      }
-    },
     "执行中" : {
       "localizations" : {
         "en" : {
@@ -1683,16 +1643,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search chats"
-          }
-        }
-      }
-    },
-    "搜索聊天 ⌘K" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Search chats ⌘K"
           }
         }
       }
@@ -1813,16 +1763,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New Chat"
-          }
-        }
-      }
-    },
-    "新对话 ⌘N" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "New chat ⌘N"
           }
         }
       }
@@ -3351,16 +3291,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Settings"
-          }
-        }
-      }
-    },
-    "设置 ⌘," : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Settings ⌘,"
           }
         }
       }

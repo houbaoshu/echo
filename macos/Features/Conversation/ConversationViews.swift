@@ -117,54 +117,6 @@ extension NSFont {
     }
 }
 
-/// The column's permanent header, carried by the sidebar item's own top-aligned accessory
-/// rather than riding in the same VStack as the list. AppKit pins it above the scroll
-/// area, applies the column's standard content insets and draws the scroll edge effect as
-/// rows pass under it.
-///
-/// No text control lives here, and none may. An accessory's contents are ordered after
-/// the column body in the window's key view loop, which would put the chat composer
-/// between this column's header and this column's list. The magnifier is a button, and
-/// buttons do not join the loop, so the header cannot disturb it. Search itself opens in a
-/// floating panel of its own (SearchPalette.swift), so it is not in this window at all.
-///
-/// The paddings are the old ones minus what the accessory contributes — 10pt
-/// leading/trailing and 9pt top/bottom — so the title and
-/// the button land exactly where they did before: 18pt in, 16pt down.
-struct WorkspaceSidebarHeader: View {
-    @ObservedObject var workspace: WorkspaceStore
-    @ObservedObject var palette: SearchPalettePresentation
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                Text("Echo").font(.system(size: 18, weight: .medium)).foregroundStyle(WorkspaceStyle.primary)
-                Spacer(minLength: 8)
-                // A system button. The hover highlight, the pressed state and the tint it
-                // takes while the palette is up are all the accessory-bar style's own
-                // drawing; nothing here paints a state. It is a Toggle because the
-                // palette's open flag IS the button's on state, which is the one thing
-                // the style needs to be told.
-                Toggle(isOn: $palette.isOpen) {
-                    Image(systemName: "magnifyingglass").font(.body)
-                }.toggleStyle(.button).buttonStyle(.accessoryBar)
-                    .help("搜索聊天 ⌘K").accessibilityLabel("搜索聊天")
-                    .accessibilityValue(palette.isOpen ? "已打开" : "已关闭")
-                    .accessibilityHint("打开或关闭聊天搜索")
-                    .accessibilityIdentifier("workspace.search.toggle")
-            }.frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8).padding(.top, 7)
-            HStack {
-                Button { workspace.newConversation(projectID: workspace.selected?.projectID) } label: {
-                    Label("新对话", systemImage: "square.and.pencil")
-                        .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }.buttonStyle(.borderless).help("新对话 ⌘N").accessibilityLabel("新对话")
-            }.padding(.horizontal, 8).padding(.top, 16).padding(.bottom, 1)
-        }
-    }
-}
-
 struct WorkspaceSidebar: View {
     private struct RowID: Hashable {
         let conversationID: UUID
@@ -178,7 +130,6 @@ struct WorkspaceSidebar: View {
     @State private var projectsExpanded = true
     @State private var recentExpanded = true
     @State private var projectHeaderHovered = false
-    @State private var recentHeaderHovered = false
     @State private var hoveredProject: UUID?
     @State private var selectedRow: RowID?
     private var selection: Binding<RowID?> {
@@ -245,15 +196,7 @@ struct WorkspaceSidebar: View {
         }
     }
     private var recentHeader: some View {
-        HStack(spacing: 4) {
-            Text("最近").accessibilityIdentifier("workspace.recent.title")
-            Spacer(minLength: 8)
-            HoverRevealButton(symbol: "square.and.pencil", label: "新对话", help: "新对话 ⌘N", visible: recentHeaderHovered) {
-                workspace.newConversation(projectID: workspace.selected?.projectID)
-            }.accessibilityIdentifier("workspace.recent.newConversation")
-        }.frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .onHover { recentHeaderHovered = $0 }
+        Text("最近").accessibilityIdentifier("workspace.recent.title")
     }
     private var projectHeader: some View {
         HStack(spacing: 4) {

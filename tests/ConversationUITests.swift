@@ -271,13 +271,12 @@ private struct ComposerHeightHost: View {
 
     /// The window's structure comes from system parts.
     ///
-    /// The sidebar's header and footer are NSSplitViewItemAccessoryViewControllers rather
-    /// than views stacked with the list and a floating button pinned to the root view; the
+    /// The sidebar column is the chat list alone, with no header or footer accessory; the
     /// toolbar carries the standard sidebar/inspector toggles and no custom title item; the
     /// title is the window's own, on one line; and the frame is NSWindow's to persist.
     /// None of this needs a real pointer, so it stays deterministic.
     func testWindowChromeAndSidebarAccessories() async throws {
-        // The gear is a SwiftUI button, and SwiftUI only publishes AX nodes once this is on.
+        // The chat list is SwiftUI, and SwiftUI only publishes AX nodes once this is on.
         let accessibilitySetter = NSSelectorFromString("accessibilitySetValue:forAttribute:")
         if NSApp.responds(to: accessibilitySetter) {
             NSApp.perform(accessibilitySetter, with: NSNumber(value: true), with: "AXEnhancedUserInterface")
@@ -308,20 +307,14 @@ private struct ComposerHeightHost: View {
         window.contentView?.layoutSubtreeIfNeeded()
         XCTAssertTrue(!main.sidebarItem.isCollapsed, "⌃⌘S opens the column for the rest of this test")
 
-        // --- P1-1 / P1-2: the column's header and footer are accessories ---
+        // --- P1-1 / P1-2: the column is the chat list alone ---
+        // New chat, search and Settings are in the menu bar (⌘N, ⌘K, ⌘,), so the column
+        // carries no header or footer accessory.
         let header = main.sidebarItem.topAlignedAccessoryViewControllers
         let footer = main.sidebarItem.bottomAlignedAccessoryViewControllers
-        XCTAssertTrue(header.count == 1 && footer.count == 1,
-                     "The sidebar column carries one header and one footer accessory, got \(header.count)/\(footer.count)")
-        XCTAssertTrue(header[0].view.frame.height > 0 && footer[0].view.frame.height > 0,
-                     "Accessories size themselves from their hosted SwiftUI content")
-        XCTAssertTrue(findAccessibility("workspace.search.toggle", in: header[0].view) != nil,
-                     "The header accessory carries the search entry")
-        XCTAssertTrue(findAccessibility("workspace.settings", in: footer[0].view) != nil,
-                     "The settings gear lives in the footer accessory")
+        XCTAssertTrue(header.isEmpty && footer.isEmpty,
+                     "The sidebar column carries no header or footer accessory, got \(header.count)/\(footer.count)")
         let body = main.sidebarItem.viewController.view
-        XCTAssertTrue(findAccessibility("workspace.settings", in: window.contentView!) != nil,
-                     "The gear is reachable while the column is open")
 
         // No text control may live in this window's column chrome. An accessory's
         // contents are ordered after the column body in the key view loop, which would
@@ -347,7 +340,6 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(main.searchPalette.isOpen, "⌘K opens the palette")
         XCTAssertTrue(searchFields(in: window.contentView!).isEmpty,
                      "The palette's field is in its own panel, never in this window")
-        XCTAssertTrue(searchFields(in: header[0].view).isEmpty, "...and certainly not in the header accessory")
         // The panel hangs centred on the whole window, not on the chat column: the columns
         // divide what is inside the window and leave its frame alone, so the palette sits
         // in the same place whatever they are doing.
@@ -390,41 +382,21 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(workspace.conversations(matching: "no chat has this in it").isEmpty,
                      "The palette's matching is what narrows results")
 
-        // The accessories are expressed as safe-area insets, so the list must be inset by
-        // them or its first and last rows would sit under the header and the footer.
-        func sidebarScrollView() -> NSScrollView? {
-            func search(_ view: NSView) -> NSScrollView? {
-                if let scroll = view as? NSScrollView { return scroll }
-                for child in view.subviews { if let found = search(child) { return found } }
-                return nil
-            }
-            return search(body)
-        }
-        guard let scroll = sidebarScrollView() else { throw SettingsError("No scroll view in the sidebar column") }
-        XCTAssertTrue(scroll.contentInsets.top >= header[0].view.frame.height,
-                     "The list is inset below the header, got \(scroll.contentInsets.top) for a \(header[0].view.frame.height)pt header")
-        XCTAssertTrue(scroll.contentInsets.bottom >= footer[0].view.frame.height,
-                     "The list is inset above the footer, got \(scroll.contentInsets.bottom) for a \(footer[0].view.frame.height)pt footer")
-
-        // A collapsed column takes its footer with it. That is the accepted cost of putting
-        // the gear in the sidebar: ⌘, and the Echo menu are the entries that always work.
-        // The split view's own toggle animates the collapse, so this waits it out.
+        // ⌃⌘S collapses the column and brings it back. The split view's own toggle animates
+        // the collapse, so this waits it out.
         main.toggleSidebar()
         try await Task.sleep(for: .milliseconds(600))
         window.contentView?.layoutSubtreeIfNeeded()
         XCTAssertTrue(main.sidebarItem.isCollapsed, "⌃⌘S collapses the column")
-        XCTAssertTrue(footer[0].view.isHiddenOrHasHiddenAncestor,
-                     "The footer goes away with the column")
         main.toggleSidebar()
         try await Task.sleep(for: .milliseconds(200))
         window.contentView?.layoutSubtreeIfNeeded()
-        XCTAssertTrue(!main.sidebarItem.isCollapsed && !footer[0].view.isHiddenOrHasHiddenAncestor,
-                     "Reopening the column brings the footer back")
+        XCTAssertTrue(!main.sidebarItem.isCollapsed, "Reopening the column brings it back")
 
         // --- P1-3: the toolbar carries AppKit's own column toggles ---
-        // Without them a collapsed sidebar is a dead end: the settings gear rides in that
-        // column's footer accessory and goes away with it (asserted just above), and Echo
-        // is an LSUIElement app with no Dock tile to fall back on.
+        // Without them a collapsed sidebar is a dead end: AppKit collapses it on its own
+        // when the window gets narrow, the chat list goes away with it, and Echo is an
+        // LSUIElement app with no Dock tile to fall back on.
         guard let toolbar = window.toolbar else { throw SettingsError("No toolbar") }
         let identifiers = toolbar.items.map(\.itemIdentifier)
         XCTAssertTrue(identifiers == [.toggleSidebar, .sidebarTrackingSeparator,
