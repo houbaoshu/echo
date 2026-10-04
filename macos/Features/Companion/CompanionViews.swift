@@ -1,14 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// The shared surface behind every companion panel. The panels are borderless and fully
-/// transparent, so the system material is what samples the desktop behind them.
-struct CompanionBackground<SurfaceShape: InsettableShape>: View {
+/// The shared surface behind the activity cards and the voice bubble. The panels are borderless
+/// and fully transparent, so the system material is what samples the desktop behind them. It
+/// keeps its active look although these panels are almost never key.
+struct CompanionBackground<SurfaceShape: Shape>: View {
     var shape: SurfaceShape
     var body: some View {
-        Color.clear
-            .glassEffect(.regular, in: shape)
-            .overlay { shape.strokeBorder(.primary.opacity(0.14), lineWidth: 0.75) }
+        Color.clear.background(.thickMaterial, in: shape)
     }
 }
 
@@ -23,9 +22,9 @@ private extension View {
 /// label keeps a control's outer size exactly what the companion layout reserves for it.
 private let systemButtonInset: CGFloat = 8
 
-/// A round control drawn on top of a companion Liquid Glass surface. A system glass style here
-/// would stack glass on glass, so the fill stays hand-drawn; the style exists to give the control
-/// the pressed state that `.plain` does not provide.
+/// A round control drawn on top of a companion card. The fill is one grey step away from the
+/// card's material in both appearances, so the half that overlaps the card stays visible; the
+/// style exists to give the control the hover and pressed states that `.plain` does not provide.
 private struct CompanionRoundButtonStyle: ButtonStyle {
     let size: CGFloat
     let hovered: Bool
@@ -35,8 +34,12 @@ private struct CompanionRoundButtonStyle: ButtonStyle {
             .foregroundStyle(.primary)
             .frame(width: size, height: size)
             .background {
-                Circle().fill(Color(nsColor: .controlBackgroundColor).opacity(hovered ? 0.95 : 0.75))
-                    .overlay { if configuration.isPressed { Circle().fill(.primary.opacity(0.16)) } }
+                Circle().fill(Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
+                    .overlay {
+                        if configuration.isPressed || hovered {
+                            Circle().fill(.primary.opacity(configuration.isPressed ? 0.16 : 0.08))
+                        }
+                    }
             }
             .contentShape(Circle())
     }
@@ -59,8 +62,8 @@ struct RoundControl: View {
     }
 
     /// The main action follows the system accent color through the prominent style, which also
-    /// brings its own hover, pressed and disabled appearance. The secondary actions sit on glass
-    /// and keep their own fill, so they stay legible against the surface behind them.
+    /// brings its own hover, pressed and disabled appearance. The secondary actions sit on a card's
+    /// material and keep their own fill, so they stay legible against the surface behind them.
     @ViewBuilder private var control: some View {
         if emphasized {
             Button(action: action) {
@@ -219,10 +222,7 @@ struct ActivityCapsule: View {
             }
         }
         .frame(width: CompanionLayout.capsuleWidth)
-        .background {
-            CompanionBackground(shape: RoundedRectangle(cornerRadius: 28))
-                .shadow(color: Color(nsColor: .separatorColor).opacity(0.35), radius: 20, y: 6)
-        }
+        .background { CompanionBackground(shape: RoundedRectangle(cornerRadius: 28)) }
         .overlay(alignment: .topLeading) {
             if store.task != nil {
                 RoundControl(symbol: "xmark", label: String(localized: "忽略任务通知"), size: 20, identifier: "activity.dismiss") {
@@ -790,10 +790,10 @@ struct WorkspaceActivityCapsule: View {
             } else if let first = workspace.visiblePetActivities.first {
                 ZStack(alignment: placement.isBelowPet ? .top : .bottom) {
                     ForEach(Array(workspace.visiblePetActivities.prefix(3).enumerated().dropFirst().reversed()), id: \.element.id) { index, _ in
-                        CompanionBackground(shape: RoundedRectangle(cornerRadius: 28))
-                            .frame(width: CompanionLayout.capsuleWidth - CGFloat(index) * 12,
-                                   height: CompanionLayout.collapsedHeight)
-                            .offset(y: CGFloat(index) * (placement.isBelowPet ? 7 : -7))
+                        CompanionBackground(shape: StackedCardSliver(depth: index, belowPet: placement.isBelowPet))
+                            .opacity(index == 1 ? 0.7 : 0.45)
+                            .frame(width: StackedCardSliver.width(depth: index), height: CompanionLayout.collapsedHeight)
+                            .offset(y: CGFloat(index) * (placement.isBelowPet ? 1 : -1) * StackedCardSliver.step.offset)
                             .allowsHitTesting(false).accessibilityHidden(true)
                     }
                     card(first)
@@ -806,6 +806,28 @@ struct WorkspaceActivityCapsule: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: placement.isBelowPet ? .top : .bottom)
         .coordinateSpace(name: "activityCanvas")
         .onPreferenceChange(ActivityCloseButtonFrames.self) { placement.updateCloseButtonFrames($0) }
+    }
+}
+
+/// The part of a stacked card's back layer that shows past the layers in front of it. The front
+/// card's material blends with whatever the panel draws beneath it, so a full layer under it
+/// would tint the card; each layer draws only its own strip.
+struct StackedCardSliver: Shape {
+    let depth: Int
+    let belowPet: Bool
+    static let step = (width: CGFloat(12), offset: CGFloat(7))
+    static func width(depth: Int) -> CGFloat { CompanionLayout.capsuleWidth - CGFloat(depth) * step.width }
+
+    func path(in rect: CGRect) -> Path {
+        let own = RoundedRectangle(cornerRadius: 28).path(in: rect)
+        let front = (0..<depth).reduce(into: Path()) { path, layer in
+            let width = Self.width(depth: layer)
+            let shift = CGFloat(depth - layer) * Self.step.offset
+            let frame = CGRect(x: rect.midX - width / 2, y: rect.minY + (belowPet ? -shift : shift),
+                               width: width, height: rect.height)
+            path.addPath(RoundedRectangle(cornerRadius: 28).path(in: frame))
+        }
+        return own.subtracting(front)
     }
 }
 
@@ -846,18 +868,16 @@ struct WorkspacePetControls: View {
 }
 
 /// A rounded bubble whose tail points at the pet from the top or bottom edge.
-struct CompanionBubbleShape: InsettableShape {
+struct CompanionBubbleShape: Shape {
     static let tail: CGFloat = 7
     var tailX: CGFloat
     var tailOnTop: Bool
-    var insetAmount: CGFloat = 0
     func path(in rect: CGRect) -> Path {
-        let rect = rect.insetBy(dx: insetAmount, dy: insetAmount)
-        let tail = max(0, Self.tail - insetAmount)
+        let tail = Self.tail
         let body = CGRect(x: rect.minX, y: rect.minY + (tailOnTop ? tail : 0), width: rect.width, height: rect.height - tail)
         let radius = max(0, min(14, body.height / 2, body.width / 2))
         let x = min(max(tailX, body.minX + radius + tail), body.maxX - radius - tail)
-        // One continuous outline, so the border runs around the tail instead of across its base.
+        // One continuous outline, so the tail and the body are a single filled region.
         var path = Path()
         path.move(to: CGPoint(x: body.minX + radius, y: body.minY))
         if tailOnTop {
@@ -876,9 +896,6 @@ struct CompanionBubbleShape: InsettableShape {
         path.addArc(tangent1End: CGPoint(x: body.minX, y: body.minY), tangent2End: CGPoint(x: body.maxX, y: body.minY), radius: radius)
         path.closeSubpath()
         return path
-    }
-    func inset(by amount: CGFloat) -> Self {
-        var shape = self; shape.insetAmount += amount; return shape
     }
 }
 
@@ -906,7 +923,6 @@ struct CompanionBubble: View, Equatable {
                     .background {
                         CompanionBackground(shape: CompanionBubbleShape(tailX: petCenterX - (center - width / 2), tailOnTop: tailOnTop))
                     }
-                    .shadow(color: .black.opacity(0.08), radius: 4, y: 1)
                     .offset(x: center - canvasWidth / 2)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(reply.map { String($0.characters) } ?? accessibilityNotice)
