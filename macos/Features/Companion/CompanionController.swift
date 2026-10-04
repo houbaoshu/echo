@@ -4,6 +4,8 @@ import Combine
 
 @MainActor final class CompanionSurface: NSPanel {
     var acceptsKeyboard: Bool
+    /// A click into a text view of this panel while it is not key places the caret there too.
+    var focusesTextOnFirstClick = false
     override var canBecomeKey: Bool { acceptsKeyboard }
     override var canBecomeMain: Bool { false }
     init<Content: View>(title: String, acceptsKeyboard: Bool = false, content: Content) {
@@ -20,6 +22,17 @@ import Combine
         acceptsMouseMovedEvents = true
         // Every companion surface inherits the system appearance.
         contentView = NSHostingView(rootView: content)
+    }
+
+    /// AppKit spends the click that makes a window key on making it key: the text view never sees
+    /// it and the caret stays where it was. Becoming key first hands the same click to the text.
+    /// Only a click on text does this; the panel's buttons still leave the keyboard where it is.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown, focusesTextOnFirstClick, !isKeyWindow, canBecomeKey,
+           contentView?.hitTest(event.locationInWindow) is NSTextView {
+            makeKey()
+        }
+        super.sendEvent(event)
     }
 
     /// AppKit must ignore the whole window outside the card; a SwiftUI hit test alone
@@ -63,6 +76,9 @@ import Combine
     private var composerObservation: AnyCancellable?
     private var projectPickerObservation: AnyCancellable?
     private var outsideClickMonitor: Any?
+    /// A click elsewhere took the keyboard from a composer that keeps its draft. The + menu
+    /// closing behind that click must not take it back; clicking into the panel again clears it.
+    private var composerReleasedKeyboard = false
     private var activityMouseUpMonitor: Any?
     private var globalActivityMouseUpMonitor: Any?
 
@@ -91,6 +107,8 @@ import Combine
         bubblePanel = CompanionSurface(title: String(localized: "语音气泡"),
                                        content: WorkspaceCompanionBubble(voice: workspace.voice,
                                                                          state: bubbleState, placement: placement))
+        // A composer that kept its draft is clicked back into at the caret's new place.
+        controlsPanel.focusesTextOnFirstClick = true
         // The bubble only reports; clicks pass through to whatever is behind it.
         bubblePanel.ignoresMouseEvents = true
         super.init()
@@ -134,13 +152,16 @@ import Combine
             guard !open else { return }
             // Typing returns to the composer once the + menu closes over it.
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.controlsPresentation.isComposerOpen, !self.controlsPresentation.isProjectPickerOpen else { return }
+                guard let self, self.controlsPresentation.isComposerOpen, !self.controlsPresentation.isProjectPickerOpen,
+                      !self.composerReleasedKeyboard else { return }
                 self.controlsPanel.makeKey()
                 self.controlsPresentation.refocusComposer()
             }
         }
         NotificationCenter.default.addObserver(self, selector: #selector(controlsResignedKey),
                                                name: NSWindow.didResignKeyNotification, object: controlsPanel)
+        NotificationCenter.default.addObserver(self, selector: #selector(controlsBecameKey),
+                                               name: NSWindow.didBecomeKeyNotification, object: controlsPanel)
         observation = workspace.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.synchronize() }
         }
@@ -267,27 +288,38 @@ import Combine
     private func samplePointer(_ point: NSPoint) {
         updateActivityMousePassthrough(at: point)
         let presentation = controlsPresentation
-        let hovered = petPanel.frame.contains(point) || controlsContentFrame(hovered: true).contains(point)
+        let hovered = hoverFrames().contains { $0.contains(point) }
         guard presentation.isHovered != hovered else { return }
         presentation.isHovered = hovered
         // An empty composer follows the idle strip, unless the user is still typing in it.
         if !hovered, presentation.isComposerOpen, !presentation.isProjectPickerOpen,
-           presentation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            presentation.collapsesOnExit || !controlsPanel.isKeyWindow {
-            presentation.closeComposer()
+            presentation.closeComposerIfEmpty()
         }
     }
-    private func controlsContentFrame(hovered: Bool) -> CGRect {
-        let surface = controlsPresentation.surface(hovered: hovered, store: taskStore, voice: workspace.voice,
-                                                   unseenCompleted: workspace.unseenCompletedCount,
-                                                   runningTasks: workspace.runningTaskCount, activityCount: workspace.petActivities.count,
-                                                   activitiesCollapsed: !workspace.isPetActivityVisible,
-                                                   keepsExpandedAfterCompletion: workspace.keepsPetControlsExpandedAfterCompletion)
+    private func controlsSurface(hovered: Bool) -> PetSurfacePresentation {
+        controlsPresentation.surface(hovered: hovered, store: taskStore, voice: workspace.voice,
+                                     unseenCompleted: workspace.unseenCompletedCount,
+                                     runningTasks: workspace.runningTaskCount, activityCount: workspace.petActivities.count,
+                                     activitiesCollapsed: !workspace.isPetActivityVisible,
+                                     keepsExpandedAfterCompletion: workspace.keepsPetControlsExpandedAfterCompletion)
+    }
+    /// Where the pointer counts as hovering. Resting on a draft's line, only the line itself does:
+    /// hovering opens the composer, so neither the pet nor the space around the line may. Otherwise
+    /// it is the pet and the controls as they would appear while hovered, or as they show now if
+    /// that is wider, so leaving one form never lands on the other and hovers again.
+    private func hoverFrames() -> [CGRect] {
         let frames = CompanionLayout(pet: petPanel.frame, activity: activityPanel.frame, controls: controlsPanel.frame)
-        return frames.controlsContent(width: surface.width)
+        let resting = controlsSurface(hovered: false)
+        if !controlsPresentation.isHovered, resting.showsDraftLine {
+            return [frames.collapsedBar(size: resting.collapsedSize)]
+        }
+        let width = max(controlsSurface(hovered: true).width, resting.width)
+        return [petPanel.frame, frames.controlsContent(width: width)]
     }
     private func composerDidChange(open: Bool) {
         if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor); self.outsideClickMonitor = nil }
+        composerReleasedKeyboard = false
         if open {
             controlsPanel.orderFrontRegardless()
             controlsPanel.makeKey()
@@ -295,7 +327,7 @@ import Combine
             controlsPresentation.refocusComposer()
             // A non-activating panel is not always told when another app takes the click.
             outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                MainActor.assumeIsolated { self?.controlsPresentation.closeComposer() }
+                MainActor.assumeIsolated { self?.composerLostFocus() }
             }
         } else if controlsPanel.isKeyWindow {
             // Return typing to the app that was in front instead of an empty panel.
@@ -304,10 +336,30 @@ import Combine
         }
     }
     @objc private func controlsResignedKey() {
-        // Clicking elsewhere collapses the composer; its draft is kept for next time.
         // The + menu's popover takes the keyboard while it is open.
         guard !controlsPresentation.isProjectPickerOpen else { return }
-        controlsPresentation.closeComposer()
+        composerLostFocus()
+    }
+    @objc private func controlsBecameKey() {
+        composerReleasedKeyboard = false
+        // A click into the composer that hovering opened over the draft: from here on it is open
+        // like one opened with ✎, and stays when the pointer leaves.
+        if !controlsPresentation.isComposerOpen, controlsSurface(hovered: controlsPresentation.isHovered).peeksComposer {
+            controlsPresentation.openComposer()
+        }
+    }
+    /// Clicking elsewhere collapses an empty composer. One with a draft stays open and gives up
+    /// only the caret: typing goes to whatever took the click, and clicking the field brings it back.
+    private func composerLostFocus() {
+        let presentation = controlsPresentation
+        guard presentation.isComposerOpen, !presentation.closeComposerIfEmpty() else { return }
+        composerReleasedKeyboard = true
+        if presentation.isProjectPickerOpen { presentation.isProjectPickerOpen = false }
+        // A non-activating panel is not always told that another app took the click.
+        if controlsPanel.isKeyWindow {
+            controlsPanel.orderOut(nil)
+            controlsPanel.orderFrontRegardless()
+        }
     }
 
     func layout() {

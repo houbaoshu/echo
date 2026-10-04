@@ -9,11 +9,11 @@ import Testing
         func surface(hovered: Bool = false, composer: Bool = false, draft: String = "", count: Int = 0,
                      collapsed: Bool = false, unseen: Int = 0, voice: VoiceSessionSnapshot = .init(),
                      canStart: Bool = true, running: Int = 0, sent: Bool = false, connected: UUID? = nil,
-                     completionHeld: Bool = false) -> Surface {
+                     completionHeld: Bool = false, peeks: Bool = true) -> Surface {
             Surface(hovered: hovered, composerOpen: composer, draft: draft, activityCount: count,
                     activitiesCollapsed: collapsed, unseenCompleted: unseen, voice: voice, canStartVoice: canStart,
                     runningTasks: running, composerSent: sent, connectedVoiceSession: connected,
-                    keepsExpandedAfterCompletion: completionHeld)
+                    keepsExpandedAfterCompletion: completionHeld, peeksDraft: peeks)
         }
         #expect(surface().mode == .compact && !surface().showsActions && surface().width == Surface.collapsedSize.width,
                      "Idle pet shows only the light collapsed bar")
@@ -50,6 +50,37 @@ import Testing
                      "After a send the composer shows Live Voice and the bell beside it")
         #expect(surface(hovered: true, unseen: 2).width == 2 * Surface.pillPadding + 3 * Surface.segment,
                      "Hover strip holds text entry, Live Voice and the bell")
+        let drafted = surface(draft: "  第一行草稿\n第二行")
+        #expect(drafted.isCollapsedBar && drafted.showsDraftLine && drafted.draftPreview == "第一行草稿"
+                && drafted.collapsedSize == Surface.draftLineSize && drafted.width == Surface.draftLineSize.width,
+                "A closed composer's draft collapses to one line of its start")
+        #expect(surface(draft: " \n第二行").draftPreview == "第二行", "The line starts at the draft's first text")
+        #expect(Surface.draftLineSize.height == ceil(NSFont.preferredFont(forTextStyle: .caption2).defaultLineHeight)
+                + 2 * Surface.draftLinePadding.height && Surface.draftLineSize.height <= Surface.circle,
+                "The line is just tall enough for the smallest text style and fits the strip's row")
+        for blank in ["", " ", " \n\t"] {
+            let collapsed = surface(draft: blank)
+            #expect(!collapsed.showsDraftLine && collapsed.collapsedSize == Surface.collapsedSize
+                    && collapsed.width == Surface.collapsedSize.width, "A blank draft keeps the hairline: \(blank.debugDescription)")
+        }
+        #expect(!surface(hovered: true, draft: "草稿").showsDraftLine && surface(composer: true, draft: "草稿").draftPreview == nil
+                && !surface(draft: "草稿", count: 1, running: 1).showsDraftLine,
+                "Hover, an open composer and the status circles replace the line")
+        let peek = surface(hovered: true, draft: "草稿", unseen: 1)
+        #expect(peek.peeksComposer && peek.mode == .composer && !peek.showsStatus && peek.width == Surface.composerWidth,
+                "Hovering the draft's line opens the composer, not the pill")
+        #expect(!surface(draft: "草稿").peeksComposer && !surface(composer: true, draft: "草稿").peeksComposer,
+                "Only hover peeks; an open composer is simply open")
+        let blankHover = surface(hovered: true, draft: " \n")
+        #expect(!blankHover.peeksComposer && blankHover.mode == .compact && blankHover.showsActions,
+                "A blank draft still hovers to the pill")
+        let waiting = surface(hovered: true, draft: "草稿", peeks: false)
+        #expect(waiting.showsDraftLine && !waiting.showsActions && waiting.width == Surface.draftLineSize.width,
+                "Closed under the pointer, the line waits for the pointer to leave before it opens again")
+        let busy = surface(hovered: true, draft: "草稿", count: 1, running: 1)
+        #expect(!busy.peeksComposer && busy.mode == .compact && busy.showsActions,
+                "Where the strip does not rest on the line, hover keeps the pill")
+        #expect(surface(draft: "草稿", unseen: 1).showsDraftLine, "The line keeps the completion green")
         let composer = surface(composer: true, draft: " \n")
         #expect(composer.mode == .composer && !composer.canSend, "Whitespace cannot be sent")
         #expect(surface(composer: true, draft: "你好").canSend)
@@ -101,6 +132,10 @@ import Testing
             let inset = screen.insetBy(dx: 8, dy: 8)
             #expect(inset.contains(frames.pet) && inset.contains(frames.controls), "Pet and controls stay on screen at \(origin)")
             #expect(frames.controls.maxY == frames.pet.minY, "Controls sit directly below the pet")
+            let line = frames.collapsedBar(size: Surface.draftLineSize)
+            #expect(line.size == Surface.draftLineSize && frames.controlsContent(width: line.width).minX == line.minX
+                    && line.maxY == frames.controls.maxY - Surface.collapsedTop && frames.controls.contains(line),
+                    "The draft's line is where the strip draws it, inside the controls canvas")
             for width in widths.map({ $0.width }) {
                 let content = frames.controlsContent(width: width)
                 let inset = PetSurfacePresentation.canvasInset

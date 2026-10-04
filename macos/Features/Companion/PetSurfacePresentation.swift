@@ -1,5 +1,4 @@
-import Foundation
-import CoreGraphics
+import AppKit
 
 /// The pet's control strip. Composing takes precedence over voice, and voice over the idle strip.
 struct PetSurfacePresentation: Equatable {
@@ -23,6 +22,16 @@ struct PetSurfacePresentation: Equatable {
     /// Without hover the strip collapses to a hairline bar, green while completed tasks are unseen.
     /// It is deliberately the smallest thing on screen: collapsed means the pet, not its controls.
     static let collapsedSize = CGSize(width: 28, height: 5)
+    /// The collapsed bar hangs from the top of the strip's row by this much.
+    static let collapsedTopInset: CGFloat = 4
+    /// The collapsed bar's top edge below the top of the canvas.
+    static let collapsedTop = (canvasHeight - circle) / 2 + collapsedTopInset
+    /// A closed composer that still holds a draft collapses to one line of it instead: a fixed
+    /// width, just tall enough for a line of the smallest system text style.
+    /// The line is drawn in `.caption2`; this is the same style's line height.
+    static let draftLinePadding = CGSize(width: 8, height: 2)
+    static let draftLineSize = CGSize(width: 120, height: ceil(NSFont.preferredFont(forTextStyle: .caption2).defaultLineHeight)
+                                                          + 2 * draftLinePadding.height)
     static let gap: CGFloat = 7
     static let pillPadding: CGFloat = 2
     static let composerWidth: CGFloat = 320
@@ -48,14 +57,20 @@ struct PetSurfacePresentation: Equatable {
     let showsStatus: Bool
     /// Live Voice has started but not yet connected: its own button shows the progress, not the voice bar.
     let voiceConnecting: Bool
+    /// The start of the closed composer's draft, or `nil` while it is open or holds only whitespace.
+    let draftPreview: String?
+    /// The pointer is on the draft's line, which opens the composer to show the draft. It is not
+    /// `composerOpen`: the composer has no keyboard until it is clicked, and closes again on exit.
+    let peeksComposer: Bool
 
     /// `connectedVoiceSession` is a Live Voice session that has already connected once, so its later
-    /// recognition reconnects keep the voice bar.
+    /// recognition reconnects keep the voice bar. Without `peeksDraft` hovering the draft's line
+    /// leaves it as it is, e.g. after Escape closed the composer under the pointer.
     init(hovered: Bool, composerOpen: Bool, draft: String,
          activityCount: Int, activitiesCollapsed: Bool, unseenCompleted: Int,
          voice snapshot: VoiceSessionSnapshot, canStartVoice: Bool,
          runningTasks: Int = 0, composerSent: Bool = false, connectedVoiceSession: UUID? = nil,
-         keepsExpandedAfterCompletion: Bool = false) {
+         keepsExpandedAfterCompletion: Bool = false, peeksDraft: Bool = true) {
         self.unseenCompleted = unseenCompleted
         switch snapshot.session {
         case .starting: voiceConnecting = true
@@ -77,11 +92,17 @@ struct PetSurfacePresentation: Equatable {
         if case .active = snapshot.session { muteEnabled = true } else { muteEnabled = false }
         self.canStartVoice = canStartVoice
         canSend = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if composerOpen { mode = .composer }
+        draftPreview = composerOpen ? nil : Self.preview(of: draft)
+        // Where the strip would rest on the draft's line, hover leads to the draft, never the pill.
+        let restsOnDraft = draftPreview != nil && snapshot.session.owner == nil && runningTasks == 0
+            && !keepsExpandedAfterCompletion
+        peeksComposer = restsOnDraft && hovered && peeksDraft
+        if composerOpen || peeksComposer { mode = .composer }
         else if snapshot.session.owner != nil && !voiceConnecting { mode = .voice }
         else { mode = .compact }
-        showsActions = hovered || composerOpen || keepsExpandedAfterCompletion
-        showsStatus = composerOpen ? composerSent : !showsActions && (runningTasks > 0 || voiceConnecting)
+        showsActions = (hovered && !restsOnDraft) || composerOpen || peeksComposer || keepsExpandedAfterCompletion
+        showsStatus = mode == .composer ? composerOpen && composerSent
+                                        : !showsActions && (runningTasks > 0 || voiceConnecting)
     }
 
     /// What the voice mark shows, from the session alone. The pet strip and the chat's planet
@@ -110,8 +131,18 @@ struct PetSurfacePresentation: Equatable {
         min(max(petCenter, canvasInset + width / 2), canvasWidth - canvasInset - width / 2)
     }
 
+    /// The draft's first line with any text in it, without the whitespace around it.
+    static func preview(of draft: String) -> String? {
+        draft.split(whereSeparator: \.isNewline)
+            .lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+    }
+
     /// Nothing but the idle hairline bar is shown: no pill, no status circles.
     var isCollapsedBar: Bool { mode == .compact && !showsActions && !showsStatus }
+    /// The collapsed bar is the draft's line rather than the hairline.
+    var showsDraftLine: Bool { isCollapsedBar && draftPreview != nil }
+    /// What the collapsed bar occupies: the hairline, or the draft's line.
+    var collapsedSize: CGSize { showsDraftLine ? Self.draftLineSize : Self.collapsedSize }
 
     /// Width of the main pane: the hover pill, the composer or the voice bar. `nil` while the strip
     /// shows only round controls or the collapsed bar.
@@ -128,7 +159,7 @@ struct PetSurfacePresentation: Equatable {
         let trayWidth = tray == .none ? 0 : Self.gap + Self.circle
         switch mode {
         case .compact:
-            guard let mainWidth else { return showsStatus ? Self.circle + trayWidth : Self.collapsedSize.width }
+            guard let mainWidth else { return showsStatus ? Self.circle + trayWidth : collapsedSize.width }
             return mainWidth
         // Composing is a focus mode until the first send brings back the task status controls.
         case .composer: return Self.composerWidth + (showsStatus ? Self.gap + Self.circle + trayWidth : 0)

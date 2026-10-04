@@ -49,6 +49,12 @@ struct CompanionLayout {
         let x = controls.minX + center - width / 2
         return CGRect(x: x, y: controls.minY, width: width, height: controls.height)
     }
+    /// The collapsed bar of `size`, where the controls draw it: hanging from the top of their row.
+    func collapsedBar(size: CGSize) -> CGRect {
+        let content = controlsContent(width: size.width)
+        return CGRect(x: content.minX, y: controls.maxY - PetSurfacePresentation.collapsedTop - size.height,
+                      width: size.width, height: size.height)
+    }
     static func screen(for pet: CGRect, screens: [CGRect]) -> CGRect? {
         screens.min { left, right in
             func distance(_ screen: CGRect) -> CGFloat {

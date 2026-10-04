@@ -245,7 +245,12 @@ struct ActivityCapsule: View {
 }
 
 @MainActor final class PetControlsPresentation: ObservableObject {
-    @Published var isHovered = false
+    @Published var isHovered = false {
+        didSet { if !isHovered, draftPeekWaitsForExit { draftPeekWaitsForExit = false } }
+    }
+    /// The composer closed under the pointer, e.g. on Escape. Its draft's line stays a line until
+    /// the pointer has left it once, or the composer would open again at once without the keyboard.
+    @Published private(set) var draftPeekWaitsForExit = false
     @Published private(set) var isComposerOpen = false
     @Published var draft = ""
     @Published private(set) var focusRequest = 0
@@ -270,12 +275,14 @@ struct ActivityCapsule: View {
     func surface(hovered: Bool, store: TaskStore, voice: VoiceSessionController,
                  unseenCompleted: Int, runningTasks: Int, activityCount: Int? = nil, activitiesCollapsed: Bool? = nil,
                  keepsExpandedAfterCompletion: Bool = false) -> PetSurfacePresentation {
-        PetSurfacePresentation(hovered: hovered, composerOpen: isComposerOpen, draft: draft,
+        // The + menu's popover belongs to the composer showing the draft; it keeps that composer up.
+        PetSurfacePresentation(hovered: hovered || isProjectPickerOpen, composerOpen: isComposerOpen, draft: draft,
                                activityCount: activityCount ?? store.activityCount, activitiesCollapsed: activitiesCollapsed ?? store.activitiesCollapsed,
                                unseenCompleted: unseenCompleted, voice: voice.snapshot, canStartVoice: voice.canStartCall,
                                runningTasks: runningTasks, composerSent: collapsesOnExit,
                                connectedVoiceSession: connectedVoiceSession,
-                               keepsExpandedAfterCompletion: keepsExpandedAfterCompletion)
+                               keepsExpandedAfterCompletion: keepsExpandedAfterCompletion,
+                               peeksDraft: !draftPeekWaitsForExit)
     }
     func noteVoice(_ snapshot: VoiceSessionSnapshot) {
         guard case .active(let owner) = snapshot.session else {
@@ -293,7 +300,17 @@ struct ActivityCapsule: View {
     }
     func closeComposer() {
         if isProjectPickerOpen { isProjectPickerOpen = false }
-        if isComposerOpen { isComposerOpen = false }
+        guard isComposerOpen else { return }
+        isComposerOpen = false
+        if isHovered { draftPeekWaitsForExit = true }
+    }
+    /// Clicking elsewhere, losing the keyboard and the pointer leaving collapse the composer only
+    /// while it holds no character at all. Any draft, even a lone space, keeps it open; Escape, a
+    /// send and the voice controls still collapse it outright. Returns whether it collapsed.
+    @discardableResult func closeComposerIfEmpty() -> Bool {
+        guard draft.isEmpty else { return false }
+        closeComposer()
+        return true
     }
     /// Asks the open editor for focus again, e.g. once its panel has become key.
     func refocusComposer() { if isComposerOpen { focusRequest += 1 } }
@@ -386,6 +403,7 @@ struct PetControls: View {
             .frame(width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight)
             .animation(reduceMotion ? nil : .easeInOut(duration: Self.morphDuration), value: surface.mode)
             .animation(reduceMotion ? nil : .easeInOut(duration: Self.morphDuration), value: surface.showsActions)
+            .animation(reduceMotion ? nil : .easeInOut(duration: Self.morphDuration), value: surface.showsDraftLine)
     }
 
     /// The pill, the composer and the voice bar on screen at once share one glass container, so
@@ -583,18 +601,30 @@ struct PetControls: View {
     /// Collapsed is the pet's own state: the controls shrink to a hairline that reads as a handle,
     /// flat and unlit, so nothing but the completion green ever competes with the pet itself. It is
     /// not glass and stays out of the container; a faint contact shadow seats it on the desktop.
+    /// A draft left in the closed composer widens the handle into one line of its start.
     private func collapsedBar(_ surface: PetSurfacePresentation) -> some View {
-        let size = PetSurfacePresentation.collapsedSize
-        let fill: AnyShapeStyle = surface.unseenCompleted > 0
+        let size = surface.collapsedSize
+        let completed = surface.unseenCompleted > 0
+        let fill: AnyShapeStyle = completed
             ? AnyShapeStyle(WorkspaceStyle.success.opacity(0.8))
             : AnyShapeStyle(.primary.opacity(0.16))
         return Capsule().fill(fill)
             .frame(width: size.width, height: size.height)
             .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
-            .frame(maxHeight: .infinity, alignment: .top).padding(.top, 4)
             .accessibilityElement()
-            .accessibilityLabel(surface.unseenCompleted > 0 ? "\(surface.unseenCompleted) 个已完成任务未查看" : "桌宠快捷控件")
+            .accessibilityLabel(completed ? "\(surface.unseenCompleted) 个已完成任务未查看" : "桌宠快捷控件")
             .accessibilityIdentifier("pet.collapsed")
+            .overlay {
+                if let preview = surface.draftPreview, surface.showsDraftLine {
+                    Text(verbatim: preview).font(.caption2).lineLimit(1).truncationMode(.tail)
+                        .foregroundStyle(completed ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                        .padding(.horizontal, PetSurfacePresentation.draftLinePadding.width)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("pet.collapsed.draft")
+                        .transition(paneContentTransition)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top).padding(.top, PetSurfacePresentation.collapsedTopInset)
     }
 
     private static var connectingLabel: String { String(localized: "正在连接 Live Voice，点按取消") }

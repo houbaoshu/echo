@@ -47,6 +47,12 @@ import XCTest
         XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed, description)
     }
 
+    /// `element` is still there a second later: whatever collapses it has had time to run.
+    @MainActor private func staysOpen(_ element: XCUIElement, _ description: String) {
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !element.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 1), .timedOut, description)
+    }
+
     @MainActor func testSendStreamStopRetryAndRestart() throws {
         try withApp { app, _ in
             let editor = composer(app)
@@ -340,9 +346,28 @@ import XCTest
             XCTAssertEqual(editor.value as? String, "main draft")
             app.typeKey(.escape, modifierFlags: [])
             wait("Escape closes the pet composer") { !quick.exists }
-            pet.hover(); compose.click()
-            XCTAssertTrue(quick.waitForExistence(timeout: 5))
+            editor.hover()
+            let draftLine = app.staticTexts["pet.collapsed.draft"]
+            wait("The collapsed strip shows the kept draft's start") {
+                draftLine.exists && [draftLine.label, draftLine.value as? String].contains("slow pet request")
+            }
+            // With a draft on its line, hover opens the composer from the line alone, without the keyboard.
+            pet.hover()
+            let opened = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in compose.exists || quick.exists }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 1), .timedOut, "Hovering the pet opens nothing over a draft")
+            draftLine.hover()
+            XCTAssertTrue(quick.waitForExistence(timeout: 5), "Hovering the draft's line opens the composer")
+            XCTAssertFalse(compose.exists, "The line never hovers to the pill")
             XCTAssertEqual(quick.value as? String, "slow pet request", "Escape preserves the independent pet draft")
+            XCTAssertEqual(quick.value(forKey: "hasKeyboardFocus") as? Bool, false, "Hover does not take the keyboard")
+            editor.hover()
+            wait("Leaving the hovered composer returns to the line") { !quick.exists && draftLine.exists }
+            draftLine.hover()
+            XCTAssertTrue(quick.waitForExistence(timeout: 5))
+            quick.click()
+            XCTAssertEqual(quick.value(forKey: "hasKeyboardFocus") as? Bool, true, "Clicking the hovered composer takes the keyboard")
+            editor.hover()
+            staysOpen(quick, "Once clicked into, the composer stays when the pointer leaves")
             app.typeKey(.return, modifierFlags: [])
             XCTAssertEqual(editor.value as? String, "main draft")
             wait("Sending closes the empty new-chat composer") { !quick.exists }
@@ -361,10 +386,28 @@ import XCTest
             collapse.click(); pet.hover()
             XCTAssertEqual(bell.value as? String, "1 个已完成任务未查看", "Opening the stack does not acknowledge the result")
             compose.click(); quick.typeText("kept pet draft")
+            // A draft keeps the composer open when focus moves away; only the caret goes.
             editor.click()
-            wait("Focus loss closes the pet composer") { !quick.exists }
-            pet.hover(); compose.click()
+            app.typeText(" typed elsewhere")
+            staysOpen(quick, "Focus loss keeps a composer that holds a draft")
             XCTAssertEqual(quick.value as? String, "kept pet draft")
+            XCTAssertEqual(editor.value as? String, "main draft typed elsewhere", "Typing goes to what took the click")
+            // A real click on the field takes the keyboard back, with the caret where it landed.
+            quick.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 1, dy: 0)).click()
+            app.typeText("A ")
+            XCTAssertEqual(quick.value as? String, "A kept pet draft", "The caret lands at the start where the click was")
+            quick.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).click()
+            app.typeText("!")
+            XCTAssertEqual(quick.value as? String, "A kept pet draft!", "The caret lands at the end where the click was")
+            // Whitespace alone still counts as a draft; only an empty composer collapses.
+            app.typeKey("a", modifierFlags: .command); app.typeText(" ")
+            editor.click()
+            staysOpen(quick, "A whitespace-only draft keeps the composer open")
+            quick.click()
+            app.typeKey("a", modifierFlags: .command); app.typeKey(.delete, modifierFlags: [])
+            XCTAssertEqual(quick.value as? String, "")
+            editor.click()
+            wait("Focus loss collapses an empty composer") { !quick.exists }
             editor.click()
             app.typeKey("k", modifierFlags: .command)
             let search = app.searchFields["搜索聊天"]

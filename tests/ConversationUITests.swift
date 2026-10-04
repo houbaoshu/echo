@@ -1605,7 +1605,25 @@ private struct ComposerHeightHost: View {
         reopened.keyDown(with: key(53, "\u{1b}"))
         try await refresh()
         XCTAssertTrue(!presentation.isComposerOpen && presentation.draft == "保留草稿", "Escape closes the composer and keeps its draft")
-        XCTAssertTrue(node("voice.start") != nil && node("pet.compose") != nil, "Closing the composer restores the hover controls")
+        // The composer leaves with the strip's morph; wait it out rather than a fixed delay.
+        func until(_ label: String, _ condition: () -> Bool) async throws {
+            try await eventually(label) { host.layoutSubtreeIfNeeded(); return condition() }
+        }
+        try await until("Escape under the pointer leaves the draft's line until the pointer leaves") {
+            node("pet.collapsed.draft") != nil && node("pet.composer") == nil && node("pet.compose") == nil
+        }
+        presentation.isHovered = false
+        try await refresh()
+        presentation.isHovered = true
+        try await until("Hovering the draft's line again shows the composer, not the pill") {
+            node("pet.composer") != nil && node("pet.collapsed.draft") == nil
+        }
+        XCTAssertTrue(!presentation.isComposerOpen && node("pet.compose") == nil, "The hovered composer is not opened")
+        presentation.isHovered = false
+        try await until("Leaving it returns to the line") { node("pet.composer") == nil && node("pet.collapsed.draft") != nil }
+        presentation.draft = ""
+        presentation.isHovered = true
+        try await until("Without a draft hover shows the pill") { node("voice.start") != nil && node("pet.compose") != nil }
 
         store.send("任务")
         source.receive?(.completed("完成"))
@@ -1638,6 +1656,89 @@ private struct ComposerHeightHost: View {
         try await refresh()
         XCTAssertTrue(!store.activitiesCollapsed && node("pet.activity.collapse") != nil && node("pet.activity.expand") == nil,
                      "Opening the bell shows the card and turns the bell into ⌃")
+    }
+
+    /// The collapsed strip without a draft, with a short one and with one too long for its line,
+    /// in both appearances. The renders are printed for review.
+    func testPetCollapsedDraftLine() async throws {
+        // Every render is wanted even when one check fails.
+        continueAfterFailure = true
+        let store = TaskStore(source: PreviewSource())
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        defer { store.shutdown(); voice.shutdown() }
+        let presentation = PetControlsPresentation()
+        let canvas = NSRect(x: 0, y: 0, width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight)
+        let drafts = [("empty", ""), ("short", "帮我看看"),
+                      ("long", "把这个项目里所有用到旧接口的地方都找出来，列一个清单再逐个改掉\n第二行不显示")]
+        for (appearance, scheme) in [(NSAppearance.Name.aqua, ColorScheme.light), (.darkAqua, .dark)] {
+            let host = NSHostingView(rootView: PetControls(store: store, voice: voice, presentation: presentation,
+                                                           placement: ActivityPlacement())
+                .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, scheme))
+            let window = NSWindow(contentRect: canvas, styleMask: .borderless, backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: appearance)
+            window.contentView = host
+            window.orderFront(nil)
+            defer { window.orderOut(nil) }
+            for (name, draft) in drafts {
+                presentation.draft = draft
+                try await Task.sleep(for: .milliseconds(300)); host.layoutSubtreeIfNeeded()
+                if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let output = EchoTestResources.output("pet-collapsed-\(name)-\(scheme == .light ? "light" : "dark").png")
+                    try bitmap.representation(using: .png, properties: [:])!.write(to: output)
+                    print("Pet collapsed render: " + output.path)
+                }
+                let expected = PetSurfacePresentation.preview(of: draft)
+                XCTAssertFalse((expected ?? "").contains("第二行"), "Only the first line is shown")
+                let line = findAccessibility("pet.collapsed.draft", in: host)
+                let shown = line.map { $0.accessibilityLabel?() ?? axValue($0) ?? "" }
+                XCTAssertTrue(findAccessibility("pet.collapsed", in: host) != nil && shown == expected,
+                              "The collapsed strip shows the draft's start only when it has one: \(String(describing: line)) \(String(describing: shown))")
+            }
+        }
+    }
+
+    /// Hovering a kept draft's line opens the composer without the keyboard, from the line alone,
+    /// and leaving closes it again. Clicking into it is covered with real events in EchoUITests.
+    func testPetDraftLineHoverPeeksComposer() async throws {
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let companion = CompanionController(petStore: pet, workspace: workspace,
+                                            settings: SettingsStore(secrets: ComposerSecrets()), defaults: EchoTestResources.defaults())
+        defer { companion.shutdown() }
+        let presentation = companion.controlsPresentation
+        let controls = companion.controlsPanel.contentView!
+        func node(_ id: String) -> AnyObject? { findAccessibility(id, in: controls) }
+        func pointer(_ point: NSPoint, until ready: () -> Bool) async throws {
+            try await eventually("Pointer presentation updates at \(point)") {
+                companion.petPanel.samplePointer(at: point)
+                return ready()
+            }
+        }
+        let far = NSPoint(x: companion.petPanel.frame.minX - 600, y: companion.petPanel.frame.maxY + 600)
+        presentation.draft = "  帮我看看这个\n第二行"
+        try await pointer(far) { node("pet.collapsed.draft") != nil }
+        let line = CompanionLayout(pet: companion.petPanel.frame, activity: companion.activityPanel.frame,
+                                   controls: companion.controlsPanel.frame).collapsedBar(size: PetSurfacePresentation.draftLineSize)
+        // Just beside, below and above the line, and on the pet: none of it opens the composer.
+        for point in [NSPoint(x: line.maxX + 2, y: line.midY), NSPoint(x: line.minX - 2, y: line.midY),
+                      NSPoint(x: line.midX, y: line.minY - 2), NSPoint(x: line.midX, y: line.maxY + 2),
+                      NSPoint(x: companion.petPanel.frame.midX, y: companion.petPanel.frame.midY)] {
+            companion.petPanel.samplePointer(at: point)
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertTrue(!presentation.isHovered && node("pet.composer") == nil && node("pet.collapsed.draft") != nil,
+                          "Only the line itself opens the composer, not \(point)")
+        }
+        try await pointer(NSPoint(x: line.midX, y: line.midY)) { node("pet.composer") != nil }
+        XCTAssertTrue(!presentation.isComposerOpen && !companion.controlsPanel.isKeyWindow && node("pet.compose") == nil,
+                      "Hovering the line shows the composer without the keyboard, and never the pill")
+        XCTAssertEqual((node("pet.composer") as? NSTextView)?.string, "  帮我看看这个\n第二行", "The composer shows the whole draft")
+        try await pointer(far) { node("pet.composer") == nil && node("pet.collapsed.draft") != nil }
+        XCTAssertFalse(presentation.isComposerOpen, "Passing over the line leaves nothing open")
+        presentation.draft = " "
+        try await pointer(NSPoint(x: line.midX, y: line.midY)) { presentation.isHovered && node("pet.compose") != nil }
+        XCTAssertNil(node("pet.composer"), "A blank draft hovers to the pill as before")
+        try await pointer(far) { !presentation.isHovered }
     }
 
     func testIgnoringPetNotificationThroughCloseButton() async throws {
