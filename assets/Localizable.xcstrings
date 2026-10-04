@@ -1157,6 +1157,16 @@
         }
       }
     },
+    "展开列表" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expand list"
+          }
+        }
+      }
+    },
     "展开活动" : {
       "localizations" : {
         "en" : {
@@ -1693,6 +1703,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Playback stalled. Check your audio output device."
+          }
+        }
+      }
+    },
+    "收起列表" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collapse list"
           }
         }
       }

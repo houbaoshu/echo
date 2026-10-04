@@ -186,8 +186,8 @@ import XCTest
             wait("Sending closes the composer") { !editor.exists }
             outside.hover()
             let collapse = app.buttons["pet.activity.collapse"]
-            wait("Running keeps only the existing status controls") {
-                collapse.exists && app.buttons["voice.start"].exists && !compose.exists
+            wait("A running card keeps the controls expanded") {
+                collapse.exists && app.buttons["voice.start"].exists && compose.exists && !collapsed.exists
             }
             wait("Completion while the pointer is outside keeps the controls expanded", timeout: 10) {
                 app.buttons["activity.summary"].label.contains("已完成") && compose.exists && collapse.exists && !collapsed.exists
@@ -203,14 +203,14 @@ import XCTest
                            "Completion remains expanded after real pointer exit and an outside dwell")
             collapse.click()
             outside.hover()
-            wait("Explicit collapse releases the completion hold") {
+            wait("Collapsing to the bell lets the controls follow hover again") {
                 collapsed.exists && !collapse.exists && !app.buttons["activity.summary"].exists
             }
             pet.hover()
             XCTAssertTrue(app.buttons["pet.activity.expand"].waitForExistence(timeout: 3))
             XCTAssertEqual(app.buttons["pet.activity.expand"].value as? String, "1 个已完成任务未查看")
             outside.hover()
-            wait("Normal hover exit resumes after explicit collapse") { collapsed.exists && !compose.exists }
+            wait("With only the bell, pointer exit collapses the controls") { collapsed.exists && !compose.exists }
         }
     }
 
@@ -220,6 +220,9 @@ import XCTest
             app.activate()
             let pet = app.buttons["赤焰"]
             XCTAssertTrue(pet.waitForExistence(timeout: 5))
+            // A stack's front card is one element whose only action opens the list.
+            let stack = app.descendants(matching: .any)["activity.stack"]
+            let cards = app.buttons.matching(identifier: "activity.summary")
             @MainActor func sendQuick(_ text: String) {
                 pet.hover()
                 let compose = app.buttons["pet.compose"]
@@ -230,7 +233,7 @@ import XCTest
                 editor.click(); editor.typeText(text); app.typeKey(.return, modifierFlags: [])
                 wait("Quick send closes the new-chat editor") { !editor.exists }
                 wait("The compact result completes", timeout: 8) {
-                    app.buttons.matching(identifier: "activity.summary").allElementsBoundByIndex.contains {
+                    (cards.allElementsBoundByIndex + (stack.exists ? [stack] : [])).contains {
                         $0.label.contains("已完成") && $0.label.contains(text)
                     }
                 }
@@ -244,23 +247,28 @@ import XCTest
             sendQuick("query current model")
             sendQuick("pet greeting")
             XCTAssertFalse(app.textViews["activity.followUp"].exists)
-            XCTAssertEqual(app.buttons.matching(identifier: "activity.summary").count, 1)
-            XCTAssertGreaterThan(app.buttons["activity.summary"].frame.minY, pet.frame.maxY)
+            XCTAssertTrue(stack.exists && cards.count == 0, "Two notifications arrive as a stack")
+            XCTAssertGreaterThan(stack.frame.minY, pet.frame.maxY)
+            stack.hover()
+            XCTAssertFalse(app.buttons["activity.followUp.toggle"].waitForExistence(timeout: 1), "The stack has no follow-up button")
+            XCTAssertFalse(app.buttons["activity.dismiss"].exists, "The stack has no ✕")
             capture("echo-cards-1-stack-below")
-            pet.hover(); app.buttons["pet.activity.collapse"].click(); pet.hover()
+            let collapse = app.buttons["pet.activity.collapse"]
+            pet.hover(); collapse.click(); pet.hover()
             let bell = app.buttons["pet.activity.expand"]
             XCTAssertTrue(bell.waitForExistence(timeout: 3))
             XCTAssertEqual(bell.value as? String, "2 个已完成任务未查看")
             bell.click()
-            wait("Bell opens two compact cards") { app.buttons.matching(identifier: "activity.summary").count == 2 }
+            wait("Bell opens the stack") { stack.exists && cards.count == 0 }
+            stack.click()
+            wait("Clicking the stack opens the list") { cards.count == 2 && !stack.exists }
             XCTAssertFalse(app.textViews["activity.followUp"].exists)
             let listTree = XCTAttachment(string: app.debugDescription)
             listTree.name = "Expanded card accessibility"; listTree.lifetime = .keepAlways; add(listTree)
             capture("echo-cards-2-list-below")
             // The nonactivating panel can be visible while XCUI marks its scroll view
             // inactive. Move to the card's reported frame without automatic scrolling.
-            app.buttons.matching(identifier: "activity.summary").firstMatch
-                .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
+            cards.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
             let follow = app.buttons["activity.followUp.toggle"].firstMatch
             XCTAssertTrue(follow.waitForExistence(timeout: 3)); follow.click()
             let editor = app.textViews["activity.followUp"]
@@ -276,24 +284,27 @@ import XCTest
                 XCTAssertFalse(app.buttons["activity.send"].exists)
             }
             follow.click()
-            wait("Second follow-up click restores the list") { !editor.exists && app.buttons.matching(identifier: "activity.summary").count == 2 }
-            pet.hover(); app.buttons["pet.activity.collapse"].click()
-            pet.hover()
+            wait("Second follow-up click restores the list") { !editor.exists && cards.count == 2 }
+            pet.hover(); collapse.click()
+            wait("⌃ steps the list back to the stack") { stack.exists && cards.count == 0 }
+            collapse.click(); pet.hover()
             XCTAssertTrue(bell.waitForExistence(timeout: 3))
             XCTAssertEqual(bell.value as? String, "2 个已完成任务未查看", app.debugDescription)
             bell.click()
-            wait("Bell restores both unread cards") { app.buttons.matching(identifier: "activity.summary").count == 2 }
+            wait("Bell restores the stack") { stack.exists }
             XCTAssertFalse(editor.exists)
-            pet.hover(); app.buttons["pet.activity.collapse"].click(); pet.hover()
-            XCTAssertEqual(app.buttons["pet.activity.expand"].value as? String, "2 个已完成任务未查看",
+            pet.hover(); collapse.click(); pet.hover()
+            XCTAssertEqual(bell.value as? String, "2 个已完成任务未查看",
                           "Revealing or collapsing the stack must preserve its unread result")
             bell.click()
-            let firstCard = app.buttons.matching(identifier: "activity.summary").firstMatch
+            XCTAssertTrue(stack.waitForExistence(timeout: 3)); stack.click()
+            wait("The list shows both cards") { cards.count == 2 }
+            let firstCard = cards.firstMatch
             let openedTitle = firstCard.label.contains("pet greeting") ? "pet greeting" : "query current model"
             firstCard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
             XCTAssertTrue(app.staticTexts["Offline reply: " + openedTitle].waitForExistence(timeout: 5))
-            wait("Opening one chat removes only its card") { app.buttons.matching(identifier: "activity.summary").count == 1 }
-            pet.hover(); app.buttons["pet.activity.collapse"].click(); pet.hover()
+            wait("Opening one chat removes only its card") { cards.count == 1 && !stack.exists }
+            pet.hover(); collapse.click(); pet.hover()
             XCTAssertEqual(bell.value as? String, "1 个已完成任务未查看")
             bell.click()
             app.buttons["activity.summary"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()

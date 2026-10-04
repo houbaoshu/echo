@@ -13,7 +13,7 @@ import Foundation
 }
 
 @Suite(.serialized) struct WorkspaceTests {
-    @MainActor @Test(.tags(.fast)) static func completionHoldsPetControlsUntilExplicitCollapse() throws {
+    @MainActor @Test(.tags(.fast)) static func petControlsStayExpandedWhileAnyCardShows() throws {
         var sources: [WorkspaceTestSource] = []
         let workspace = WorkspaceStore(sourceFactory: {
             let source = WorkspaceTestSource()
@@ -21,63 +21,55 @@ import Foundation
             return source
         })
         defer { workspace.shutdown() }
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
-        #expect(workspace.sendQuickMessage("first completion"))
+        #expect(!workspace.keepsPetControlsExpanded, "Without cards the controls follow hover")
+        #expect(workspace.sendQuickMessage("first"))
         let first = try #require(workspace.activity)
         let firstSource = try #require(sources.last)
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "Running does not arm a completion hold")
-        firstSource.receive?(.completed("first result"))
-        #expect(workspace.keepsPetControlsExpandedAfterCompletion)
-        #expect(workspace.sendQuickMessage("second completion"))
-        let second = try #require(workspace.activity)
-        sources.last?.receive?(.completed("second result"))
-        workspace.collapsePetActivity(conversationID: first.id)
-        #expect(workspace.keepsPetControlsExpandedAfterCompletion, "The other visible completion still holds the controls")
-        workspace.collapsePetActivity(conversationID: second.id)
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
-        #expect(workspace.unseenCompletedCount == 2, "Holding and folding do not acknowledge results")
-        workspace.toggleActivityTray()
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "Reopening alone does not rearm the hold")
+        #expect(workspace.keepsPetControlsExpanded, "A running card keeps the controls")
+        for (event, state) in [(TaskEvent.completed("done"), "completed"), (.failed("failure"), "failed")] {
+            firstSource.receive?(event)
+            #expect(workspace.keepsPetControlsExpanded, "A \(state) card keeps the controls")
+            #expect(workspace.send("again", conversationID: first.id))
+        }
+        first.store.stopTask()
+        #expect(workspace.keepsPetControlsExpanded, "A stopped card keeps the controls")
 
-        #expect(workspace.send("new completion", conversationID: first.id))
-        firstSource.receive?(.completed("new result"))
-        #expect(workspace.keepsPetControlsExpandedAfterCompletion)
         workspace.toggleActivityTray()
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "The tray collapse releases every hold")
+        #expect(workspace.petTrayLevel == .collapsed && !workspace.keepsPetControlsExpanded, "The bell follows hover")
         workspace.toggleActivityTray()
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
-        #expect(workspace.send("another completion", conversationID: first.id))
-        firstSource.receive?(.completed("another result"))
-        #expect(workspace.keepsPetControlsExpandedAfterCompletion)
+        #expect(workspace.keepsPetControlsExpanded)
+        #expect(workspace.sendQuickMessage("second"))
+        let second = try #require(workspace.activity)
+        #expect(workspace.petTrayLevel == .stack && workspace.keepsPetControlsExpanded, "The stack keeps the controls")
+        workspace.expandActivityList()
+        #expect(workspace.petTrayLevel == .list && workspace.keepsPetControlsExpanded, "The list keeps the controls")
+        workspace.toggleActivityTray()
+        #expect(workspace.petTrayLevel == .stack && workspace.keepsPetControlsExpanded)
+        workspace.collapsePetActivity(conversationID: second.id)
+        workspace.collapsePetActivity(conversationID: first.id)
+        #expect(workspace.petTrayLevel == .collapsed && !workspace.keepsPetControlsExpanded,
+                "Folding every card leaves the bell, which follows hover")
+        workspace.toggleActivityTray()
         workspace.dismissPetActivity(conversationID: first.id)
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "Removing a held card leaves no stale hold")
+        workspace.dismissPetActivity(conversationID: second.id)
+        #expect(!workspace.keepsPetControlsExpanded, "Without cards the controls follow hover again")
     }
 
-    @MainActor @Test(.tags(.fast)) static func completionHoldDoesNotChangeOtherTaskStates() throws {
+    @MainActor @Test(.tags(.fast)) static func completionPreservesAFoldMadeDuringTheRun() throws {
         let source = WorkspaceTestSource()
         let workspace = WorkspaceStore(sourceFactory: { source })
         defer { workspace.shutdown() }
         #expect(workspace.sendQuickMessage("background"))
         let chat = try #require(workspace.activity)
-        source.receive?(.failed("failure"))
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
-        #expect(workspace.send("stopped", conversationID: chat.id))
-        chat.store.stopTask()
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion)
-        #expect(workspace.send("completed", conversationID: chat.id))
-        source.receive?(.completed("result"))
-        #expect(workspace.keepsPetControlsExpandedAfterCompletion)
-        #expect(workspace.send("running again", conversationID: chat.id))
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion, "A new run keeps its existing presentation rules")
         workspace.collapsePetActivity(conversationID: chat.id)
         source.receive?(.completed("explicitly folded result"))
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion && !workspace.isPetActivityVisible,
+        #expect(!workspace.keepsPetControlsExpanded && !workspace.isPetActivityVisible,
                 "Completion preserves an explicit fold made during the run")
         workspace.toggleActivityTray()
         workspace.openPetActivity(conversationID: chat.id)
         #expect(workspace.send("viewed result", conversationID: chat.id))
         source.receive?(.completed("already viewed"))
-        #expect(!workspace.keepsPetControlsExpandedAfterCompletion && workspace.petActivities.isEmpty)
+        #expect(!workspace.keepsPetControlsExpanded && workspace.petActivities.isEmpty)
     }
 
     @MainActor @Test static func petCardsStayUnreadUntilOpened() throws {
@@ -152,6 +144,90 @@ import Foundation
         #expect(first.store.isGenerating && workspace.petActivities.isEmpty)
         firstSource.receive?(.completed("聊天里的结果"))
         #expect(workspace.petActivities.isEmpty && workspace.unseenCompletedCount == 0)
+    }
+
+    @MainActor @Test(.tags(.fast)) static func petTrayStepsBetweenCollapsedStackAndList() throws {
+        var sources: [WorkspaceTestSource] = []
+        let workspace = WorkspaceStore(sourceFactory: {
+            let source = WorkspaceTestSource()
+            sources.append(source)
+            return source
+        })
+        defer { workspace.shutdown() }
+        func notify(_ text: String) throws -> WorkspaceConversation {
+            #expect(workspace.sendQuickMessage(text))
+            let conversation = try #require(workspace.activity)
+            sources.last?.receive?(.completed(text + "的结果"))
+            return conversation
+        }
+        let first = try notify("第一条")
+        let second = try notify("第二条")
+        #expect(workspace.petTrayLevel == .stack, "A new notification arrives as the stack")
+
+        workspace.toggleActivityTray()
+        #expect(workspace.petTrayLevel == .collapsed && !workspace.isPetActivityVisible)
+        workspace.toggleActivityTray()
+        #expect(workspace.petTrayLevel == .stack && workspace.visiblePetActivities.count == 2,
+                "The bell opens to the stack, not the list")
+        workspace.expandActivityList()
+        #expect(workspace.petTrayLevel == .list && workspace.isMainWindowVisible == false,
+                "Clicking the stack only opens the list")
+        workspace.toggleActivityTray()
+        #expect(workspace.petTrayLevel == .stack && workspace.isPetActivityVisible, "⌃ steps the list back to the stack")
+        workspace.toggleActivityTray()
+        #expect(workspace.petTrayLevel == .collapsed, "⌃ then collapses the stack")
+        #expect(workspace.unseenCompletedCount == 2 && workspace.petActivityIDs == [second.id, first.id])
+
+        // Follow-up returns to the level it was entered from; ⌃ during it steps back from that level.
+        workspace.toggleActivityTray()
+        workspace.enterPetFollowUp(second.id)
+        workspace.exitPetFollowUp()
+        #expect(workspace.petTrayLevel == .stack)
+        workspace.expandActivityList()
+        workspace.enterPetFollowUp(first.id)
+        workspace.exitPetFollowUp()
+        #expect(workspace.petTrayLevel == .list)
+        workspace.enterPetFollowUp(first.id)
+        workspace.toggleActivityTray()
+        #expect(workspace.petTrayLevel == .stack && workspace.petFollowUpID == nil && !first.store.isFollowUpExpanded)
+
+        workspace.toggleActivityTray()
+        let third = try notify("第三条")
+        #expect(workspace.petTrayLevel == .stack && workspace.visiblePetActivities.map(\.id) == [third.id],
+                "A notification to a collapsed tray pops up again, with the folded cards left folded")
+        workspace.toggleActivityTray(); workspace.toggleActivityTray()
+        workspace.expandActivityList()
+        #expect(workspace.petTrayLevel == .list && workspace.visiblePetActivities.count == 3)
+        let fourth = try notify("第四条")
+        #expect(workspace.petTrayLevel == .list, "An open list stays open for a new notification")
+        #expect(workspace.visiblePetActivities.map(\.id) == [fourth.id, third.id, second.id, first.id],
+                "The new notification goes on top")
+
+        workspace.dismissPetActivity(conversationID: fourth.id)
+        workspace.collapsePetActivity(conversationID: third.id)
+        #expect(workspace.petTrayLevel == .list && workspace.visiblePetActivities.count == 2)
+        workspace.openPetActivity(conversationID: second.id)
+        #expect(workspace.visiblePetActivities.map(\.id) == [first.id])
+        #expect(!workspace.isActivityListExpanded && workspace.petTrayLevel == .stack,
+                "A list down to one card goes back to the plain card")
+    }
+
+    @MainActor @Test(.tags(.fast)) static func singlePetNotificationKeepsOneStepTray() throws {
+        let source = WorkspaceTestSource()
+        let workspace = WorkspaceStore(sourceFactory: { source })
+        defer { workspace.shutdown() }
+        #expect(workspace.sendQuickMessage("唯一的通知"))
+        let only = try #require(workspace.activity)
+        source.receive?(.completed("结果"))
+        workspace.expandActivityList()
+        #expect(workspace.petTrayLevel == .stack && !workspace.isActivityListExpanded, "One card has no list")
+        workspace.toggleActivityTray()
+        #expect(workspace.petTrayLevel == .collapsed, "⌃ collapses a single card in one step")
+        workspace.toggleActivityTray()
+        #expect(workspace.petTrayLevel == .stack && workspace.visiblePetActivities.map(\.id) == [only.id])
+        workspace.openPetActivity(conversationID: only.id)
+        #expect(workspace.isMainWindowVisible && workspace.selectedID == only.id && workspace.petActivities.isEmpty,
+                "Clicking the card opens its chat and removes the notification")
     }
 
     @MainActor @Test static func ignoringPetNotificationsPreservesHistoryAndFutureResults() async throws {
@@ -478,11 +554,11 @@ import Foundation
               "A completed result remains visible and unread without a composer")
         check(quick.store.cardSummary.contains("最终回复"), "The result replaces progress")
         ws.expandActivityList()
-        check(ws.isActivityListExpanded && ws.unseenCompletedCount == 1 && ws.petFollowUpID == nil,
-              "Expanding a stack only reveals the list")
+        check(!ws.isActivityListExpanded && ws.unseenCompletedCount == 1 && ws.petFollowUpID == nil,
+              "A single card has no list to open")
         ws.toggleActivityTray(); ws.toggleActivityTray()
         check(ws.isPetActivityVisible && !ws.isActivityListExpanded && ws.unseenCompletedCount == 1,
-              "The bell reopens the stack without acknowledging it")
+              "The bell reopens the card without acknowledging it")
         ws.enterPetFollowUp(quick.id)
         check(ws.unseenCompletedCount == 1 && quick.store.isFollowUpExpanded, "Entering follow-up keeps the result unread")
         for message in ["第二个问题", "第三个问题"] {

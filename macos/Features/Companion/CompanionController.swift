@@ -274,7 +274,10 @@ import Combine
         guard let contentView = activityPanel.contentView else { return }
         // Measure every close button, including stacked and scrolled cards, rather than
         // treating transparent padding beside the entire list as a click target.
-        let listFrame = activityPanel.frame.insetBy(dx: CompanionLayout.activityPadding, dy: CompanionLayout.activityPadding)
+        var listFrame = activityPanel.frame.insetBy(dx: CompanionLayout.activityPadding, dy: CompanionLayout.activityPadding)
+        // The list's scroll view reaches past the cards' leading edge by ✕'s overhang.
+        listFrame.origin.x -= CompanionLayout.closeButtonOverhang
+        listFrame.size.width += CompanionLayout.closeButtonOverhang
         let closeFrames = activityPlacement.closeButtonFrames.map {
             let frame = activityPanel.convertToScreen(contentView.convert($0, to: nil))
             // Buttons clipped by the scroll view cannot turn its surrounding padding into a hit target.
@@ -302,7 +305,7 @@ import Combine
                                      unseenCompleted: workspace.unseenCompletedCount,
                                      runningTasks: workspace.runningTaskCount, activityCount: workspace.petActivities.count,
                                      activitiesCollapsed: !workspace.isPetActivityVisible,
-                                     keepsExpandedAfterCompletion: workspace.keepsPetControlsExpandedAfterCompletion)
+                                     keepsExpanded: workspace.keepsPetControlsExpanded)
     }
     /// Where the pointer counts as hovering. Resting on a draft's line, only the line itself does:
     /// hovering opens the composer, so neither the pet nor the space around the line may. Otherwise

@@ -1741,6 +1741,77 @@ private struct ComposerHeightHost: View {
         try await pointer(far) { !presentation.isHovered }
     }
 
+    func testPetStackPeeksBelowFrontCardInBothPlacements() async throws {
+        let source = PreviewSource()
+        let workspace = WorkspaceStore(sourceFactory: { source })
+        defer { workspace.shutdown() }
+        for text in ["第一条", "第二条", "第三条"] {
+            XCTAssertTrue(workspace.sendQuickMessage(text))
+            source.receive?(.failed(text))
+        }
+        XCTAssertEqual(workspace.petTrayLevel, .stack)
+        // The activity panel's canvas: the stack and the padding around it, on white.
+        let padding = CompanionLayout.activityPadding
+        let size = CGSize(width: CompanionLayout.capsuleWidth + 2 * padding, height: workspace.petActivityHeight + 2 * padding)
+        func render(belowPet: Bool) async throws -> NSBitmapImageRep {
+            let placement = ActivityPlacement()
+            placement.isBelowPet = belowPet
+            let host = NSHostingView(rootView: WorkspaceActivityCapsule(workspace: workspace, placement: placement)
+                .background(.white).environment(\.colorScheme, .light))
+            host.frame = NSRect(origin: .zero, size: size)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            return bitmap
+        }
+        let below = try await render(belowPet: true)
+        let above = try await render(belowPet: false)
+        XCTAssertEqual(below.representation(using: .png, properties: [:]), above.representation(using: .png, properties: [:]),
+                       "The stack draws the same way above and below the pet")
+        // Down the middle, the stack runs from the front card's top to the back layers below it.
+        let scale = CGFloat(below.pixelsHigh) / size.height
+        let drawn = (0..<below.pixelsHigh).filter { y in
+            guard let color = below.colorAt(x: below.pixelsWide / 2, y: y)?.usingColorSpace(.sRGB) else { return false }
+            return color.redComponent + color.greenComponent + color.blueComponent < 2.99
+        }
+        let top = CGFloat(drawn.first ?? 0) / scale, bottom = CGFloat((drawn.last ?? 0) + 1) / scale
+        XCTAssertEqual(top, padding, accuracy: 1, "The front card is at the stack's top")
+        XCTAssertEqual(bottom, padding + workspace.petActivityHeight, accuracy: 1,
+                       "The back layers fill the stack's height below the front card")
+    }
+
+    func testPetStackOffersOnlyItsExpandAction() async throws {
+        let source = PreviewSource()
+        let workspace = WorkspaceStore(sourceFactory: { source })
+        defer { workspace.shutdown() }
+        for text in ["第一条", "第二条"] {
+            XCTAssertTrue(workspace.sendQuickMessage(text))
+            source.receive?(.completed(text + "的结果"))
+        }
+        let host = NSHostingView(rootView: WorkspaceActivityCapsule(workspace: workspace, placement: ActivityPlacement()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CompanionLayout.capsuleWidth + 96, height: 300),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        func settle() async throws { try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded() }
+        try await settle()
+        let stack = try XCTUnwrap(findAccessibility("activity.stack", in: host))
+        for id in ["activity.summary", "activity.followUp.toggle", "activity.dismiss"] {
+            XCTAssertNil(findAccessibility(id, in: host), "The stack has no \(id)")
+        }
+        XCTAssertTrue((stack.accessibilityLabel?() ?? "").contains("第二条"), "The stack reads as its front card")
+        let actions = (stack.accessibilityCustomActions?() as? [NSAccessibilityCustomAction]) ?? []
+        XCTAssertEqual(actions.map(\.name), ["展开列表"], "展开列表 is the stack's one custom action")
+        XCTAssertNotEqual(stack.accessibilityPerformPress?(), true, "The stack has no press of its own")
+        try await settle()
+        XCTAssertEqual(workspace.petTrayLevel, .stack)
+        XCTAssertTrue(actions.first?.handler?() ?? false)
+        try await settle()
+        XCTAssertEqual(workspace.petTrayLevel, .list)
+        XCTAssertNil(findAccessibility("activity.stack", in: host))
+        XCTAssertEqual(workspace.visiblePetActivities.count, 2)
+    }
+
     func testIgnoringPetNotificationThroughCloseButton() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let source = PreviewSource()
@@ -1815,8 +1886,10 @@ private struct ComposerHeightHost: View {
         try await pointer(inside) { presentation.isHovered && node("pet.compose") != nil }
         try await pointer(outside) { !presentation.isHovered && node("pet.collapsed") != nil }
         XCTAssertTrue(workspace.sendQuickMessage("completion outside the pet"))
-        try await pointer(outside) { node("voice.start") != nil && node("pet.activity.collapse") != nil }
-        XCTAssertNil(node("pet.compose"), "Running still uses its existing status controls outside hover")
+        try await pointer(outside) {
+            node("voice.start") != nil && node("pet.activity.collapse") != nil && node("pet.compose") != nil
+        }
+        XCTAssertNil(node("pet.collapsed"), "A running card keeps the controls expanded outside hover")
         source.receive?(.completed("completed result"))
         try await pointer(outside) { node("pet.compose") != nil && node("pet.activity.collapse") != nil }
         XCTAssertFalse(presentation.isHovered)
@@ -1824,7 +1897,7 @@ private struct ComposerHeightHost: View {
         for point in [inside, outside, inside, outside] {
             companion.petPanel.samplePointer(at: point)
             try await Task.sleep(for: .milliseconds(250))
-            XCTAssertNotNil(node("pet.activity.collapse"), "Completion survives pointer enter/exit and animation callbacks")
+            XCTAssertNotNil(node("pet.activity.collapse"), "The card's controls survive pointer enter/exit and animation callbacks")
             XCTAssertNil(node("pet.collapsed"))
             XCTAssertTrue(companion.activityPanel.isVisible)
         }
@@ -1833,7 +1906,7 @@ private struct ComposerHeightHost: View {
         let collapse = try XCTUnwrap(node("pet.activity.collapse"))
         XCTAssertTrue(collapse.accessibilityPerformPress?() == true)
         try await pointer(outside) { node("pet.collapsed") != nil && !companion.activityPanel.isVisible }
-        XCTAssertFalse(workspace.keepsPetControlsExpandedAfterCompletion)
+        XCTAssertFalse(workspace.keepsPetControlsExpanded)
         XCTAssertEqual(workspace.unseenCompletedCount, 1)
         try await pointer(inside) { node("pet.activity.expand") != nil && node("pet.compose") != nil }
         try await pointer(outside) { node("pet.collapsed") != nil && node("pet.compose") == nil }

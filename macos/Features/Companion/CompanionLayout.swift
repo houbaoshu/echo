@@ -6,6 +6,8 @@ struct CompanionLayout {
     static let collapsedHeight: CGFloat = 56
     static let expandedHeight: CGFloat = 96
     static let activityPadding: CGFloat = 48
+    /// How far a card's ✕ reaches past its top and leading edges.
+    static let closeButtonOverhang: CGFloat = 4
     static let controlsWidth = PetSurfacePresentation.canvasWidth
     static let controlsHeight = PetSurfacePresentation.canvasHeight
     var pet: CGRect

@@ -111,15 +111,17 @@ struct ActivityCapsule: View {
     var followUp: (() -> Void)?
     var exit: (() -> Void)?
     var end: (() -> Void)?
+    /// The front card of a stack: `open` opens the list, and the card has no buttons of its own.
+    var stacked = false
     @State private var hovered = false
     @State private var followUpFocusRequest = 0
 
     init(store: TaskStore, canStop: Bool = false, send: @escaping () -> Void, stop: @escaping () -> Void,
          open: @escaping () -> Void = {}, placement: ActivityPlacement, title: String? = nil,
-         followUp: (() -> Void)? = nil, exit: (() -> Void)? = nil, end: (() -> Void)? = nil) {
+         followUp: (() -> Void)? = nil, exit: (() -> Void)? = nil, end: (() -> Void)? = nil, stacked: Bool = false) {
         self.store = store; self.canStop = canStop
         self.send = send; self.stop = stop; self.open = open; self.placement = placement
-        self.title = title; self.followUp = followUp; self.exit = exit; self.end = end
+        self.title = title; self.followUp = followUp; self.exit = exit; self.end = end; self.stacked = stacked
     }
     private var statusSymbol: String {
         switch store.task?.status {
@@ -160,12 +162,13 @@ struct ActivityCapsule: View {
         let reply = Text(summary).foregroundColor(.secondary)
         return Text("\(icon)  \(heading)  ·  \(reply)")
     }
+    private var accessibilitySummary: String { String(localized: "\(statusLabel)，\(cardTitle)，\(summary)") }
     private var summaryView: some View {
         summaryLabel
             .font(.system(size: 13))
             .lineLimit(2).truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel(String(localized: "\(statusLabel)，\(cardTitle)，\(summary)"))
+            .accessibilityLabel(accessibilitySummary)
             .padding(.trailing, hovered || store.isFollowUpExpanded ? 50 : 0)
     }
 
@@ -215,6 +218,25 @@ struct ActivityCapsule: View {
     }
 
     var body: some View {
+        if stacked { stackFront } else { card }
+    }
+
+    /// No ✕ or follow-up here, even on hover: clicking anywhere on a stack opens the list, and
+    /// that is also its one accessibility action.
+    private var stackFront: some View {
+        summaryView
+            .padding(.horizontal, 16)
+            .frame(width: CompanionLayout.capsuleWidth, height: CompanionLayout.collapsedHeight)
+            .background { CompanionBackground(shape: RoundedRectangle(cornerRadius: 28)) }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: open)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilitySummary)
+            .accessibilityIdentifier("activity.stack")
+            .accessibilityAction(named: String(localized: "展开列表"), open)
+    }
+
+    private var card: some View {
         VStack(spacing: 0) {
             header
             if store.isFollowUpExpanded {
@@ -224,7 +246,8 @@ struct ActivityCapsule: View {
         .frame(width: CompanionLayout.capsuleWidth)
         .background { CompanionBackground(shape: RoundedRectangle(cornerRadius: 28)) }
         .overlay(alignment: .topLeading) {
-            if store.task != nil {
+            // Like the follow-up button, ✕ shows on hover.
+            if store.task != nil, hovered || store.isFollowUpExpanded {
                 RoundControl(symbol: "xmark", label: String(localized: "忽略任务通知"), size: 20, identifier: "activity.dismiss") {
                     if let end { end() }
                     else { store.closeActivity() }
@@ -235,10 +258,14 @@ struct ActivityCapsule: View {
                                                value: [proxy.frame(in: .named("activityCanvas"))])
                     }
                 }
-                .offset(x: -4, y: -4)
+                .offset(x: -CompanionLayout.closeButtonOverhang, y: -CompanionLayout.closeButtonOverhang)
             }
         }
+        // The hover area takes in the part of ✕ outside the card, so moving onto it keeps ✕ shown.
+        .padding([.top, .leading], CompanionLayout.closeButtonOverhang)
+        .contentShape(Rectangle())
         .onHover { hovered = $0 }
+        .padding([.top, .leading], -CompanionLayout.closeButtonOverhang)
         .onAppear { if store.isFollowUpExpanded { followUpFocusRequest += 1 } }
         .onChange(of: store.isFollowUpExpanded) { _, expanded in if expanded { followUpFocusRequest += 1 } }
     }
@@ -274,14 +301,14 @@ struct ActivityCapsule: View {
     /// hit-frame both read it here, so the pointer target always matches the width on screen.
     func surface(hovered: Bool, store: TaskStore, voice: VoiceSessionController,
                  unseenCompleted: Int, runningTasks: Int, activityCount: Int? = nil, activitiesCollapsed: Bool? = nil,
-                 keepsExpandedAfterCompletion: Bool = false) -> PetSurfacePresentation {
+                 keepsExpanded: Bool = false) -> PetSurfacePresentation {
         // The + menu's popover belongs to the composer showing the draft; it keeps that composer up.
         PetSurfacePresentation(hovered: hovered || isProjectPickerOpen, composerOpen: isComposerOpen, draft: draft,
                                activityCount: activityCount ?? store.activityCount, activitiesCollapsed: activitiesCollapsed ?? store.activitiesCollapsed,
                                unseenCompleted: unseenCompleted, voice: voice.snapshot, canStartVoice: voice.canStartCall,
                                runningTasks: runningTasks, composerSent: collapsesOnExit,
                                connectedVoiceSession: connectedVoiceSession,
-                               keepsExpandedAfterCompletion: keepsExpandedAfterCompletion,
+                               keepsExpanded: keepsExpanded,
                                peeksDraft: !draftPeekWaitsForExit)
     }
     func noteVoice(_ snapshot: VoiceSessionSnapshot) {
@@ -391,7 +418,7 @@ struct PetControls: View {
         presentation.surface(hovered: presentation.isHovered, store: store, voice: voice,
                              unseenCompleted: unseenCompleted, runningTasks: runningTasks,
                              activityCount: workspace?.petActivities.count, activitiesCollapsed: workspace.map { !$0.isPetActivityVisible },
-                             keepsExpandedAfterCompletion: workspace?.keepsPetControlsExpandedAfterCompletion ?? false)
+                             keepsExpanded: workspace?.keepsPetControlsExpanded ?? false)
     }
     var body: some View {
         let surface = surface
@@ -752,7 +779,8 @@ struct PetControls: View {
         switch tray {
         case .none: ""
         case .bell(let unseen): unseen > 0 ? String(localized: "展开活动（\(unseen) 个已完成任务未查看）") : String(localized: "展开活动")
-        case .collapse: String(localized: "收起活动")
+        // ⌃ on the list goes back to the stack, not all the way to the bell.
+        case .collapse: workspace?.petTrayLevel == .list ? String(localized: "收起列表") : String(localized: "收起活动")
         }
     }
 
@@ -766,14 +794,16 @@ struct PetControls: View {
 struct WorkspaceActivityCapsule: View {
     @ObservedObject var workspace: WorkspaceStore
     @ObservedObject var placement: ActivityPlacement
-    @ViewBuilder private func card(_ conversation: WorkspaceConversation) -> some View {
+    /// A card opens its chat when clicked; the front of a stack opens the list instead.
+    @ViewBuilder private func card(_ conversation: WorkspaceConversation, stacked: Bool = false) -> some View {
         ActivityCapsule(store: conversation.store,
             canStop: workspace.voice.conversationID == conversation.id && workspace.voice.presentation.isReplyAudioActive,
             send: { workspace.sendFollowUp(conversationID: conversation.id) },
             stop: { workspace.stop(conversationID: conversation.id) },
-            open: { workspace.openPetActivity(conversationID: conversation.id) }, placement: placement, title: conversation.displayTitle,
+            open: stacked ? { workspace.expandActivityList() } : { workspace.openPetActivity(conversationID: conversation.id) },
+            placement: placement, title: conversation.displayTitle,
             followUp: { workspace.enterPetFollowUp(conversation.id) }, exit: { workspace.exitPetFollowUp() },
-            end: { workspace.dismissPetActivity(conversationID: conversation.id) })
+            end: { workspace.dismissPetActivity(conversationID: conversation.id) }, stacked: stacked)
             .id(conversation.id)
     }
     var body: some View {
@@ -781,25 +811,39 @@ struct WorkspaceActivityCapsule: View {
             if let id = workspace.petFollowUpID, let conversation = workspace.conversation(id: id) {
                 card(conversation)
             } else if workspace.isActivityListExpanded {
+                // The scroll view reaches past the cards' leading edge by ✕'s overhang, so it does not
+                // clip ✕; the cards stay where they were. The 6pt top inset already covers it above.
                 ScrollView {
                     VStack(spacing: 8) { ForEach(workspace.visiblePetActivities) { card($0) } }
                         .padding(.vertical, 6)
+                        .padding(.leading, CompanionLayout.closeButtonOverhang)
                 }
                 .scrollIndicators(.automatic)
                 .frame(height: workspace.petActivityHeight)
+                .padding(.leading, -CompanionLayout.closeButtonOverhang)
             } else if let first = workspace.visiblePetActivities.first {
-                ZStack(alignment: placement.isBelowPet ? .top : .bottom) {
+                // A stack opens into the list wherever it is clicked; a single card opens its chat.
+                let stacked = workspace.visiblePetActivities.count > 1
+                // Above or below the pet, the back layers peek out below the front card, in the
+                // same height either way.
+                ZStack(alignment: .top) {
                     ForEach(Array(workspace.visiblePetActivities.prefix(3).enumerated().dropFirst().reversed()), id: \.element.id) { index, _ in
-                        CompanionBackground(shape: StackedCardSliver(depth: index, belowPet: placement.isBelowPet))
+                        let sliver = StackedCardSliver(depth: index)
+                        CompanionBackground(shape: sliver)
                             .opacity(index == 1 ? 0.7 : 0.45)
+                            .contentShape(sliver)
+                            .onTapGesture { workspace.expandActivityList() }
                             .frame(width: StackedCardSliver.width(depth: index), height: CompanionLayout.collapsedHeight)
-                            .offset(y: CGFloat(index) * (placement.isBelowPet ? 1 : -1) * StackedCardSliver.step.offset)
-                            .allowsHitTesting(false).accessibilityHidden(true)
+                            .offset(y: CGFloat(index) * StackedCardSliver.step.offset)
+                            .accessibilityHidden(true)
                     }
-                    card(first)
+                    card(first, stacked: stacked)
                 }
-                .frame(height: workspace.petActivityHeight, alignment: placement.isBelowPet ? .top : .bottom)
-                .accessibilityAction(named: "查看聊天") { workspace.openPetActivity(conversationID: first.id) }
+                .frame(height: workspace.petActivityHeight, alignment: .top)
+                // A stack's one action, 展开列表, is on its front card.
+                .accessibilityActions {
+                    if !stacked { Button(String(localized: "查看聊天")) { workspace.openPetActivity(conversationID: first.id) } }
+                }
             }
         }
         .padding(CompanionLayout.activityPadding)
@@ -814,7 +858,6 @@ struct WorkspaceActivityCapsule: View {
 /// would tint the card; each layer draws only its own strip.
 struct StackedCardSliver: Shape {
     let depth: Int
-    let belowPet: Bool
     static let step = (width: CGFloat(12), offset: CGFloat(7))
     static func width(depth: Int) -> CGFloat { CompanionLayout.capsuleWidth - CGFloat(depth) * step.width }
 
@@ -823,7 +866,7 @@ struct StackedCardSliver: Shape {
         let front = (0..<depth).reduce(into: Path()) { path, layer in
             let width = Self.width(depth: layer)
             let shift = CGFloat(depth - layer) * Self.step.offset
-            let frame = CGRect(x: rect.midX - width / 2, y: rect.minY + (belowPet ? -shift : shift),
+            let frame = CGRect(x: rect.midX - width / 2, y: rect.minY - shift,
                                width: width, height: rect.height)
             path.addPath(RoundedRectangle(cornerRadius: 28).path(in: frame))
         }

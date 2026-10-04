@@ -42,7 +42,8 @@ struct PetSurfacePresentation: Equatable {
     static let canvasHeight: CGFloat = 56
 
     let mode: Mode
-    /// ✎ and the voice entry appear on hover, or while a completion holds the controls open.
+    /// ✎ and the voice entry appear on hover, or while the workspace keeps the controls expanded
+    /// because a card shows.
     let showsActions: Bool
     let tray: Tray
     let voice: VoiceIndicator
@@ -70,7 +71,7 @@ struct PetSurfacePresentation: Equatable {
          activityCount: Int, activitiesCollapsed: Bool, unseenCompleted: Int,
          voice snapshot: VoiceSessionSnapshot, canStartVoice: Bool,
          runningTasks: Int = 0, composerSent: Bool = false, connectedVoiceSession: UUID? = nil,
-         keepsExpandedAfterCompletion: Bool = false, peeksDraft: Bool = true) {
+         keepsExpanded: Bool = false, peeksDraft: Bool = true) {
         self.unseenCompleted = unseenCompleted
         switch snapshot.session {
         case .starting: voiceConnecting = true
@@ -95,12 +96,12 @@ struct PetSurfacePresentation: Equatable {
         draftPreview = composerOpen ? nil : Self.preview(of: draft)
         // Where the strip would rest on the draft's line, hover leads to the draft, never the pill.
         let restsOnDraft = draftPreview != nil && snapshot.session.owner == nil && runningTasks == 0
-            && !keepsExpandedAfterCompletion
+            && !keepsExpanded
         peeksComposer = restsOnDraft && hovered && peeksDraft
         if composerOpen || peeksComposer { mode = .composer }
         else if snapshot.session.owner != nil && !voiceConnecting { mode = .voice }
         else { mode = .compact }
-        showsActions = (hovered && !restsOnDraft) || composerOpen || peeksComposer || keepsExpandedAfterCompletion
+        showsActions = (hovered && !restsOnDraft) || composerOpen || peeksComposer || keepsExpanded
         showsStatus = mode == .composer ? composerOpen && composerSent
                                         : !showsActions && (runningTasks > 0 || voiceConnecting)
     }

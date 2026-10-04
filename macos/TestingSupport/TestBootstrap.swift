@@ -36,9 +36,20 @@ import AppKit
 
     static func seed(workspace: WorkspaceStore, root: URL) throws {
         guard let fixture = ProcessInfo.processInfo.environment["ECHO_UI_FIXTURE"] else { return }
-        guard ["projects", "sidebar"].contains(fixture) else { throw SettingsError("Unknown UI fixture") }
+        guard ["projects", "sidebar", "pet-card", "pet-stack"].contains(fixture) else { throw SettingsError("Unknown UI fixture") }
         let marker = root.appendingPathComponent("fixture.seeded")
         guard !FileManager.default.fileExists(atPath: marker.path) else { return }
+        if fixture.hasPrefix("pet-") {
+            // Quick chats from the pet; their offline replies leave notification cards on it.
+            let texts = ["整理会议纪要", "检查构建日志", "翻译这段说明"]
+            // Sent once the main window has settled on its own chat, so none of the replies counts as viewed.
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                for text in fixture == "pet-stack" ? texts : [texts[0]] { workspace.sendQuickMessage(text) }
+            }
+            try Data().write(to: marker)
+            return
+        }
         for index in 0..<(fixture == "projects" ? 24 : 1) {
             let project = root.appendingPathComponent(String(format: "Project %02d", index))
             try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)

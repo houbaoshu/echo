@@ -241,15 +241,16 @@ struct WorkspaceSnapshot: Codable {
     @Published private(set) var isActivityListExpanded = false
     @Published private(set) var petFollowUpID: UUID?
     @Published private(set) var isPetTrayCollapsed = false
-    /// A completion holds the controls open until that card is explicitly folded or removed.
-    /// Transient and separate from hover and unread state; reopening a folded card does not rearm it.
-    @Published private var petCompletionHoldIDs: Set<UUID> = []
+    /// The tray's three levels. More than one notification stacks; the stack opens into the list,
+    /// and ⌃ steps back one level at a time. Follow-up sits on top of a level and returns to it.
+    enum PetTrayLevel { case collapsed, stack, list }
+    var petTrayLevel: PetTrayLevel { !isPetActivityVisible ? .collapsed : isActivityListExpanded ? .list : .stack }
     var petActivities: [WorkspaceConversation] { petActivityIDs.filter { $0 != voice.conversationID }.compactMap { conversation(id: $0) } }
     var visiblePetActivities: [WorkspaceConversation] { petActivities.filter { !$0.store.activitiesCollapsed } }
     var isPetActivityVisible: Bool { !visiblePetActivities.isEmpty && !isPetTrayCollapsed }
-    var keepsPetControlsExpandedAfterCompletion: Bool {
-        isPetActivityVisible && visiblePetActivities.contains { petCompletionHoldIDs.contains($0.id) }
-    }
+    /// The controls stay expanded without hover while any card shows, so ⌃ stays in reach.
+    /// With only the bell left they follow hover.
+    var keepsPetControlsExpanded: Bool { isPetActivityVisible }
     var petActivityHeight: CGFloat {
         if petFollowUpID != nil { return CompanionLayout.expandedHeight }
         if isActivityListExpanded { return max(0, CGFloat(min(3, visiblePetActivities.count)) * (CompanionLayout.collapsedHeight + 8) - 8) + 12 }
@@ -258,10 +259,10 @@ struct WorkspaceSnapshot: Codable {
     /// Folding changes presentation only; the bell still owns the unread result.
     func collapsePetActivity(conversationID: UUID) {
         guard petActivityIDs.contains(conversationID), let store = conversation(id: conversationID)?.store else { return }
-        petCompletionHoldIDs.remove(conversationID)
         if petFollowUpID == conversationID { exitPetFollowUp() }
         store.foldActivity()
         if visiblePetActivities.isEmpty { isPetTrayCollapsed = true }
+        settleActivityList()
     }
     /// Ignore this notification without opening its chat or stopping its task.
     /// Only a subsequent run can add this conversation back to the pet tray.
@@ -276,7 +277,15 @@ struct WorkspaceSnapshot: Codable {
         removePetActivity(conversationID)
         onOpenPetActivity?()
     }
-    func expandActivityList() { isActivityListExpanded = true }
+    /// Opens a stack into the list. A single card has no stack and stays a card.
+    func expandActivityList() {
+        guard isPetActivityVisible, visiblePetActivities.count > 1 else { return }
+        isActivityListExpanded = true
+    }
+    /// A list left with one card goes back to a plain card, and forgets it was a list.
+    private func settleActivityList() {
+        if visiblePetActivities.count <= 1 { isActivityListExpanded = false }
+    }
     func enterPetFollowUp(_ id: UUID) {
         guard petActivityIDs.contains(id), let store = conversation(id: id)?.store else { return }
         if petFollowUpID == id {
@@ -293,11 +302,11 @@ struct WorkspaceSnapshot: Codable {
         petFollowUpID = nil
     }
     private func removePetActivity(_ id: UUID) {
-        petCompletionHoldIDs.remove(id)
         if petFollowUpID == id { exitPetFollowUp() }
         petActivityIDs.removeAll { $0 == id }
         conversation(id: id)?.store.closeActivity()
         if activityID == id { activityID = petActivityIDs.first }
+        settleActivityList()
     }
     @Published var isMainWindowVisible = false {
         didSet {
@@ -387,13 +396,17 @@ struct WorkspaceSnapshot: Codable {
         return projects.first { $0.id == id }
     }
     var unseenCompletedCount: Int { petActivities.filter { $0.store.hasUnseenCompletion }.count }
+    /// The bell and ⌃: collapsed opens to the stack, the list steps back to the stack, and the
+    /// stack collapses. Follow-up ends with the level it sat on.
     func toggleActivityTray() {
-        if isPetActivityVisible {
-            petCompletionHoldIDs.removeAll()
-            exitPetFollowUp(); isPetTrayCollapsed = true
+        switch petTrayLevel {
+        case .list:
+            exitPetFollowUp(); isActivityListExpanded = false
+        case .stack:
+            exitPetFollowUp(); isPetTrayCollapsed = true; isActivityListExpanded = false
             petActivities.forEach { $0.store.foldActivity() }
-        } else {
-            isPetTrayCollapsed = false; isActivityListExpanded = petActivities.count > 1
+        case .collapsed:
+            isPetTrayCollapsed = false; isActivityListExpanded = false
             petActivities.forEach { $0.store.expandActivity() }
         }
     }
@@ -585,11 +598,11 @@ struct WorkspaceSnapshot: Codable {
             guard let self, let target = self.conversation(id: id) else { return }
             switch event {
             case .started:
-                // A new run supersedes the previous outcome.
-                self.petCompletionHoldIDs.remove(id)
                 target.store.markSeen()
                 if !self.petActivityIDs.contains(id) {
-                    self.exitPetFollowUp(); self.isActivityListExpanded = false; self.isPetTrayCollapsed = false
+                    // An open list takes the new card on top; otherwise it arrives as the stack.
+                    if !self.isPetActivityVisible { self.isActivityListExpanded = false }
+                    self.exitPetFollowUp(); self.isPetTrayCollapsed = false
                     self.petActivityIDs.insert(id, at: 0)
                 }
                 if self.voice.conversationID != id {
@@ -603,10 +616,6 @@ struct WorkspaceSnapshot: Codable {
                 let viewed = self.isViewing(id)
                 if self.voice.conversationID == id { self.voiceCompletion = viewed ? nil : id }
                 target.store.recordCompletion(unseen: !viewed && self.voice.conversationID != id)
-                if !viewed, self.voice.conversationID != id, self.petActivityIDs.contains(id),
-                   !self.isPetTrayCollapsed, target.store.isActivityVisible {
-                    self.petCompletionHoldIDs.insert(id)
-                }
                 if viewed { self.removePetActivity(id) }
                 if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
             case .reply(_, .failed):
