@@ -129,7 +129,7 @@ import Combine
             self?.petPanel.replacePet(with: store)
             self?.layout()
         }
-        petPanel.onClick = { [weak self] in self?.showMainWindow() }
+        petPanel.onClick = { [weak self] in self?.showMainWindowFromPet() }
         workspace.onOpenPetActivity = { [weak self] in
             guard let self else { return }
             self.clearNotice()
@@ -400,6 +400,13 @@ import Combine
         if workspace.voice.isActive { workspace.voice.reveal() }
         else { workspace.revealActivity() }
         taskStore.showMainWindow()
+        presentMainWindow()
+        mainController?.showWorkspace()
+    }
+    /// The pet's click; see `WorkspaceStore.revealFromPet`.
+    func showMainWindowFromPet() {
+        clearNotice()
+        workspace.revealFromPet()
         presentMainWindow()
         mainController?.showWorkspace()
     }

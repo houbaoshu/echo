@@ -314,6 +314,8 @@ struct WorkspaceSnapshot: Codable {
             markViewedActivitySeen()
         }
     }
+    /// A minimized main window is not visible, but it is still open: it keeps its chat.
+    var isMainWindowMinimized = false
     @Published var persistenceNotice: String?
     var onRevealVoice: ((UUID) -> Void)?
     var onOpenPetActivity: (() -> Void)?
@@ -677,6 +679,15 @@ struct WorkspaceSnapshot: Codable {
     }
     func revealActivity() {
         if let activityID, activityID != selectedID { select(activityID) }
+        isMainWindowVisible = true
+    }
+    /// Clicking the pet. A Live Voice call takes it to the call's conversation. Otherwise a main
+    /// window still open, showing or minimized, keeps its chat, and a closed one opens on a new
+    /// chat, reusing an empty draft, rather than on a notification's chat, so every notification
+    /// stays unread.
+    func revealFromPet() {
+        if voice.isActive, let id = voice.conversationID { revealVoice(conversationID: id); return }
+        if !isMainWindowVisible && !isMainWindowMinimized { newConversation(projectID: selected?.projectID) }
         isMainWindowVisible = true
     }
     func renameConversation(_ id: UUID, to title: String) {

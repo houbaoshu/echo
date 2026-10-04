@@ -42,11 +42,7 @@ import AppKit
         if fixture.hasPrefix("pet-") {
             // Quick chats from the pet; their offline replies leave notification cards on it.
             let texts = ["整理会议纪要", "检查构建日志", "翻译这段说明"]
-            // Sent once the main window has settled on its own chat, so none of the replies counts as viewed.
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(1))
-                for text in fixture == "pet-stack" ? texts : [texts[0]] { workspace.sendQuickMessage(text) }
-            }
+            for text in fixture == "pet-stack" ? texts : [texts[0]] { workspace.sendQuickMessage(text) }
             try Data().write(to: marker)
             return
         }

@@ -3015,6 +3015,43 @@ private struct ComposerHeightHost: View {
         voice.end()
     }
 
+    /// Clicking the pet, wired as the app wires it, with the main window minimized and then
+    /// closed. A minimized window is still open and comes back on its chat; only a closed one
+    /// opens on a new chat.
+    func testPetRestoresAMinimizedMainWindowOnItsChat() async throws {
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
+        defer { companion.shutdown() }
+        func until(_ description: String, _ condition: () -> Bool) async throws {
+            for _ in 0..<100 where !condition() { try await Task.sleep(for: .milliseconds(50)) }
+            XCTAssertTrue(condition(), description)
+        }
+        let read = workspace.selected!
+        XCTAssertTrue(workspace.send("正在读的聊天", conversationID: read.id), "The chat to read accepts a message")
+
+        companion.petPanel.onClick?()
+        guard let window = companion.mainWindow else { throw SettingsError("The pet opens no main window") }
+        let fresh = try XCTUnwrap(workspace.selectedID)
+        XCTAssertTrue(window.isVisible && fresh != read.id, "A closed window opens on a new chat")
+        workspace.select(read.id)
+
+        window.miniaturize(nil)
+        try await until("The window minimizes") { window.isMiniaturized && workspace.isMainWindowMinimized }
+        XCTAssertFalse(workspace.isMainWindowVisible)
+        companion.petPanel.onClick?()
+        try await until("The pet restores the minimized window") { !window.isMiniaturized && window.isVisible }
+        XCTAssertTrue(workspace.isMainWindowVisible && !workspace.isMainWindowMinimized)
+        XCTAssertEqual(workspace.selectedID, read.id, "A minimized window comes back on its chat")
+
+        companion.mainController?.hideMainWindow()
+        XCTAssertFalse(window.isVisible || workspace.isMainWindowVisible || workspace.isMainWindowMinimized)
+        companion.petPanel.onClick?()
+        XCTAssertTrue(window.isVisible, "The pet reopens a closed window")
+        XCTAssertEqual(workspace.selectedID, fresh, "A closed window opens on the new chat, reusing the empty one")
+    }
+
     func testComposerPreservesEditorStateAcrossVoiceUpdates() async throws {
         let source = PreviewSource()
         let store = TaskStore(source: source)

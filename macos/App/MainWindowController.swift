@@ -263,7 +263,7 @@ import Combine
     }
     @objc func hideMainWindow() {
         searchPalette.isOpen = false
-        workspace.isMainWindowVisible = false
+        workspace.isMainWindowVisible = false; workspace.isMainWindowMinimized = false
         workspace.selected?.store.hideMainWindow()
         window?.orderOut(nil); workspace.flush()
     }
@@ -334,8 +334,10 @@ import Combine
         window?.title = workspace.selected?.displayTitle ?? WorkspaceConversation.untitledTitle
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { hideMainWindow(); return false }
-    func windowDidMiniaturize(_ notification: Notification) { workspace.isMainWindowVisible = false; workspace.flush() }
-    func windowDidDeminiaturize(_ notification: Notification) { workspace.isMainWindowVisible = true }
+    func windowDidMiniaturize(_ notification: Notification) {
+        workspace.isMainWindowVisible = false; workspace.isMainWindowMinimized = true; workspace.flush()
+    }
+    func windowDidDeminiaturize(_ notification: Notification) { workspace.isMainWindowMinimized = false; workspace.isMainWindowVisible = true }
     /// Expanded reading is not restored, so the split view's autosave has to keep the
     /// columns the next launch comes back to rather than the expansion's. The autosave is
     /// written a main-queue turn later, which `applicationWillTerminate` no longer has.

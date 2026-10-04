@@ -146,6 +146,70 @@ import Foundation
         #expect(workspace.petActivities.isEmpty && workspace.unseenCompletedCount == 0)
     }
 
+    /// Clicking the pet opens a hidden main window on a new chat, never on a notification's chat;
+    /// a window already showing keeps its chat, and Live Voice still takes it to the call.
+    @MainActor @Test(.tags(.fast)) static func petOpensTheMainWindowOnANewChat() throws {
+        var sources: [WorkspaceTestSource] = []
+        let workspace = WorkspaceStore(sourceFactory: {
+            let source = WorkspaceTestSource()
+            sources.append(source)
+            return source
+        })
+        defer { workspace.shutdown() }
+        let blank = try #require(workspace.selected)
+        #expect(workspace.sendQuickMessage("第一张卡片"))
+        let first = try #require(workspace.activity)
+        sources.last?.receive?(.completed("第一个结果"))
+        #expect(workspace.sendQuickMessage("第二张卡片"))
+        let second = try #require(workspace.activity)
+        sources.last?.receive?(.completed("第二个结果"))
+        #expect(workspace.unseenCompletedCount == 2 && workspace.activityID == second.id)
+
+        let focusRequests = workspace.composerFocusRequest
+        workspace.revealFromPet()
+        #expect(workspace.isMainWindowVisible && workspace.selectedID == blank.id, "A hidden window opens on the empty new chat")
+        #expect(workspace.composerFocusID == blank.id && workspace.composerFocusRequest > focusRequests, "Its composer takes focus")
+        #expect(workspace.unseenCompletedCount == 2 && workspace.petActivityIDs == [second.id, first.id],
+                "No notification is opened or read")
+        workspace.isMainWindowVisible = false
+        workspace.revealFromPet()
+        #expect(workspace.selectedID == blank.id && workspace.conversations.count == 2, "Clicking again reuses the same empty chat")
+        #expect(workspace.newConversation().id == blank.id, "No second empty chat was left behind")
+
+        // A chat read and then hidden is not reopened: the pet goes to a new chat.
+        workspace.select(first.id)
+        #expect(workspace.unseenCompletedCount == 1, "Viewing a chat reads it")
+        workspace.isMainWindowVisible = false
+        workspace.revealFromPet()
+        #expect(workspace.selectedID == blank.id && workspace.unseenCompletedCount == 1)
+
+        // A window already showing keeps whatever it shows.
+        workspace.revealFromPet()
+        #expect(workspace.selectedID == blank.id)
+        let read = try #require(workspace.conversation(id: first.id))
+        workspace.select(read.id)
+        workspace.revealFromPet()
+        #expect(workspace.isMainWindowVisible && workspace.selectedID == read.id, "A showing window keeps its chat")
+        #expect(workspace.unseenCompletedCount == 1 && workspace.petActivityIDs == [second.id])
+
+        // A minimized window is still open: it keeps its chat and makes no new one.
+        workspace.isMainWindowVisible = false; workspace.isMainWindowMinimized = true
+        workspace.revealFromPet()
+        #expect(workspace.isMainWindowVisible && workspace.selectedID == read.id, "A minimized window keeps its chat")
+        workspace.isMainWindowMinimized = false
+
+        // Live Voice still takes the pet to the call, from a hidden window and from another chat.
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: second.id)
+        workspace.voice.updateSnapshot { $0.session = .active(owner) }
+        workspace.revealFromPet()
+        #expect(workspace.isMainWindowVisible && workspace.selectedID == second.id, "A showing window goes to the call")
+        workspace.select(blank.id)
+        workspace.isMainWindowVisible = false
+        workspace.revealFromPet()
+        #expect(workspace.isMainWindowVisible && workspace.selectedID == second.id, "A hidden window opens on the call")
+        workspace.voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
+    }
+
     @MainActor @Test(.tags(.fast)) static func petTrayStepsBetweenCollapsedStackAndList() throws {
         var sources: [WorkspaceTestSource] = []
         let workspace = WorkspaceStore(sourceFactory: {
@@ -498,9 +562,9 @@ import Foundation
         let freshDraft = fresh.selected!
         let historyIDs = fresh.conversations.map(\.id)
         let historicalMessages = fresh.conversations.map { $0.store.messages }
-        fresh.revealActivity()
-        check(fresh.selectedID == freshDraft.id && fresh.activityID == nil,
-              "Opening the pet after restart stays on the composer without activating history")
+        fresh.revealFromPet()
+        check(fresh.selectedID == freshDraft.id && fresh.activityID == nil && fresh.selected === freshDraft,
+              "Opening the pet after restart reuses the launch's new chat without activating history")
         freshDraft.store.send("重启后的新消息")
         check(fresh.activityID == freshDraft.id && fresh.activityStore.isActivityVisible,
               "The first real message activates the new session and its activity")

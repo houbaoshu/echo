@@ -45,7 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                      y: screen.maxY - panel.frame.height - 24))
                     }
                     store.start()
-                    companion?.showMainWindow()
+                    // Opens the way the pet does: on the launch's new chat, never on a chat the fixture seeded.
+                    companion?.showMainWindowFromPet()
                     return
                 }
             }
