@@ -4,12 +4,12 @@
     "" : {
       "shouldTranslate" : false
     },
-    "%@  %@  ·  %@" : {
+    "%@  %@" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "%1$@  %2$@  ·  %3$@"
+            "value" : "%1$@  %2$@"
           }
         }
       },

@@ -1741,6 +1741,56 @@ private struct ComposerHeightHost: View {
         try await pointer(far) { !presentation.isHovered }
     }
 
+    /// The card gives the title and the reply a line each whatever their length, and without a
+    /// summary the title sits alone in the middle of the card.
+    func testPetCardKeepsTitleAndReplyOnALineEach() async throws {
+        let height = CompanionLayout.collapsedHeight
+        // The rows of text drawn on the card, as runs of points from its top.
+        func textRows(title: String, summary: String) async throws -> [ClosedRange<CGFloat>] {
+            let store = TaskStore(snapshot: .init(
+                task: ActivityTask(id: UUID(), runID: UUID(), title: title, summary: summary, status: .completed),
+                messages: [], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false), source: nil)
+            defer { store.shutdown() }
+            XCTAssertEqual(store.cardSummary, summary)
+            let host = NSHostingView(rootView: ActivityCapsule(store: store, send: {}, stop: {}, placement: ActivityPlacement())
+                .background(.white).environment(\.colorScheme, .light))
+            host.frame = NSRect(x: 0, y: 0, width: CompanionLayout.capsuleWidth, height: height)
+            try await Task.sleep(for: .milliseconds(150))
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsHigh) / height
+            func brightness(_ x: Int, _ y: Int) -> CGFloat {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return 0 }
+                return (color.redComponent + color.greenComponent + color.blueComponent) / 3
+            }
+            // Text runs from the 16 pt padding to the card's end. The card's own colour is read at
+            // x = 8 pt, inside the padding; the 28 pt corners leave that column above 9 pt and
+            // below 47 pt, where no text reaches.
+            let inked = (Int(9 * scale)..<Int(47 * scale)).filter { y in
+                let card = brightness(Int(8 * scale), y)
+                return stride(from: Int(16 * scale), to: bitmap.pixelsWide - Int(16 * scale), by: 1)
+                    .contains { abs(brightness($0, y) - card) > 0.15 }
+            }
+            var rows: [ClosedRange<Int>] = []
+            for y in inked {
+                if let last = rows.last, last.upperBound == y - 1 { rows[rows.count - 1] = last.lowerBound...y }
+                else { rows.append(y...y) }
+            }
+            return rows.map { CGFloat($0.lowerBound) / scale...CGFloat($0.upperBound + 1) / scale }
+        }
+        let long = String(repeating: "把上周三次产品评审会议的结论整理成备忘录", count: 3)
+        for (title, summary) in [("整理会议纪要", "已整理成 5 条要点。"), (long, "已整理成 5 条要点。"), ("检查构建日志", long), (long, long)] {
+            let rows = try await textRows(title: title, summary: summary)
+            XCTAssertEqual(rows.count, 2, "The title and the reply take a line each: \(rows)")
+            XCTAssertTrue(rows.allSatisfy { $0.upperBound - $0.lowerBound < 17 }, "Neither wraps: \(rows)")
+        }
+        let alone = try await textRows(title: "翻译这段说明", summary: "")
+        XCTAssertEqual(alone.count, 1, "Without a summary there is no second line: \(alone)")
+        let row = try XCTUnwrap(alone.first)
+        XCTAssertEqual((row.lowerBound + row.upperBound) / 2, height / 2, accuracy: 1.5, "The lone title is centered in the card")
+    }
+
     func testPetStackPeeksBelowFrontCardInBothPlacements() async throws {
         let source = PreviewSource()
         let workspace = WorkspaceStore(sourceFactory: { source })

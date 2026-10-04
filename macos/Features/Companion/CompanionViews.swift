@@ -156,20 +156,27 @@ struct ActivityCapsule: View {
             .map { String($0.characters) } ?? source
         return plain.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
-    private var summaryLabel: Text {
+    private var headingLabel: Text {
         let icon = Text(Image(systemName: statusSymbol)).foregroundColor(statusColor)
         let heading = Text(cardTitle).fontWeight(.semibold).foregroundColor(.primary)
-        let reply = Text(summary).foregroundColor(.secondary)
-        return Text("\(icon)  \(heading)  ·  \(reply)")
+        return Text("\(icon)  \(heading)")
     }
     private var accessibilitySummary: String { String(localized: "\(statusLabel)，\(cardTitle)，\(summary)") }
+    /// The title and the reply each keep a line of their own, so every card breaks in the same
+    /// place. Without a summary the title stands alone, centered in the card's height.
     private var summaryView: some View {
-        summaryLabel
-            .font(.system(size: 13))
-            .lineLimit(2).truncationMode(.tail)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel(accessibilitySummary)
-            .padding(.trailing, hovered || store.isFollowUpExpanded ? 50 : 0)
+        VStack(alignment: .leading, spacing: 2) {
+            headingLabel
+            if !summary.isEmpty {
+                Text(summary).foregroundStyle(.secondary)
+            }
+        }
+        .font(.system(size: 13))
+        .lineLimit(1).truncationMode(.tail)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilitySummary)
+        .padding(.trailing, hovered || store.isFollowUpExpanded ? 50 : 0)
     }
 
     private var header: some View {

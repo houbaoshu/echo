@@ -223,7 +223,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             ? messages.last(where: { $0.role == .assistant && !$0.content.isEmpty })?.content ?? ""
             : cardReply
         let text = reply.isEmpty ? task?.summary ?? String(localized: "准备开始") : reply
-        // The card truncates the combined title and result; the chat retains the full reply.
+        // The card truncates the result to one line; the chat retains the full reply.
         return text
     }
     @Published private(set) var tools: [AgentToolRecord] = []
