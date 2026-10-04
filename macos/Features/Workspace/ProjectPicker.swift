@@ -96,6 +96,18 @@ struct ProjectSelectionPanel: View {
     @State private var query = ""
     @State private var highlighted: ProjectPickerOption = .add
     @FocusState private var searchFocused: Bool
+    @Environment(\.sidebarRowSize) private var sidebarRowSize
+    /// A `.sidebar` row's height, which follows the sidebar size setting in System
+    /// Settings. Measured on macOS 27: 24, 32 and 40pt, with the list adding 10pt above
+    /// and 10pt below and no spacing between rows at every size.
+    private var rowHeight: CGFloat {
+        switch sidebarRowSize {
+        case .small: 24
+        case .large: 40
+        // Medium, which is also the system's default.
+        default: 32
+        }
+    }
     /// The list is a system source list, so it hands back an optional selection. A click
     /// on its background clears it; the option that was highlighted stays highlighted,
     /// because Return has to keep meaning something.
@@ -128,14 +140,12 @@ struct ProjectSelectionPanel: View {
                     }
                 }.listStyle(.sidebar).scrollContentBackground(.hidden)
                 // A list cannot size itself to its rows, so the panel's height comes from
-                // here — the same reason SearchPalette computes its own. Measured on
-                // macOS 27 for `.listStyle(.sidebar)` at the medium sidebar size, where the
-                // rows draw at 13pt: a row is 32pt, the list adds 10pt above and 10pt below,
-                // and vertical intercell spacing is 0. The rows follow the sidebar size
-                // setting (24pt small, 40pt large), so only medium fits exactly. Left to a bare
+                // here — the same reason SearchPalette computes its own. Left to a bare
                 // `maxHeight:` the list fills instead of hugging, which moves the popover
-                // off its anchor.
-                .frame(height: min(CGFloat(options.count) * 32 + 20, 280))
+                // off its anchor. Nor can it be read back: `onScrollGeometryChange` reports
+                // the table's height, and the table never gets shorter than the list's
+                // frame, so a list that loses rows keeps reporting its old height.
+                .frame(height: min(CGFloat(options.count) * rowHeight + 20, 280))
                 .accessibilityIdentifier("projectPicker.list")
                 .onChange(of: highlighted) { _, value in proxy.scrollTo(value) }
             }

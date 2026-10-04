@@ -102,8 +102,8 @@ struct WorkspaceSearchField: NSViewRepresentable {
 
 /// Chat search, as a command palette rather than a filter over the sidebar.
 ///
-/// It draws the panel's whole surface, so it carries the material, the corner radius and
-/// the border; `SearchPalettePanel` is a clear borderless window behind it. Living in its
+/// It draws the panel's whole surface, so it carries the glass and the corner radius;
+/// `SearchPalettePanel` is a clear borderless window behind it. Living in its
 /// own window is also what keeps the main window's Tab order untouched while it is open.
 /// The sidebar keeps
 /// listing every chat; matching happens only here, and the column's collapsed or expanded
@@ -119,6 +119,24 @@ struct ChatSearchPalette: View {
     @State private var highlighted: UUID?
     @State private var focus = WorkspaceSearchFocus()
     private var results: [WorkspaceConversation] { workspace.conversations(matching: query) }
+    /// Concentric with the search field's capsule. Measured on macOS 27: the field is 24pt
+    /// tall, so its ends have a 12pt radius, and it sits 12pt from the panel's top, left
+    /// and right edges.
+    private static let cornerRadius: CGFloat = 12 + 12
+    /// The highlighted result's fill, drawn here rather than by the list. The insertion point
+    /// stays in the search field, so the list is never first responder, and AppKit emphasizes
+    /// only a focused list's selection; otherwise it draws an inactive gray that disappears
+    /// into the glass in dark appearance. On macOS 27 neither `controlActiveState`,
+    /// `appearsActive`, `backgroundProminence` nor `focusEffectDisabled` changes that. The
+    /// fill copies the list's own emphasized selection, measured with the list focused: the
+    /// selection colour, which follows the accent colour, the row's full height, 10pt in from
+    /// each side and 8pt corners. It covers the gray one the list still draws beneath it.
+    private static var selectionFill: some View {
+        RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .selectedContentBackgroundColor))
+            .padding(.horizontal, 10)
+    }
+    /// Both the title and the project name, as in Xcode's Open Quickly.
+    private static let selectedText = Color(nsColor: .alternateSelectedControlTextColor)
     var body: some View {
         // One full-text search per render; `results` scans every message of every chat.
         let results = results
@@ -132,17 +150,19 @@ struct ChatSearchPalette: View {
                     .padding(.horizontal, 20).padding(.bottom, 12)
                     .accessibilityIdentifier("palette.empty")
             } else {
-                // A system list: the selection fill, hover, row metrics and the focus
-                // appearance are AppKit's. Only the traversal is driven from the field,
-                // because that is where the insertion point has to stay.
+                // A system list: the selection, hover and row metrics are AppKit's. The
+                // traversal is driven from the field, because that is where the insertion
+                // point has to stay, and so is the highlight's look (`selectionFill`).
                 ScrollViewReader { proxy in
                     List(results, selection: Binding(get: { highlighted }, set: { highlighted = $0 })) { conversation in
+                        let selected = conversation.id == highlighted
                         HStack(spacing: 8) {
                             Text(conversation.displayTitle).lineLimit(1)
+                                .foregroundStyle(selected ? AnyShapeStyle(Self.selectedText) : AnyShapeStyle(.primary))
                             Spacer(minLength: 8)
                             if let project = workspace.project(for: conversation.id) {
                                 Text(project.name).font(WorkspaceStyle.caption)
-                                    .foregroundStyle(.secondary).lineLimit(1)
+                                    .foregroundStyle(selected ? AnyShapeStyle(Self.selectedText) : AnyShapeStyle(.secondary)).lineLimit(1)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -152,11 +172,18 @@ struct ChatSearchPalette: View {
                         .onTapGesture { open(conversation.id) }
                         .accessibilityAction { open(conversation.id) }
                         .id(conversation.id)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(selected ? Self.selectionFill : nil)
                     }
                     .listStyle(.inset).scrollContentBackground(.hidden)
                     // A list cannot size itself, so the panel's height comes from here.
                     // Measured on macOS 27 at the 13pt body: an inset row of this content is
-                    // 24pt and the list adds 10pt above and 10pt below.
+                    // 24pt and the list adds 10pt above and 10pt below, at every sidebar size
+                    // setting — unlike `.sidebar` rows, inset rows do not follow it, so the
+                    // constant holds. The height cannot be read back from the list either:
+                    // `onScrollGeometryChange` reports the table's height, and the table
+                    // never gets shorter than this frame, so fewer results would leave the
+                    // panel at its old height.
                     .frame(height: min(CGFloat(results.count) * 24 + 20, 360))
                     .onChange(of: highlighted) { _, value in if let value { proxy.scrollTo(value) } }
                 }
@@ -164,8 +191,16 @@ struct ChatSearchPalette: View {
             }
         }
         .frame(width: SearchPalettePanel.width)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.1), lineWidth: 1))
+        // Regular Liquid Glass with no border drawn over it, as a layer of its own behind
+        // the content. Applied to the content itself, glass restyles what it captures: on
+        // macOS 27 the search field's well turned from 35 to 129 gray in dark appearance.
+        // Clipped to its shape because glass also draws a faint shadow of its own past it,
+        // which the window's rectangle cuts off; those pixels filled the panel's corners and
+        // turned AppKit's window shadow square there.
+        .background {
+            let shape = RoundedRectangle(cornerRadius: Self.cornerRadius)
+            Color.clear.glassEffect(.regular, in: shape).clipShape(shape)
+        }
         .font(WorkspaceStyle.body)
         .accessibilityIdentifier("palette")
         .onAppear { highlighted = self.results.first?.id; focus.focus() }
@@ -212,7 +247,6 @@ struct ChatSearchPalette: View {
         level = .floating
         // Summoned surfaces do not outlive the app's turn at the front.
         hidesOnDeactivate = true
-        isMovableByWindowBackground = true
         animationBehavior = .utilityWindow
         collectionBehavior = [.fullScreenAuxiliary]
         // The hosting controller drives the window's size from the SwiftUI content, so the
