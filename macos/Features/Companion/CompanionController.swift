@@ -144,6 +144,7 @@ import Combine
         }
         petPanel.onMove = { [weak self] in self?.layout() }
         petPanel.onPointerSample = { [weak self] point in self?.samplePointer(point) }
+        restorePetPosition()
         composerObservation = controlsPresentation.$isComposerOpen.removeDuplicates().dropFirst().sink { [weak self] open in
             // @Published delivers before the value is stored; act once the new state is visible.
             DispatchQueue.main.async { [weak self] in self?.composerDidChange(open: open) }
@@ -197,6 +198,22 @@ import Combine
         }
         petPanel.orderFrontRegardless()
         synchronize(animated: false)
+    }
+
+    static let petFrameAutosaveName = "pet"
+
+    /// NSWindow keeps the pet's place the way it keeps the main window's frame: once named, the
+    /// panel saves its frame on every move. Saving always writes to standard defaults, so it is
+    /// armed only for the app's own suite. The restore reads that same slot through `defaults`,
+    /// so tests can seed it without touching the app's. A window that cannot be resized gets back
+    /// only its saved top-left corner; the size stays the current sprite's. The restored origin
+    /// then takes the same constraint as a drag, landing on the nearest screen that is still
+    /// there, and that clamped place is what gets saved next.
+    private func restorePetPosition() {
+        let name = Self.petFrameAutosaveName
+        if let saved = defaults.string(forKey: "NSWindow Frame \(name)") { petPanel.setFrame(from: saved) }
+        if defaults === UserDefaults.standard { petPanel.setFrameAutosaveName(name) }
+        petPanel.setFrameOrigin(petPanel.frame.origin)
     }
 
     /// Hides and pauses the whole companion cluster — the pet, its control strip, the activity

@@ -3031,6 +3031,67 @@ private struct ComposerHeightHost: View {
                      "Ending the session keeps the card in place")
     }
 
+    /// The pet comes back where it was left. The restore reads NSWindow's own autosave slot, seeded
+    /// here into an injected suite; only the app's standard suite arms the autosave that writes it.
+    func testPetRestoresSavedPosition() async throws {
+        func launch(saved: NSRect?, savedScreen: NSRect? = nil) throws -> CompanionController {
+            let defaults = EchoTestResources.defaults()
+            if let saved {
+                let window = NSWindow(contentRect: saved, styleMask: [.borderless], backing: .buffered, defer: true)
+                var descriptor = window.frameDescriptor
+                if let savedScreen {
+                    // The trailing four fields are the screen the frame was saved on.
+                    let fields = descriptor.split(separator: " ").prefix(4).map(String.init)
+                    descriptor = (fields + [savedScreen.minX, savedScreen.minY, savedScreen.width, savedScreen.height]
+                        .map { String(Int($0)) }).joined(separator: " ") + " "
+                }
+                defaults.set(descriptor, forKey: "NSWindow Frame \(CompanionController.petFrameAutosaveName)")
+            }
+            let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+            return CompanionController(petStore: pet, workspace: WorkspaceStore(sourceFactory: { PreviewSource() }),
+                                       settings: SettingsStore(secrets: ComposerSecrets()), defaults: defaults)
+        }
+        let main = try XCTUnwrap(NSScreen.main).visibleFrame
+        let size = try PetStore(directory: EchoTestResources.resource("pets/chiyan")).size
+        // AppKit rounds every window frame to whole points, so the panel's own size is the reference.
+        var unsaved = NSSize.zero
+
+        do {
+            let companion = try launch(saved: nil)
+            defer { companion.shutdown() }
+            unsaved = companion.petPanel.frame.size
+            let first = NSRect(x: main.maxX - size.width - 24, y: main.minY + 24, width: size.width, height: size.height)
+            XCTAssertEqual(companion.petPanel.frame.origin, CompanionLayout.place(pet: first, in: main, expanded: false).pet.origin,
+                           "With nothing saved the pet starts in the main screen's lower right")
+            XCTAssertTrue(companion.petPanel.frameAutosaveName.isEmpty, "An injected suite never arms the autosave")
+        }
+
+        do {
+            // Saved at twice the size: only the top-left corner comes back.
+            let saved = NSRect(x: main.minX + 200, y: main.midY, width: unsaved.width * 2, height: unsaved.height * 2).integral
+            let companion = try launch(saved: saved)
+            defer { companion.shutdown() }
+            let frame = companion.petPanel.frame
+            XCTAssertEqual(frame.size, unsaved, "The current sprite decides the size, not the saved frame")
+            XCTAssertEqual(NSPoint(x: frame.minX, y: frame.maxY), NSPoint(x: saved.minX, y: saved.maxY),
+                           "The pet returns to its saved top-left corner")
+            let layout = CompanionLayout.place(pet: frame, in: main, expanded: false)
+            XCTAssertEqual(companion.controlsPanel.frame, layout.controls, "The controls follow the restored pet")
+            XCTAssertEqual(companion.activityPanel.frame, layout.activityCanvas, "So does the card's panel")
+        }
+
+        do {
+            let saved = NSRect(x: -20_000, y: -20_000, width: size.width, height: size.height)
+            let companion = try launch(saved: saved, savedScreen: NSRect(x: -20_100, y: -20_100, width: 1440, height: 900))
+            defer { companion.shutdown() }
+            let frame = companion.petPanel.frame
+            let screen = try XCTUnwrap(CompanionLayout.screen(for: frame, screens: NSScreen.screens.map(\.visibleFrame)))
+            XCTAssertTrue(screen.contains(frame), "A place on a screen that is gone lands back on one that is there")
+            XCTAssertEqual(frame.origin, CompanionLayout.place(pet: frame, in: screen, expanded: false).pet.origin,
+                           "The restored place takes the same constraint as a drag")
+        }
+    }
+
     /// The pet steps aside for the main window's Live Voice planet, and for nothing else: the
     /// rule is about what is on screen, not about whether a session is running somewhere.
     func testPetHidesOnlyForTheVoiceConversationOnScreen() async throws {

@@ -2129,7 +2129,8 @@ extension EchoVoiceScenarios {
             let workspace = WorkspaceStore(voice: voice, sourceFactory: { FakeSource() })
             let settings = SettingsStore(secrets: FakeSecrets())
             settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
-            let companion = CompanionController(petStore: store, workspace: workspace, settings: settings)
+            let companion = CompanionController(petStore: store, workspace: workspace, settings: settings,
+                                                defaults: EchoTestResources.defaults())
             defer { companion.shutdown() }
 
             // Case A: Main window is VISIBLE -> voice error must NOT show notice panel
