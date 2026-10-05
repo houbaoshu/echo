@@ -37,6 +37,32 @@ import SwiftUI
     }
 }
 
+/// A drag carrying the given file URLs, one pasteboard item each, as Finder writes them.
+@MainActor private final class FileDrag: NSObject, @MainActor NSDraggingInfo {
+    let draggingPasteboard = NSPasteboard(name: NSPasteboard.Name("echo-test-drag-\(UUID())"))
+    init(_ urls: [URL]) {
+        super.init()
+        draggingPasteboard.clearContents()
+        draggingPasteboard.writeObjects(urls as [NSURL])
+    }
+    var draggingDestinationWindow: NSWindow? { nil }
+    var draggingSourceOperationMask: NSDragOperation { .every }
+    var draggingLocation: NSPoint { .zero }
+    var draggedImageLocation: NSPoint { .zero }
+    var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 1 }
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 0
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?,
+                                classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+    func resetSpringLoading() {}
+}
+
 /// A command that ignores Stop until the test lets it finish, like one whose cleanup is still pending.
 private final class HeldRunner: CommandRunning {
     let gate = ScriptGate()
@@ -3001,6 +3027,56 @@ private struct ComposerHeightHost: View {
 
         // The pet card's list and follow-up navigation are exercised by the companion
         // lifecycle test and by real Echo UI tests, rather than opening the main window.
+    }
+
+    /// Dropping exactly one folder on the pet opens its composer on that folder's project; a
+    /// folder that already is a project is reused, the draft survives, and anything else is refused.
+    func testPetFolderDropStartsChatInProject() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pet-drop-\(UUID())")
+        let folder = root.appendingPathComponent("拖来的项目"), known = root.appendingPathComponent("已有项目")
+        let file = root.appendingPathComponent("notes.txt"), package = root.appendingPathComponent("Probe.app")
+        for directory in [folder, known, package] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        try Data("notes".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
+        defer { companion.shutdown() }
+        let presentation = companion.controlsPresentation
+        let view = try XCTUnwrap(companion.petPanel.contentView as? PetInteractionView)
+        let knownID = workspace.addProject(url: known)
+        presentation.draft = "先看看目录结构"
+        func drop(_ urls: [URL]) -> (operation: NSDragOperation, accepted: Bool) {
+            let drag = FileDrag(urls)
+            defer { drag.draggingPasteboard.releaseGlobally() }
+            return (view.draggingEntered(drag), view.performDragOperation(drag))
+        }
+
+        for (refused, label) in [([file], "a file"), ([folder, known], "two folders"), ([folder, file], "a folder with a file"),
+                                 ([package], "a package")] {
+            let result = drop(refused)
+            XCTAssertTrue(result.operation == [] && !result.accepted, "The pet refuses \(label)")
+        }
+        XCTAssertTrue(workspace.projects.map(\.id) == [knownID] && presentation.projectID == nil && !presentation.isComposerOpen,
+                     "A refused drop changes nothing")
+
+        let result = drop([folder])
+        XCTAssertTrue(result.operation == .link && result.accepted, "One folder is accepted with the link badge")
+        let added = try XCTUnwrap(workspace.projects.first { $0.path == folder.resolvingSymlinksInPath().path })
+        XCTAssertTrue(workspace.projects.count == 2 && presentation.projectID == added.id && presentation.isComposerOpen,
+                     "The folder becomes a project and the composer opens on it")
+        XCTAssertTrue(presentation.draft == "先看看目录结构", "The draft stays as typed")
+        let controls = try XCTUnwrap(companion.controlsPanel.contentView)
+        try await eventually("the project chip shows") { axValue(findAccessibility("pet.project.name", in: controls)) == "拖来的项目" }
+
+        XCTAssertTrue(drop([known]).accepted && workspace.projects.count == 2 && presentation.projectID == knownID,
+                     "A folder that already is a project switches the composer to it without adding another")
+        try await eventually("the chip shows the known project") { axValue(findAccessibility("pet.project.name", in: controls)) == "已有项目" }
+        XCTAssertTrue(drop([folder]).accepted && workspace.projects.count == 2 && presentation.projectID == added.id,
+                     "Dropping the first folder again reuses its project")
+        XCTAssertTrue(presentation.isComposerOpen && presentation.draft == "先看看目录结构")
+        try await eventually("the chip is back on the dropped folder") { axValue(findAccessibility("pet.project.name", in: controls)) == "拖来的项目" }
     }
 
     func testCompanionBubblePanel() async throws {

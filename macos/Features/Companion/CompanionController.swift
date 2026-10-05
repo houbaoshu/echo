@@ -130,6 +130,7 @@ import Combine
             self?.layout()
         }
         petPanel.onClick = { [weak self] in self?.showMainWindowFromPet() }
+        petPanel.onDropFolder = { [weak self] in self?.startChat(inFolder: $0) }
         workspace.onOpenPetActivity = { [weak self] in
             guard let self else { return }
             self.clearNotice()
@@ -354,6 +355,15 @@ import Combine
             controlsPanel.orderOut(nil)
             controlsPanel.orderFrontRegardless()
         }
+    }
+    /// A folder dropped on the pet becomes a project, reusing the one already at that path, and the
+    /// composer opens on it with the keyboard. Only the project changes; a draft stays as typed.
+    func startChat(inFolder folder: URL) {
+        controlsPresentation.projectID = workspace.addProject(url: folder)
+        controlsPresentation.openComposer()
+        // Already open, its panel may have given up the keyboard to a click elsewhere.
+        composerReleasedKeyboard = false
+        controlsPanel.makeKey()
     }
     @objc private func controlsResignedKey() {
         // The + menu's popover takes the keyboard while it is open.

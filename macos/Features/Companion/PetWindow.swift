@@ -4,6 +4,8 @@ import SwiftUI
 @MainActor
 final class PetPanel: NSPanel {
     var onClick: (() -> Void)?
+    /// A folder dropped on the pet; see `PetInteractionView.droppedFolder(on:)` for what counts.
+    var onDropFolder: ((URL) -> Void)?
     var onMove: (() -> Void)?
     var onPointerSample: ((NSPoint) -> Void)?
     var constrainOrigin: ((NSPoint) -> NSPoint)?
@@ -32,7 +34,8 @@ final class PetPanel: NSPanel {
         isFloatingPanel = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         title = store.displayName
-        contentView = PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() }) { [weak self] in
+        contentView = PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() },
+                                         onDropFolder: { [weak self] in self?.onDropFolder?($0) }) { [weak self] in
             store.stop()
             self?.close()
             terminate()
@@ -46,7 +49,8 @@ final class PetPanel: NSPanel {
     func replacePet(with store: PetStore) {
         let center = NSPoint(x: frame.midX, y: frame.midY)
         title = store.displayName
-        contentView = PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() }) { [weak self] in
+        contentView = PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() },
+                                         onDropFolder: { [weak self] in self?.onDropFolder?($0) }) { [weak self] in
             store.stop(); self?.close(); self?.terminateApplication()
         }
         setContentSize(store.size)
@@ -127,6 +131,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     private let store: PetStore
     private let closePet: () -> Void
     private let onClick: () -> Void
+    private let onDropFolder: (URL) -> Void
     private var mouseStart: NSPoint?
     private var windowStart: NSPoint?
     private var dragging = false
@@ -136,10 +141,12 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     private var lastLookOffset: NSPoint?
     private var hoverTrackingArea: NSTrackingArea?
 
-    init(store: PetStore, onClick: @escaping () -> Void, closePet: @escaping () -> Void) {
+    init(store: PetStore, onClick: @escaping () -> Void, onDropFolder: @escaping (URL) -> Void,
+         closePet: @escaping () -> Void) {
         self.store = store
         self.closePet = closePet
         self.onClick = onClick
+        self.onDropFolder = onDropFolder
         super.init(frame: NSRect(origin: .zero, size: store.size))
         let hosting = NSHostingView(rootView: PetView(store: store))
         hosting.frame = bounds
@@ -157,6 +164,32 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
         pan.buttonMask = 0x1
         pan.delegate = self
         addGestureRecognizer(pan)
+        // The whole panel takes the drop, its transparent margin included, as it takes clicks.
+        registerForDraggedTypes([.fileURL])
+    }
+
+    /// The one folder a drag carries, or nil when it carries anything else as well: a file, a
+    /// package such as an app, or a second item. Whatever is refused shows no badge and slides back.
+    static func droppedFolder(on pasteboard: NSPasteboard) -> URL? {
+        guard pasteboard.pasteboardItems?.count == 1,
+              let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              urls.count == 1, let url = urls.first,
+              let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]),
+              values.isDirectory == true, values.isPackage != true else { return nil }
+        return url
+    }
+
+    // The pet links to the folder rather than copying it, so the cursor shows the link badge
+    // when the source allows one. Without draggingUpdated AppKit keeps this answer for the drag.
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard Self.droppedFolder(on: sender.draggingPasteboard) != nil else { return [] }
+        return [.link, .copy, .generic].first { sender.draggingSourceOperationMask.contains($0) } ?? []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let folder = Self.droppedFolder(on: sender.draggingPasteboard) else { return false }
+        onDropFolder(folder)
+        return true
     }
 
     @objc private func primaryClicked(_ recognizer: NSClickGestureRecognizer) {
