@@ -24,7 +24,7 @@ import AppKit
     /// opening a running Echo again from Spotlight or Finder activates it before the
     /// reopen arrives — `setPolicy` has to work around it.
     static func activate(for window: NSWindow) {
-        if let current { current.activate(for: window) } else { NSApp.activate(ignoringOtherApps: true) }
+        if let current { current.activate(for: window) } else { NSApp.activate() }
     }
 
     private struct Tracked {
@@ -49,7 +49,7 @@ import AppKit
     private let leaveDock: (@MainActor () -> Void)?
 
     init(apply: @escaping @MainActor (NSApplication.ActivationPolicy) -> Void = { NSApp.setActivationPolicy($0) },
-         activate: @escaping @MainActor () -> Void = { NSApp.activate(ignoringOtherApps: true) },
+         activate: @escaping @MainActor () -> Void = { NSApp.activate() },
          isActive: @escaping @MainActor () -> Bool = { NSApp.isActive },
          activateDock: @escaping @MainActor () -> Void = {
              NSRunningApplication.runningApplications(withBundleIdentifier: ActivationPolicyController.dock).first?.activate()
@@ -108,15 +108,21 @@ import AppKit
     /// A workaround, and the only one found: an app that is already active as an accessory
     /// keeps the previous app's menu bar after it turns regular. Activating it again,
     /// deactivating and activating it (in the same turn or the next), re-assigning the main
-    /// menu, the cooperative `activate()`, hide and unhide, and turning regular in
-    /// `willBecomeActive` all leave the menu bar as it was (measured, macOS 27). Handing
-    /// activation to another app and taking it back does bring Echo's in. The Dock is that
-    /// app: it has no windows to bring forward and no menu bar of its own, so for those 0.1s
-    /// the menu bar stays the previous app's, where Finder would show its own and its windows.
+    /// menu, hide and unhide, and turning regular in `willBecomeActive` all leave the menu bar
+    /// as it was (measured, macOS 27). So does activating with `activate()` alone, measured
+    /// again after the switch to it: the menu bar then draws Echo's titles, but
+    /// `menuBarOwningApplication` stays the previous app, Echo's items have no place in the bar
+    /// and clicking them opens nothing. Handing activation to another app and taking it back
+    /// does bring Echo's in. The Dock is that app: it has no windows to bring forward and no
+    /// menu bar of its own, so for those 0.1s the menu bar stays the previous app's, where
+    /// Finder would show its own and its windows.
     ///
     /// 0.1s is the hand-back delay measured reliable, also with every core busy; a request
     /// in the meantime only waits for it. If the last window has closed by then, Echo stays
-    /// in the background and the keyboard goes back to the app the person came from.
+    /// in the background and the keyboard goes back to the app the person came from. The
+    /// hand-back is a main-queue block, so a modal session started in the meantime, as the
+    /// pet's standalone folder panel is, holds it until the panel closes: the Dock stays
+    /// active under the panel and the menu bar stays the previous app's (measured, not fixed).
     private func reactivateThroughDock() {
         guard !reactivating else { return }
         reactivating = true
