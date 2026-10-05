@@ -27,10 +27,11 @@ private let systemButtonInset: CGFloat = 8
 /// style exists to give the control the hover and pressed states that `.plain` does not provide.
 private struct CompanionRoundButtonStyle: ButtonStyle {
     let size: CGFloat
+    let textStyle: Font.TextStyle
     let hovered: Bool
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: size * 0.46, weight: .medium))
+            .font(.system(textStyle, weight: .medium))
             .foregroundStyle(.primary)
             .frame(width: size, height: size)
             .background {
@@ -49,6 +50,8 @@ struct RoundControl: View {
     let symbol: String
     let label: String
     var size: CGFloat = 28
+    /// The symbol's text style, chosen by the caller to suit the diameter.
+    let textStyle: Font.TextStyle
     var emphasized = false
     var enabled = true
     var identifier: String?
@@ -67,14 +70,14 @@ struct RoundControl: View {
     @ViewBuilder private var control: some View {
         if emphasized {
             Button(action: action) {
-                Image(systemName: symbol).font(.system(size: size * 0.46, weight: .medium))
+                Image(systemName: symbol).font(.system(textStyle, weight: .medium))
                     .frame(width: size - systemButtonInset, height: size - systemButtonInset)
             }
             .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
             .companionControlActive()
         } else {
             Button(action: action) { Image(systemName: symbol) }
-                .buttonStyle(CompanionRoundButtonStyle(size: size, hovered: hovered))
+                .buttonStyle(CompanionRoundButtonStyle(size: size, textStyle: textStyle, hovered: hovered))
                 .opacity(enabled ? 1 : 0.4)
                 .onHover { hovered = $0 }
         }
@@ -171,7 +174,7 @@ struct ActivityCapsule: View {
                 Text(summary).foregroundStyle(.secondary)
             }
         }
-        .font(.system(size: 13))
+        .font(.body)
         .lineLimit(1).truncationMode(.tail)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
@@ -195,7 +198,7 @@ struct ActivityCapsule: View {
                     else { (followUp ?? store.toggleFollowUp)() }
                 } label: {
                     Image(systemName: "arrowshape.turn.up.left.fill")
-                        .font(.system(size: 28 * 0.46, weight: .medium))
+                        .font(.system(.body, weight: .medium))
                         .frame(width: 28 - systemButtonInset, height: 28 - systemButtonInset)
                 }
                 .buttonStyle(.borderedProminent).buttonBorderShape(.circle).companionControlActive()
@@ -211,11 +214,11 @@ struct ActivityCapsule: View {
     private var followUpComposer: some View {
         NativeComposer(text: $store.followUpDraft, focusRequest: followUpFocusRequest,
                        onEscape: { (exit ?? store.toggleFollowUp)(); return true },
-                       fontSize: 13, minHeight: 24, maxLines: 1,
+                       minHeight: 24, maxLines: 1,
                        label: String(localized: "继续跟进输入框"), identifier: "activity.followUp", onSend: send)
             .overlay(alignment: .leading) {
                 if store.followUpDraft.isEmpty {
-                    Text("继续跟进").font(.system(size: 13)).foregroundStyle(.tertiary)
+                    Text("继续跟进").font(.body).foregroundStyle(.tertiary)
                         .allowsHitTesting(false).accessibilityHidden(true)
                 }
             }
@@ -255,7 +258,8 @@ struct ActivityCapsule: View {
         .overlay(alignment: .topLeading) {
             // Like the follow-up button, ✕ shows on hover.
             if store.task != nil, hovered || store.isFollowUpExpanded {
-                RoundControl(symbol: "xmark", label: String(localized: "忽略任务通知"), size: 20, identifier: "activity.dismiss") {
+                RoundControl(symbol: "xmark", label: String(localized: "忽略任务通知"), size: 20, textStyle: .caption,
+                             identifier: "activity.dismiss") {
                     if let end { end() }
                     else { store.closeActivity() }
                 }
@@ -375,7 +379,7 @@ private struct PetSegmentStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 15, weight: .medium)).foregroundStyle(.primary)
+            .font(.system(.title3, weight: .medium)).foregroundStyle(.primary)
             .frame(width: PetSurfacePresentation.segment, height: PetSurfacePresentation.circle)
             .background {
                 if enabled, hovered || configuration.isPressed {
@@ -677,17 +681,17 @@ struct PetControls: View {
             }
             NativeComposer(text: $presentation.draft, focusRequest: presentation.focusRequest,
                            onEscape: { presentation.closeComposer(); return true },
-                           fontSize: 13, minHeight: 20, maxLines: 1,
+                           minHeight: 20, maxLines: 1,
                            label: String(localized: "新聊天输入框"), identifier: "pet.composer",
                            caretColor: .labelColor, onSend: send)
                 .overlay(alignment: .leading) {
                     if presentation.draft.isEmpty {
-                        Text("开始新聊天").font(.system(size: 13)).foregroundStyle(.tertiary)
+                        Text("开始新聊天").font(.body).foregroundStyle(.tertiary)
                             .allowsHitTesting(false).accessibilityHidden(true)
                     }
                 }
             Button(action: send) {
-                Image(systemName: "arrow.up").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                Image(systemName: "arrow.up").font(.system(.subheadline, weight: .semibold)).foregroundStyle(.white)
                     .frame(width: 22, height: 22)
                     .background(Color.accentColor.opacity(surface.canSend ? 1 : 0.35), in: Circle())
                     .contentShape(Circle())
@@ -701,7 +705,7 @@ struct PetControls: View {
 
     private func projectButton(_ workspace: WorkspaceStore) -> some View {
         Button { presentation.isProjectPickerOpen.toggle() } label: {
-            Image(systemName: "plus").font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
+            Image(systemName: "plus").font(.system(.callout, weight: .medium)).foregroundStyle(.primary)
                 .frame(width: 22, height: 22)
                 .background { Circle().fill(.primary.opacity(presentation.isProjectPickerOpen ? 0.12 : 0.06)) }
                 .contentShape(Circle())
@@ -728,12 +732,12 @@ struct PetControls: View {
             Button {
                 presentation.projectID = nil; presentation.refocusComposer()
             } label: {
-                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).frame(width: 12, height: 20).contentShape(Rectangle())
+                Image(systemName: "xmark").font(.system(.caption, weight: .bold)).frame(width: 12, height: 20).contentShape(Rectangle())
             }
             .buttonStyle(.plain).help("取消关联项目").accessibilityLabel("取消关联项目")
             .accessibilityIdentifier("pet.project.detach")
         }
-        .font(.system(size: 11)).foregroundStyle(project.isAvailable ? Color.secondary : WorkspaceStyle.warning)
+        .font(.subheadline).foregroundStyle(project.isAvailable ? Color.secondary : WorkspaceStyle.warning)
         .padding(.leading, 6).padding(.trailing, 2).frame(height: 20).frame(maxWidth: 104)
         .background(.primary.opacity(0.06), in: Capsule())
         .help(project.isAvailable ? project.path : String(localized: "项目不可用：\(project.path)"))
@@ -765,6 +769,9 @@ struct PetControls: View {
                     switch surface.badge {
                     case .none: EmptyView()
                     case .running(let count), .completed(let count):
+                        // The one fixed size in this file, on purpose: the badge is a mark drawn on the
+                        // bell, and the smallest system text style (10 pt) widens its capsule past the
+                        // bell and truncates a two-digit count.
                         Text("\(count)").font(.system(size: 7, weight: .bold)).foregroundStyle(.white)
                             .padding(.horizontal, 3).frame(minWidth: 11, minHeight: 11)
                             .background(surface.badge == .running(count) ? WorkspaceStyle.running : WorkspaceStyle.success, in: Capsule())
@@ -965,7 +972,7 @@ struct CompanionBubble: View, Equatable {
         ZStack {
             if content != .none, reply.map({ !$0.characters.isEmpty }) ?? true {
                 text(reply)
-                    .font(.system(size: 12)).foregroundStyle(.primary)
+                    .font(.callout).foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .padding(tailOnTop ? .top : .bottom, CompanionBubbleShape.tail)
@@ -983,7 +990,7 @@ struct CompanionBubble: View, Equatable {
         .frame(width: canvasWidth, height: CompanionBubbleContent.canvasHeight, alignment: tailOnTop ? .top : .bottom)
     }
 
-    static let replyHeight = 3 * NSFont.systemFont(ofSize: 12).defaultLineHeight
+    static let replyHeight = 3 * NSFont.preferredFont(forTextStyle: .callout).defaultLineHeight
 
     /// The rendered reply up to what speech has covered.
     private var shownReply: AttributedString? {
@@ -1011,12 +1018,12 @@ struct CompanionBubble: View, Equatable {
     /// inline styles and code keep their formatting, headings turn bold, list items keep their markers.
     static func renderedReply(_ markdown: String) -> AttributedString {
         var result = AttributedString()
-        for block in MarkdownBlock.parse(markdown, codeSize: 11) {
+        for block in MarkdownBlock.parse(markdown, codeSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize) {
             var text = block.text
             while text.characters.last?.isNewline == true { text.characters.removeLast() }
             guard !text.characters.isEmpty else { continue }
-            if block.heading != nil { text.font = .system(size: 12, weight: .semibold) }
-            if block.code { text.font = .system(size: 11, design: .monospaced) }
+            if block.heading != nil { text.font = .system(.callout, weight: .semibold) }
+            if block.code { text.font = .system(.subheadline, design: .monospaced) }
             if block.quote { text.foregroundColor = .secondary }
             if !result.characters.isEmpty { result += AttributedString("\n") }
             if let marker = block.marker {
@@ -1068,8 +1075,8 @@ struct WorkspaceCompanionBubble: View {
 
 #Preview("精灵控制") {
     HStack(spacing: 12) {
-        RoundControl(symbol: "square.and.pencil", label: "输入") {}
-        RoundControl(symbol: "waveform", label: "语音", emphasized: true) {}
+        RoundControl(symbol: "square.and.pencil", label: "输入", textStyle: .body) {}
+        RoundControl(symbol: "waveform", label: "语音", textStyle: .body, emphasized: true) {}
     }
     .padding(24)
 }
