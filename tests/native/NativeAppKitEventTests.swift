@@ -588,11 +588,19 @@ import SwiftUI
         target.store.send("无障碍目标会话")
         let current = workspace.newConversation()
         current.store.send("当前会话")
-        XCTAssertTrue(workspace.selectedID == current.id && workspace.conversations(matching: "").first?.id == current.id)
+        XCTAssertTrue(workspace.selectedID == current.id && workspace.conversations(matching: "会话").first?.id == current.id)
         var closed = 0
         let panel = SearchPalettePanel(content: ChatSearchPalette(workspace: workspace, close: { closed += 1 }))
         panel.makeKeyAndOrderFront(nil)
         defer { panel.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(200)); panel.contentView?.layoutSubtreeIfNeeded()
+        // The palette lists nothing until something is typed; both chats match this.
+        XCTAssertNil(findAccessibility("palette.result.\(target.id)", in: panel.contentView!), "An empty query lists nothing")
+        guard let field = findView(panel.contentView!, isQueryField) as? NSTextField else {
+            throw SettingsError("The palette must carry its query field")
+        }
+        field.stringValue = "会话"
+        NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: field)
         try await Task.sleep(for: .milliseconds(200)); panel.contentView?.layoutSubtreeIfNeeded()
         guard let result = findAccessibility("palette.result.\(target.id)", in: panel.contentView!) else {
             throw SettingsError("The target search result must be exposed to accessibility")
@@ -905,7 +913,7 @@ import SwiftUI
         window.setFrame(NSRect(origin: window.frame.origin, size: NSSize(width: 1100, height: 760)), display: true)
         try await settle(); try await settle()
         XCTAssertFalse(main.sidebarItem.isCollapsed)
-        XCTAssertTrue(!main.searchPalette.isOpen && findView(sidebar, { $0 is NSSearchField }) == nil,
+        XCTAssertTrue(!main.searchPalette.isOpen && findView(sidebar, isQueryField) == nil,
                      "A fresh column rests with the palette closed and no field in it")
         func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) async throws {
             let keyWindow = NSApp.keyWindow ?? window
@@ -973,10 +981,10 @@ import SwiftUI
         // ⌘K.
         // The main window carries no search field of its own, which is what keeps the
         // column's Tab order out of it.
-        func paletteField() -> NSSearchField? {
+        func paletteField() -> NSTextField? {
             for candidate in NSApp.windows {
                 guard let content = candidate.contentView, candidate.isVisible else { continue }
-                if let field = findView(content, { $0 is NSSearchField }) as? NSSearchField { return field }
+                if let field = findView(content, isQueryField) as? NSTextField { return field }
             }
             return nil
         }
@@ -988,7 +996,7 @@ import SwiftUI
             }
             return false
         }
-        XCTAssertTrue(findView(window.contentView!, { $0 is NSSearchField }) == nil,
+        XCTAssertTrue(findView(window.contentView!, isQueryField) == nil,
                      "The main window has no search field")
         let restsClosed = try await paletteClosed()
         XCTAssertTrue(restsClosed, "The palette rests closed")
@@ -996,15 +1004,21 @@ import SwiftUI
         try await settle(); try await settle()
         XCTAssertTrue(main.searchPalette.isOpen, "⌘K opens the palette")
         guard let query = paletteField(), let queryWindow = query.window else {
-            throw SettingsError("The palette must carry a system NSSearchField")
+            throw SettingsError("The palette must carry its query field")
         }
         XCTAssertTrue(queryWindow is SearchPalettePanel && queryWindow !== window,
                      "The palette lives in its own floating panel, not in this window")
-        XCTAssertTrue(findView(window.contentView!, { $0 is NSSearchField }) == nil,
+        XCTAssertTrue(findView(window.contentView!, isQueryField) == nil,
                      "...so the main window still has no search field in it")
-        guard let queryCell = query.cell as? NSSearchFieldCell else { throw SettingsError("NSSearchField must carry its cell") }
-        XCTAssertTrue(queryCell.searchButtonCell != nil, "The magnifier comes from the system cell")
-        XCTAssertTrue(queryCell.cancelButtonCell != nil, "The clear button comes from the system cell")
+        // A bare line of text, as in Xcode's Open Quickly: no bezel, border, fill, focus
+        // ring or clear button, in the system's title2 style. The magnifier is drawn
+        // beside it, not by the field.
+        XCTAssertTrue(!(query is NSSearchField) && !query.isBezeled && !query.isBordered
+                      && !query.drawsBackground && query.focusRingType == .none,
+                      "The query is a bare field with no chrome of its own")
+        XCTAssertTrue(query.font?.pointSize == NSFont.preferredFont(forTextStyle: .title2).pointSize,
+                     "The query uses the title2 text style, got \(String(describing: query.font))")
+        XCTAssertTrue(query.accessibilitySubrole() == .searchField, "It still reports itself as a search field")
         XCTAssertTrue((queryWindow.firstResponder as? NSTextView)?.isFieldEditor == true,
                      "Opening the palette puts the insertion point in its field, with nothing forced")
 
@@ -1035,13 +1049,56 @@ import SwiftUI
         // no field of its own to join the loop, and the column's own controls are all that
         // is in it. Identity comparisons are useless here — SwiftUI rebuilds the composer
         // whenever a chat opens — so this is asserted by walking, below and after closing.
-        XCTAssertTrue(findView(window.contentView!, { $0 is NSSearchField }) == nil)
+        XCTAssertTrue(findView(window.contentView!, isQueryField) == nil)
+
+        // 11a. It opens as the query line alone: no list until something is typed, and
+        // spaces are not something. Typing unfolds the results downwards, with the query
+        // line left where it was.
+        func paletteTable() -> NSTableView? { findView(queryWindow.contentView!, { $0 is NSTableView }) as? NSTableView }
+        func type(_ text: String, into field: NSTextField) async throws {
+            field.stringValue = text
+            NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: field)
+            try await settle(); try await settle()
+        }
+        XCTAssertTrue(paletteTable() == nil, "An empty query lists nothing")
+        let queryOnlyHeight = queryWindow.frame.height, queryOnlyTop = queryWindow.frame.maxY
+        try await type("   ", into: query)
+        XCTAssertTrue(paletteTable() == nil && queryWindow.frame.height == queryOnlyHeight,
+                     "Spaces alone leave the palette as the query line")
+        try await type("最近", into: query)
+        XCTAssertTrue(queryWindow.frame.height > queryOnlyHeight && abs(queryWindow.frame.maxY - queryOnlyTop) <= 1,
+                     "Typing unfolds the results below the query line: \(queryWindow.frame), top was \(queryOnlyTop)")
+
+        // 11b. The panel drags from what is not a control: the list's margins beside and
+        // above its rows count, a row and the query do not. (The surface around the list
+        // drags through SwiftUI's WindowDragGesture, which only real pointer events reach.)
+        guard let palette = queryWindow as? SearchPalettePanel, let results = paletteTable(),
+              results.numberOfRows > 1 else { throw SettingsError("The palette must list results in a table") }
+        let firstCell = results.frameOfCell(atColumn: 0, row: 0)
+        func inPanel(_ point: NSPoint, of view: NSView) -> NSPoint { view.convert(point, to: nil) }
+        XCTAssertFalse(palette.isListMargin(at: inPanel(NSPoint(x: firstCell.midX, y: firstCell.midY), of: results)),
+                       "A result row is pressed, not dragged")
+        XCTAssertTrue(palette.isListMargin(at: inPanel(NSPoint(x: firstCell.minX - 4, y: firstCell.midY), of: results)),
+                      "The margin beside a row drags the panel")
+        XCTAssertTrue(palette.isListMargin(at: inPanel(NSPoint(x: firstCell.midX, y: results.rect(ofRow: 0).minY - 4), of: results)),
+                      "The margin above the first row drags the panel")
+        XCTAssertFalse(palette.isListMargin(at: inPanel(NSPoint(x: query.bounds.midX, y: query.bounds.midY), of: query)),
+                       "The query is typed in, not dragged")
+
+        // 11c. A drag ends with a move the palette did not make itself. From then on it
+        // stays where it was put while the results change its height.
+        queryWindow.setFrameOrigin(NSPoint(x: queryWindow.frame.minX - 120, y: queryWindow.frame.minY - 60))
+        let draggedLeft = queryWindow.frame.minX, draggedTop = queryWindow.frame.maxY,
+            heightBefore = queryWindow.frame.height
 
         // 12. Typing narrows the palette's own results; the sidebar does not move.
         let listedBefore = (0..<list.numberOfRows).count
         query.stringValue = "最近丙"
         NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: query)
         try await settle(); try await settle()
+        XCTAssertTrue(queryWindow.frame.height < heightBefore, "Fewer results make the panel shorter")
+        XCTAssertTrue(abs(queryWindow.frame.minX - draggedLeft) <= 1 && abs(queryWindow.frame.maxY - draggedTop) <= 1,
+                     "A dragged palette keeps its place as it resizes: \(queryWindow.frame) after left \(draggedLeft) top \(draggedTop)")
         XCTAssertTrue(workspace.conversations(matching: "最近丙").map(\.id) == [ids["最近丙"]!],
                      "The query matches exactly the one chat")
         XCTAssertTrue((0..<list.numberOfRows).count == listedBefore,
@@ -1057,23 +1114,39 @@ import SwiftUI
         let closedAfterReturn = try await paletteClosed()
         XCTAssertTrue(closedAfterReturn, "Return closes the palette")
 
-        // 14. ⌘K opens it again, and Escape backs out in two stages: the field clears its
-        // own query first, and only an empty field closes the palette.
+        // 14. ⌘K opens it again, and one Escape closes it, query and all.
         main.focusSearch()
         try await settle(); try await settle()
         XCTAssertTrue(main.searchPalette.isOpen, "⌘K opens the palette")
         guard let reopened = paletteField() else { throw SettingsError("⌘K must open a palette with a field") }
+        let reopenedOffset = abs((reopened.window?.frame.midX ?? .infinity) - window.frame.midX)
+        XCTAssertTrue(reopenedOffset <= 1, "Closing forgets the drag: ⌘K opens it centred again, off by \(reopenedOffset)pt")
         reopened.stringValue = "项目甲"
         NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: reopened)
         try await settle()
+        let openBeforeEscape = workspace.selectedID
         try await key(53)
-        try await settle()
-        XCTAssertTrue(main.searchPalette.isOpen, "The first Escape belongs to the query, not the palette")
-        XCTAssertTrue(paletteField()?.stringValue.isEmpty == true, "It clears the query, drawn by nobody but AppKit")
+        try await settle(); try await settle()
+        let closedWithQuery = try await paletteClosed()
+        XCTAssertTrue(closedWithQuery && workspace.selectedID == openBeforeEscape,
+                     "Escape closes the palette with its query still in it, opening nothing")
+        // It opens empty again: the query line alone, with nothing to open.
+        main.focusSearch()
+        try await settle(); try await settle()
+        guard let fresh = paletteField(), let freshWindow = fresh.window else {
+            throw SettingsError("⌘K must open a palette with a field")
+        }
+        XCTAssertTrue(fresh.stringValue.isEmpty && freshWindow.frame.height == queryOnlyHeight
+                      && findView(freshWindow.contentView!, { $0 is NSTableView }) == nil,
+                     "The next ⌘K opens an empty palette")
+        let openBeforeEmptyReturn = workspace.selectedID
+        try await key(36)
+        XCTAssertTrue(main.searchPalette.isOpen && workspace.selectedID == openBeforeEmptyReturn,
+                     "Return on an empty query does nothing")
         try await key(53)
         try await settle(); try await settle()
         let closedAfterEscape = try await paletteClosed()
-        XCTAssertTrue(closedAfterEscape, "The second Escape closes the palette")
+        XCTAssertTrue(closedAfterEscape, "Escape closes the empty palette too")
         // The column still has its cycle: Tab leaves the list and comes back round, exactly
         // as it did before the palette was ever opened.
         XCTAssertTrue(window.makeFirstResponder(list))
@@ -1123,6 +1196,11 @@ import SwiftUI
         if match(view) { return view }
         for child in view.subviews { if let found = findView(child, match) { return found } }
         return nil
+    }
+    /// A search field: the palette's query is a plain text field that reports itself as
+    /// one, so it is told apart by that rather than by its class.
+    private func isQueryField(_ view: NSView) -> Bool {
+        view is NSSearchField || (view as? NSTextField)?.accessibilitySubrole() == .searchField
     }
 
     /// SwiftUI AX nodes answer the selector without declaring the protocol, so dispatch it directly.

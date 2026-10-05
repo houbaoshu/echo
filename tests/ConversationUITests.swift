@@ -322,10 +322,11 @@ private struct ComposerHeightHost: View {
         // in a floating panel of its own instead — so nothing it does can reach this
         // window's Tab order. The structural guard is here; the real pointer and key walk
         // is in testWorkspaceSidebarPointerAndKeyboard.
-        func searchFields(in view: NSView) -> [NSSearchField] {
-            var found: [NSSearchField] = []
+        func searchFields(in view: NSView) -> [NSTextField] {
+            var found: [NSTextField] = []
             func walk(_ v: NSView) {
-                if let field = v as? NSSearchField { found.append(field) }
+                if let field = v as? NSTextField, field is NSSearchField
+                    || field.accessibilitySubrole() == .searchField { found.append(field) }
                 for child in v.subviews { walk(child) }
             }
             walk(view)

@@ -525,10 +525,12 @@ import XCTest
             search.typeText("no matching conversation")
             XCTAssertEqual(outline.descendants(matching: .outlineRow).count, rowCount)
             app.typeKey(.escape, modifierFlags: [])
-            XCTAssertTrue(search.exists)
-            XCTAssertEqual(search.value as? String, "")
+            wait("One Escape closes the palette, query and all") { !search.exists }
+            app.typeKey("k", modifierFlags: .command)
+            XCTAssertTrue(search.waitForExistence(timeout: 3))
+            XCTAssertEqual(search.value as? String, "", "The palette opens empty again")
             app.typeKey(.escape, modifierFlags: [])
-            wait("Second Escape closes the empty palette") { !search.exists }
+            wait("Escape closes the empty palette too") { !search.exists }
         }
     }
 

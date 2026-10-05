@@ -4,8 +4,8 @@ import SwiftUI
 // Type comes from the system's text styles; the secondary and tertiary tones are the system's label colours.
 // Keep AppKit and SwiftUI typography in sync, including the native text editor.
 enum WorkspaceStyle {
-    /// The point size of the system `.body` style, for AppKit text — the composer, the
-    /// search field and code — that has to match SwiftUI's `.body`.
+    /// The point size of the system `.body` style, for AppKit text — the composer and
+    /// code — that has to match SwiftUI's `.body`.
     static let bodySize = NSFont.preferredFont(forTextStyle: .body).pointSize
     static let body = Font.body
     static let medium = Font.body.weight(.medium)
