@@ -163,21 +163,52 @@ struct ActivityCapsule: View {
         return Text("\(icon)  \(heading)")
     }
     private var accessibilitySummary: String { String(localized: "\(statusLabel)，\(cardTitle)，\(summary)") }
-    /// The title and the reply each keep a line of their own, so every card breaks in the same
-    /// place. Without a summary the title stands alone, centered in the card's height.
+    /// The room the follow-up button takes from the text while it shows.
+    private var followUpInset: CGFloat { hovered || store.isFollowUpExpanded ? 50 : 0 }
+    /// A reply that fits on one line gets a line of its own under the title. A longer one runs on
+    /// after the title as one paragraph of up to two lines, so it can show more. The choice is made
+    /// at the card's full text width, so showing the follow-up button only squeezes the text and
+    /// never switches the layout. Without a summary the title stands alone, centered in the card.
     private var summaryView: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            headingLabel
-            if !summary.isEmpty {
-                Text(summary).foregroundStyle(.secondary)
+        Group {
+            if summary.isEmpty {
+                headingLabel.lineLimit(1)
+                    .padding(.trailing, followUpInset)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    titleAboveReply
+                    paragraph.lineLimit(2)
+                        .padding(.trailing, followUpInset)
+                }
             }
         }
         .font(.body)
-        .lineLimit(1).truncationMode(.tail)
+        .truncationMode(.tail)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
-        .padding(.trailing, hovered || store.isFollowUpExpanded ? 50 : 0)
+    }
+    /// `ViewThatFits` takes this layout when its ideal width fits. The hidden reply alone sets that
+    /// width, so the title's length and the follow-up button's inset play no part in the choice.
+    private var titleAboveReply: some View {
+        ZStack(alignment: .leading) {
+            Text(summary).hidden()
+            VStack(alignment: .leading, spacing: 2) {
+                headingLabel
+                Text(summary).foregroundStyle(.secondary)
+            }
+            .padding(.trailing, followUpInset)
+            .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+        }
+        .lineLimit(1)
+    }
+    /// Both interpolations reuse the heading's format string, so the separator dot, which is only
+    /// typography, adds nothing to the string catalog. The dot is a bullet in the title's weight
+    /// and colour, so it stands out between the bold title and the grey reply.
+    private var paragraph: Text {
+        let reply = Text(summary).foregroundColor(.secondary)
+        let separator = Text(verbatim: "•").fontWeight(.semibold).foregroundColor(.primary)
+        return Text("\(headingLabel)  \(Text("\(separator)  \(reply)"))")
     }
 
     private var header: some View {
