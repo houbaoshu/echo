@@ -1832,7 +1832,7 @@ private struct ComposerHeightHost: View {
                        "The back layers fill the stack's height below the front card")
     }
 
-    func testPetStackOffersOnlyItsExpandAction() async throws {
+    func testPetStackFrontCardIsAButtonThatExpandsTheList() async throws {
         let source = PreviewSource()
         let workspace = WorkspaceStore(sourceFactory: { source })
         defer { workspace.shutdown() }
@@ -1851,12 +1851,12 @@ private struct ComposerHeightHost: View {
             XCTAssertNil(findAccessibility(id, in: host), "The stack has no \(id)")
         }
         XCTAssertTrue((stack.accessibilityLabel?() ?? "").contains("第二条"), "The stack reads as its front card")
+        XCTAssertEqual(stack.accessibilityRole?(), .button, "VoiceOver reads the stack's front card as a button")
+        XCTAssertEqual(stack.accessibilityHelp?(), "展开列表", "The hint says what pressing it does")
         let actions = (stack.accessibilityCustomActions?() as? [NSAccessibilityCustomAction]) ?? []
-        XCTAssertEqual(actions.map(\.name), ["展开列表"], "展开列表 is the stack's one custom action")
-        XCTAssertNotEqual(stack.accessibilityPerformPress?(), true, "The stack has no press of its own")
-        try await settle()
+        XCTAssertEqual(actions.map(\.name), [], "Pressing replaces the old 展开列表 action")
         XCTAssertEqual(workspace.petTrayLevel, .stack)
-        XCTAssertTrue(actions.first?.handler?() ?? false)
+        XCTAssertTrue(stack.accessibilityPerformPress?() == true, "VO-Space presses the stack")
         try await settle()
         XCTAssertEqual(workspace.petTrayLevel, .list)
         XCTAssertNil(findAccessibility("activity.stack", in: host))

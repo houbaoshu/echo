@@ -231,19 +231,19 @@ struct ActivityCapsule: View {
         if stacked { stackFront } else { card }
     }
 
-    /// No ✕ or follow-up here, even on hover: clicking anywhere on a stack opens the list, and
-    /// that is also its one accessibility action.
+    /// No ✕ or follow-up here, even on hover: clicking anywhere on a stack opens the list. The
+    /// front card is a button like a single card's body, so VoiceOver presses it to do the same.
     private var stackFront: some View {
-        summaryView
-            .padding(.horizontal, 16)
-            .frame(width: CompanionLayout.capsuleWidth, height: CompanionLayout.collapsedHeight)
-            .background { CompanionBackground(shape: RoundedRectangle(cornerRadius: 28)) }
-            .contentShape(Rectangle())
-            .onTapGesture(perform: open)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(accessibilitySummary)
-            .accessibilityIdentifier("activity.stack")
-            .accessibilityAction(named: String(localized: "展开列表"), open)
+        Button(action: open) {
+            summaryView
+                .padding(.horizontal, 16)
+                .frame(width: CompanionLayout.capsuleWidth, height: CompanionLayout.collapsedHeight)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background { CompanionBackground(shape: RoundedRectangle(cornerRadius: 28)) }
+        .accessibilityHint(String(localized: "展开列表"))
+        .accessibilityIdentifier("activity.stack")
     }
 
     private var card: some View {
@@ -854,7 +854,7 @@ struct WorkspaceActivityCapsule: View {
                     card(first, stacked: stacked)
                 }
                 .frame(height: workspace.petActivityHeight, alignment: .top)
-                // A stack's one action, 展开列表, is on its front card.
+                // A stack opens its list through its front card's press.
                 .accessibilityActions {
                     if !stacked { Button(String(localized: "查看聊天")) { workspace.openPetActivity(conversationID: first.id) } }
                 }
