@@ -126,20 +126,17 @@ struct ActivityCapsule: View {
         self.send = send; self.stop = stop; self.open = open; self.placement = placement
         self.title = title; self.followUp = followUp; self.exit = exit; self.end = end; self.stacked = stacked
     }
-    private var statusSymbol: String {
+    /// Only an ended task gets an icon; while it runs, the reply line already says it is working.
+    private var statusSymbol: String? {
         switch store.task?.status {
         case .completed: "checkmark.circle.fill"
         case .failed: "exclamationmark.circle.fill"
         case .stopped, .interrupted: "pause.circle.fill"
-        default: "circle.dotted"
+        default: nil
         }
     }
     private var statusColor: Color {
-        switch store.task?.status {
-        case .completed: .green
-        case .failed, .stopped, .interrupted: .orange
-        default: .accentColor
-        }
+        store.task?.status == .completed ? .green : .orange
     }
     private var statusLabel: String {
         switch store.task?.status {
@@ -160,8 +157,9 @@ struct ActivityCapsule: View {
         return plain.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
     private var headingLabel: Text {
-        let icon = Text(Image(systemName: statusSymbol)).foregroundColor(statusColor)
         let heading = Text(cardTitle).fontWeight(.semibold).foregroundColor(.primary)
+        guard let statusSymbol else { return heading }
+        let icon = Text(Image(systemName: statusSymbol)).foregroundColor(statusColor)
         return Text("\(icon)  \(heading)")
     }
     private var accessibilitySummary: String { String(localized: "\(statusLabel)，\(cardTitle)，\(summary)") }
