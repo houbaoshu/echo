@@ -171,19 +171,16 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     /// The one folder a drag carries, or nil when it carries anything else as well: a file, a
     /// package such as an app, or a second item. Whatever is refused shows no badge and slides back.
     static func droppedFolder(on pasteboard: NSPasteboard) -> URL? {
-        guard pasteboard.pasteboardItems?.count == 1,
-              let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
-              urls.count == 1, let url = urls.first,
-              let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]),
-              values.isDirectory == true, values.isPackage != true else { return nil }
-        return url
+        guard let folders = WorkspaceActions.droppedFolders(on: pasteboard), folders.count == 1 else { return nil }
+        return folders[0]
     }
 
-    // The pet links to the folder rather than copying it, so the cursor shows the link badge
-    // when the source allows one. Without draggingUpdated AppKit keeps this answer for the drag.
+    // Adding a folder here does what dropping it on the sidebar's 项目 section does, so the cursor
+    // shows the same + badge; a source that does not allow copying gets the next operation it does.
+    // Without draggingUpdated AppKit keeps this answer for the drag.
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard Self.droppedFolder(on: sender.draggingPasteboard) != nil else { return [] }
-        return [.link, .copy, .generic].first { sender.draggingSourceOperationMask.contains($0) } ?? []
+        return [.copy, .link, .generic].first { sender.draggingSourceOperationMask.contains($0) } ?? []
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {

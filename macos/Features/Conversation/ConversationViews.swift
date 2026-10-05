@@ -94,6 +94,19 @@ extension NSFont {
         ActivationPolicyController.activate(for: panel)
         if panel.runModal() == .OK, let url = panel.url { completion(url) } else { cancelled?() }
     }
+    /// The folders a drag carries, one per item, or nil when any item is something else: a file,
+    /// a package such as an app or an .xcodeproj, or anything that is not a file at all. The pet
+    /// and the sidebar's 项目 section refuse such a drag as a whole.
+    static func droppedFolders(on pasteboard: NSPasteboard) -> [URL]? {
+        guard let items = pasteboard.pasteboardItems, !items.isEmpty,
+              let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              urls.count == items.count,
+              urls.allSatisfy({ url in
+                  let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+                  return values?.isDirectory == true && values?.isPackage != true
+              }) else { return nil }
+        return urls
+    }
     static func rename(_ current: String, completion: @escaping (String) -> Void) {
         let alert = NSAlert(); alert.messageText = String(localized: "重命名|对话框标题", defaultValue: "重命名")
         let field = NSTextField(string: current); field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
@@ -208,6 +221,11 @@ struct WorkspaceSidebar: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onHover { projectHeaderHovered = $0 }
+            .modifier(ProjectFolderDropTarget(drop: projectFolderDrop))
+    }
+    /// Anywhere in 项目 takes folders: its header, a project and one of the project's chats.
+    private var projectFolderDrop: ProjectFolderDrop {
+        ProjectFolderDrop(workspace: workspace) { projectsExpanded = true }
     }
     private func projectExpanded(_ project: WorkspaceProject) -> Bool {
         !collapsedProjects.contains(project.id)
@@ -247,6 +265,7 @@ struct WorkspaceSidebar: View {
                 .accessibilityHint("点击展开或收起项目聊天")
                 .accessibilityIdentifier("workspace.project.\(project.id)")
                 .contextMenu { projectMenu(project) }
+                .modifier(ProjectFolderDropTarget(drop: projectFolderDrop))
         }
     }
     private func newProjectConversation(_ id: UUID) {
@@ -269,6 +288,7 @@ struct WorkspaceSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .tag(rowID)
+            .modifier(ProjectFolderDropTarget(drop: projectID == nil ? nil : projectFolderDrop))
             .help(conversation.displayTitle)
             .accessibilityIdentifier("conversation.\(projectID?.uuidString ?? "recent").\(conversation.id)")
         }
@@ -291,6 +311,35 @@ struct WorkspaceSidebar: View {
         Button("重新定位文件夹…") { WorkspaceActions.chooseFolder { workspace.relocateProject(project.id, to: $0) } }
         Divider()
         Button("移除项目，保留会话") { workspace.removeProject(project.id) }
+    }
+}
+
+/// Folders dropped on the sidebar's 项目 section become projects one by one, those that already
+/// are stay as they are, and the section opens to show them. Neither a chat nor the selection
+/// changes. It reads the drag's own pasteboard rather than its item providers: those load only
+/// asynchronously, and entry is where a drag of anything but folders has to be refused, so that
+/// it shows no + badge at all. The list draws nothing; the badge is the whole cue.
+struct ProjectFolderDrop: DropDelegate {
+    let workspace: WorkspaceStore
+    var pasteboard = NSPasteboard(name: .drag)
+    let expand: () -> Void
+    var accepts: Bool { WorkspaceActions.droppedFolders(on: pasteboard) != nil }
+    func drop() -> Bool {
+        guard let folders = WorkspaceActions.droppedFolders(on: pasteboard) else { return false }
+        folders.forEach { workspace.addProject(url: $0) }
+        expand()
+        return true
+    }
+    func validateDrop(info: DropInfo) -> Bool { accepts }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .copy) }
+    func performDrop(info: DropInfo) -> Bool { drop() }
+}
+
+/// 最近 takes no drops: its rows pass nil.
+private struct ProjectFolderDropTarget: ViewModifier {
+    let drop: ProjectFolderDrop?
+    func body(content: Content) -> some View {
+        if let drop { content.onDrop(of: [.fileURL], delegate: drop) } else { content }
     }
 }
 

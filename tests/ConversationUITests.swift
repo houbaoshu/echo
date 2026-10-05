@@ -3062,7 +3062,7 @@ private struct ComposerHeightHost: View {
                      "A refused drop changes nothing")
 
         let result = drop([folder])
-        XCTAssertTrue(result.operation == .link && result.accepted, "One folder is accepted with the link badge")
+        XCTAssertTrue(result.operation == .copy && result.accepted, "One folder is accepted with the + badge, as in the sidebar")
         let added = try XCTUnwrap(workspace.projects.first { $0.path == folder.resolvingSymlinksInPath().path })
         XCTAssertTrue(workspace.projects.count == 2 && presentation.projectID == added.id && presentation.isComposerOpen,
                      "The folder becomes a project and the composer opens on it")
@@ -3077,6 +3077,64 @@ private struct ComposerHeightHost: View {
                      "Dropping the first folder again reuses its project")
         XCTAssertTrue(presentation.isComposerOpen && presentation.draft == "先看看目录结构")
         try await eventually("the chip is back on the dropped folder") { axValue(findAccessibility("pet.project.name", in: controls)) == "拖来的项目" }
+    }
+
+    /// Folders dropped on the sidebar's 项目 section are added one by one, known ones skipped, and
+    /// the section opens. A drag holding anything but folders is refused whole, by the same rule the
+    /// pet applies before it takes exactly one. Neither the chats nor the selection change.
+    func testSidebarFolderDropAddsProjects() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sidebar-drop-\(UUID())")
+        let known = root.appendingPathComponent("已有项目")
+        let folders = ["新项目一", "新项目二", "新项目三", "新项目四"].map { root.appendingPathComponent($0) }
+        let file = root.appendingPathComponent("notes.txt")
+        let packages = ["Probe.app", "Probe.xcodeproj"].map { root.appendingPathComponent($0) }
+        for directory in [known] + folders + packages { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        try Data("notes".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        defer { workspace.shutdown() }
+        let knownID = workspace.addProject(url: known)
+        let projectChat = workspace.newConversation(projectID: knownID)
+        projectChat.store.send("项目里的聊天")
+        workspace.newConversation().store.send("最近的聊天")
+        workspace.select(projectChat.id)
+        let chats = workspace.conversations.map(\.id)
+        var expansions = 0
+        func drop(_ urls: [URL]) -> (accepts: Bool, dropped: Bool) {
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("echo-test-drag-\(UUID())"))
+            defer { pasteboard.releaseGlobally() }
+            pasteboard.clearContents()
+            pasteboard.writeObjects(urls as [NSURL])
+            let target = ProjectFolderDrop(workspace: workspace, pasteboard: pasteboard) { expansions += 1 }
+            return (target.accepts, target.drop())
+        }
+        func names() -> [String] { workspace.projects.map(\.name) }
+
+        for (refused, label) in [([file], "a file"), ([folders[0], file], "folders mixed with a file"),
+                                 ([packages[0]], "an app"), ([packages[1]], "an Xcode project"),
+                                 ([folders[0], packages[1]], "a folder with a package")] {
+            let result = drop(refused)
+            XCTAssertTrue(!result.accepts && !result.dropped, "The section refuses \(label) as a whole")
+        }
+        XCTAssertTrue(names() == ["已有项目"] && expansions == 0, "A refused drop changes nothing")
+
+        XCTAssertTrue(drop([folders[0]]) == (true, true) && names() == ["已有项目", "新项目一"] && expansions == 1,
+                     "One folder becomes a project and the section opens")
+        XCTAssertTrue(drop([folders[1], folders[2]]) == (true, true) && names() == ["已有项目", "新项目一", "新项目二", "新项目三"],
+                     "Several folders are added one by one, in order")
+        XCTAssertTrue(drop([known, folders[0], folders[3]]) == (true, true)
+                     && names() == ["已有项目", "新项目一", "新项目二", "新项目三", "新项目四"] && expansions == 3,
+                     "Folders that already are projects are skipped")
+        XCTAssertTrue(workspace.selectedID == projectChat.id && workspace.conversations.map(\.id) == chats,
+                     "Dropping starts no chat and keeps the selection")
+
+        // The pet shares the folder rule but takes exactly one.
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("echo-test-drag-\(UUID())"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents(); pasteboard.writeObjects([folders[0], folders[1]] as [NSURL])
+        XCTAssertTrue(PetInteractionView.droppedFolder(on: pasteboard) == nil, "The pet still refuses two folders")
+        pasteboard.clearContents(); pasteboard.writeObjects([folders[0]] as [NSURL])
+        XCTAssertTrue(PetInteractionView.droppedFolder(on: pasteboard)?.lastPathComponent == "新项目一", "The pet takes one")
     }
 
     func testCompanionBubblePanel() async throws {
