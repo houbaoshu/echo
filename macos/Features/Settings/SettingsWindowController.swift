@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 /// Settings owns its window and focus loop. The shared stores keep unsaved edits and
@@ -8,7 +7,7 @@ import SwiftUI
     private let settings: SettingsStore
     private let workspace: WorkspaceStore
     private let sectionFocus = SidebarListFocus()
-    private var sectionTitle: AnyCancellable?
+    private var sectionTitle: ObservationHandle?
 
     /// Like System Settings, the window has one width and only its height changes.
     static let width: CGFloat = 720
@@ -35,7 +34,7 @@ import SwiftUI
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: Self.width, height: 520)
         window.maxSize = NSSize(width: Self.width, height: .greatestFiniteMagnitude)
-        sectionTitle = settings.$selectedSection.sink { [weak window] in window?.title = $0.title }
+        sectionTitle = observeChanges({ settings.selectedSection }, initial: true) { [weak window] in window?.title = $0.title }
         window.delegate = self
         window.onEscape = { [weak self] in self?.handleEscape() ?? false }
 

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ConversationProjectPicker: View {
-    @ObservedObject var workspace: WorkspaceStore
+    var workspace: WorkspaceStore
     let conversationID: UUID
     @State private var isPresented = false
     @State private var hovered = false
@@ -34,7 +34,7 @@ struct ConversationProjectPicker: View {
                             },
                             close: { isPresented = false })
                     }
-                    .help(project?.isAvailable == false ? "项目不可用" : "选择项目文件夹")
+                    .help(project.map(workspace.isAvailable) == false ? "项目不可用" : "选择项目文件夹")
                     .accessibilityIdentifier("conversation.project")
                     .accessibilityValue("可选择项目")
                 if project != nil {
@@ -66,9 +66,9 @@ struct ConversationProjectPicker: View {
     }
     private var label: some View {
         HStack(spacing: 6) {
-            Image(systemName: project?.isAvailable == false ? "folder.badge.questionmark" : "folder")
+            Image(systemName: project.map(workspace.isAvailable) == false ? "folder.badge.questionmark" : "folder")
             Text(project?.name ?? String(localized: "选择项目")).lineLimit(1)
-            if project?.isAvailable == false { Text("不可用").foregroundStyle(WorkspaceStyle.warning) }
+            if project.map(workspace.isAvailable) == false { Text("不可用").foregroundStyle(WorkspaceStyle.warning) }
             if editable { Image(systemName: "chevron.down").font(.caption2) }
         }.font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
             .padding(.horizontal, 7).frame(height: 28).contentShape(Rectangle())
@@ -87,7 +87,7 @@ enum ProjectPickerOption: Hashable {
 
 /// Project search and selection, shared by a conversation's picker and the pet's quick composer.
 struct ProjectSelectionPanel: View {
-    @ObservedObject var workspace: WorkspaceStore
+    var workspace: WorkspaceStore
     let selectedProjectID: UUID?
     let select: (UUID) -> Void
     /// Runs after the panel has dismissed, so a folder dialog does not belong to it.
@@ -119,7 +119,7 @@ struct ProjectSelectionPanel: View {
         guard case .project(let id) = option else { return nil }
         return workspace.projects.first { $0.id == id }
     }
-    private func enabled(_ option: ProjectPickerOption) -> Bool { project(option)?.isAvailable ?? true }
+    private func enabled(_ option: ProjectPickerOption) -> Bool { project(option).map(workspace.isAvailable) ?? true }
     private func selected(_ option: ProjectPickerOption) -> Bool {
         switch option {
         case .project(let id): return selectedProjectID == id

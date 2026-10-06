@@ -45,9 +45,9 @@ struct RecordingWaveform: View {
 }
 
 struct VoiceSettingsView: View {
-    @ObservedObject var settings: SettingsStore
-    @ObservedObject var voice: VoiceSessionController
-    @ObservedObject private var diagnostics = VoiceDiagnostics.shared
+    @Bindable var settings: SettingsStore
+    var voice: VoiceSessionController
+    private var diagnostics: VoiceDiagnostics { .shared }
     private var testsDisabled: Bool { voice.testing || voice.isActive || voice.isDictating || !settings.canTestVoice }
     var body: some View {
         // Each group of the section is a `Section`, so the separator between them is the

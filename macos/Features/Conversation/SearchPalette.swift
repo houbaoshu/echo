@@ -129,7 +129,7 @@ struct WorkspaceSearchField: NSViewRepresentable {
 /// through the results, Return opens the highlighted chat, and Escape closes the palette
 /// whatever is typed. It opens empty again the next time.
 struct ChatSearchPalette: View {
-    @ObservedObject var workspace: WorkspaceStore
+    var workspace: WorkspaceStore
     let close: () -> Void
     @State private var query = ""
     @State private var highlighted: UUID?

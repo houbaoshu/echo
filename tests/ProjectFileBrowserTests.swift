@@ -294,9 +294,7 @@ import AppKit
             }) else { throw SettingsError("Could not observe the run loop") }
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         defer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
-        let subscription = browser.$state.sink { state in
-            MainActor.assumeIsolated { recorder.record(state.directories) }
-        }
+        let subscription = observeChanges({ browser.state.directories }, initial: true) { recorder.record($0) }
         defer { subscription.cancel() }
 
         grown.set()
@@ -317,9 +315,7 @@ import AppKit
         // and, with several directories, is the update shape the list cannot take.
         let quiet = CommitRecorder()
         quiet.previous = browser.state.directories
-        let quietSubscription = browser.$state.sink { state in
-            MainActor.assumeIsolated { quiet.record(state.directories) }
-        }
+        let quietSubscription = observeChanges({ browser.state.directories }, initial: true) { quiet.record($0) }
         defer { quietSubscription.cancel() }
         browser.refresh()
         try await Task.sleep(for: .milliseconds(300))

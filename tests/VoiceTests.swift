@@ -316,7 +316,7 @@ extension EchoVoiceScenarios {
             synthesizer: { synth }, tailProtectionDuration: .milliseconds(20), permission: { true })
         let conversation = WorkspaceConversation(store: store)
         var published: [VoiceSessionSnapshot] = []
-        let observation = voice.$snapshot.sink { published.append($0) }
+        let observation = observeChanges({ voice.snapshot }, initial: true) { published.append($0) }
         var finishPlayback: CheckedContinuation<Void, Never>?
         audio.onDrain = { await withCheckedContinuation { finishPlayback = $0 } }
         defer { observation.cancel(); finishPlayback?.resume(); voice.shutdown(); store.shutdown() }
@@ -2404,6 +2404,87 @@ extension EchoVoiceScenarios {
               && relaunched.notice == "上次选择的星球无法加载，已换成另一颗。",
               "a missing imported planet falls back to a bundled one and says so")
         voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
+    }
+}
+}
+
+extension EchoVoiceScenarios {
+/// One Live Voice session with the real companion and planet: after each step, what the voice
+/// snapshot's observers left on screen and in the workspace.
+@Suite(.serialized) struct VoiceObserverTests {
+    @MainActor static func wait(_ label: String, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(8)
+        while !condition() {
+            guard Date() < deadline else { throw SettingsError("Timed out: \(label)") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    @Test @MainActor static func bubblePetPlanetAndUnseenFollowTheSession() async throws {
+        _ = NSApplication.shared
+        let f = AgentVoiceFixture()
+        let planets = PlanetStore(settings: f.settings, root: EchoTestResources.resource("planets"), voice: f.voice)
+        let companion = CompanionController(petStore: try PetStore(directory: EchoTestResources.resource("pets/chiyan")),
+                                            workspace: f.workspace, settings: f.settings, planets: planets,
+                                            defaults: EchoTestResources.defaults())
+        defer { companion.shutdown(); f.shutdown() }
+        let voice = f.voice, workspace = f.workspace
+        var outcomes: [String] = []
+        /// The bubble is left out once it shows an error: the notice goes away on a three-second timer.
+        func record(_ step: String, bubble: Bool = true) async {
+            // The companion applies what it observed on the next main-queue turn.
+            await VoiceFixtureSupport.tick()
+            let shown = bubble ? "bubble=\(companion.bubblePanel.isVisible) notice=\(companion.bubbleState.notice ?? "-") " : ""
+            outcomes.append("\(step) | \(shown)pet=\(companion.petPanel.isVisible) planet=\(planets.playing ?? "-") unseen=\(f.store.hasUnseenCompletion)")
+        }
+
+        await f.start(); await record("start")
+        voice.toggleSpeakerMute(); await record("speakerMute")
+        workspace.isMainWindowVisible = true; await record("mainWindowOnTheCall")
+        workspace.isMainWindowVisible = false; await record("mainWindowHidden")
+        f.holdPlayback(); f.speak("第一轮")
+        try await f.puppet.reply("第一轮回复")
+        try await wait("first reply") { f.synths.count == 1 }
+        await record("speaking")
+        let recognizers = f.recognizers.count
+        f.releasePlayback()
+        try await wait("listening resumes") { voice.snapshot.recognition == .listening && f.recognizers.count > recognizers }
+        await record("drained")
+        voice.toggleSpeakerMute(); await record("speakerUnmute")
+        voice.toggleSpeakerMute(); await record("speakerMuteAgain")
+        f.audio.onFailure?("设备变化", .deviceChange); await record("failing")
+        // The planet plays its ending once before the session lets go and reports the error.
+        try await wait("failure ended") { voice.snapshot.session == .inactive }
+        await record("failed")
+        voice.clearError()
+        #expect(voice.start(conversation: f.conversation, configuration: .init(), key: "fake"))
+        await VoiceFixtureSupport.tick()
+        f.audio.input?.yield(.init(data: Data(repeating: 0, count: 640), epoch: f.audio.captureEpoch))
+        try await wait("restarted") { voice.snapshot.recognition == .listening }
+        await record("restarted", bubble: false)
+        voice.end(); await record("ending", bubble: false)
+        try await wait("ended") { voice.snapshot.session == .inactive }
+        await record("ended", bubble: false)
+
+        let expected = [
+            "start | bubble=false notice=- pet=true planet=idle unseen=false",
+            "speakerMute | bubble=false notice=- pet=true planet=idle unseen=false",
+            // The main window shows this call's planet, so the pet steps aside.
+            "mainWindowOnTheCall | bubble=false notice=- pet=false planet=idle unseen=false",
+            "mainWindowHidden | bubble=false notice=- pet=true planet=idle unseen=false",
+            "speaking | bubble=false notice=- pet=true planet=spinning unseen=false",
+            // With the speaker muted, the reply's words show in the bubble.
+            "drained | bubble=true notice=- pet=true planet=idle unseen=false",
+            "speakerUnmute | bubble=false notice=- pet=true planet=idle unseen=false",
+            "speakerMuteAgain | bubble=true notice=- pet=true planet=idle unseen=false",
+            "failing | bubble=false notice=- pet=true planet=review unseen=false",
+            // The ended call reports its error by the pet and leaves its reply unseen.
+            "failed | bubble=true notice=设备变化 pet=true planet=- unseen=true",
+            "restarted | pet=true planet=idle unseen=true",
+            "ending | pet=true planet=review unseen=true",
+            "ended | pet=true planet=- unseen=true",
+        ]
+        #expect(outcomes == expected, "\(outcomes.joined(separator: "\n"))")
     }
 }
 }

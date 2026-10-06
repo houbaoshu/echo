@@ -4377,3 +4377,95 @@ private struct ComposerHeightHost: View {
         return visit(root)
     }
 }
+
+/// One workspace script with the real main window, companion and archive: after each step, the
+/// window title, which companion panels show, what a relaunch would read, and how many times the
+/// archive was written. The expected values are what the workspace did before it moved to
+/// Observation; how often the title or the companion re-syncs is deliberately not part of it.
+@MainActor final class WorkspaceObserverTests: XCTestCase {
+    func testTitlePanelsAndArchiveFollowTheWorkspace() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("workspace-observers-\(UUID().uuidString)")
+        let folder = root.appendingPathComponent("项目甲")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = root.appendingPathComponent("workspace.json")
+        var sources: [PreviewSource] = []
+        let voice = VoiceSessionController(), dictation = DictationController()
+        let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: url), dictation: dictation, voice: voice,
+                                       sourceFactory: { let source = PreviewSource(); sources.append(source); return source })
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: SettingsStore(secrets: ComposerSecrets()),
+                                            defaults: EchoTestResources.defaults())
+        defer { companion.shutdown(); workspace.shutdown(); voice.shutdown(); VoiceDiagnostics.shared.cancelTimeline() }
+
+        // Saves are counted through the diagnostics timeline, which logs every flush while it is open.
+        let diagnostics = VoiceDiagnostics.shared
+        func begin(_ step: String) { diagnostics.beginTimeline("WorkspaceObserverTests \(step)") }
+        func flushes(since start: Int) -> Int {
+            diagnostics.lines.dropFirst(start).filter { $0.contains("WorkspaceStore.flush") }.count
+        }
+        var outcomes: [String] = []
+        func step(_ name: String, _ body: () async throws -> Void) async rethrows {
+            begin(name)
+            let start = diagnostics.lines.count
+            try await body()
+            try? await Task.sleep(for: .milliseconds(700))
+            let title = companion.mainWindow?.isVisible == true ? companion.mainWindow?.title ?? "-" : "(hidden)"
+            let panels = "pet=\(companion.petPanel.isVisible) activity=\(companion.activityPanel.isVisible) controls=\(companion.controlsPanel.isVisible)"
+            var saved = "nothing saved"
+            if let data = try? Data(contentsOf: url), let snapshot = try? JSONDecoder().decode(WorkspaceSnapshot.self, from: data) {
+                let chats = snapshot.conversations.map {
+                    "\($0.isUntitled ? "untitled" : $0.title) msgs=\($0.state.messages.count) task=\($0.state.task?.status.rawValue ?? "-") project=\($0.projectID != nil)"
+                }
+                let selected = snapshot.conversations.firstIndex { $0.id == snapshot.selectedID }.map { "chat\($0)" }
+                    ?? (snapshot.drafts ?? []).firstIndex { $0.id == snapshot.selectedID }.map { "draft\($0)" } ?? "none"
+                saved = "projects=\(snapshot.projects.map(\.name)) chats=\(chats) drafts=\(snapshot.drafts?.count ?? 0) selected=\(selected)"
+            }
+            outcomes.append("\(name) | title=\(title) | \(panels) | \(saved) | flushes=\(flushes(since: start))")
+        }
+        func reply(_ source: PreviewSource?, _ chunks: [String]) async {
+            var text = ""
+            for chunk in chunks {
+                text += chunk
+                source?.receive?(.progress(text))
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+            source?.receive?(.completed(text))
+        }
+
+        var chat: WorkspaceConversation?
+        await step("launch") {}
+        await step("showMain") { workspace.isMainWindowVisible = true }
+        await step("newChat") { chat = workspace.newConversation() }
+        let id = try XCTUnwrap(chat?.id)
+        // A chat takes a project only while it is empty, so the project comes before the message.
+        await step("project") { XCTAssertTrue(workspace.associateProject(workspace.addProject(url: folder), conversationID: id)) }
+        await step("send") { XCTAssertTrue(workspace.send("你好", conversationID: id)) }
+        await step("reply") { await reply(sources.last, ["第一段", "，第二段", "，第三段。"]) }
+        await step("rename") { workspace.renameConversation(id, to: "改过的名字") }
+        await step("delete") { workspace.deleteConversation(id) }
+        await step("cardShow") { XCTAssertTrue(workspace.sendQuickMessage("桌宠里的问题")) }
+        let card = workspace.petActivityIDs.first
+        await step("cardReply") { await reply(sources.last, ["桌宠", "的回答。"]) }
+        await step("cardHide") { if let card { workspace.dismissPetActivity(conversationID: card) } }
+
+        let project = "projects=[\"项目甲\"]"
+        let expected = [
+            "launch | title=(hidden) | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=1",
+            "showMain | title=新对话 | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=0",
+            "newChat | title=新对话 | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=1",
+            "project | title=新对话 | pet=true activity=false controls=true | \(project) chats=[] drafts=1 selected=draft0 | flushes=1",
+            "send | title=你好 | pet=true activity=true controls=true | \(project) chats=[\"你好 msgs=2 task=running project=true\"] drafts=0 selected=chat0 | flushes=1",
+            "reply | title=你好 | pet=true activity=false controls=true | \(project) chats=[\"你好 msgs=2 task=completed project=true\"] drafts=0 selected=chat0 | flushes=1",
+            "rename | title=改过的名字 | pet=true activity=false controls=true | \(project) chats=[\"改过的名字 msgs=2 task=completed project=true\"] drafts=0 selected=chat0 | flushes=1",
+            "delete | title=新对话 | pet=true activity=false controls=true | \(project) chats=[] drafts=1 selected=draft0 | flushes=2",
+            "cardShow | title=新对话 | pet=true activity=true controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=running project=false\"] drafts=1 selected=draft0 | flushes=1",
+            "cardReply | title=新对话 | pet=true activity=true controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=completed project=false\"] drafts=1 selected=draft0 | flushes=1",
+            "cardHide | title=新对话 | pet=true activity=false controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=completed project=false\"] drafts=1 selected=draft0 | flushes=1",
+        ]
+        for (index, outcome) in outcomes.enumerated() {
+            XCTAssertEqual(outcome, index < expected.count ? expected[index] : "(none)")
+        }
+        XCTAssertEqual(outcomes.count, expected.count)
+        print("Workspace observer archive kept at \(root.path)")
+    }
+}

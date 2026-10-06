@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Observation
 
 struct WorkspaceProject: Identifiable, Codable, Equatable {
     var id = UUID()
@@ -11,7 +12,7 @@ struct WorkspaceProject: Identifiable, Codable, Equatable {
     }
 }
 
-@MainActor final class WorkspaceConversation: Identifiable {
+@MainActor @Observable final class WorkspaceConversation: Identifiable {
     let id: UUID
     fileprivate(set) var projectID: UUID?
     var title: String
@@ -217,30 +218,30 @@ struct WorkspaceSnapshot: Codable {
     }
 }
 
-@MainActor final class WorkspaceStore: ObservableObject {
+@MainActor @Observable final class WorkspaceStore {
     let fileBrowser = ProjectFileBrowserStore()
     let voice: VoiceSessionController
     let dictation: DictationController
-    @Published private(set) var projects: [WorkspaceProject] = [] {
+    private(set) var projects: [WorkspaceProject] = [] {
         didSet { synchronizeFileBrowser() }
     }
-    @Published private(set) var conversations: [WorkspaceConversation] = []
-    @Published private(set) var selectedID: UUID? {
+    private(set) var conversations: [WorkspaceConversation] = []
+    private(set) var selectedID: UUID? {
         didSet {
             if oldValue != selectedID { fileBrowser.collapsePreview() }
             synchronizeFileBrowser()
             markViewedActivitySeen()
         }
     }
-    @Published private(set) var composerFocusRequest = 0
+    private(set) var composerFocusRequest = 0
     private(set) var composerFocusID: UUID?
     private var drafts: [WorkspaceConversation] = []
-    @Published private(set) var activityID: UUID?
+    private(set) var activityID: UUID?
     /// Transient pet entries; removing an entry leaves its conversation in history.
-    @Published private(set) var petActivityIDs: [UUID] = []
-    @Published private(set) var isActivityListExpanded = false
-    @Published private(set) var petFollowUpID: UUID?
-    @Published private(set) var isPetTrayCollapsed = false
+    private(set) var petActivityIDs: [UUID] = []
+    private(set) var isActivityListExpanded = false
+    private(set) var petFollowUpID: UUID?
+    private(set) var isPetTrayCollapsed = false
     /// The tray's three levels. More than one notification stacks; the stack opens into the list,
     /// and ⌃ steps back one level at a time. Follow-up sits on top of a level and returns to it.
     enum PetTrayLevel { case collapsed, stack, list }
@@ -308,31 +309,32 @@ struct WorkspaceSnapshot: Codable {
         if activityID == id { activityID = petActivityIDs.first }
         settleActivityList()
     }
-    @Published var isMainWindowVisible = false {
+    var isMainWindowVisible = false {
         didSet {
             if !isMainWindowVisible { dictation.cancel() }
             markViewedActivitySeen()
         }
     }
     /// A minimized main window is not visible, but it is still open: it keeps its chat.
-    var isMainWindowMinimized = false
-    @Published var persistenceNotice: String?
-    var onRevealVoice: ((UUID) -> Void)?
-    var onOpenPetActivity: (() -> Void)?
+    @ObservationIgnored var isMainWindowMinimized = false
+    var persistenceNotice: String?
+    @ObservationIgnored var onRevealVoice: ((UUID) -> Void)?
+    @ObservationIgnored var onOpenPetActivity: (() -> Void)?
     private let emptyActivity = TaskStore()
     private let sourceFactory: () -> (any TaskSource)?
     private let persistence: WorkspacePersistence?
-    private var observations: [UUID: AnyCancellable] = [:]
-    private var lifecycleObservations: [UUID: AnyCancellable] = [:]
-    private var emptyObservation: AnyCancellable?
-    private var saveWork: DispatchWorkItem?
-    private var saveDeadline: DispatchTime?
-    private var shuttingDown = false
+    @ObservationIgnored private var lifecycleObservations: [UUID: AnyCancellable] = [:]
+    @ObservationIgnored private var saveWork: DispatchWorkItem?
+    /// Bumped each time what a save reads is read again under tracking; an older registration that
+    /// fires afterwards is stale and does nothing.
+    @ObservationIgnored private var saveTracking = 0
+    @ObservationIgnored private var saveDeadline: DispatchTime?
+    @ObservationIgnored private var shuttingDown = false
     /// A Live Voice conversation whose completed replies have not been viewed. It becomes an
     /// unseen completion only when the voice session ends; until then the conversation is in progress.
-    private var voiceCompletion: UUID?
-    private var voiceObservation: AnyCancellable?
-    private var saveBlocked = false
+    @ObservationIgnored private var voiceCompletion: UUID?
+    @ObservationIgnored private var voiceObservation: ObservationHandle?
+    @ObservationIgnored private var saveBlocked = false
     // Keep display timestamps fixed for this app session. Persist actual interaction
     // times separately so only the next launch applies the new order.
     private var pendingRecency: [UUID: Date] = [:]
@@ -346,11 +348,8 @@ struct WorkspaceSnapshot: Codable {
         self.dictation = dictation; self.voice = voice
         self.persistence = persistence
         self.sourceFactory = sourceFactory
-        voiceObservation = voice.$snapshot.map { $0.session.owner == nil }.removeDuplicates().sink { [weak self] ended in
+        voiceObservation = observeChanges({ voice.snapshot.session.owner == nil }, initial: true) { [weak self] ended in
             if ended { self?.finishVoiceConversation() }
-        }
-        emptyObservation = emptyActivity.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { [weak self] in self?.objectWillChange.send() }
         }
         if let initialStore {
             let conversation = WorkspaceConversation(store: initialStore)
@@ -383,8 +382,11 @@ struct WorkspaceSnapshot: Codable {
                 // selection and desktop activity behind on every launch.
                 (conversations + drafts).forEach(bind)
             }
-            if selected == nil { _ = newConversation() }
-        } else { _ = newConversation() }
+        }
+        // Armed after loading, which only repeats what is on disk, and before the first chat of a
+        // launch is made, which is new.
+        _ = trackingSaves { snapshot }
+        if selected == nil { _ = newConversation() }
     }
 
     var selected: WorkspaceConversation? { (conversations + drafts).first { $0.id == selectedID } }
@@ -473,7 +475,7 @@ struct WorkspaceSnapshot: Codable {
         let conversation = makeDraft(projectID: validProjectID(projectID))
         if send(text, conversationID: conversation.id) { return true }
         if conversation.store.messages.isEmpty {
-            conversation.store.shutdown(); observations[conversation.id] = nil; lifecycleObservations[conversation.id] = nil
+            conversation.store.shutdown(); lifecycleObservations[conversation.id] = nil
             drafts.removeAll { $0.id == conversation.id }
         }
         return false
@@ -491,7 +493,6 @@ struct WorkspaceSnapshot: Codable {
         // A failed start reports against this conversation, so the draft stays for the error to
         // hang on — and, being empty, it is what the next attempt reuses.
         guard voice.activate(conversation: target, entry: "桌宠·新对话") else { return false }
-        scheduleSave()
         return true
     }
     @discardableResult func sendMainMessage(conversationID: UUID) -> Bool {
@@ -561,6 +562,12 @@ struct WorkspaceSnapshot: Codable {
         isMainWindowVisible = true
         onRevealVoice?(targetID)
     }
+    /// What a save writes, and also what decides when one happens: every flush reads this with
+    /// tracking armed, and the first later change to anything read here schedules the next save
+    /// (`trackingSaves`). So everything it reads, here and in `TaskStore.snapshot`, has to be an
+    /// observed property: never `@ObservationIgnored`, never kept in an object that is not
+    /// `@Observable`. Otherwise a change to it alone is only written with some later change.
+    /// WorkspaceTests.everySavedFieldReachesTheArchiveOnItsOwn changes each field on its own.
     var snapshot: WorkspaceSnapshot {
         WorkspaceSnapshot(projects: projects, conversations: conversations.map {
             .init(id: $0.id, projectID: $0.projectID, title: $0.title, manuallyNamed: $0.manuallyNamed,
@@ -631,15 +638,8 @@ struct WorkspaceSnapshot: Codable {
             default: break
             }
         }
-        observations[id] = conversation.store.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { [weak self] in
-                guard let self, !self.shuttingDown, (self.conversations + self.drafts).contains(where: { $0.id == id }) else { return }
-                self.objectWillChange.send()
-                self.scheduleSave()
-            }
-        }
     }
-    private var persistedAgentIDs: Set<UUID> = []
+    @ObservationIgnored private var persistedAgentIDs: Set<UUID> = []
     private func didUse(_ id: UUID) {
         let usedAt = Date()
         // A blank composer becomes a sidebar conversation only after the first real message.
@@ -649,7 +649,6 @@ struct WorkspaceSnapshot: Codable {
             conversations.append(draft)
         }
         guard let conversation = conversations.first(where: { $0.id == id }) else { return }
-        objectWillChange.send()
         pendingRecency[id] = usedAt
         if conversation.untitled {
             if let first = conversation.store.messages.first(where: { $0.role == .user }) {
@@ -657,7 +656,6 @@ struct WorkspaceSnapshot: Codable {
             } else { conversation.title = "新会话" }
         }
         activityID = id
-        scheduleSave()
     }
     @discardableResult func newConversation(projectID: UUID? = nil) -> WorkspaceConversation {
         let validProject = validProjectID(projectID)
@@ -666,7 +664,6 @@ struct WorkspaceSnapshot: Codable {
         selectedID = conversation.id
         conversation.lastUsed = Date()
         composerFocusID = conversation.id; composerFocusRequest += 1
-        scheduleSave()
         return conversation
     }
     func select(_ id: UUID) {
@@ -675,7 +672,6 @@ struct WorkspaceSnapshot: Codable {
         flush()
         selectedID = id
         if let draft = drafts.first(where: { $0.id == id }) { draft.lastUsed = Date() }
-        scheduleSave()
     }
     func revealActivity() {
         if let activityID, activityID != selectedID { select(activityID) }
@@ -693,15 +689,14 @@ struct WorkspaceSnapshot: Codable {
     func renameConversation(_ id: UUID, to title: String) {
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, let conversation = conversations.first(where: { $0.id == id }) else { return }
-        objectWillChange.send(); conversation.title = name; conversation.manuallyNamed = true; conversation.untitled = false
-        scheduleSave()
+        conversation.title = name; conversation.manuallyNamed = true; conversation.untitled = false
     }
     func deleteConversation(_ id: UUID) {
         guard let conversation = (conversations + drafts).first(where: { $0.id == id }) else { return }
         if dictation.conversationID == id { dictation.cancel(discard: true) }
         if voice.conversationID == id { voice.end(reason: .conversationDeleted) }
         voice.clearError(conversationID: id)
-        conversation.store.shutdown(); observations[id] = nil; lifecycleObservations[id] = nil
+        conversation.store.shutdown(); lifecycleObservations[id] = nil
         pendingRecency[id] = nil
         conversations.removeAll { $0.id == id }
         drafts.removeAll { $0.id == id }
@@ -752,12 +747,12 @@ struct WorkspaceSnapshot: Codable {
         let path = url.standardizedFileURL.resolvingSymlinksInPath().path
         if let existing = projects.first(where: { $0.path == path }) { return existing.id }
         let project = WorkspaceProject(name: url.lastPathComponent, path: path)
-        projects.append(project); scheduleSave(); return project.id
+        projects.append(project); return project.id
     }
     func renameProject(_ id: UUID, to name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, let index = projects.firstIndex(where: { $0.id == id }) else { return }
-        projects[index].name = name; scheduleSave()
+        projects[index].name = name
     }
     func relocateProject(_ id: UUID, to url: URL) {
         guard !projectIsActive(id) else { persistenceNotice = String(localized: "任务活动期间不能重新定位项目。"); return }
@@ -766,13 +761,20 @@ struct WorkspaceSnapshot: Codable {
         guard !projects.contains(where: { $0.id != id && $0.path == path }) else {
             persistenceNotice = String(localized: "该文件夹已属于另一个项目。"); return
         }
-        projects[index].path = path; scheduleSave()
+        projects[index].path = path
     }
     func removeProject(_ id: UUID) {
         guard !projectIsActive(id) else { persistenceNotice = String(localized: "任务活动期间不能解除项目关联。"); return }
-        objectWillChange.send()
         (conversations + drafts).filter { $0.projectID == id }.forEach { $0.projectID = nil }
         projects.removeAll { $0.id == id }; flush()
+    }
+    /// Bumped when Echo comes back to the front, since a project's folder may have moved or come
+    /// back meanwhile. `isAvailable(_:)` reads it so the views that show availability look again.
+    private(set) var projectAvailabilityRevision = 0
+    func refreshProjectAvailability() { projectAvailabilityRevision += 1 }
+    func isAvailable(_ project: WorkspaceProject) -> Bool {
+        _ = projectAvailabilityRevision
+        return project.isAvailable
     }
     func projectIsActive(_ id: UUID) -> Bool {
         (conversations + drafts).contains { $0.projectID == id && $0.store.isGenerating }
@@ -781,7 +783,6 @@ struct WorkspaceSnapshot: Codable {
         guard canAssociateProject(conversationID: conversationID),
               let conversation = conversation(id: conversationID) else { return false }
         if let projectID, !projects.contains(where: { $0.id == projectID && $0.isAvailable }) { return false }
-        objectWillChange.send()
         conversation.projectID = projectID
         conversation.lastUsed = Date()
         synchronizeFileBrowser()
@@ -805,7 +806,7 @@ struct WorkspaceSnapshot: Codable {
                 persistenceNotice = Self.saveBlockedNotice; conversation.store.stopTask(); return
             }
             let previousProject = conversation.projectID, knownProjects = Set(projects.map(\.id))
-            objectWillChange.send(); conversation.projectID = addProject(url: url)
+            conversation.projectID = addProject(url: url)
             synchronizeFileBrowser()
             // Persist the binding before letting the pending call proceed.
             do { try persistence?.save(snapshot) }
@@ -852,10 +853,30 @@ struct WorkspaceSnapshot: Codable {
         }
         // Logged only during a Live Voice call: every save for its first 10 s, then only slow ones.
         do {
-            try VoiceDiagnostics.shared.measure("WorkspaceStore.flush", quietAfter: .seconds(10)) { try persistence.save(snapshot) }
+            try VoiceDiagnostics.shared.measure("WorkspaceStore.flush", quietAfter: .seconds(10)) {
+                try persistence.save(trackingSaves { snapshot })
+            }
             return true
         }
         catch { persistenceNotice = String(localized: "会话保存失败：\(error.localizedDescription)"); return false }
+    }
+    /// Reads what a save writes with tracking armed: the first later change to any of it schedules
+    /// a save, inside that write, the way an explicit `scheduleSave()` after it would. Every flush
+    /// reads it again, so a change made right after a flush in the same turn still schedules one;
+    /// otherwise it is read again on the next main-queue turn.
+    private func trackingSaves<T>(_ read: () -> T) -> T {
+        saveTracking += 1
+        let armed = saveTracking
+        return withObservationTracking(options: [.didSet]) { read() } onChange: { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.saveTracking == armed else { return }
+                self.scheduleSave()
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.saveTracking == armed else { return }
+                    _ = self.trackingSaves { self.snapshot }
+                }
+            }
+        }
     }
     private static var saveBlockedNotice: String { String(localized: "无法备份损坏的会话文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。") }
     func shutdown() {
@@ -863,7 +884,7 @@ struct WorkspaceSnapshot: Codable {
         dictation.shutdown()
         voiceObservation = nil
         voice.shutdown()
-        shuttingDown = true; flush(); observations.removeAll(); lifecycleObservations.removeAll(); emptyObservation = nil
+        shuttingDown = true; flush(); saveTracking += 1; lifecycleObservations.removeAll()
         (conversations + drafts).forEach { $0.store.shutdown() }
     }
 }

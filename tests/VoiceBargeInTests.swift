@@ -239,7 +239,7 @@ extension VoiceTests {
             try await f.start(); await f.probe(); await f.recognize()
             let old = f.recognizers[1]
             var published: [VoiceSessionSnapshot] = []
-            let observation = f.voice.$snapshot.sink { published.append($0) }
+            let observation = observeChanges({ f.voice.snapshot }, initial: true) { published.append($0) }
             defer { observation.cancel() }
             switch action {
             case "mute":

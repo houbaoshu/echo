@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import Observation
 
 /// The first-packet timeout measures the microphone, not an engine restart: while VoiceAudio
 /// recovers from a startup reconfiguration nothing can arrive, and once it has recovered the
@@ -36,14 +37,14 @@ enum VoiceCaptureWatchdog {
     }
 }
 
-@MainActor final class VoiceSessionController: NSObject, ObservableObject {
-    @Published private(set) var snapshot = VoiceSessionSnapshot()
+@MainActor @Observable final class VoiceSessionController: NSObject {
+    private(set) var snapshot = VoiceSessionSnapshot()
     /// Set by the shared planet store while a sprite is loaded.
-    var endingAnimationDuration: Duration = .zero
+    @ObservationIgnored var endingAnimationDuration: Duration = .zero
     /// The reply being spoken, or the last one, until the next reply's first subtitle.
-    @Published private(set) var spoken: SpokenReply?
+    private(set) var spoken: SpokenReply?
     /// Playback frames already heard when the current reply's audio began.
-    private var speechBaseFrames = 0
+    @ObservationIgnored private var speechBaseFrames = 0
     /// Seconds of `spoken` audio actually played so far.
     var spokenPosition: TimeInterval {
         guard let spoken else { return 0 }
@@ -58,12 +59,12 @@ enum VoiceCaptureWatchdog {
     var status: String { presentation.status }
     var isMuted: Bool { presentation.isMuted }
     var error: String? { snapshot.error?.message }
-    @Published private(set) var testing = false
-    @Published private(set) var testResult: String?
+    private(set) var testing = false
+    private(set) var testResult: String?
     /// Whether `testResult` reports a success, so the settings page can mark it the
     /// same way the model page marks its own connection test.
-    @Published private(set) var testSucceeded = false
-    @Published private(set) var isDictating = false
+    private(set) var testSucceeded = false
+    private(set) var isDictating = false
     var canStartCall: Bool { snapshot.session.owner == nil && !isDictating && !testing }
     var canSubmit: Bool {
         switch snapshot.session {
@@ -72,54 +73,54 @@ enum VoiceCaptureWatchdog {
         }
     }
     var isActive: Bool { presentation.isActive }
-    private weak var workspace: WorkspaceStore?
-    private weak var settings: SettingsStore?
-    private weak var store: TaskStore?
+    @ObservationIgnored private weak var workspace: WorkspaceStore?
+    @ObservationIgnored private weak var settings: SettingsStore?
+    @ObservationIgnored private weak var store: TaskStore?
     private let audio: any VoiceAudioHandling
     private let makeRecognizer: () -> any VoiceRecognizing
     private let makeSynthesizer: () -> any VoiceSynthesizing
     private let permission: () async -> Bool
-    private var configuration = VoiceConfiguration()
-    private var key = ""
-    private var sessionID = UUID()
-    private var recognitionID = UUID()
-    private var turnID = UUID()
-    private var runID: UUID?
+    @ObservationIgnored private var configuration = VoiceConfiguration()
+    @ObservationIgnored private var key = ""
+    @ObservationIgnored private var sessionID = UUID()
+    @ObservationIgnored private var recognitionID = UUID()
+    @ObservationIgnored private var turnID = UUID()
+    @ObservationIgnored private var runID: UUID?
     // Legacy text-source runs already underway, or accepted while starting, remain text-only.
-    private var textOnlyRunID: UUID?
-    private var submitting = false
-    private var tracker = VoiceUtteranceTracker()
-    private var delta = VoiceTextDelta()
-    private var inputEpoch = 0
-    private var playedAudioForCurrentRun = false
-    private var bargeInGate: VoiceBargeInGate?
-    private var bargeInEchoGuard: VoiceBargeInEchoGuard?
-    private var bargeInTask: Task<Void, Never>?
-    private var bargeInID = UUID()
-    private var recoveryTask: Task<Void, Never>?
-    private var recoveryID = UUID()
-    private var observation: AnyCancellable?
-    private var taskObservation: AnyCancellable?
-    private var handledFinalRunID: UUID?
-    private var submissionHadAudio = false
+    @ObservationIgnored private var textOnlyRunID: UUID?
+    @ObservationIgnored private var submitting = false
+    @ObservationIgnored private var tracker = VoiceUtteranceTracker()
+    @ObservationIgnored private var delta = VoiceTextDelta()
+    @ObservationIgnored private var inputEpoch = 0
+    @ObservationIgnored private var playedAudioForCurrentRun = false
+    @ObservationIgnored private var bargeInGate: VoiceBargeInGate?
+    @ObservationIgnored private var bargeInEchoGuard: VoiceBargeInEchoGuard?
+    @ObservationIgnored private var bargeInTask: Task<Void, Never>?
+    @ObservationIgnored private var bargeInID = UUID()
+    @ObservationIgnored private var recoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var recoveryID = UUID()
+    @ObservationIgnored private var observation: AnyCancellable?
+    @ObservationIgnored private var taskObservation: ObservationHandle?
+    @ObservationIgnored private var handledFinalRunID: UUID?
+    @ObservationIgnored private var submissionHadAudio = false
     // The plain TaskSource adapter has no steering API. Production sessions use the Agent.
     private var usesAgent: Bool { store?.usesAgent == true }
-    private var dictationObservation: AnyCancellable?
-    private var startup: Task<Void, Never>?
-    private var captureWatchdog: Task<Void, Never>?
-    private var receivedCapturePacket = false
-    private var captureTask: Task<Void, Never>?
-    private var recognitionTask: Task<Void, Never>?
-    private var synthesisTask: Task<Void, Never>?
-    private var recognizer: (any VoiceRecognizing)?
-    private var synthesizer: (any VoiceSynthesizing)?
-    private var audioInput: AsyncThrowingStream<Data, Error>.Continuation?
-    private var textInput: AsyncThrowingStream<String, Error>.Continuation?
-    private var probe: Task<Void, Never>?
-    private var probeID = UUID()
-    private var probeRecognizer: (any VoiceRecognizing)?
-    private var probeSynthesizer: (any VoiceSynthesizing)?
-    private var probeWatchdog: Task<Void, Never>?
+    @ObservationIgnored private var dictationObservation: ObservationHandle?
+    @ObservationIgnored private var startup: Task<Void, Never>?
+    @ObservationIgnored private var captureWatchdog: Task<Void, Never>?
+    @ObservationIgnored private var receivedCapturePacket = false
+    @ObservationIgnored private var captureTask: Task<Void, Never>?
+    @ObservationIgnored private var recognitionTask: Task<Void, Never>?
+    @ObservationIgnored private var synthesisTask: Task<Void, Never>?
+    @ObservationIgnored private var recognizer: (any VoiceRecognizing)?
+    @ObservationIgnored private var synthesizer: (any VoiceSynthesizing)?
+    @ObservationIgnored private var audioInput: AsyncThrowingStream<Data, Error>.Continuation?
+    @ObservationIgnored private var textInput: AsyncThrowingStream<String, Error>.Continuation?
+    @ObservationIgnored private var probe: Task<Void, Never>?
+    @ObservationIgnored private var probeID = UUID()
+    @ObservationIgnored private var probeRecognizer: (any VoiceRecognizing)?
+    @ObservationIgnored private var probeSynthesizer: (any VoiceSynthesizing)?
+    @ObservationIgnored private var probeWatchdog: Task<Void, Never>?
     private let probeTimeout: Duration
     private let captureTimeout: Duration
     private let tailProtectionDuration: Duration
@@ -148,7 +149,8 @@ enum VoiceCaptureWatchdog {
     }
     func attach(workspace: WorkspaceStore, settings: SettingsStore) {
         self.workspace = workspace; self.settings = settings
-        dictationObservation = workspace.dictation.$state.sink { [weak self] in self?.isDictating = $0.isActive }
+        let dictation = workspace.dictation
+        dictationObservation = observeChanges({ dictation.state.isActive }, initial: true) { [weak self] in self?.isDictating = $0 }
     }
     @objc private func willSleep() { end(reason: .systemSleep); cancelTest() }
 
@@ -202,7 +204,7 @@ enum VoiceCaptureWatchdog {
         VoiceDiagnostics.shared.mark("start() 进入")
         sessionID = UUID(); let call = sessionID
         self.configuration = configuration; self.key = key; store = conversation.store
-        // Every $snapshot subscriber runs synchronously inside this assignment, PlanetStore's
+        // Every snapshot observer runs synchronously inside this assignment, PlanetStore's
         // sprite load included, so this span is what those subscribers cost the start.
         VoiceDiagnostics.shared.measure("snapshot=.starting（含同步订阅者）") {
             snapshot = VoiceSessionSnapshot(session: .starting(.init(sessionID: call, conversationID: conversation.id)))
@@ -217,7 +219,8 @@ enum VoiceCaptureWatchdog {
         cancelRecovery()
         observation = conversation.store.lifecycle.sink { [weak self] event in self?.handle(event) }
         if usesAgent {
-            taskObservation = conversation.store.$task.sink { [weak self] task in
+            let store = conversation.store
+            taskObservation = observeChanges({ store.task }, initial: true) { [weak self] task in
                 guard let self else { return }
                 self.updateSnapshot { $0.agentActivity = task?.status == .running || task?.status == .stopping ? task?.summary : nil }
                 if task?.status == .stopping {
@@ -630,7 +633,9 @@ enum VoiceCaptureWatchdog {
     }
     private func interruptReply(preserveRun: Bool = false) {
         // Keep what was heard; playback progress resets with the audio below.
-        if let spoken, spoken.runID == runID, spoken.stoppedAt == nil { self.spoken?.stoppedAt = spokenPosition }
+        // Read the position first: an Observable property's in-place write holds exclusive access
+        // to its storage, and spokenPosition reads that same property.
+        if let spoken, spoken.runID == runID, spoken.stoppedAt == nil { let heard = spokenPosition; self.spoken?.stoppedAt = heard }
         cancelBargeIn()
         turnID = UUID()
         if !preserveRun { runID = nil }

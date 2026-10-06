@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Observation
 
 enum TaskStatus: String, Codable { case running, stopping, stopped, completed, interrupted, failed }
 enum TaskEvent { case progress(String), completed(String), failed(String) }
@@ -79,7 +80,7 @@ enum ConversationContext {
         }
     }
 }
-struct ActivityTask: Codable {
+struct ActivityTask: Codable, Equatable {
     let id: UUID
     var runID: UUID
     var title: String
@@ -92,18 +93,18 @@ struct ActivityTask: Codable {
 /// conversation. The previous reply stays until the next reply's first real text; a model
 /// step that turns into a tool call, or is stopped, is withdrawn and the previous reply returns.
 /// Its own publisher keeps streamed text out of the conversation's save path.
-@MainActor final class AssistantReplyStream: ObservableObject {
-    @Published private(set) var text = ""
+@MainActor @Observable final class AssistantReplyStream {
+    private(set) var text = ""
     /// What the running model step has written so far, for surfaces that show the reply
     /// while it is being written. Nil once the step settles, because from then on the
     /// conversation itself carries the text; `text` keeps the last reply instead.
-    @Published private(set) var live: String?
+    private(set) var live: String?
     /// The unsettled operation that currently supplies `text`.
-    private var operationID: UInt64?
+    @ObservationIgnored private var operationID: UInt64?
     /// What was shown before `operationID` replaced it.
-    private var retained = ""
+    @ObservationIgnored private var retained = ""
     /// Operations up to here are final or withdrawn; late stream snapshots for them are ignored.
-    private var settledThrough: UInt64 = 0
+    @ObservationIgnored private var settledThrough: UInt64 = 0
 
     /// `text` is everything received so far for the operation, like `TaskEvent.progress`.
     func receive(operationID: UInt64, text next: String, toolCall: Bool) {
@@ -197,24 +198,24 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
 }
 
-@MainActor final class TaskStore: ObservableObject {
+@MainActor @Observable final class TaskStore {
     let lifecycle = PassthroughSubject<TaskLifecycleEvent, Never>()
-    @Published private(set) var task: ActivityTask?
-    @Published private(set) var messages: [ConversationMessage] = []
-    @Published private(set) var isMainWindowVisible = false
-    @Published private(set) var activitiesCollapsed = false
-    @Published private(set) var activityDismissed = false
-    @Published private(set) var isFollowUpExpanded = false
+    private(set) var task: ActivityTask?
+    private(set) var messages: [ConversationMessage] = []
+    private(set) var isMainWindowVisible = false
+    private(set) var activitiesCollapsed = false
+    private(set) var activityDismissed = false
+    private(set) var isFollowUpExpanded = false
     /// A terminal result is unread until its conversation is opened in the main window.
     /// The value orders completions across conversations. Transient: restart never restores the activity.
-    @Published private(set) var unseenCompletion: UInt64?
+    private(set) var unseenCompletion: UInt64?
     private static var completionClock: UInt64 = 0
     var hasUnseenCompletion: Bool { unseenCompletion != nil }
-    @Published var mainDraft = ""
-    @Published var followUpDraft = ""
-    @Published var notice: String?
+    var mainDraft = ""
+    var followUpDraft = ""
+    var notice: String?
     let replyStream = AssistantReplyStream()
-    @Published private(set) var cardProgress = ""
+    private(set) var cardProgress = ""
     private var cardReply = ""
     /// Uses the latest reply and execution step, without a summarization request.
     var cardSummary: String {
@@ -226,27 +227,27 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         // The card shows at most two lines of the result; the chat retains the full reply.
         return text
     }
-    @Published private(set) var tools: [AgentToolRecord] = []
-    @Published private(set) var needsDirectory = false
-    @Published private(set) var waitingForProject = false
+    private(set) var tools: [AgentToolRecord] = []
+    private(set) var needsDirectory = false
+    private(set) var waitingForProject = false
     private var agentStored: Bool?
-    private var storageFailure: String?
-    var sessionID = UUID()
-    var projectDirectory: (() -> URL?)?
-    var checkpoint: ((Snapshot) throws -> Void)?
-    var acquireDirectory: ((String, @escaping () -> Void) -> Void)?
-    var cancelDirectoryWait: (() -> Void)?
-    var releaseDirectory: (() -> Void)?
+    @ObservationIgnored private var storageFailure: String?
+    @ObservationIgnored var sessionID = UUID()
+    @ObservationIgnored var projectDirectory: (() -> URL?)?
+    @ObservationIgnored var checkpoint: ((Snapshot) throws -> Void)?
+    @ObservationIgnored var acquireDirectory: ((String, @escaping () -> Void) -> Void)?
+    @ObservationIgnored var cancelDirectoryWait: (() -> Void)?
+    @ObservationIgnored var releaseDirectory: (() -> Void)?
     var agentLoadError: String?
     var usesAgent: Bool { harness != nil }
     /// The Agent engine, when this conversation uses it.
     private var harness: AgentHarness? { source as? AgentHarness }
     private let source: (any TaskSource)?
     private var retired = false
-    private var responseMessageID: UUID?
-    private var activeRequestMessages: [ConversationMessage] = []
-    var onUserAction: (() -> Void)?
-    var onVisibilityChange: ((Bool) -> Void)?
+    @ObservationIgnored private var responseMessageID: UUID?
+    @ObservationIgnored private var activeRequestMessages: [ConversationMessage] = []
+    @ObservationIgnored var onUserAction: (() -> Void)?
+    @ObservationIgnored var onVisibilityChange: ((Bool) -> Void)?
 
     struct Snapshot: Codable {
         var task: ActivityTask?
@@ -260,6 +261,10 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         var loadError: String? = nil
         var native: NativeAgentState? = nil
     }
+    /// Part of `WorkspaceStore.snapshot`, under the same rule: everything read here is an observed
+    /// property, so changing it schedules a save. The exception is the Agent's transcript, which
+    /// lives in the harness, an object that is not observable, and is saved through `checkpoint`
+    /// at the points a turn commits: when it is sent, around each tool call, and when it ends.
     var snapshot: Snapshot {
         Snapshot(task: task, messages: messages, mainDraft: mainDraft, followUpDraft: followUpDraft,
                  activityDismissed: activityDismissed, activitiesCollapsed: activitiesCollapsed,

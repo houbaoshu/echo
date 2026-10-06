@@ -334,7 +334,6 @@ import Foundation
             workspace.toggleActivityTray()
             workspace.toggleActivityTray()
             workspace.expandActivityList()
-            workspace.objectWillChange.send()
             await Task.yield()
             #expect(workspace.petActivities.map(\.id) == [second.id])
             #expect(workspace.unseenCompletedCount == 1)
@@ -886,6 +885,93 @@ import Foundation
 
     /// An archive written before steering, tool states and the untitled state had types of their
     /// own stored them as the text the interface showed. It reads back with the same meaning.
+    /// Saving follows what `WorkspaceStore.snapshot` reads. Each saved field is changed on its own,
+    /// through the narrowest way the app changes it, and has to reach the archive on disk: a field
+    /// left out of observation would only be written with some other change.
+    @Test @MainActor static func everySavedFieldReachesTheArchiveOnItsOwn() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-saved-fields-\(UUID())")
+        let folders = ["项目甲", "项目乙", "项目丙"].map { root.appendingPathComponent($0) }
+        for folder in folders { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        let url = root.appendingPathComponent("workspace.json")
+        var sources: [WorkspaceTestSource] = []
+        func open() -> WorkspaceStore {
+            WorkspaceStore(persistence: WorkspacePersistence(url: url), sourceFactory: {
+                let source = WorkspaceTestSource(); sources.append(source); return source
+            })
+        }
+
+        // A chat with a finished reply, a project, and an empty draft: then a fresh launch, so the
+        // chat carries no recency from this session that would stand in for its own date.
+        let first = open()
+        let seeded = first.newConversation()
+        #expect(first.send("你好", conversationID: seeded.id))
+        sources.last?.receive?(.completed("你好呀"))
+        let projectID = first.addProject(url: folders[0])
+        _ = first.newConversation()
+        first.shutdown()
+
+        let launched = sources.count
+        let workspace = open()
+        defer { workspace.shutdown() }
+        let chat = try #require(workspace.conversation(id: seeded.id))
+        let draft = try #require(workspace.selected)
+        try await Task.sleep(for: .milliseconds(600))
+
+        func archive() throws -> WorkspaceSnapshot { try JSONDecoder().decode(WorkspaceSnapshot.self, from: Data(contentsOf: url)) }
+        func saved(_ snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot.Conversation? { snapshot.conversations.first { $0.id == chat.id } }
+        func expectSaved(_ field: String, sourceLocation: SourceLocation = #_sourceLocation,
+                         _ change: () -> Void, _ landed: (WorkspaceSnapshot) -> Bool) async throws {
+            #expect(!landed(try archive()), "\(field) is not on disk before it changes", sourceLocation: sourceLocation)
+            change()
+            let deadline = Date().addingTimeInterval(3)
+            while !((try? landed(archive())) ?? false) {
+                guard Date() < deadline else {
+                    Issue.record("\(field) never reached the archive on its own", sourceLocation: sourceLocation); return
+                }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+
+        // WorkspaceStore
+        try await expectSaved("a new project", { _ = workspace.addProject(url: folders[1]) }) { $0.projects.contains { $0.name == "项目乙" } }
+        try await expectSaved("a project's name", { workspace.renameProject(projectID, to: "改过名的项目") }) {
+            $0.projects.contains { $0.id == projectID && $0.name == "改过名的项目" }
+        }
+        try await expectSaved("a project's folder", { workspace.relocateProject(projectID, to: folders[2]) }) {
+            $0.projects.contains { $0.id == projectID && $0.path.hasSuffix("项目丙") }
+        }
+        try await expectSaved("the selection", { workspace.select(chat.id) }) { $0.selectedID == chat.id }
+
+        // WorkspaceConversation
+        try await expectSaved("a chat's title", { chat.title = "直接改的标题" }) { saved($0)?.title == "直接改的标题" }
+        try await expectSaved("whether it was named by hand", { chat.manuallyNamed = true }) { saved($0)?.manuallyNamed == true }
+        try await expectSaved("whether it is untitled", { chat.untitled = true }) { saved($0)?.untitled == true }
+        let date = Date(timeIntervalSince1970: 1_000_000)
+        try await expectSaved("when it was last used", { chat.lastUsed = date }) { saved($0)?.lastUsed == date }
+        let projects = workspace.projects
+        let other = try #require(projects.first { $0.id != projectID }?.id)
+        try await expectSaved("a draft's project", { #expect(workspace.associateProject(other, conversationID: draft.id)) }) {
+            $0.drafts?.contains { $0.id == draft.id && $0.projectID == other } == true
+        }
+
+        // TaskStore
+        try await expectSaved("the main draft", { chat.store.mainDraft = "还没发出的话" }) { saved($0)?.state.mainDraft == "还没发出的话" }
+        try await expectSaved("the follow-up draft", { chat.store.followUpDraft = "跟进的话" }) { saved($0)?.state.followUpDraft == "跟进的话" }
+        try await expectSaved("a folded card", { chat.store.foldActivity() }) { saved($0)?.state.activitiesCollapsed == true }
+        try await expectSaved("a dismissed card", { chat.store.closeActivity() }) { saved($0)?.state.activityDismissed == true }
+        try await expectSaved("a load error", { chat.store.agentLoadError = "记录无法读取" }) { saved($0)?.state.loadError == "记录无法读取" }
+        chat.store.agentLoadError = nil
+        try await Task.sleep(for: .milliseconds(600))
+        try await expectSaved("a sent message", { #expect(workspace.send("第二个问题", conversationID: chat.id)) }) {
+            saved($0)?.state.messages.contains { $0.content == "第二个问题" } == true
+        }
+        let chatSource = try #require(sources[launched...].first { $0.requests > 0 })
+        try await expectSaved("the task's outcome", { chatSource.receive?(.completed("第二个回答")) }) {
+            saved($0)?.state.task?.status == .completed && saved($0)?.state.messages.last?.content == "第二个回答"
+        }
+        print("Saved-fields archive kept at \(root.path)")
+    }
+
     @Test(.tags(.fast)) @MainActor static func archiveWithTextStatesReadsBackUnchanged() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-text-state-archive-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }

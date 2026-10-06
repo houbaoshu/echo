@@ -1,5 +1,5 @@
 import Foundation
-import Combine
+import Observation
 import Darwin
 import ImageIO
 import UniformTypeIdentifiers
@@ -27,7 +27,7 @@ enum ProjectFilePreview: Equatable, Sendable {
 }
 
 // No file content or navigation state is part of WorkspaceSnapshot.
-@MainActor final class ProjectFileBrowserStore: ObservableObject {
+@MainActor @Observable final class ProjectFileBrowserStore {
     struct Location: Hashable, Sendable {
         let projectID: UUID
         let root: String
@@ -40,18 +40,18 @@ enum ProjectFilePreview: Equatable, Sendable {
         var preview: ProjectFilePreview = .loading
         var scrollID: String?
     }
-    @Published private(set) var location: Location?
-    @Published private(set) var state = BrowsingState()
+    private(set) var location: Location?
+    private(set) var state = BrowsingState()
     // Temporary presentation state, deliberately excluded from the per-project cache.
-    @Published private(set) var isPreviewExpanded = false
-    private var watcher: ProjectFileWatcher?
-    private var watchID = UUID()
-    private var cache: [Location: BrowsingState] = [:]
-    private var generation = UUID()
-    private var directoryRequests: [String: UUID] = [:]
-    private var refreshing: Set<Location> = []
-    private var pendingRefresh: Set<Location> = []
-    private var previewRequest = UUID()
+    private(set) var isPreviewExpanded = false
+    @ObservationIgnored private var watcher: ProjectFileWatcher?
+    @ObservationIgnored private var watchID = UUID()
+    @ObservationIgnored private var cache: [Location: BrowsingState] = [:]
+    @ObservationIgnored private var generation = UUID()
+    @ObservationIgnored private var directoryRequests: [String: UUID] = [:]
+    @ObservationIgnored private var refreshing: Set<Location> = []
+    @ObservationIgnored private var pendingRefresh: Set<Location> = []
+    @ObservationIgnored private var previewRequest = UUID()
     private let readDirectory: @Sendable (String, String) -> ProjectDirectoryState
     private let readPreview: @Sendable (String, String) -> ProjectFilePreview
 

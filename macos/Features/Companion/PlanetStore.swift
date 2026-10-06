@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Observation
 import ImageIO
 
 /// One bundled or imported planet. A planet directory is a pet directory: the same `pet.json` manifest and the
@@ -17,28 +18,28 @@ struct PlanetEntry: Identifiable {
 /// It owns the one sprite instance both surfaces draw, and drives it straight from the voice
 /// snapshot rather than from a view: two views driving it would fight over the animation clock,
 /// because every `set_animation` restarts it.
-@MainActor final class PlanetStore: ObservableObject {
+@MainActor @Observable final class PlanetStore {
     /// Filled the first time the settings page asks; the app itself only needs the selected one.
-    @Published private(set) var entries: [PlanetEntry] = []
-    @Published private(set) var selectedID: String
+    private(set) var entries: [PlanetEntry] = []
+    private(set) var selectedID: String
     /// The card an import added or found already listed, so the grid can scroll to it.
-    @Published private(set) var highlightedID: String?
+    private(set) var highlightedID: String?
     /// Loaded only while Live Voice runs. Dropping it frees the frames on both sides of the FFI.
-    @Published private(set) var active: PetStore?
-    @Published var notice: String?
+    private(set) var active: PetStore?
+    var notice: String?
     /// The clip the planet is playing, so a test can assert a swap kept the current state.
-    private(set) var playing: String?
+    @ObservationIgnored private(set) var playing: String?
     /// How long the runtime's `review` clip plays once: five 150 ms frames and a 280 ms hold.
     private static let endingDuration: Duration = .milliseconds(1030)
 
     private let settings: SettingsStore?
     private let root: URL?
     private let importedRoot: URL?
-    private var loadedEntries = false
-    private var current: PetSurfacePresentation.VoiceIndicator = .inactive
-    private weak var voice: VoiceSessionController?
-    private var voiceObservation: AnyCancellable?
-    private var reduceMotionObservation: AnyCancellable?
+    @ObservationIgnored private var loadedEntries = false
+    @ObservationIgnored private var current: PetSurfacePresentation.VoiceIndicator = .inactive
+    @ObservationIgnored private weak var voice: VoiceSessionController?
+    @ObservationIgnored private var voiceObservation: ObservationHandle?
+    @ObservationIgnored private var reduceMotionObservation: AnyCancellable?
 
     init(settings: SettingsStore? = nil, root: URL? = nil, importedRoot: URL? = nil, voice: VoiceSessionController? = nil) {
         self.settings = settings
@@ -46,12 +47,11 @@ struct PlanetEntry: Identifiable {
         self.importedRoot = importedRoot
         self.voice = voice
         selectedID = settings?.snapshot.selectedPlanetID ?? SettingsSnapshot.defaultPlanetID
-        voiceObservation = voice?.$snapshot
-            .map { PetSurfacePresentation.indicator(for: $0) }
-            .removeDuplicates()
-            .sink { [weak self] indicator in
-                MainActor.assumeIsolated { self?.apply(indicator) }
-            }
+        if let voice {
+            voiceObservation = observeChanges({ [weak voice] in
+                voice.map { PetSurfacePresentation.indicator(for: $0.snapshot) } ?? .inactive
+            }, initial: true) { [weak self] indicator in self?.apply(indicator) }
+        }
         reduceMotionObservation = NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)
             .sink { [weak self] _ in

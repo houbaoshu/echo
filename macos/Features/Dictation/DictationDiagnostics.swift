@@ -1,5 +1,4 @@
 import Foundation
-import Combine
 
 /// Explicit, local transcript tracing for ordinary dictation only (never Live Voice).
 /// Keep this separate from VoiceDiagnostics, whose logs never contain transcripts.
@@ -73,7 +72,7 @@ import Combine
     private let recordingID: UUID
     let conversationID: UUID
     private let canRecord: () -> Bool
-    private var draftObservation: AnyCancellable?
+    private var draftObservation: ObservationHandle?
     private var lastSnapshots: [String: Data] = [:]
     private var callbacks = 0
 
@@ -81,9 +80,10 @@ import Combine
          store: TaskStore, canRecord: @escaping () -> Bool = { true }) {
         self.logger = logger; self.recordingID = recordingID; self.conversationID = conversationID
         self.canRecord = canRecord
-        // @Published emits before assignment. The proposed value is logged separately.
-        draftObservation = store.$mainDraft.dropFirst().sink { [weak self, weak store] next in
-            self?.record("draft.willSet", ["before": store?.mainDraft ?? "", "proposed": next])
+        // Recorded right after each change, with the draft it replaced and the one it set. The event
+        // keeps its name so traces stay comparable with ones recorded before the change.
+        draftObservation = observeTransitions({ [weak store] in store?.mainDraft ?? "" }) { [weak self] before, next in
+            self?.record("draft.willSet", ["before": before, "proposed": next])
         }
     }
 

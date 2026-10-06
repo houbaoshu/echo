@@ -48,7 +48,7 @@ final class AppIntegrationTests: XCTestCase {
         let store = TaskStore(source: harness)
         defer { store.shutdown() }
         var snapshots: [String] = []
-        let watch = store.replyStream.$live.sink { if let live = $0 { snapshots.append(live) } }
+        let watch = observeChanges({ store.replyStream.live }, initial: true) { if let live = $0 { snapshots.append(live) } }
         defer { watch.cancel() }
         func idle(_ seconds: Double) async throws {
             let deadline = Date().addingTimeInterval(seconds)

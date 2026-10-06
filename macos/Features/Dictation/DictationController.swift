@@ -1,38 +1,38 @@
 import AppKit
 import AVFoundation
-import Combine
+import Observation
 
 /// One bounded dictation owns a draft, independently of model generation and calls.
-@MainActor final class DictationController: NSObject, ObservableObject {
+@MainActor @Observable final class DictationController: NSObject {
     enum State { case idle, recording, finalizing, failed
         var isActive: Bool { self == .recording || self == .finalizing }
     }
-    @Published private(set) var state: State = .idle
+    private(set) var state: State = .idle
     /// The latest cumulative transcript; the draft receives it unless the recording is discarded.
-    @Published private(set) var subtitle = ""
-    @Published private(set) var error: String?
-    @Published private(set) var captureReady = false
-    @Published private(set) var levels: [Double] = []
+    private(set) var subtitle = ""
+    private(set) var error: String?
+    private(set) var captureReady = false
+    private(set) var levels: [Double] = []
     private(set) var conversationID: UUID?
     var isActive: Bool { state.isActive }
-    private weak var workspace: WorkspaceStore?
-    private weak var store: TaskStore?
+    @ObservationIgnored private weak var workspace: WorkspaceStore?
+    @ObservationIgnored private weak var store: TaskStore?
     private let audio: any VoiceAudioHandling
     private let makeRecognizer: () async throws -> any VoiceRecognizing
     private let permission: () async -> Bool
     private let finalizationTimeout: Duration
     private let captureTimeout: Duration
-    private var generation = UUID()
-    private var retired = false
-    private var finalTranscript: String?
-    private var recognizer: (any VoiceRecognizing)?
-    private var audioInput: AsyncThrowingStream<Data, Error>.Continuation?
-    private var startup: Task<Void, Never>?
-    private var captureTask: Task<Void, Never>?
-    private var recognitionTask: Task<Void, Never>?
-    private var watchdog: Task<Void, Never>?
+    @ObservationIgnored private var generation = UUID()
+    @ObservationIgnored private var retired = false
+    @ObservationIgnored private var finalTranscript: String?
+    @ObservationIgnored private var recognizer: (any VoiceRecognizing)?
+    @ObservationIgnored private var audioInput: AsyncThrowingStream<Data, Error>.Continuation?
+    @ObservationIgnored private var startup: Task<Void, Never>?
+    @ObservationIgnored private var captureTask: Task<Void, Never>?
+    @ObservationIgnored private var recognitionTask: Task<Void, Never>?
+    @ObservationIgnored private var watchdog: Task<Void, Never>?
     /// Set when recording was finished with Send; runs once the final transcript is in the draft.
-    private var sendWhenFinished: (() -> Void)?
+    @ObservationIgnored private var sendWhenFinished: (() -> Void)?
     private(set) var diagnosticTrace: DictationTrace?
 
     private var diagnosticState: [String: Any] {

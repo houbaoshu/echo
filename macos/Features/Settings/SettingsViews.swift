@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// come from AppKit, the same way the workspace sidebar gets them. Nothing here
 /// paints a background or fixes a width, or that material would be covered up.
 struct SettingsSidebar: View {
-    @ObservedObject var settings: SettingsStore
+    var settings: SettingsStore
     /// Owned by the window controller, so showing the page can hand the first
     /// responder to this list instead of to the hosting container.
     let sectionFocus: SidebarListFocus
@@ -51,10 +51,10 @@ struct SettingsSidebar: View {
 /// keeps its controls in the chat window and on the pet strip, so settings never
 /// carries them. The sidebar is its own column, so this is only the right-hand side.
 struct SettingsView: View {
-    @ObservedObject var settings: SettingsStore
-    @ObservedObject var voice: VoiceSessionController
+    var settings: SettingsStore
+    var voice: VoiceSessionController
     let pets: PetCatalog
-    @ObservedObject var planets: PlanetStore
+    var planets: PlanetStore
     private var section: SettingsSection { settings.selectedSection }
     var body: some View {
         // Each section is its own `Form`, so the card grouping, the label column and
@@ -109,7 +109,7 @@ struct SettingsTestResult: View {
 }
 
 struct ModelSettingsView: View {
-    @ObservedObject var settings: SettingsStore
+    @Bindable var settings: SettingsStore
     @State private var revealsKey = false
     /// Revealing swaps the secure field for a plain one — a different view, which
     /// takes the first responder with it when it goes. Hand it back to whichever
@@ -205,7 +205,7 @@ struct ModelSettingsView: View {
 /// The offline model: which one is imported, bringing in an exported model folder, and where it is.
 /// The path is one click away rather than always on screen.
 struct LocalModelSection: View {
-    @ObservedObject var settings: SettingsStore
+    var settings: SettingsStore
     @State private var importing = false
     var body: some View {
         Section {
@@ -252,7 +252,7 @@ struct LocalModelSection: View {
 
 struct PetSettingsView: View {
     let pets: PetCatalog
-    @ObservedObject var settings: SettingsStore
+    var settings: SettingsStore
     var body: some View {
         Form {
             Section {
@@ -282,7 +282,7 @@ struct PetSettingsView: View {
 /// Live Voice's planet picker. Same card grid as the pets, from a different folder: a planet is
 /// the voice mark, not a second pet, so it gets its own section rather than a row in 精灵.
 struct PlanetSettingsView: View {
-    @ObservedObject var planets: PlanetStore
+    var planets: PlanetStore
     var body: some View {
         Form {
             Section {

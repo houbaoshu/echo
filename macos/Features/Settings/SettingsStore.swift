@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Security
 
 enum ModelAPIProtocol: String, Codable, CaseIterable, Sendable {
@@ -212,29 +213,29 @@ protocol ConnectionTesting: Sendable {
     func test(configuration: ModelConfiguration, key: String) async throws
 }
 
-@MainActor final class SettingsStore: ObservableObject {
-    @Published var voiceDraft = VoiceConfiguration()
-    @Published var voiceAPIKey = ""
-    @Published var voiceNotice: String?
+@MainActor @Observable final class SettingsStore {
+    var voiceDraft = VoiceConfiguration()
+    var voiceAPIKey = ""
+    var voiceNotice: String?
     private var savedVoiceKey = ""
     private var voiceKeyLoaded = true
     var isVoiceDirty: Bool { voiceDraft != (snapshot.voice ?? VoiceConfiguration()) || voiceAPIKey != savedVoiceKey }
-    @Published var selectedSection = SettingsSection.model
-    @Published var presentationRevision = 0
-    @Published private(set) var selectedProvider: ModelProvider = .openAI
-    @Published var draft = ModelConfiguration() { didSet { invalidateTest() } }
-    @Published var apiKey = "" { didSet { invalidateTest() } }
-    @Published private(set) var snapshot = SettingsSnapshot()
-    @Published var notice: String?
-    @Published private(set) var testResult: String?
-    @Published private(set) var testing = false
-    @Published private(set) var testSucceeded = false
+    var selectedSection = SettingsSection.model
+    var presentationRevision = 0
+    private(set) var selectedProvider: ModelProvider = .openAI
+    var draft = ModelConfiguration() { didSet { invalidateTest() } }
+    var apiKey = "" { didSet { invalidateTest() } }
+    private(set) var snapshot = SettingsSnapshot()
+    var notice: String?
+    private(set) var testResult: String?
+    private(set) var testing = false
+    private(set) var testSucceeded = false
     /// The offline model, as its files show it; refreshed when the model settings appear.
-    @Published private(set) var localModel: LocalModelAvailability = .missing
+    private(set) var localModel: LocalModelAvailability = .missing
     /// The ready model's name from its metadata, read with `localModel`; nil when there is no usable one.
-    @Published private(set) var localModelName: String?
-    @Published private(set) var importingLocalModel = false
-    @Published var localModelNotice: String?
+    private(set) var localModelName: String?
+    private(set) var importingLocalModel = false
+    var localModelNotice: String?
     private let url: URL?
     private let secrets: any SecretStore
     private let tester: any ConnectionTesting
@@ -251,8 +252,8 @@ protocol ConnectionTesting: Sendable {
     private var savedKey: String { credentials[snapshot.activeProvider]?.key ?? "" }
     private var keyLoaded: Bool { credentials[snapshot.activeProvider]?.loaded ?? true }
     private var selectedCredential: Credential { credentials[selectedProvider] ?? Credential() }
-    private var task: Task<Void, Never>?
-    private var revision = 0
+    @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var revision = 0
     private var loadBlocked = false
     static var directory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

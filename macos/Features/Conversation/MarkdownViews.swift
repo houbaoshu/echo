@@ -165,7 +165,7 @@ struct ConversationMessageView: View {
 /// the core's checkpoint projection, which only carries a reply once the step is final, so the
 /// stream's snapshot stands in for that message until the projected one takes its place.
 struct StreamingReplyView: View {
-    @ObservedObject var stream: AssistantReplyStream
+    var stream: AssistantReplyStream
     var showsProgress = true
     /// One identity for the whole reply, so arriving text grows the same bubble.
     private static let messageID = UUID()

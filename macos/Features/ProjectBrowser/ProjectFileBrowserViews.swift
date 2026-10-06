@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct WorkspaceInspector: View {
-    @ObservedObject var workspace: WorkspaceStore
+    var workspace: WorkspaceStore
     var body: some View {
         ProjectFileBrowserView(workspace: workspace, browser: workspace.fileBrowser)
             .onChange(of: workspace.selectedID, initial: true) { _, _ in synchronize() }
@@ -18,8 +18,8 @@ struct WorkspaceInspector: View {
 }
 
 private struct ProjectFileBrowserView: View {
-    @ObservedObject var workspace: WorkspaceStore
-    @ObservedObject var browser: ProjectFileBrowserStore
+    var workspace: WorkspaceStore
+    var browser: ProjectFileBrowserStore
     @State private var listFocus = SidebarListFocus()
     private var project: WorkspaceProject? { workspace.selectedID.flatMap { workspace.project(for: $0) } }
     var body: some View {

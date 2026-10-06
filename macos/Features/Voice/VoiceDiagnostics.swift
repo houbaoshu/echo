@@ -1,5 +1,5 @@
 import Foundation
-import Combine
+import Observation
 import OSLog
 
 /// Why a Live Voice call ended, one case per `VoiceSessionController.end` call site, so a log
@@ -48,16 +48,21 @@ extension VoiceEndReason {
 
 // Only locally constructed metadata belongs here. Never log keys, request headers,
 // transcripts, remote error bodies or raw audio.
-@MainActor final class VoiceDiagnostics: ObservableObject {
+@MainActor @Observable final class VoiceDiagnostics {
     static let shared = VoiceDiagnostics()
-    @Published private(set) var lines: [String] = []
-    private let logger = Logger(subsystem: "local.chiyan.desktop-pet", category: "voice")
+    private(set) var lines: [String] = []
+    @ObservationIgnored private let logger = Logger(subsystem: "local.chiyan.desktop-pet", category: "voice")
     var text: String { lines.joined(separator: "\n") }
 
     func record(_ stage: String, _ status: String, _ message: String) {
         let line = "\(Date().ISO8601Format()) [\(stage)] \(status) \(message)"
-        lines.append(line)
-        if lines.count > 300 { lines.removeFirst(lines.count - 300) }
+        // Through the storage, not `lines`: an in-place write reads the property too, and this is
+        // called from inside tracked work (a flush, a synchronize), which would then rerun on
+        // every later line. Observers of `lines` are still told.
+        withMutation(keyPath: \.lines) {
+            _lines.append(line)
+            if _lines.count > 300 { _lines.removeFirst(_lines.count - 300) }
+        }
         logger.notice("\(line, privacy: .public)")
         FileHandle.standardError.write(Data((line + "\n").utf8))
     }
@@ -67,8 +72,8 @@ extension VoiceEndReason {
     // Lines are written only while a call is open, so the spans on shared paths (PlanetStore,
     // workspace saves) stay silent the rest of the time. Signposts are always emitted, so the
     // same stages line up with Time Profiler in Instruments ("voice-timeline" category).
-    private let signposter = OSSignposter(subsystem: "local.chiyan.desktop-pet", category: "voice-timeline")
-    private var timelineStart: ContinuousClock.Instant?
+    @ObservationIgnored private let signposter = OSSignposter(subsystem: "local.chiyan.desktop-pet", category: "voice-timeline")
+    @ObservationIgnored private var timelineStart: ContinuousClock.Instant?
     var isTimelineOpen: Bool { timelineStart != nil }
 
     func beginTimeline(_ entry: String) {

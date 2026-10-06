@@ -77,7 +77,7 @@ import Testing
             try await FakeBackend.stream(["回", "复", "\(index)", "。"], gap: .milliseconds(40), into: channel)
         }
         var shown: [String?] = []
-        let watch = chat.store.replyStream.$live.sink { shown.append($0) }
+        let watch = observeChanges({ chat.store.replyStream.live }, initial: true) { shown.append($0) }
         #expect(chat.store.send("你好"))
         try await chat.idle()
         #expect(chat.store.send("再说一次"))

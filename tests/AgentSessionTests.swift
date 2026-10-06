@@ -46,11 +46,9 @@ extension EchoIntegrationScenarios {
 
       // Stop admitted while the completed reply is being applied: the real race path.
       let raced = workspace.newConversation()
-      let raceStop = raced.store.$messages.sink { [store = raced.store] messages in
-        MainActor.assumeIsolated {
-          if store.isGenerating, messages.contains(where: { $0.role == .assistant && !$0.content.isEmpty }) {
-            store.stopTask()
-          }
+      let raceStop = observeChanges({ [store = raced.store] in store.messages }, initial: true) { [store = raced.store] messages in
+        if store.isGenerating, messages.contains(where: { $0.role == .assistant && !$0.content.isEmpty }) {
+          store.stopTask()
         }
       }
       raced.store.send("hello race")

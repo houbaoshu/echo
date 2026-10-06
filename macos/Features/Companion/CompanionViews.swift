@@ -104,7 +104,7 @@ private struct ActivityCloseButtonFrames: PreferenceKey {
 }
 
 struct ActivityCapsule: View {
-    @ObservedObject var store: TaskStore
+    @Bindable var store: TaskStore
     var canStop: Bool = false
     let send: () -> Void
     let stop: () -> Void
@@ -444,8 +444,8 @@ private struct PetSegment<Label: View>: View {
 }
 
 struct PetControls: View {
-    @ObservedObject var store: TaskStore
-    @ObservedObject var voice: VoiceSessionController
+    var store: TaskStore
+    var voice: VoiceSessionController
     @Bindable var presentation: PetControlsPresentation
     let placement: ActivityPlacement
     var unseenCompleted = 0
@@ -760,10 +760,11 @@ struct PetControls: View {
     private static var projectButtonLabel: String { String(localized: "关联项目|悬停提示", defaultValue: "关联项目") }
 
     private func projectChip(_ project: WorkspaceProject) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: project.isAvailable ? "folder" : "folder.badge.questionmark").accessibilityHidden(true)
+        let available = workspace?.isAvailable(project) ?? project.isAvailable
+        return HStack(spacing: 3) {
+            Image(systemName: available ? "folder" : "folder.badge.questionmark").accessibilityHidden(true)
             Text(project.name).lineLimit(1).truncationMode(.middle)
-                .accessibilityLabel(project.isAvailable ? project.name : String(localized: "\(project.name)（不可用）"))
+                .accessibilityLabel(available ? project.name : String(localized: "\(project.name)（不可用）"))
                 .accessibilityIdentifier("pet.project.name")
             Button {
                 presentation.projectID = nil; presentation.refocusComposer()
@@ -773,10 +774,10 @@ struct PetControls: View {
             .buttonStyle(.plain).help("取消关联项目").accessibilityLabel("取消关联项目")
             .accessibilityIdentifier("pet.project.detach")
         }
-        .font(.subheadline).foregroundStyle(project.isAvailable ? Color.secondary : WorkspaceStyle.warning)
+        .font(.subheadline).foregroundStyle(available ? Color.secondary : WorkspaceStyle.warning)
         .padding(.leading, 6).padding(.trailing, 2).frame(height: 20).frame(maxWidth: 104)
         .background(.primary.opacity(0.06), in: Capsule())
-        .help(project.isAvailable ? project.path : String(localized: "项目不可用：\(project.path)"))
+        .help(available ? project.path : String(localized: "项目不可用：\(project.path)"))
     }
 
     private func send() {
@@ -842,7 +843,7 @@ struct PetControls: View {
 
 
 struct WorkspaceActivityCapsule: View {
-    @ObservedObject var workspace: WorkspaceStore
+    var workspace: WorkspaceStore
     let placement: ActivityPlacement
     /// A card opens its chat when clicked; the front of a stack opens the list instead.
     @ViewBuilder private func card(_ conversation: WorkspaceConversation, stacked: Bool = false) -> some View {
@@ -925,10 +926,10 @@ struct StackedCardSliver: Shape {
 }
 
 struct WorkspacePetControls: View {
-    @ObservedObject var workspace: WorkspaceStore
+    var workspace: WorkspaceStore
     /// Observed here rather than inside `PetControls`: a planet swap republishes `active`, and
     /// this is the view that has to notice and hand the strip the new sprite.
-    @ObservedObject var planets: PlanetStore
+    var planets: PlanetStore
     let presentation: PetControlsPresentation
     let placement: ActivityPlacement
     var body: some View {
@@ -1094,7 +1095,7 @@ struct LatestLinesLayout: Layout {
 }
 
 struct WorkspaceCompanionBubble: View {
-    @ObservedObject var voice: VoiceSessionController
+    var voice: VoiceSessionController
     let state: CompanionBubbleState
     let placement: ActivityPlacement
     var body: some View {

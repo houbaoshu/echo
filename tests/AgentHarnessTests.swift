@@ -97,7 +97,7 @@ import Testing
             try await emit.text(["reply ", "\(index)"], gap: .milliseconds(20))
         }
         var shown: [String?] = []
-        let watch = simple.store.replyStream.$live.sink { shown.append($0) }
+        let watch = observeChanges({ simple.store.replyStream.live }, initial: true) { shown.append($0) }
         #expect(simple.store.send("one"))
         #expect(simple.store.isGenerating && simple.store.task?.status == .running)
         try await simple.idle()
@@ -148,7 +148,7 @@ import Testing
             }
         }, project: root)
         var withdrawn = false
-        let watch = chat.store.replyStream.$live.sink { live in if live == nil { withdrawn = true } }
+        let watch = observeChanges({ chat.store.replyStream.live }, initial: true) { live in if live == nil { withdrawn = true } }
         #expect(chat.store.send("read it"))
         try await chat.idle()
         watch.cancel()
@@ -277,10 +277,8 @@ import Testing
 
         // The reply completes; the Stop lands while it is applied (the same path as `ChatScenarios`).
         let raced = Chat { _, emit, _ in try await emit.text("complete reply") }
-        let stopOnReply = raced.store.$messages.sink { [store = raced.store] messages in
-            MainActor.assumeIsolated {
-                if store.isGenerating, messages.contains(where: { $0.role == .assistant && !$0.content.isEmpty }) { store.stopTask() }
-            }
+        let stopOnReply = observeChanges({ [store = raced.store] in store.messages }, initial: true) { [store = raced.store] messages in
+            if store.isGenerating, messages.contains(where: { $0.role == .assistant && !$0.content.isEmpty }) { store.stopTask() }
         }
         #expect(raced.store.send("hello race"))
         try await raced.idle()

@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import Combine
 
 @MainActor final class CompanionSurface: NSPanel {
     var acceptsKeyboard: Bool
@@ -62,9 +61,9 @@ import Combine
     private let activityPlacement: ActivityPlacement
     private(set) var mainController: MainWindowController?
     var mainWindow: NSWindow? { mainController?.window }
-    private var observation: AnyCancellable?
-    private var voiceObservation: AnyCancellable?
-    private var petVoicePlanetObservation: AnyCancellable?
+    private var observation: ObservationHandle?
+    private var voiceObservation: ObservationHandle?
+    private var petVoicePlanetObservation: ObservationHandle?
     private var layingOut = false
     private var visibilityRevision = 0
     private var activityShown = false
@@ -77,7 +76,7 @@ import Combine
     /// Either reason above hides the whole cluster; this is whether it is hidden now.
     private var clusterHidden = false
     private var noticeTimer: Timer?
-    private var bubbleObservation: AnyCancellable?
+    private var bubbleObservation: ObservationHandle?
     let controlsPresentation: PetControlsPresentation
     private var outsideClickMonitor: Any?
     /// A click elsewhere took the keyboard from a composer that keeps its draft. The + menu
@@ -172,17 +171,15 @@ import Combine
                                                name: NSWindow.didResignKeyNotification, object: controlsPanel)
         NotificationCenter.default.addObserver(self, selector: #selector(controlsBecameKey),
                                                name: NSWindow.didBecomeKeyNotification, object: controlsPanel)
-        observation = workspace.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { [weak self] in self?.synchronize() }
-        }
         // The bubble takes its place between the pet and its card only once it has something to show.
         let voice = workspace.voice
-        bubbleObservation = Publishers.CombineLatest(voice.$snapshot, voice.$spoken)
-            .map { CompanionBubbleContent.isShown(voice: $0, spoken: $1, notice: nil) }
-            .removeDuplicates().dropFirst().sink { [weak self] _ in
-                DispatchQueue.main.async { [weak self] in self?.layout() }
-            }
-        voiceObservation = workspace.voice.$snapshot.map(\.error).removeDuplicates().compactMap { $0 }.sink { [weak self] error in
+        bubbleObservation = observeChanges({
+            CompanionBubbleContent.isShown(voice: voice.snapshot, spoken: voice.spoken, notice: nil)
+        }) { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in self?.layout() }
+        }
+        voiceObservation = observeChanges({ voice.snapshot.error }, initial: true) { [weak self] error in
+            guard let error else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.workspace.isMainWindowVisible else { return }
                 self.showNotice(error.message)
@@ -193,20 +190,21 @@ import Combine
         // The main window's transcript shows its own planet only for the conversation Live Voice
         // owns; the pet steps aside exactly then, so the two planet-driven animations never
         // render at the same time.
-        petVoicePlanetObservation = Publishers.CombineLatest(
-            workspace.$isMainWindowVisible,
-            Publishers.CombineLatest(workspace.$selectedID, voice.$snapshot.map { $0.session.owner?.conversationID }.removeDuplicates())
-        )
-        .map { mainWindowVisible, selection in
-            let (selectedID, voiceConversationID) = selection
-            return mainWindowVisible && selectedID != nil && selectedID == voiceConversationID
-        }
-        .removeDuplicates()
-        .sink { [weak self] hidden in
+        let workspace = workspace
+        petVoicePlanetObservation = observeChanges({
+            workspace.isMainWindowVisible && workspace.selectedID != nil
+                && workspace.selectedID == voice.snapshot.session.owner?.conversationID
+        }, initial: true) { [weak self] hidden in
             DispatchQueue.main.async { [weak self] in self?.setPetHidden(forVoicePlanet: hidden) }
         }
         petPanel.orderFrontRegardless()
-        synchronize(animated: false)
+        // The cluster mirrors the workspace: synchronize reruns, on the next main-queue turn, after
+        // anything it read changes. The first run places it without animation.
+        var placed = false
+        observation = observeReads { [weak self] in
+            self?.synchronize(animated: placed)
+            placed = true
+        }
     }
 
     static let petFrameAutosaveName = "pet"

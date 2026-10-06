@@ -134,7 +134,7 @@ struct WorkspaceSidebar: View {
         let conversationID: UUID
         let projectID: UUID?
     }
-    @ObservedObject var workspace: WorkspaceStore
+    var workspace: WorkspaceStore
     /// Owned by the window controller, so anything outside this view can hand the
     /// keyboard back to the chat list.
     let listFocus: SidebarListFocus
@@ -204,7 +204,7 @@ struct WorkspaceSidebar: View {
                 .accessibilityIdentifier("workspace.sidebar").accessibilityLabel("聊天")
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            workspace.objectWillChange.send()
+            workspace.refreshProjectAvailability()
         }
     }
     private var recentHeader: some View {
@@ -242,7 +242,7 @@ struct WorkspaceSidebar: View {
             rows(workspace.filteredConversations(projectID: project.id), projectID: project.id)
         } label: {
             HStack(spacing: 8) {
-                ProjectFolderIcon(isExpanded: projectExpanded(project), isAvailable: project.isAvailable)
+                ProjectFolderIcon(isExpanded: projectExpanded(project), isAvailable: workspace.isAvailable(project))
                     .foregroundStyle(.secondary).frame(width: 18, height: 16)
                     .accessibilityHidden(true)
                 Text(project.name).lineLimit(1)
@@ -306,7 +306,7 @@ struct WorkspaceSidebar: View {
         Button("新对话") { newProjectConversation(project.id) }
         Button("重命名") { WorkspaceActions.rename(project.name) { workspace.renameProject(project.id, to: $0) } }
         Button("在 Finder 中显示") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
-            .disabled(!project.isAvailable)
+            .disabled(!workspace.isAvailable(project))
         Button("重新定位文件夹…") { WorkspaceActions.chooseFolder { workspace.relocateProject(project.id, to: $0) } }
         Divider()
         Button("移除项目，保留会话") { workspace.removeProject(project.id) }
@@ -414,10 +414,10 @@ struct ProjectFolderIcon: View {
 }
 
 struct WorkspaceConversationView: View {
-    @ObservedObject var workspace: WorkspaceStore
+    var workspace: WorkspaceStore
     /// Observed here, not in `ConversationView`: a planet swap republishes `active`, and this is
     /// the view that has to notice and pass the new sprite down.
-    @ObservedObject var planets: PlanetStore
+    var planets: PlanetStore
     var body: some View {
         VStack(spacing: 0) {
             if let notice = workspace.persistenceNotice {
@@ -447,10 +447,10 @@ struct WorkspaceConversationView: View {
 }
 
 struct ConversationView: View {
-    @ObservedObject var store: TaskStore
+    @Bindable var store: TaskStore
     var workspace: WorkspaceStore? = nil
-    @ObservedObject var voice: VoiceSessionController
-    @ObservedObject var dictation: DictationController
+    var voice: VoiceSessionController
+    var dictation: DictationController
     /// The Live Voice planet, resolved by `PlanetStore`; nil outside a voice session.
     var planet: PetStore?
     var startDictation: () -> Void
@@ -608,10 +608,10 @@ struct ConversationView: View {
                     HStack {
                         Text("需要项目文件夹才能继续").font(WorkspaceStyle.caption)
                         Menu("关联项目") {
-                            ForEach(workspace.projects.filter(\.isAvailable)) { project in
+                            ForEach(workspace.projects.filter(workspace.isAvailable)) { project in
                                 Button(project.name) { workspace.provideDirectory(URL(fileURLWithPath: project.path), conversationID: conversationID) }
                             }
-                        }.disabled(workspace.projects.filter(\.isAvailable).isEmpty)
+                        }.disabled(workspace.projects.filter(workspace.isAvailable).isEmpty)
                         Button("选择文件夹…") {
                             // Cancelling has to reach the store too, or the paused tool call keeps waiting.
                             WorkspaceActions.chooseFolder(cancelled: {

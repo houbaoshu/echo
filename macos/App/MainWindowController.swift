@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import Combine
 
 @MainActor class WorkspaceWindow: NSWindow {
     var onEscape: (() -> Bool)?
@@ -71,8 +70,8 @@ import Combine
     private(set) var inspectorItem: NSSplitViewItem!
     private(set) var conversationItem: NSSplitViewItem!
     private let defaults: UserDefaults
-    private var observation: AnyCancellable?
-    private var previewObservation: AnyCancellable?
+    private var observation: ObservationHandle?
+    private var previewObservation: ObservationHandle?
     private var inspectorObservation: NSKeyValueObservation?
     private var widthsBeforeExpansion: (sidebar: CGFloat?, inspector: CGFloat?) = (nil, nil)
     /// Chat search is a command palette in a floating window of its own, not a field in
@@ -181,20 +180,19 @@ import Combine
         // Expanded reading is not restored, but the collapsed conversation column it leaves
         // behind in the autosave would be.
         conversationItem.isCollapsed = false
-        observation = workspace.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { [weak self] in self?.refreshTitle() }
-        }
-        previewObservation = workspace.fileBrowser.$isPreviewExpanded.removeDuplicates().sink { [weak self] _ in
-            // Published delivers before the stored value changes. Expansion measures the side
-            // columns and collapsing it sets them back, so neither may run on a column that
-            // is still animating open or closed.
+        let fileBrowser = workspace.fileBrowser
+        previewObservation = observeChanges({ fileBrowser.isPreviewExpanded }, initial: true) { [weak self] _ in
+            // Expansion measures the side columns and collapsing it sets them back, so neither
+            // may run on a column that is still animating open or closed.
             DispatchQueue.main.async { [weak self] in
                 self?.splitController.whenColumnsSettle { [weak self] in self?.applyPreviewExpansion() }
             }
         }
         paletteController = SearchPaletteController(workspace: workspace, presentation: searchPalette,
                                                     hostWindow: { [weak self] in self?.window })
-        refreshTitle()
+        // The title follows the selected chat's name: it reruns, on the next main-queue turn, after
+        // anything it read changes.
+        observation = observeReads { [weak self] in self?.refreshTitle() }
         window.minSize = NSSize(width: 720, height: 520)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
