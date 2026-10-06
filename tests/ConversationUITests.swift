@@ -422,8 +422,7 @@ private struct ComposerHeightHost: View {
 
         // --- P1-3: the toolbar carries AppKit's own column toggles ---
         // Without them a collapsed sidebar is a dead end: AppKit collapses it on its own
-        // when the window gets narrow, the chat list goes away with it, and Echo is an
-        // LSUIElement app with no Dock tile to fall back on.
+        // when the window gets narrow, and the chat list goes away with it.
         guard let toolbar = window.toolbar else { throw SettingsError("No toolbar") }
         let identifiers = toolbar.items.map(\.itemIdentifier)
         XCTAssertTrue(identifiers == [.toggleSidebar, .sidebarTrackingSeparator,
@@ -601,73 +600,6 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(window.frameAutosaveName.isEmpty && main.splitController.splitView.autosaveName == nil,
                      "Autosave writes to standard defaults, so an injected suite must not arm it")
 
-    }
-
-    func testActivationPolicyFollowsOpenWindows() async throws {
-        final class Log { var entries: [String] = [] }
-        let log = Log()
-        let controller = ActivationPolicyController(apply: { log.entries.append($0 == .regular ? "regular" : "accessory") },
-                                                    activate: { log.entries.append("activate") })
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        defer { window.orderOut(nil) }
-        func nextTurn() async throws { try await Task.sleep(for: .milliseconds(20)) }
-
-        controller.activate(for: window)
-        XCTAssertEqual(log.entries, ["regular", "activate"], "The app is regular before it activates")
-        try await nextTurn()
-        XCTAssertEqual(log.entries, ["regular", "activate"], "A window not yet on screen counts as open")
-
-        window.orderFront(nil); window.orderOut(nil)
-        try await nextTurn()
-        XCTAssertEqual(log.entries.last, "accessory", "Once it has shown, hiding it ends the regular app")
-
-        log.entries = []
-        window.orderFront(nil)
-        XCTAssertEqual(log.entries, ["regular"], "Showing a tracked window is regular at once, before any activation")
-        window.orderOut(nil); window.orderFront(nil)
-        try await nextTurn()
-        XCTAssertEqual(log.entries, ["regular"], "Hidden and shown again within a turn changes nothing")
-        window.orderOut(nil)
-        try await nextTurn()
-        XCTAssertEqual(log.entries, ["regular", "accessory"])
-    }
-
-    func testActivationPolicyDetoursWhenAlreadyActiveAsAccessory() async throws {
-        final class Log { var entries: [String] = []; var active = true }
-        let log = Log()
-        let controller = ActivationPolicyController(apply: { log.entries.append($0 == .regular ? "regular" : "accessory") },
-                                                    activate: { log.entries.append("activate") },
-                                                    isActive: { log.active }, activateDock: { log.entries.append("dock") },
-                                                    leaveDock: { log.entries.append("leave dock") })
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled],
-                              backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        defer { window.orderOut(nil) }
-
-        // Already active as an accessory, as a reopen from Spotlight leaves Echo.
-        window.orderFront(nil)
-        controller.activate(for: window)
-        XCTAssertEqual(log.entries, ["regular", "dock"], "Activation waits for the detour instead of cutting it short")
-        controller.activate(for: window)
-        XCTAssertEqual(log.entries, ["regular", "dock"], "A second request during the detour starts no second one")
-        try await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(log.entries, ["regular", "dock", "activate"])
-
-        // The window closes before the detour hands activation back: Echo stays in the background.
-        window.orderOut(nil)
-        try await Task.sleep(for: .milliseconds(50))
-        log.entries = []
-        window.orderFront(nil)
-        window.orderOut(nil)
-        try await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(log.entries, ["regular", "dock", "accessory", "leave dock"])
-
-        // Not active: no detour, as before.
-        log.active = false; log.entries = []
-        controller.activate(for: window)
-        XCTAssertEqual(log.entries, ["regular", "activate"])
     }
 
     func testConsecutiveDictationAppends() async throws {
@@ -3283,6 +3215,77 @@ private struct ComposerHeightHost: View {
         voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
         try await settle()
         XCTAssertTrue(clusterShown(), "Ending Live Voice leaves the cluster up")
+    }
+
+    /// Hiding the pet from its menu or the status item takes the whole cluster off screen and
+    /// leaves Echo running. It shares the cluster with the Live Voice planet's hiding: either one
+    /// keeps it hidden, and it comes back only once neither holds.
+    func testPetHidesAndShowsOnRequest() async throws {
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
+        defer { companion.shutdown() }
+        func settle() async throws { try await Task.sleep(for: .milliseconds(200)) }
+        func clusterShown() -> Bool { companion.petPanel.isVisible && companion.controlsPanel.isVisible }
+
+        let status = StatusItemController(companion: companion)
+        defer { status.remove() }
+        func statusTitles() -> [String] {
+            status.menuNeedsUpdate(status.menu)
+            return status.menu.items.map { $0.isSeparatorItem ? "-" : $0.title }
+        }
+
+        try await settle()
+        XCTAssertTrue(clusterShown() && !companion.isPetHidden, "The pet starts on screen")
+        XCTAssertEqual(statusTitles(), ["Echo", "-", "隐藏精灵", "设置…", "-", "退出 Echo"])
+        XCTAssertTrue(status.menu.items.last?.action == #selector(NSApplication.terminate(_:))
+                      && status.menu.items.last?.target === NSApp, "Quit Echo quits the app")
+        // Echo and Settings… go through Launch Services (SystemOpen), as does the pet menu's Settings….
+        var opened: [SystemOpen.Destination] = []
+        companion.systemOpen = { opened.append($0) }
+        status.menu.performActionForItem(at: 0)
+        status.menu.performActionForItem(at: 3)
+        companion.petPanel.onShowSettings?()
+        XCTAssertEqual(opened, [.mainWindow, .settings, .settings], "Echo opens the main window, both Settings… open Settings")
+        XCTAssertTrue(companion.mainWindow?.isVisible != true && !workspace.isMainWindowVisible,
+                      "The menus only ask Launch Services; nothing opens until its event arrives")
+        let petIndex = 2
+        companion.petPanel.onHide?()
+        try await settle()
+        XCTAssertTrue(companion.isPetHidden, "The pet menu's Hide Pet hides it")
+        XCTAssertEqual(statusTitles()[petIndex], "显示精灵", "The status item offers it back")
+        XCTAssertTrue(!companion.petPanel.isVisible && !companion.controlsPanel.isVisible && !companion.bubblePanel.isVisible
+                      && !companion.activityPanel.isVisible, "Hiding the pet hides the whole cluster")
+        XCTAssertTrue(companion.controlsPresentation.isSuspended, "A hidden strip draws no planet")
+        status.menu.performActionForItem(at: petIndex)
+        try await settle()
+        XCTAssertTrue(clusterShown() && !companion.controlsPresentation.isSuspended, "Show Pet brings the cluster back")
+        XCTAssertEqual(statusTitles()[petIndex], "隐藏精灵")
+        status.menu.performActionForItem(at: petIndex)
+        XCTAssertTrue(companion.isPetHidden, "The status item's Hide Pet is the same state as the pet menu's")
+        companion.setPetHidden(false)
+
+        // Hidden by the person while the Live Voice planet also hides it: ending either alone is not enough.
+        let conversation = workspace.selected!
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversation.id)
+        voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
+        workspace.isMainWindowVisible = true
+        try await settle()
+        XCTAssertTrue(!clusterShown(), "The planet on screen hides the pet")
+        companion.setPetHidden(true)
+        workspace.isMainWindowVisible = false
+        try await settle()
+        XCTAssertTrue(!clusterShown(), "The person's choice keeps it hidden after the planet goes")
+        workspace.isMainWindowVisible = true
+        companion.setPetHidden(false)
+        try await settle()
+        XCTAssertTrue(!clusterShown(), "...and the planet keeps it hidden after the person shows it")
+        workspace.isMainWindowVisible = false
+        try await settle()
+        XCTAssertTrue(clusterShown(), "With neither holding, the pet is back")
+        voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
     }
 
     /// The pet's Live Voice button, wired as the app wires it. The main window's button binds the

@@ -18,6 +18,8 @@ import Combine
         hasShadow = false
         level = .floating
         hidesOnDeactivate = false
+        // Stays when Echo is hidden, with the pet; see PetPanel.
+        canHide = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         acceptsMouseMovedEvents = true
         // Every companion surface inherits the system appearance.
@@ -66,10 +68,14 @@ import Combine
     private var layingOut = false
     private var visibilityRevision = 0
     private var activityShown = false
-    /// The pet is hidden only while the main window is showing this same conversation's Live
-    /// Voice planet, so the two animations never render at once. Restored as soon as either
-    /// condition stops holding.
+    /// The pet steps aside while the main window is showing this same conversation's Live Voice
+    /// planet, so the two animations never render at once.
     private var petHiddenForVoicePlanet = false
+    /// Hidden from the pet's menu or the status item, until the status item shows it again. Only
+    /// for this launch: Echo always starts with the pet on screen.
+    private(set) var isPetHidden = false
+    /// Either reason above hides the whole cluster; this is whether it is hidden now.
+    private var clusterHidden = false
     private var noticeTimer: Timer?
     private var bubbleObservation: AnyCancellable?
     let controlsPresentation: PetControlsPresentation
@@ -81,6 +87,8 @@ import Combine
     private var composerReleasedKeyboard = false
     private var activityMouseUpMonitor: Any?
     private var globalActivityMouseUpMonitor: Any?
+    /// How the status item and the pet's menu bring Echo forward; tests record the request instead.
+    var systemOpen: (SystemOpen.Destination) -> Void = { SystemOpen.open($0) }
 
     init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore? = nil, pets: PetCatalog? = nil,
          planets: PlanetStore? = nil, defaults: UserDefaults = .standard) {
@@ -131,6 +139,8 @@ import Combine
         }
         petPanel.onClick = { [weak self] in self?.showMainWindowFromPet() }
         petPanel.onDropFolder = { [weak self] in self?.startChat(inFolder: $0) }
+        petPanel.onHide = { [weak self] in self?.setPetHidden(true) }
+        petPanel.onShowSettings = { [weak self] in self?.systemOpen(.settings) }
         workspace.onOpenPetActivity = { [weak self] in
             guard let self else { return }
             self.clearNotice()
@@ -217,16 +227,33 @@ import Combine
         petPanel.setFrameOrigin(petPanel.frame.origin)
     }
 
-    /// Hides and pauses the whole companion cluster — the pet, its control strip, the activity
-    /// capsule and the voice bubble — while the main window shows this conversation's Live Voice
-    /// planet, and restores each the moment either condition stops holding. The strip carries its
-    /// own small planet (`PetControls`' `VoicePlanet`), so hiding it removes a second on-screen
-    /// copy of the same animation, not just the pet's sprite; the capsule and bubble are only
-    /// meaningful next to a visible pet, so they step aside with it rather than floating alone.
+    /// Hides or shows the pet as the person asks, from its menu or the status item. Echo keeps
+    /// running either way; only the companion cluster leaves the screen.
+    func setPetHidden(_ hidden: Bool) {
+        guard hidden != isPetHidden else { return }
+        isPetHidden = hidden
+        updateClusterVisibility()
+    }
+
+    /// The main window shows this conversation's Live Voice planet while `hidden`; the pet steps
+    /// aside then, and comes back the moment either condition stops holding.
     private func setPetHidden(forVoicePlanet hidden: Bool) {
         guard hidden != petHiddenForVoicePlanet else { return }
         petHiddenForVoicePlanet = hidden
         VoiceDiagnostics.shared.mark(hidden ? "桌宠与控制条隐藏（主窗口显示星球）" : "桌宠与控制条恢复显示")
+        updateClusterVisibility()
+    }
+
+    /// Hides and pauses the whole companion cluster — the pet, its control strip, the activity
+    /// capsule and the voice bubble — while the person has hidden the pet or the main window shows
+    /// the Live Voice planet. The strip carries its own small planet (`PetControls`' `VoicePlanet`),
+    /// so hiding it removes a second on-screen copy of the same animation, not just the pet's
+    /// sprite; the capsule and bubble are only meaningful next to a visible pet, so they step aside
+    /// with it rather than floating alone.
+    private func updateClusterVisibility() {
+        let hidden = isPetHidden || petHiddenForVoicePlanet
+        guard hidden != clusterHidden else { return }
+        clusterHidden = hidden
         petPanel.setPaused(hidden)
         if hidden {
             controlsPresentation.setSuspended(true)
@@ -252,11 +279,11 @@ import Combine
             else if activityPanel.isKeyWindow { activityPanel.orderOut(nil); activityPanel.orderFrontRegardless() }
         }
         layout()
-        if !petHiddenForVoicePlanet { controlsPanel.orderFrontRegardless() }
+        if !clusterHidden { controlsPanel.orderFrontRegardless() }
         if workspace.isMainWindowVisible {
             if mainWindow?.isVisible != true { presentMainWindow() }
         } else { mainWindow?.orderOut(nil) }
-        setActivityVisible(!petHiddenForVoicePlanet && workspace.isPetActivityVisible, animated: animated)
+        setActivityVisible(!clusterHidden && workspace.isPetActivityVisible, animated: animated)
         if let notice = taskStore.notice {
             taskStore.notice = nil
             showNotice(notice)
@@ -412,7 +439,7 @@ import Combine
         controlsPanel.setFrame(frames.controls, display: true)
         let petCenterX = frames.pet.midX - frames.controls.minX
         if controlsPresentation.petCenterX != petCenterX { controlsPresentation.petCenterX = petCenterX }
-        if frames.bubble.isEmpty || petHiddenForVoicePlanet {
+        if frames.bubble.isEmpty || clusterHidden {
             bubblePanel.orderOut(nil)
         } else {
             if bubblePanel.frame != frames.bubble { bubblePanel.setFrame(frames.bubble, display: true) }

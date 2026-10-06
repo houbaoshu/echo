@@ -54,7 +54,7 @@ import SwiftUI
         }
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
-        ActivationPolicyController.activate(for: window)
+        NSApp.activate()
         if opening { sectionFocus.take() }
     }
 

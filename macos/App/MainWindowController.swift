@@ -259,7 +259,7 @@ import Combine
         guard let window else { return }
         workspace.isMainWindowVisible = true
         if window.isMiniaturized { window.deminiaturize(nil) }
-        window.makeKeyAndOrderFront(nil); ActivationPolicyController.activate(for: window)
+        window.makeKeyAndOrderFront(nil); NSApp.activate()
     }
     @objc func hideMainWindow() {
         searchPalette.isOpen = false

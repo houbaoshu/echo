@@ -66,9 +66,6 @@
 		99C4C78ABC6C2DE4D996106D /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		9AE8661C4845450F1C8728AB /* tests/fixtures/speech/en-US.wav in Resources */ = {isa = PBXBuildFile; fileRef = 1E53D6C44AD40EA364F6E230 /* tests/fixtures/speech/en-US.wav */; };
 		A2D38BC03062D573000AB0C0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2D38BBF3062D573000AB0C0 /* Assets.xcassets */; };
-		E06EB300CAB9163F9A75410B /* Echo.icon in Resources */ = {isa = PBXBuildFile; fileRef = F82E6758E135B6EA62E34341 /* Echo.icon */; };
-		C7A1D0E2F3B4C5D6E7F80912 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */; };
-		C7A1D0E2F3B4C5D6E7F80914 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */; };
 		A48445E581B7F7391D46A313 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		A90FABF2D2B029FA59548B59 /* VoiceSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12500000000000000000F00 /* VoiceSoakTests.swift */; };
 		AD3FBE99C14C991DB4E0DF5A /* tests/fixtures/speech/mixed.wav in Resources */ = {isa = PBXBuildFile; fileRef = B628CE43BFCAC712B3D75BF1 /* tests/fixtures/speech/mixed.wav */; };
@@ -78,12 +75,15 @@
 		BC0769A420E4834B8D65FD1E /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		C5ACF86EC02CDEB0FD37A70E /* tests/support/FastTestTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */; };
 		C622A7EBBE746BA108EA86AA /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
+		C7A1D0E2F3B4C5D6E7F80912 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */; };
+		C7A1D0E2F3B4C5D6E7F80914 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */; };
 		D0D95B5D5B964B6609913AA4 /* tests/support/VoiceFakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89D5CB17C33E07630F4519C6 /* tests/support/VoiceFakes.swift */; };
 		D4D51A52463450D85F5130CA /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		D72D412AE960DFE8DB06BCC3 /* tests/support/FastTestTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */; };
 		DDBEF3D5359192AC5896BA28 /* tests/AgentModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 474D9F2D95791491A7B3D4E6 /* tests/AgentModelTests.swift */; };
 		E00000000000000000000030 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		E00000000000000000000031 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
+		E06EB300CAB9163F9A75410B /* Echo.icon in Resources */ = {isa = PBXBuildFile; fileRef = F82E6758E135B6EA62E34341 /* Echo.icon */; };
 		E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F02 /* AgentConnectionTester.swift */; };
 		E11000000000000000000B03 /* TaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F03 /* TaskStore.swift */; };
 		E11000000000000000000B05 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F05 /* SettingsStore.swift */; };
@@ -284,9 +284,6 @@
 		89D5CB17C33E07630F4519C6 /* tests/support/VoiceFakes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/VoiceFakes.swift; sourceTree = "<group>"; };
 		9B8E739899162095ABA722F3 /* tests/fixtures/speech/paused.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = tests/fixtures/speech/paused.wav; sourceTree = "<group>"; };
 		A2D38BBF3062D573000AB0C0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = assets/Assets.xcassets; sourceTree = "<group>"; };
-		F82E6758E135B6EA62E34341 /* Echo.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = Echo.icon; path = assets/Echo.icon; sourceTree = "<group>"; };
-		C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = Localizable.xcstrings; path = assets/Localizable.xcstrings; sourceTree = "<group>"; };
-		C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = InfoPlist.xcstrings; path = assets/InfoPlist.xcstrings; sourceTree = "<group>"; };
 		A3C5FB9B86C9EE63938C7854 /* tests/native/PerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/PerformanceTests.swift; sourceTree = "<group>"; };
 		A3FF57E62DA09C501023D462 /* tests/native/EchoUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/EchoUITests.swift; sourceTree = "<group>"; };
 		A5C8CF99E608551A486FC246 /* EchoLiveTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoLiveTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -295,6 +292,8 @@
 		BDB246AE9C0537E3D5EAD79A /* tests/tools/FixtureServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/tools/FixtureServer.swift; sourceTree = "<group>"; };
 		C038B52ADC4A870F1268E696 /* EchoDeviceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoDeviceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/FastTestTag.swift; sourceTree = "<group>"; };
+		C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = Localizable.xcstrings; path = assets/Localizable.xcstrings; sourceTree = "<group>"; };
+		C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = InfoPlist.xcstrings; path = assets/InfoPlist.xcstrings; sourceTree = "<group>"; };
 		CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/ProjectBrowser/ProjectPathAccess.swift; sourceTree = "<group>"; };
 		CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentHarness.swift; sourceTree = "<group>"; };
 		D5E5E6CFBA9A83634534A68F /* tests/fixtures/speech/zh-CN.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "tests/fixtures/speech/zh-CN.wav"; sourceTree = "<group>"; };
@@ -346,6 +345,7 @@
 		EA68E8426039B5A782DA9770 /* macos/Features/Agent/AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentTools.swift; sourceTree = "<group>"; };
 		F20000000000000000000010 /* macos/Features/Agent/AgentLocalChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentLocalChat.swift; sourceTree = "<group>"; };
 		F20000000000000000000012 /* tests/LocalChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/LocalChatTests.swift; sourceTree = "<group>"; };
+		F82E6758E135B6EA62E34341 /* Echo.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = Echo.icon; path = assets/Echo.icon; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */

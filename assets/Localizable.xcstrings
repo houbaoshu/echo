@@ -680,6 +680,16 @@
         }
       }
     },
+    "全部显示" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show All"
+          }
+        }
+      }
+    },
     "关于 Echo" : {
       "localizations" : {
         "en" : {
@@ -733,16 +743,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Close Window"
-          }
-        }
-      }
-    },
-    "关闭精灵" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Close Pet"
           }
         }
       }
@@ -2151,6 +2151,16 @@
         }
       }
     },
+    "显示精灵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Pet"
+          }
+        }
+      }
+    },
     "显示语音控制" : {
       "localizations" : {
         "en" : {
@@ -2948,12 +2958,12 @@
         }
       }
     },
-    "移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键显示关闭精灵菜单" : {
+    "移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键可隐藏精灵或打开设置" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hover to make it jump, drag to make it run, and move away to have it face the pointer. Click to open the chat; right-click for Close Pet."
+            "value" : "Hover to make it jump, drag to make it run, and move away to have it face the pointer. Click to open the chat; right-click to hide the pet or open Settings."
           }
         }
       }
@@ -4328,12 +4338,42 @@
         }
       }
     },
+    "隐藏 Echo" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Echo"
+          }
+        }
+      }
+    },
+    "隐藏其他" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Others"
+          }
+        }
+      }
+    },
     "隐藏检查器" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hide Inspector"
+          }
+        }
+      }
+    },
+    "隐藏精灵" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Pet"
           }
         }
       }

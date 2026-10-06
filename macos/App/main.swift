@@ -3,18 +3,23 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pets: PetCatalog?
-    private var companion: CompanionController?
+    private var companion: CompanionController? {
+        didSet { statusItem?.remove(); statusItem = companion.map(StatusItemController.init) }
+    }
+    private var statusItem: StatusItemController?
     private var acceptanceWorkspace: WorkspaceStore?
     private var workspaceCommands: WorkspaceCommands?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Settings… in the status item and the pet's menu opens Echo with this event; see SystemOpen.
+        NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(showPreferences(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEShowPreferences))
         #if DEBUG
         do {
             if let mode = try TestBootstrap.mode() {
                 switch mode {
                 case .hosted: return
                 case .ui(let root, let defaults):
-                    ActivationPolicyController.install()
                     installMenus()
                     let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: TestBootstrap.Secrets())
                     if settings.draft.model.isEmpty {
@@ -91,7 +96,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         _ = DictationDiagnostics.shared
-        ActivationPolicyController.install()
         installMenus()
         do {
             let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
@@ -131,8 +135,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applicationMenu.addItem(withTitle: String(localized: "服务"), action: nil, keyEquivalent: "").submenu = servicesMenu
         NSApp.servicesMenu = servicesMenu
         applicationMenu.addItem(.separator())
-        // No Hide items. Hiding an app hides every window it owns, and the pet is one of them,
-        // whether Echo is an accessory or, with a window open, a regular app.
+        // The pet and its panels set canHide = false, so hiding Echo leaves them on screen.
+        applicationMenu.addItem(withTitle: String(localized: "隐藏 Echo"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        applicationMenu.addItem(withTitle: String(localized: "隐藏其他"), action: #selector(NSApplication.hideOtherApplications(_:)),
+                                keyEquivalent: "h").keyEquivalentModifierMask = [.command, .option]
+        applicationMenu.addItem(withTitle: String(localized: "全部显示"), action: #selector(NSApplication.unhideAllApplications(_:)),
+                                keyEquivalent: "")
+        applicationMenu.addItem(.separator())
         applicationMenu.addItem(withTitle: String(localized: "退出 Echo"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         applicationItem.submenu = applicationMenu
         menu.addItem(applicationItem)
@@ -205,6 +214,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSettings() { companion?.showSettings() }
+    @objc private func showPreferences(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        companion?.showSettings()
+    }
     @objc private func newConversation() {
         guard let companion else { return }
         companion.mainController?.showWorkspace()
@@ -220,7 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         companion?.mainController?.focusSearch()
     }
 
-    /// The Dock tile is there only while a window is open or minimized. Clicking it brings
+    /// Clicking the Dock tile, or opening a running Echo again from Spotlight or Finder, brings
     /// the main window forward, also when the window open was Settings.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         companion?.showMainWindow()
@@ -252,14 +264,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .critical
         alert.addButton(withTitle: String(localized: "退出"))
-        ActivationPolicyController.activate(for: alert.window)
+        NSApp.activate()
         alert.runModal()
         NSApp.terminate(nil)
     }
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()

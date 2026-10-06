@@ -113,12 +113,14 @@ import SwiftUI
         let opened = OpenedMenus()
         let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
                                                               object: nil, queue: nil) { note in
-            guard let menu = note.object as? NSMenu, menu.items.map(\.title) == ["关闭精灵"] else { return }
+            guard let menu = note.object as? NSMenu, menu.items.map(\.title) == ["隐藏精灵", "设置…"] else { return }
             opened.count += 1
             menu.perform(#selector(NSMenu.cancelTracking), with: nil, afterDelay: 0.1, inModes: [.common])
         }
         defer { NotificationCenter.default.removeObserver(observer); panel.close(); pet.stop() }
-        var clicks = 0, moves = 0
+        var clicks = 0, moves = 0, hides = 0, settings = 0
+        panel.onHide = { hides += 1 }
+        panel.onShowSettings = { settings += 1 }
         var constrained: [NSPoint] = []
         panel.onClick = { clicks += 1 }
         panel.orderFrontRegardless()
@@ -162,9 +164,12 @@ import SwiftUI
             let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: local, modifierFlags: flags, timestamp: 0,
                 windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
             let menu = view.menu(for: event)
-            XCTAssertTrue(menu?.items.map(\.title) == ["关闭精灵"], "The context menu only offers closing the pet, type=\(type)")
-            XCTAssertTrue(menu?.items.first?.target === view, "Closing goes through the pet view, type=\(type)")
+            XCTAssertTrue(menu?.items.map(\.title) == ["隐藏精灵", "设置…"], "The context menu offers hiding the pet and Settings, type=\(type)")
+            XCTAssertTrue(menu?.items.allSatisfy { $0.target === view } == true, "Both items go through the pet view, type=\(type)")
+            for item in menu?.items ?? [] { _ = item.target?.perform(item.action, with: item) }
         }
+        XCTAssertTrue(hides == 2 && settings == 2, "Each item reaches its own handler, hides=\(hides) settings=\(settings)")
+        XCTAssertTrue(panel.isVisible, "The pet view only reports the choice; the companion hides the panel")
         let center = panel.convertPoint(toScreen: local)
         send(.leftMouseDown, center, .control)
         XCTAssertTrue(opened.count == 1, "Control+press opens the menu on press, opened=\(opened.count)")

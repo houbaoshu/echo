@@ -77,7 +77,7 @@ extension NSFont {
 
 @MainActor enum WorkspaceActions {
     /// `asSheet: false` runs a standalone dialog, e.g. from the pet, whose panels cannot host a sheet.
-    /// A standalone dialog brings the app forward itself and keeps it a regular app while it is up.
+    /// A standalone dialog brings the app forward itself.
     /// `cancelled` runs when the panel closes without a folder, for callers that must release a
     /// waiting task instead of leaving it paused.
     static func chooseFolder(asSheet: Bool = true, cancelled: (() -> Void)? = nil,
@@ -91,7 +91,7 @@ extension NSFont {
             }
             return
         }
-        ActivationPolicyController.activate(for: panel)
+        NSApp.activate()
         if panel.runModal() == .OK, let url = panel.url { completion(url) } else { cancelled?() }
     }
     /// The folders a drag carries, one per item, or nil when any item is something else: a file,

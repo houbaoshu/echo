@@ -4,6 +4,9 @@ import SwiftUI
 @MainActor
 final class PetPanel: NSPanel {
     var onClick: (() -> Void)?
+    /// The context menu's two items.
+    var onHide: (() -> Void)?
+    var onShowSettings: (() -> Void)?
     /// A folder dropped on the pet; see `PetInteractionView.droppedFolder(on:)` for what counts.
     var onDropFolder: ((URL) -> Void)?
     var onMove: (() -> Void)?
@@ -12,15 +15,11 @@ final class PetPanel: NSPanel {
     private var globalPointerMonitor: Any?
     private var localPointerMonitor: Any?
     private let pointerLocation: () -> NSPoint
-    private let terminateApplication: () -> Void
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    init(store: PetStore,
-         pointerLocation: @escaping () -> NSPoint = { NSEvent.mouseLocation },
-         terminate: @escaping () -> Void = { NSApplication.shared.terminate(nil) }) {
+    init(store: PetStore, pointerLocation: @escaping () -> NSPoint = { NSEvent.mouseLocation }) {
         self.pointerLocation = pointerLocation
-        self.terminateApplication = terminate
         super.init(
             contentRect: NSRect(origin: .zero, size: store.size),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
@@ -31,15 +30,13 @@ final class PetPanel: NSPanel {
         hasShadow = false
         level = .floating
         hidesOnDeactivate = false
+        // Hiding Echo, from its Dock tile or another app's Hide Others, hides its windows; the pet
+        // stays. Only Hide Pet takes it away, so the status item always tells the truth about it.
+        canHide = false
         isFloatingPanel = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         title = store.displayName
-        contentView = PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() },
-                                         onDropFolder: { [weak self] in self?.onDropFolder?($0) }) { [weak self] in
-            store.stop()
-            self?.close()
-            terminate()
-        }
+        contentView = interactionView(for: store)
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
             setFrameOrigin(NSPoint(x: visible.maxX - store.size.width - 24, y: visible.minY + 24))
@@ -49,13 +46,17 @@ final class PetPanel: NSPanel {
     func replacePet(with store: PetStore) {
         let center = NSPoint(x: frame.midX, y: frame.midY)
         title = store.displayName
-        contentView = PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() },
-                                         onDropFolder: { [weak self] in self?.onDropFolder?($0) }) { [weak self] in
-            store.stop(); self?.close(); self?.terminateApplication()
-        }
+        contentView = interactionView(for: store)
         setContentSize(store.size)
         setFrameOrigin(NSPoint(x: center.x - store.size.width / 2, y: center.y - store.size.height / 2))
         samplePointer(at: pointerLocation())
+    }
+
+    private func interactionView(for store: PetStore) -> PetInteractionView {
+        PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() },
+                           onDropFolder: { [weak self] in self?.onDropFolder?($0) },
+                           onHide: { [weak self] in self?.onHide?() },
+                           onShowSettings: { [weak self] in self?.onShowSettings?() })
     }
 
     override func setFrameOrigin(_ point: NSPoint) {
@@ -129,8 +130,9 @@ final class PetPanel: NSPanel {
 @MainActor
 final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     private let store: PetStore
-    private let closePet: () -> Void
     private let onClick: () -> Void
+    private let onHide: () -> Void
+    private let onShowSettings: () -> Void
     private let onDropFolder: (URL) -> Void
     private var mouseStart: NSPoint?
     private var windowStart: NSPoint?
@@ -142,10 +144,11 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     private var hoverTrackingArea: NSTrackingArea?
 
     init(store: PetStore, onClick: @escaping () -> Void, onDropFolder: @escaping (URL) -> Void,
-         closePet: @escaping () -> Void) {
+         onHide: @escaping () -> Void, onShowSettings: @escaping () -> Void) {
         self.store = store
-        self.closePet = closePet
         self.onClick = onClick
+        self.onHide = onHide
+        self.onShowSettings = onShowSettings
         self.onDropFolder = onDropFolder
         super.init(frame: NSRect(origin: .zero, size: store.size))
         let hosting = NSHostingView(rootView: PetView(store: store))
@@ -155,7 +158,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel(store.displayName)
-        setAccessibilityHelp(String(localized: "移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键显示关闭精灵菜单"))
+        setAccessibilityHelp(String(localized: "移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键可隐藏精灵或打开设置"))
         let primaryClick = NSClickGestureRecognizer(target: self, action: #selector(primaryClicked(_:)))
         primaryClick.buttonMask = 0x1
         primaryClick.delegate = self
@@ -202,8 +205,8 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     // AppKit asks on right-click and Control+click, and presents the menu itself.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        let close = menu.addItem(withTitle: String(localized: "关闭精灵"), action: #selector(closeFromMenu(_:)), keyEquivalent: "")
-        close.target = self
+        menu.addItem(withTitle: String(localized: "隐藏精灵"), action: #selector(hideFromMenu(_:)), keyEquivalent: "").target = self
+        menu.addItem(withTitle: String(localized: "设置…"), action: #selector(showSettingsFromMenu(_:)), keyEquivalent: "").target = self
         return menu
     }
 
@@ -316,7 +319,6 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
         store.interact(hovered: hovered, direction: direction)
     }
 
-    @objc private func closeFromMenu(_ sender: NSMenuItem) {
-        closePet()
-    }
+    @objc private func hideFromMenu(_ sender: NSMenuItem) { onHide() }
+    @objc private func showSettingsFromMenu(_ sender: NSMenuItem) { onShowSettings() }
 }
