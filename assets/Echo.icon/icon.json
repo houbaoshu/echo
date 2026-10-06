@@ -20,7 +20,7 @@
   ],
   "groups" : [
     {
-      "hidden" : false,
+      "hidden" : true,
       "layers" : [
         {
           "hidden" : false,
@@ -48,6 +48,73 @@
         }
       ],
       "name" : "gradient",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
+    },
+    {
+      "layers" : [
+        {
+          "image-name" : "5-highlight 2.svg",
+          "name" : "5-highlight 2"
+        },
+        {
+          "image-name" : "4-seams 2.svg",
+          "name" : "4-seams 2"
+        },
+        {
+          "image-name" : "3-caps 2.svg",
+          "name" : "3-caps 2"
+        },
+        {
+          "image-name" : "2-body-silver 2.svg",
+          "name" : "2-body-silver 2"
+        },
+        {
+          "image-name" : "1-body-steel 2.svg",
+          "name" : "1-body-steel 2"
+        }
+      ],
+      "name" : "flat",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
+    },
+    {
+      "hidden" : true,
+      "layers" : [
+        {
+          "image-name" : "5-highlight 3.svg",
+          "name" : "5-highlight 3"
+        },
+        {
+          "image-name" : "4-seams 3.svg",
+          "name" : "4-seams 3"
+        },
+        {
+          "image-name" : "3-caps.png",
+          "name" : "3-caps"
+        },
+        {
+          "image-name" : "2-body-silver.png",
+          "name" : "2-body-silver"
+        },
+        {
+          "image-name" : "1-body-steel.png",
+          "name" : "1-body-steel"
+        }
+      ],
+      "name" : "png",
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5
