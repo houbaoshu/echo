@@ -170,6 +170,11 @@ final class LoopbackModelServer: @unchecked Sendable {
         }
         if text.contains("tool capability test") {
             let model = body["model"] as? String ?? ""
+            if model == "probe-unauthorized" {
+                let body = try json(["error": ["message": secret]])
+                _ = write(fd, "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body)
+                return
+            }
             if model.hasPrefix("probe-delay:") { Thread.sleep(forTimeInterval: 1) }
             if model.hasPrefix("probe:") || model.hasPrefix("probe-delay:") {
                 let path = String(model.split(separator: ":", maxSplits: 1)[1])

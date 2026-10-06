@@ -1,8 +1,10 @@
 import Foundation
 import FoundationModels
 
-/// The Agent connection test: Echo's own adapter, one required call to a probe tool
-/// with bash's name and schema. The call itself is the result; the probe never runs anything.
+/// The Agent connection test: Echo's own adapter asks for one call to a probe tool with bash's
+/// name and schema. The call itself is the result; the probe never runs anything. Like an
+/// ordinary turn it leaves the choice to the model: a forced call is not something Echo uses,
+/// and some services reject it (DeepSeek in thinking mode answers HTTP 400).
 struct NativeConnectionTester: ConnectionTesting {
     @MainActor func test(configuration: ModelConfiguration, key: String) async throws {
         let configuration = try configuration.validated()
@@ -43,7 +45,6 @@ struct NativeConnectionTester: ConnectionTesting {
                 ProbeTool()
             }
             .model(model)
-            .toolCallingMode(.required)
         }
     }
 

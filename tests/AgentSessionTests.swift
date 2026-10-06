@@ -388,18 +388,35 @@ extension EchoIntegrationScenarios {
         let port = String(f.server.port)
         let tester: any ConnectionTesting = NativeConnectionTester()
         let forbidden = temp.appendingPathComponent("probe-must-not-execute")
+        // The tool_choice of each request one test sends, and the failure it reports.
+        func run(_ config: ModelConfiguration) async -> (choices: [String], failure: String?) {
+          let before = f.server.requests.count
+          var failure: String?
+          do { try await tester.test(configuration: config, key: "synthetic-key") }
+          catch let error as SettingsError { failure = error.diagnostic }
+          catch { failure = "unexpected \(error)" }
+          let choices = f.server.requests.dropFirst(before).map {
+            ((try? JSONSerialization.jsonObject(with: $0)) as? [String: Any])?["tool_choice"] as? String ?? "?"
+          }
+          return (choices, failure)
+        }
         for api in ModelAPIProtocol.allCases {
           var config = ModelConfiguration(
             baseURL: "http://127.0.0.1:\(port)",
             model: "probe:\(forbidden.path)", apiProtocol: api)
-          try await tester.test(configuration: config, key: "synthetic-key")
+          var result = await run(config)
+          #expect(result.choices == ["auto"] && result.failure == nil, "One unforced request; a call passes")
           for model in ["probe-text-only", "probe-malformed"] {
             config.model = model
-            do {
-              try await tester.test(configuration: config, key: "synthetic-key")
-              Issue.record("Invalid tool capability must fail: \(model)")
-            } catch is SettingsError {}
+            result = await run(config)
+            #expect(result.choices == ["auto"])
+            #expect(result.failure?.hasPrefix("未收到有效的 bash 工具调用") == true, "Invalid tool capability must fail: \(model)")
           }
+          config.model = "probe-unauthorized"
+          result = await run(config)
+          #expect(result.choices == ["auto"])
+          #expect(result.failure?.hasPrefix("模型请求失败") == true && result.failure?.contains("secret-provider-body") == false,
+                  "A provider error reports the request failure, never the provider's body")
           config.model = "probe-delay:\(forbidden.path)"
           let cancelling = Task { [config] in
             try await tester.test(configuration: config, key: "synthetic-key")
