@@ -2156,3 +2156,254 @@ extension EchoVoiceScenarios {
 
 }
 typealias VoiceTests = EchoVoiceScenarios.VoiceTests
+
+extension EchoVoiceScenarios {
+/// Importing a pet folder from 设置 › 精灵.
+@Suite(.serialized) struct SpriteImportTests {
+    /// A scratch folder holding the catalog's roots and the folders a test imports from.
+    struct Sandbox {
+        let root: URL
+        let imported: URL
+        let sources: URL
+        init() throws {
+            root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-sprite-import-\(UUID())")
+            imported = root.appendingPathComponent("imported")
+            sources = root.appendingPathComponent("sources")
+            try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        }
+        /// A folder built from a bundled asset: its sheet, and its manifest with `edit` applied.
+        func folder(_ name: String, from asset: String, sheetPath: String? = nil,
+                    edit: (inout [String: Any]) -> Void = { _ in }) throws -> URL {
+            let fm = FileManager.default
+            let source = EchoTestResources.resource(asset)
+            let directory = sources.appendingPathComponent(name)
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            var manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: source.appendingPathComponent("pet.json"))) as! [String: Any]
+            if let sheetPath { manifest["spritesheetPath"] = sheetPath }
+            edit(&manifest)
+            try JSONSerialization.data(withJSONObject: manifest).write(to: directory.appendingPathComponent("pet.json"))
+            let sheet = directory.appendingPathComponent(manifest["spritesheetPath"] as? String ?? "spritesheet.webp")
+            try fm.createDirectory(at: sheet.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: source.appendingPathComponent("spritesheet.webp"), to: sheet)
+            return directory
+        }
+        /// Everything in the import root, hidden staging folders included.
+        func installed() -> [String] {
+            ((try? FileManager.default.contentsOfDirectory(atPath: imported.path)) ?? []).sorted()
+        }
+        func remove() { try? FileManager.default.removeItem(at: root) }
+    }
+
+    @MainActor static func check(_ condition: Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
+        #expect(condition, "\(message)", sourceLocation: sourceLocation)
+    }
+
+    /// The pet import as it behaved before planets shared its checks; the planet import must not change it.
+    @Test(.tags(.fast)) @MainActor static func petImportTests() throws {
+        _ = NSApplication.shared
+        let sandbox = try Sandbox()
+        defer { sandbox.remove() }
+        let fm = FileManager.default
+        let settings = SettingsStore(url: sandbox.root.appendingPathComponent("settings.json"), secrets: FakeSecrets())
+        let builtin = EchoTestResources.resource("pets")
+
+        let rootless = PetCatalog(settings: settings, builtinRoot: builtin)
+        check(rootless.importPet(from: try sandbox.folder("rootless", from: "pets/chiyan")) == nil
+              && rootless.notice == "精灵导入目录不可用。", "without an import root nothing is imported")
+
+        let pets = PetCatalog(settings: settings, builtinRoot: builtin, importedRoot: sandbox.imported)
+        let builtinCount = pets.entries.count
+        let source = try sandbox.folder("renamed", from: "pets/chiyan") { $0["displayName"] = "测试精灵" }
+        let id = try #require(pets.importPet(from: source))
+        let name = String(id.dropFirst("imported:".count))
+        check(id.hasPrefix("imported:") && UUID(uuidString: name) != nil, "an import is named by a fresh UUID")
+        check(pets.entries.count == builtinCount + 1 && pets.entries.last?.id == id
+              && pets.entries.last?.builtin == false && pets.entries.last?.name == "测试精灵",
+              "the imported pet joins the end of the list")
+        check(pets.highlightedID == id && pets.selectedID == "builtin:chiyan", "an import is highlighted, not selected")
+        check(pets.notice == "已导入“测试精灵”，点击卡片即可切换。", "an import says how to switch to it")
+        check(sandbox.installed() == [name], "the import leaves one folder and no staging folder")
+        check(fm.contentsEqual(atPath: source.appendingPathComponent("spritesheet.webp").path,
+                               andPath: sandbox.imported.appendingPathComponent("\(name)/spritesheet.webp").path)
+              && fm.contentsEqual(atPath: source.appendingPathComponent("pet.json").path,
+                                  andPath: sandbox.imported.appendingPathComponent("\(name)/pet.json").path),
+              "the import copies the manifest and sheet byte for byte")
+
+        pets.notice = nil
+        check(pets.importPet(from: source) == id && pets.highlightedID == id && pets.notice == "这只精灵已在列表中。"
+              && sandbox.installed() == [name], "importing the same folder again highlights the existing pet")
+        let copy = sandbox.sources.appendingPathComponent("copy")
+        try fm.copyItem(at: EchoTestResources.resource("pets/cangcang"), to: copy)
+        check(pets.importPet(from: copy) == "builtin:cangcang" && pets.highlightedID == "builtin:cangcang"
+              && sandbox.installed() == [name], "a copy of a bundled pet is the bundled pet")
+
+        let nested = try sandbox.folder("nested", from: "pets/cangcang", sheetPath: "art/sheet.webp") { $0["displayName"] = "嵌套" }
+        let nestedID = try #require(pets.importPet(from: nested))
+        check(fm.fileExists(atPath: sandbox.imported.appendingPathComponent("\(nestedID.dropFirst("imported:".count))/art/sheet.webp").path),
+              "a sheet in a subfolder keeps its relative path")
+        let installed = sandbox.installed()
+
+        // Each refusal names the problem and leaves the import root as it was.
+        func refuses(_ folder: URL, _ reason: String?, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
+            pets.notice = nil
+            let result = pets.importPet(from: folder)
+            let notice = pets.notice ?? ""
+            // The notice has its own catalog key, 导入失败：%@|精灵; the key itself must never show.
+            check(result == nil && notice.hasPrefix("导入失败：") && !notice.contains("|")
+                  && (reason.map { notice == "导入失败：\($0)" } ?? true),
+                  "\(message): \(notice)", sourceLocation: sourceLocation)
+            check(sandbox.installed() == installed, "\(message) leaves nothing behind", sourceLocation: sourceLocation)
+        }
+        let empty = sandbox.sources.appendingPathComponent("empty")
+        try fm.createDirectory(at: empty, withIntermediateDirectories: true)
+        refuses(empty, nil, "a folder without pet.json")
+        refuses(try sandbox.folder("unnamed", from: "pets/chiyan") { $0["displayName"] = nil }, nil, "a manifest without a name")
+        refuses(try sandbox.folder("version", from: "pets/chiyan") { $0["spriteVersionNumber"] = 3; $0["displayName"] = "版本" },
+                nil, "a sheet the runtime cannot load")
+        let escaping = try sandbox.folder("escaping", from: "pets/chiyan") { $0["displayName"] = "越界" }
+        try JSONSerialization.data(withJSONObject: ["displayName": "越界", "spritesheetPath": "../renamed/spritesheet.webp"])
+            .write(to: escaping.appendingPathComponent("pet.json"))
+        refuses(escaping, "精灵图必须使用文件夹内的相对路径。", "a sheet path that climbs out")
+        let png = try sandbox.folder("png", from: "pets/chiyan", sheetPath: "sheet.png") { $0["displayName"] = "PNG" }
+        refuses(png, "精灵图必须是所选文件夹内的 WebP 文件。", "a sheet that is not WebP")
+        let linkedSheet = try sandbox.folder("linked-sheet", from: "pets/chiyan") { $0["displayName"] = "链接图" }
+        try fm.removeItem(at: linkedSheet.appendingPathComponent("spritesheet.webp"))
+        try fm.createSymbolicLink(at: linkedSheet.appendingPathComponent("spritesheet.webp"),
+                                  withDestinationURL: source.appendingPathComponent("spritesheet.webp"))
+        refuses(linkedSheet, "精灵图必须是所选文件夹内的 WebP 文件。", "a sheet linked from outside the folder")
+        let linkedManifest = try sandbox.folder("linked-manifest", from: "pets/chiyan") { $0["displayName"] = "链接清单" }
+        try fm.removeItem(at: linkedManifest.appendingPathComponent("pet.json"))
+        try fm.createSymbolicLink(at: linkedManifest.appendingPathComponent("pet.json"),
+                                  withDestinationURL: nested.appendingPathComponent("pet.json"))
+        refuses(linkedManifest, "pet.json 必须位于所选文件夹内。", "a manifest linked from outside the folder")
+        let large = try sandbox.folder("large", from: "pets/chiyan") { $0["displayName"] = "大清单" }
+        var padded = try Data(contentsOf: large.appendingPathComponent("pet.json"))
+        padded.append(Data(repeating: UInt8(ascii: " "), count: 1_048_576))
+        try padded.write(to: large.appendingPathComponent("pet.json"))
+        refuses(large, "pet.json 文件过大。", "a manifest over 1 MB")
+        let corrupt = try sandbox.folder("corrupt", from: "pets/chiyan") { $0["displayName"] = "损坏" }
+        try Data("not a webp".utf8).write(to: corrupt.appendingPathComponent("spritesheet.webp"))
+        refuses(corrupt, "精灵图损坏或尺寸过大（最多 1600 万像素）。", "a sheet that does not decode")
+
+        // A later launch lists what was imported, under the same id, and can switch to it.
+        let reopened = PetCatalog(settings: settings, builtinRoot: builtin, importedRoot: sandbox.imported)
+        check(Set(reopened.entries.map(\.id)) == Set(pets.entries.map(\.id))
+              && reopened.entries.prefix(builtinCount).allSatisfy(\.builtin) && reopened.notice == nil,
+              "the next launch lists the imported pets after the bundled ones")
+        check(reopened.activate(id) && settings.snapshot.selectedPetID == id, "an imported pet can be selected")
+        reopened.stop()
+    }
+
+    /// Importing a planet folder from 设置 › 星球, and Live Voice finding what was imported.
+    @Test(.tags(.fast)) @MainActor static func planetImportTests() async throws {
+        _ = NSApplication.shared
+        let sandbox = try Sandbox()
+        defer { sandbox.remove() }
+        let fm = FileManager.default
+        let settings = SettingsStore(url: sandbox.root.appendingPathComponent("settings.json"), secrets: FakeSecrets())
+        let builtin = EchoTestResources.resource("planets")
+        let voice = VoiceSessionController()
+        defer { voice.shutdown() }
+
+        let rootless = PlanetStore(settings: settings, root: builtin, voice: voice)
+        check(rootless.importPlanet(from: try sandbox.folder("rootless", from: "planets/ember-planet")) == nil
+              && rootless.notice == "星球导入目录不可用。", "without an import root nothing is imported")
+
+        let planets = PlanetStore(settings: settings, root: builtin, importedRoot: sandbox.imported, voice: voice)
+        planets.loadEntries()
+        check(planets.entries.map(\.id) == ["builtin:ember-planet", "builtin:quiet-planet"], "the bundled planets come first")
+        let source = try sandbox.folder("renamed", from: "planets/ember-planet") { $0["displayName"] = "测试星球" }
+        let id = try #require(planets.importPlanet(from: source))
+        let name = String(id.dropFirst("imported:".count))
+        check(id.hasPrefix("imported:") && UUID(uuidString: name) != nil, "an import is named by a fresh UUID")
+        check(planets.entries.count == 3 && planets.entries.last?.id == id && planets.entries.last?.name == "测试星球",
+              "the imported planet joins the end of the list")
+        check(planets.highlightedID == id && planets.selectedID == SettingsSnapshot.defaultPlanetID
+              && settings.snapshot.selectedPlanetID == SettingsSnapshot.defaultPlanetID, "an import is highlighted, not selected")
+        check(planets.notice == "已导入“测试星球”，点击卡片即可切换。", "an import says how to switch to it")
+        check(sandbox.installed() == [name], "the import leaves one folder and no staging folder")
+        check(fm.contentsEqual(atPath: source.appendingPathComponent("spritesheet.webp").path,
+                               andPath: sandbox.imported.appendingPathComponent("\(name)/spritesheet.webp").path),
+              "the import copies the sheet byte for byte")
+
+        planets.notice = nil
+        check(planets.importPlanet(from: source) == id && planets.highlightedID == id && planets.notice == "这颗星球已在列表中。"
+              && sandbox.installed() == [name], "importing the same folder again highlights the existing planet")
+        let copy = sandbox.sources.appendingPathComponent("copy")
+        try fm.copyItem(at: EchoTestResources.resource("planets/quiet-planet"), to: copy)
+        check(planets.importPlanet(from: copy) == "builtin:quiet-planet" && planets.highlightedID == "builtin:quiet-planet"
+              && sandbox.installed() == [name], "a copy of a bundled planet is the bundled planet")
+        // Planets and pets share the format, so a pet folder is a valid planet.
+        let pet = try #require(planets.importPlanet(from: try sandbox.folder("pet", from: "pets/chiyan") { $0["displayName"] = "精灵星球" }))
+        check(pet.hasPrefix("imported:") && planets.entries.last?.name == "精灵星球", "a pet folder imports as a planet")
+        let installed = sandbox.installed()
+
+        func refuses(_ folder: URL, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
+            planets.notice = nil
+            let count = planets.entries.count
+            let result = planets.importPlanet(from: folder)
+            check(result == nil && planets.notice?.hasPrefix("导入失败：") == true && planets.notice?.contains("|") == false
+                  && planets.entries.count == count,
+                  "\(message): \(planets.notice ?? "")", sourceLocation: sourceLocation)
+            check(sandbox.installed() == installed, "\(message) leaves nothing behind", sourceLocation: sourceLocation)
+        }
+        let empty = sandbox.sources.appendingPathComponent("empty")
+        try fm.createDirectory(at: empty, withIntermediateDirectories: true)
+        refuses(empty, "a folder without pet.json")
+        let corrupt = try sandbox.folder("corrupt", from: "planets/ember-planet") { $0["displayName"] = "损坏" }
+        try Data("not a webp".utf8).write(to: corrupt.appendingPathComponent("spritesheet.webp"))
+        refuses(corrupt, "a sheet that does not decode")
+        refuses(try sandbox.folder("version", from: "planets/ember-planet") { $0["spriteVersionNumber"] = 3; $0["displayName"] = "版本" },
+                "a sheet the runtime cannot load")
+        refuses(try sandbox.folder("grid", from: "planets/ember-planet") {
+            $0["displayName"] = "网格"; $0["frame"] = ["width": 100, "height": 100, "columns": 8, "rows": 11]
+        }, "a sheet whose size does not match its grid")
+        let escaping = try sandbox.folder("escaping", from: "planets/ember-planet") { $0["displayName"] = "越界" }
+        try JSONSerialization.data(withJSONObject: ["displayName": "越界", "spritesheetPath": "../renamed/spritesheet.webp"])
+            .write(to: escaping.appendingPathComponent("pet.json"))
+        refuses(escaping, "a sheet path that climbs out")
+
+        // A later launch lists the imports, and Live Voice resolves the saved imported id.
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
+        let reopened = PlanetStore(settings: settings, root: builtin, importedRoot: sandbox.imported, voice: voice)
+        reopened.loadEntries()
+        check(Set(reopened.entries.map(\.id)) == Set(planets.entries.map(\.id))
+              && reopened.entries.prefix(2).allSatisfy { $0.id.hasPrefix("builtin:") } && reopened.notice == nil,
+              "the next launch lists the imported planets after the bundled ones")
+        reopened.select(id)
+        check(reopened.selectedID == id && settings.snapshot.selectedPlanetID == id && reopened.notice == nil,
+              "an imported planet can be selected")
+        voice.updateSnapshot { $0.session = .active(owner); $0.replyAudio = .playing(UUID()) }
+        await VoiceTests.tick()
+        check(reopened.active?.displayName == "测试星球" && reopened.playing == "spinning",
+              "Live Voice loads and plays the imported planet")
+        reopened.select(pet)
+        check(reopened.active?.displayName == "精灵星球" && reopened.playing == "spinning",
+              "switching to another import during a call swaps the sprite")
+        reopened.select(id)
+        voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
+        check(reopened.active == nil, "ending the call unloads the planet")
+
+        // Saved ids are untrusted: an imported id may only name a direct child of the import root.
+        // Each prefix resolves only inside its own folder: a bundled planet's name is not an import, and the reverse.
+        for bad in ["imported:", "imported:.hidden", "imported:../imported/\(name)", "imported:\(name)/..", "builtin:\(name)",
+                    "imported:ember-planet", "imported:quiet-planet"] {
+            reopened.notice = nil
+            reopened.select(bad)
+            check(reopened.selectedID == id && reopened.notice == "所选星球不存在，请重新选择。", "\(bad) is refused")
+        }
+
+        // The selected import's folder is deleted between launches: the next call falls back to a bundled planet.
+        try fm.removeItem(at: sandbox.imported.appendingPathComponent(name))
+        let relaunched = PlanetStore(settings: settings, root: builtin, importedRoot: sandbox.imported, voice: voice)
+        check(relaunched.selectedID == id && relaunched.notice == nil, "launching alone does not look for the folder")
+        voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
+        await VoiceTests.tick()
+        check(relaunched.selectedID == SettingsSnapshot.defaultPlanetID && relaunched.active?.displayName == "烬星"
+              && settings.snapshot.selectedPlanetID == SettingsSnapshot.defaultPlanetID
+              && relaunched.notice == "上次选择的星球无法加载，已换成另一颗。",
+              "a missing imported planet falls back to a bundled one and says so")
+        voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
+    }
+}
+}

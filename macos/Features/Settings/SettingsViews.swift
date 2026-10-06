@@ -290,15 +290,23 @@ struct PlanetSettingsView: View {
                     Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
                         .textSelection(.enabled).accessibilityIdentifier("settings.planet.notice")
                 }
-                LazyVGrid(columns: SpriteCard.columns, spacing: 16) {
-                    ForEach(planets.entries) { planet in
-                        SpriteCard(name: planet.name, preview: planet.preview, selected: planets.selectedID == planet.id,
-                                   currentLabel: String(localized: "\(planet.name)，当前星球"), identifier: "settings.planet.\(planet.id)") { planets.select(planet.id) }
-                            .id(planet.id)
-                    }
+                ScrollViewReader { proxy in
+                    LazyVGrid(columns: SpriteCard.columns, spacing: 16) {
+                        ForEach(planets.entries) { planet in
+                            SpriteCard(name: planet.name, preview: planet.preview, selected: planets.selectedID == planet.id,
+                                       currentLabel: String(localized: "\(planet.name)，当前星球"), identifier: "settings.planet.\(planet.id)") { planets.select(planet.id) }
+                                .id(planet.id)
+                        }
+                    }.onChange(of: planets.highlightedID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
                 }
             } header: {
-                Text("我的星球")
+                HStack {
+                    Text("我的星球")
+                    Spacer()
+                    Button("导入星球…", systemImage: "plus") {
+                        WorkspaceActions.chooseFolder { planets.importPlanet(from: $0) }
+                    }.accessibilityIdentifier("settings.importPlanet")
+                }
             }
         }
         // The settings window is retained rather than unmounted, so this runs once and the

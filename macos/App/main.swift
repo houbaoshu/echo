@@ -41,7 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("workspace.json")),
                         dictation: dictation, voice: voice, sourceFactory: { TestBootstrap.Source() })
                     try TestBootstrap.seed(workspace: workspace, root: root)
-                    let planets = PlanetStore(settings: settings, root: Bundle.main.resourceURL?.appendingPathComponent("planets"), voice: voice)
+                    let planets = PlanetStore(settings: settings, root: Bundle.main.resourceURL?.appendingPathComponent("planets"),
+                        importedRoot: root.appendingPathComponent("planets"), voice: voice)
                     companion = CompanionController(petStore: store, workspace: workspace, settings: settings,
                         pets: pets, planets: planets, defaults: defaults)
                     if ProcessInfo.processInfo.environment["ECHO_UI_PET_POSITION"] == "top",
@@ -112,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // starts with nothing decoded beyond the pet itself.
             let planets = PlanetStore(settings: settings,
                                       root: Bundle.main.resourceURL?.appendingPathComponent("planets"),
+                                      importedRoot: SettingsStore.directory.appendingPathComponent("planets"),
                                       voice: workspace.voice)
             companion = CompanionController(petStore: store, workspace: workspace, settings: settings, pets: pets,
                                             planets: planets)

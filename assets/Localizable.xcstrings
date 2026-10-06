@@ -1127,6 +1127,50 @@
         }
       }
     },
+    "导入失败：%@|星球" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t import the planet: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "导入失败：%@"
+          }
+        }
+      }
+    },
+    "导入失败：%@|精灵" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t import the pet: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "导入失败：%@"
+          }
+        }
+      }
+    },
+    "导入星球…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Planet…"
+          }
+        }
+      }
+    },
     "导入模型…" : {
       "localizations" : {
         "en" : {
@@ -2051,6 +2095,16 @@
         }
       }
     },
+    "无法读取星球素材。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read the planet assets."
+          }
+        }
+      }
+    },
     "无法读取此 provider 的 API Key，请检查钥匙串权限或重新填写后保存。" : {
       "localizations" : {
         "en" : {
@@ -2117,6 +2171,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The planet animation stopped: %@"
+          }
+        }
+      }
+    },
+    "星球导入目录不可用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The planet import folder isn’t available."
           }
         }
       }
@@ -4117,6 +4181,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This message is too long for the local model. Shorten it and try again."
+          }
+        }
+      }
+    },
+    "这颗星球已在列表中。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This planet is already in the list."
           }
         }
       }

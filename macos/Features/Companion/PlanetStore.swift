@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import ImageIO
 
-/// One bundled planet. A planet directory is a pet directory: the same `pet.json` manifest and the
+/// One bundled or imported planet. A planet directory is a pet directory: the same `pet.json` manifest and the
 /// same sprite sheet, so the Rust runtime loads it without knowing the difference.
 struct PlanetEntry: Identifiable {
     let id: String
@@ -21,6 +21,8 @@ struct PlanetEntry: Identifiable {
     /// Filled the first time the settings page asks; the app itself only needs the selected one.
     @Published private(set) var entries: [PlanetEntry] = []
     @Published private(set) var selectedID: String
+    /// The card an import added or found already listed, so the grid can scroll to it.
+    @Published private(set) var highlightedID: String?
     /// Loaded only while Live Voice runs. Dropping it frees the frames on both sides of the FFI.
     @Published private(set) var active: PetStore?
     @Published var notice: String?
@@ -31,14 +33,17 @@ struct PlanetEntry: Identifiable {
 
     private let settings: SettingsStore?
     private let root: URL?
+    private let importedRoot: URL?
+    private var loadedEntries = false
     private var current: PetSurfacePresentation.VoiceIndicator = .inactive
     private weak var voice: VoiceSessionController?
     private var voiceObservation: AnyCancellable?
     private var reduceMotionObservation: AnyCancellable?
 
-    init(settings: SettingsStore? = nil, root: URL? = nil, voice: VoiceSessionController? = nil) {
+    init(settings: SettingsStore? = nil, root: URL? = nil, importedRoot: URL? = nil, voice: VoiceSessionController? = nil) {
         self.settings = settings
         self.root = root
+        self.importedRoot = importedRoot
         self.voice = voice
         selectedID = settings?.snapshot.selectedPlanetID ?? SettingsSnapshot.defaultPlanetID
         voiceObservation = voice?.$snapshot
@@ -122,16 +127,53 @@ struct PlanetEntry: Identifiable {
         }
     }
 
-    /// Read the bundled planets for the settings grid.
+    /// Read the bundled planets, then the imported ones, for the settings grid.
     func loadEntries() {
-        guard entries.isEmpty, let root else { return }
+        guard !loadedEntries else { return }
+        loadedEntries = true
         var loaded: [PlanetEntry] = []
         var skipped = false
-        for directory in directories(in: root) {
-            if let entry = entry(at: directory) { loaded.append(entry) } else { skipped = true }
+        for (root, prefix) in [(root, "builtin"), (importedRoot, "imported")] {
+            guard let root else { continue }
+            for directory in directories(in: root) {
+                if let entry = entry(at: directory, id: "\(prefix):\(directory.lastPathComponent)") {
+                    loaded.append(entry)
+                } else { skipped = true }
+            }
         }
         entries = loaded
         if skipped { notice = String(localized: "部分星球素材无法读取，已跳过。") }
+    }
+
+    /// Import a planet folder the way the pet catalog imports a pet: checked, compared with the
+    /// listed planets, staged, checked again and only then installed. It is not selected.
+    @discardableResult func importPlanet(from directory: URL) -> String? {
+        guard let importedRoot else { notice = String(localized: "星球导入目录不可用。"); return nil }
+        loadEntries()
+        do {
+            let fingerprint = try validated(directory, id: "candidate").fingerprint
+            // Listed planets are fingerprinted only here, so opening the page never reads whole sheets.
+            if let existing = entries.first(where: { (try? SpriteFolder.read($0.directory).fingerprint) == fingerprint }) {
+                highlightedID = existing.id; notice = String(localized: "这颗星球已在列表中。"); return existing.id
+            }
+            let entry = try SpriteFolder.install(directory, into: importedRoot) { folder, name in
+                try validated(folder, id: name.map { "imported:\($0)" } ?? "staging").entry
+            }
+            entries.append(entry); highlightedID = entry.id
+            notice = String(localized: "已导入“\(entry.name)”，点击卡片即可切换。")
+            return entry.id
+        } catch {
+            notice = String(localized: "导入失败：%@|星球", defaultValue: "导入失败：\(error.localizedDescription)"); return nil
+        }
+    }
+
+    /// What a folder must pass to be imported: the shared folder checks, a sprite the runtime
+    /// loads, and a card this page can draw.
+    private func validated(_ directory: URL, id: String) throws -> (entry: PlanetEntry, fingerprint: String) {
+        let contents = try SpriteFolder.read(directory)
+        try PetStore(directory: directory).stop()
+        guard let entry = entry(at: directory, id: id) else { throw SettingsError(localized: "无法读取星球素材。") }
+        return (entry, contents.fingerprint)
     }
 
     // MARK: - Loading
@@ -187,11 +229,11 @@ struct PlanetEntry: Identifiable {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
-    /// Resolve an id to a bundled directory. The id comes from `settings.json`, so it is treated
-    /// as untrusted input and may only name a direct child of the planets folder.
+    /// Resolve an id to a bundled or imported directory. The id comes from `settings.json`, so it
+    /// is treated as untrusted input and may only name a direct child of its own planets folder.
     private func directory(for id: String) -> URL? {
-        let prefix = "builtin:"
-        guard let root, id.hasPrefix(prefix) else { return nil }
+        let roots = [("builtin:", root), ("imported:", importedRoot)]
+        guard let (prefix, root) = roots.first(where: { id.hasPrefix($0.0) }), let root else { return nil }
         let name = String(id.dropFirst(prefix.count))
         guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/") else { return nil }
         let directory = root.appendingPathComponent(name, isDirectory: true)
@@ -229,7 +271,7 @@ struct PlanetEntry: Identifiable {
         Manifest.Frame(width: 192, height: 208, columns: 8, rows: version == 2 ? 11 : 9)
     }
 
-    private func entry(at directory: URL) -> PlanetEntry? {
+    private func entry(at directory: URL, id: String) -> PlanetEntry? {
         guard let manifest = manifest(at: directory) else { return nil }
         let relative = manifest.spritesheetPath ?? "spritesheet.webp"
         guard !relative.isEmpty, !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") else { return nil }
@@ -247,7 +289,7 @@ struct PlanetEntry: Identifiable {
         guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
               let preview = image.cropping(to: CGRect(x: 0, y: 0, width: grid.width, height: grid.height)) else { return nil }
         let name = manifest.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return PlanetEntry(id: "builtin:\(directory.lastPathComponent)",
+        return PlanetEntry(id: id,
                            name: name.flatMap { $0.isEmpty ? nil : $0 } ?? directory.lastPathComponent,
                            description: manifest.description ?? "",
                            directory: directory, preview: preview)
