@@ -79,8 +79,6 @@ import Combine
     private var noticeTimer: Timer?
     private var bubbleObservation: AnyCancellable?
     let controlsPresentation: PetControlsPresentation
-    private var composerObservation: AnyCancellable?
-    private var projectPickerObservation: AnyCancellable?
     private var outsideClickMonitor: Any?
     /// A click elsewhere took the keyboard from a composer that keeps its draft. The + menu
     /// closing behind that click must not take it back; clicking into the panel again clears it.
@@ -156,11 +154,11 @@ import Combine
         petPanel.onMove = { [weak self] in self?.layout() }
         petPanel.onPointerSample = { [weak self] point in self?.samplePointer(point) }
         restorePetPosition()
-        composerObservation = controlsPresentation.$isComposerOpen.removeDuplicates().dropFirst().sink { [weak self] open in
-            // @Published delivers before the value is stored; act once the new state is visible.
+        controlsPresentation.onComposerOpenChange = { [weak self] open in
+            // Act once the change that opened or closed the composer has run to its end.
             DispatchQueue.main.async { [weak self] in self?.composerDidChange(open: open) }
         }
-        projectPickerObservation = controlsPresentation.$isProjectPickerOpen.removeDuplicates().dropFirst().sink { [weak self] open in
+        controlsPresentation.onProjectPickerOpenChange = { [weak self] open in
             guard !open else { return }
             // Typing returns to the composer once the + menu closes over it.
             DispatchQueue.main.async { [weak self] in
@@ -499,7 +497,8 @@ import Combine
     func shutdown() {
         workspace.voice.shutdown(); voiceObservation = nil; bubbleObservation = nil; petVoicePlanetObservation = nil
         settings.cancelTest(); pets.stop(); pets.onActivate = nil
-        observation = nil; composerObservation = nil; projectPickerObservation = nil
+        observation = nil
+        controlsPresentation.onComposerOpenChange = nil; controlsPresentation.onProjectPickerOpenChange = nil
         if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor); self.outsideClickMonitor = nil }
         if let activityMouseUpMonitor { NSEvent.removeMonitor(activityMouseUpMonitor); self.activityMouseUpMonitor = nil }
         if let globalActivityMouseUpMonitor { NSEvent.removeMonitor(globalActivityMouseUpMonitor); self.globalActivityMouseUpMonitor = nil }

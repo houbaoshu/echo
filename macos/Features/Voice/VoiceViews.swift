@@ -165,7 +165,7 @@ struct VoicePlanet: View {
 /// The observing leaf. Frames change on the `PetStore`, not on the shared `PlanetStore`, so the
 /// view that redraws every frame has to be the one holding the sprite.
 private struct PlanetFrame: View {
-    @ObservedObject var store: PetStore
+    let store: PetStore
     var body: some View {
         Image(decorative: store.image, scale: 1, orientation: .up)
             .resizable()

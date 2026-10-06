@@ -22,20 +22,20 @@ final class RuntimeHandle {
     deinit { echo_destroy(pointer) }
 }
 
-@MainActor
-final class PetStore: ObservableObject {
+@MainActor @Observable
+final class PetStore {
     // Codex's default floating pet width; AppKit points match CSS logical pixels.
     private static let displayWidth: CGFloat = 112
-    @Published private(set) var image: CGImage
-    private(set) var spriteIndex: UInt32 = 0
+    private(set) var image: CGImage
+    @ObservationIgnored private(set) var spriteIndex: UInt32 = 0
     let size: NSSize
     let displayName: String
-    private var handle: RuntimeHandle?
+    @ObservationIgnored private var handle: RuntimeHandle?
     private let images: [CGImage]
-    private var timer: Timer?
-    var onFailure: ((Error) -> Void)?
+    @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored var onFailure: ((Error) -> Void)?
     /// The runtime's tick. Only tests replace it, to fail a tick the way a runtime error would.
-    var advance: (OpaquePointer, UnsafeMutablePointer<EchoTick>) -> Bool = { echo_tick($0, $1) }
+    @ObservationIgnored var advance: (OpaquePointer, UnsafeMutablePointer<EchoTick>) -> Bool = { echo_tick($0, $1) }
 
     init(directory: URL) throws {
         struct Metadata: Decodable { var displayName: String? }
@@ -102,7 +102,7 @@ final class PetStore: ObservableObject {
 
     /// Hold the frame that is already showing instead of advancing. Reduce Motion pauses the
     /// Live Voice planet here, which leaves the state readable rather than blanking the mark.
-    var isPaused = false {
+    @ObservationIgnored var isPaused = false {
         didSet {
             guard isPaused != oldValue else { return }
             if isPaused {
@@ -171,7 +171,7 @@ final class PetStore: ObservableObject {
 }
 
 struct PetView: View {
-    @ObservedObject var store: PetStore
+    let store: PetStore
     var body: some View {
         // Keep SwiftUI hit testing enabled: disabling it also makes WindowServer
         // pass clicks through this hosting view, so the pet panel never sees them.

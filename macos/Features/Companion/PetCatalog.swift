@@ -10,14 +10,14 @@ struct PetEntry: Identifiable {
     let builtin: Bool
 }
 
-@MainActor final class PetCatalog: ObservableObject {
-    @Published private(set) var entries: [PetEntry] = []
-    @Published var notice: String?
-    @Published private(set) var selectedID = "builtin:chiyan"
-    @Published private(set) var highlightedID: String?
-    private(set) var activeStore: PetStore?
-    var onActivate: ((PetStore) -> Void)?
-    var onFailure: ((Error) -> Void)?
+@MainActor @Observable final class PetCatalog {
+    private(set) var entries: [PetEntry] = []
+    var notice: String?
+    private(set) var selectedID = "builtin:chiyan"
+    private(set) var highlightedID: String?
+    @ObservationIgnored private(set) var activeStore: PetStore?
+    @ObservationIgnored var onActivate: ((PetStore) -> Void)?
+    @ObservationIgnored var onFailure: ((Error) -> Void)?
     private let settings: SettingsStore
     private let importedRoot: URL?
     init(settings: SettingsStore, builtinRoot: URL? = nil, importedRoot: URL? = nil) {

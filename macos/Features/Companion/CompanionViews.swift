@@ -84,10 +84,10 @@ struct RoundControl: View {
     }
 }
 
-@MainActor final class ActivityPlacement: ObservableObject {
-    @Published var isBelowPet = false
-    private(set) var closeButtonFrames: [CGRect] = []
-    var onCloseButtonFramesChange: (() -> Void)?
+@MainActor @Observable final class ActivityPlacement {
+    var isBelowPet = false
+    @ObservationIgnored private(set) var closeButtonFrames: [CGRect] = []
+    @ObservationIgnored var onCloseButtonFramesChange: (() -> Void)?
 
     func updateCloseButtonFrames(_ frames: [CGRect]) {
         guard closeButtonFrames != frames else { return }
@@ -109,7 +109,7 @@ struct ActivityCapsule: View {
     let send: () -> Void
     let stop: () -> Void
     var open: () -> Void = {}
-    @ObservedObject var placement: ActivityPlacement
+    let placement: ActivityPlacement
     var title: String?
     var followUp: (() -> Void)?
     var exit: (() -> Void)?
@@ -311,31 +311,38 @@ struct ActivityCapsule: View {
     }
 }
 
-@MainActor final class PetControlsPresentation: ObservableObject {
-    @Published var isHovered = false {
+@MainActor @Observable final class PetControlsPresentation {
+    var isHovered = false {
         didSet { if !isHovered, draftPeekWaitsForExit { draftPeekWaitsForExit = false } }
     }
     /// The composer closed under the pointer, e.g. on Escape. Its draft's line stays a line until
     /// the pointer has left it once, or the composer would open again at once without the keyboard.
-    @Published private(set) var draftPeekWaitsForExit = false
-    @Published private(set) var isComposerOpen = false
-    @Published var draft = ""
-    @Published private(set) var focusRequest = 0
+    private(set) var draftPeekWaitsForExit = false
+    private(set) var isComposerOpen = false {
+        didSet { if isComposerOpen != oldValue { onComposerOpenChange?(isComposerOpen) } }
+    }
+    var draft = ""
+    private(set) var focusRequest = 0
     /// The pet's horizontal center inside the fixed canvas; the content clamps itself to the canvas.
-    @Published var petCenterX = PetSurfacePresentation.canvasWidth / 2
+    var petCenterX = PetSurfacePresentation.canvasWidth / 2
     /// The project the next quick send starts in; it stays selected across sends.
-    @Published var projectID: UUID?
+    var projectID: UUID?
     /// While the + menu is open the composer keeps itself open even though its panel is not key.
-    @Published var isProjectPickerOpen = false
+    var isProjectPickerOpen = false {
+        didSet { if isProjectPickerOpen != oldValue { onProjectPickerOpenChange?(isProjectPickerOpen) } }
+    }
+    /// The controller's hooks, called once the new value is stored and only when it changed.
+    @ObservationIgnored var onComposerOpenChange: ((Bool) -> Void)?
+    @ObservationIgnored var onProjectPickerOpenChange: ((Bool) -> Void)?
     /// After a send the empty composer collapses once the pointer leaves, like the idle strip.
     private(set) var collapsesOnExit = false
     /// The Live Voice session that has connected once. The snapshot shows only the current
     /// recognition state, which also reconnects between replies; those keep the voice bar.
-    @Published private(set) var connectedVoiceSession: UUID?
+    private(set) var connectedVoiceSession: UUID?
     /// The strip's panel is ordered out while the main window shows the Live Voice planet. An
     /// ordered-out window still runs its SwiftUI updates, so the strip drops its planet until it
     /// is back on screen rather than redrawing a copy nobody sees on every frame.
-    @Published private(set) var isSuspended = false
+    private(set) var isSuspended = false
     func setSuspended(_ suspended: Bool) { if isSuspended != suspended { isSuspended = suspended } }
     /// The strip's layout from the live stores. The drawn strip and the controller's hover
     /// hit-frame both read it here, so the pointer target always matches the width on screen.
@@ -439,8 +446,8 @@ private struct PetSegment<Label: View>: View {
 struct PetControls: View {
     @ObservedObject var store: TaskStore
     @ObservedObject var voice: VoiceSessionController
-    @ObservedObject var presentation: PetControlsPresentation
-    @ObservedObject var placement: ActivityPlacement
+    @Bindable var presentation: PetControlsPresentation
+    let placement: ActivityPlacement
     var unseenCompleted = 0
     var runningTasks = 0
     /// Supplies the composer's + project menu; without it the composer has no + button.
@@ -836,7 +843,7 @@ struct PetControls: View {
 
 struct WorkspaceActivityCapsule: View {
     @ObservedObject var workspace: WorkspaceStore
-    @ObservedObject var placement: ActivityPlacement
+    let placement: ActivityPlacement
     /// A card opens its chat when clicked; the front of a stack opens the list instead.
     @ViewBuilder private func card(_ conversation: WorkspaceConversation, stacked: Bool = false) -> some View {
         ActivityCapsule(store: conversation.store,
@@ -946,11 +953,11 @@ struct WorkspacePetControls: View {
     }
 }
 
-@MainActor final class CompanionBubbleState: ObservableObject {
+@MainActor @Observable final class CompanionBubbleState {
     /// A transient error, e.g. from Live Voice, shown in place of the muted reply.
-    @Published var notice: String?
+    var notice: String?
     /// The pet's horizontal center inside the bubble canvas.
-    @Published var petCenterX = CGFloat(CompanionLayout.capsuleWidth + 24) / 2
+    var petCenterX = CGFloat(CompanionLayout.capsuleWidth + 24) / 2
 }
 
 /// A rounded bubble whose tail points at the pet from the top or bottom edge.
@@ -1088,8 +1095,8 @@ struct LatestLinesLayout: Layout {
 
 struct WorkspaceCompanionBubble: View {
     @ObservedObject var voice: VoiceSessionController
-    @ObservedObject var state: CompanionBubbleState
-    @ObservedObject var placement: ActivityPlacement
+    let state: CompanionBubbleState
+    let placement: ActivityPlacement
     var body: some View {
         let playing = voice.snapshot.speakerMuted && voice.spoken != nil && voice.spoken?.stoppedAt == nil
         // Follows the real playback position while the reply is being spoken; still otherwise.

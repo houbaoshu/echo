@@ -53,7 +53,7 @@ struct SettingsSidebar: View {
 struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var voice: VoiceSessionController
-    @ObservedObject var pets: PetCatalog
+    let pets: PetCatalog
     @ObservedObject var planets: PlanetStore
     private var section: SettingsSection { settings.selectedSection }
     var body: some View {
@@ -251,7 +251,7 @@ struct LocalModelSection: View {
 }
 
 struct PetSettingsView: View {
-    @ObservedObject var pets: PetCatalog
+    let pets: PetCatalog
     @ObservedObject var settings: SettingsStore
     var body: some View {
         Form {

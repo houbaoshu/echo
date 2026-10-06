@@ -1,11 +1,14 @@
 import AppKit
 import SwiftUI
-import Combine
 
 /// Whether the palette is on screen. ⌘K and the palette's own Escape / Return all drive
 /// it through here; `SearchPaletteController` is what turns that into a window.
-@MainActor final class SearchPalettePresentation: ObservableObject {
-    @Published var isOpen = false
+@MainActor @Observable final class SearchPalettePresentation {
+    var isOpen = false {
+        didSet { if isOpen != oldValue { onOpenChange?(isOpen) } }
+    }
+    /// The controller's hook, called once the new value is stored and only when it changed.
+    @ObservationIgnored var onOpenChange: ((Bool) -> Void)?
 }
 
 /// The palette's search field, addressed by identity.
@@ -342,7 +345,6 @@ struct ChatSearchPalette: View {
     private let presentation: SearchPalettePresentation
     private let hostWindow: () -> NSWindow?
     private var panel: SearchPalettePanel?
-    private var observation: AnyCancellable?
     /// The top edge the panel hangs from, in screen coordinates. The panel resizes itself
     /// as results narrow, and a palette that grew upwards from its bottom edge would walk
     /// up the screen as you type. Until the panel is dragged, only the vertical edge is
@@ -365,8 +367,7 @@ struct ChatSearchPalette: View {
         self.presentation = presentation
         self.hostWindow = hostWindow
         super.init()
-        // Published delivers the new value to the sink, so this needs no hop.
-        observation = presentation.$isOpen.removeDuplicates().sink { [weak self] open in
+        presentation.onOpenChange = { [weak self] open in
             if open { self?.present() } else { self?.dismiss() }
         }
     }

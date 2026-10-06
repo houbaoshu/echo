@@ -345,8 +345,8 @@ private struct ProjectFolderDropTarget: ViewModifier {
 /// Clicking a SwiftUI List changes selection without taking keyboard focus. Bind
 /// FocusState directly to the List: `.focusable()` would insert a proxy that cannot
 /// drive its rows.
-@MainActor final class SidebarListFocus: ObservableObject {
-    @Published private(set) var request = 0
+@MainActor @Observable final class SidebarListFocus {
+    private(set) var request = 0
     func take() {
         // Let AppKit finish dispatching selection before transferring focus.
         DispatchQueue.main.async { [weak self] in self?.request += 1 }
@@ -354,7 +354,7 @@ private struct ProjectFolderDropTarget: ViewModifier {
 }
 
 struct SidebarListFocusBinding: ViewModifier {
-    @ObservedObject var focus: SidebarListFocus
+    let focus: SidebarListFocus
     @FocusState private var focused: Bool
     func body(content: Content) -> some View {
         content.focused($focused)
