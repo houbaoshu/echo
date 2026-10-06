@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Settings owns its window and focus loop. The shared stores keep unsaved edits and
@@ -7,20 +8,34 @@ import SwiftUI
     private let settings: SettingsStore
     private let workspace: WorkspaceStore
     private let sectionFocus = SidebarListFocus()
+    private var sectionTitle: AnyCancellable?
+
+    /// Like System Settings, the window has one width and only its height changes.
+    static let width: CGFloat = 720
+    /// Tall enough for the model section, the longest one, to show without scrolling.
+    static let defaultHeight: CGFloat = 600
 
     init(settings: SettingsStore, workspace: WorkspaceStore, pets: PetCatalog, planets: PlanetStore,
          defaults: UserDefaults) {
         self.settings = settings
         self.workspace = workspace
-        let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 700),
+        let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.defaultHeight),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         super.init(window: window)
-        window.title = String(localized: "设置")
-        window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 720, height: 520)
-        window.toolbarStyle = .preference
+        // The title is the open section's name, drawn by AppKit in a unified toolbar over
+        // the detail column the way System Settings draws its pane's name. The toolbar has
+        // no items; it is there for the toolbar-height titlebar and its title font. A
+        // transparent titlebar drops the hairline under it, which `titlebarSeparatorStyle`
+        // (on the window or the split item) was measured not to remove.
+        window.title = settings.selectedSection.title
+        window.toolbarStyle = .unified
         window.toolbar = NSToolbar(identifier: "chiyan.settings")
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: Self.width, height: 520)
+        window.maxSize = NSSize(width: Self.width, height: .greatestFiniteMagnitude)
+        sectionTitle = settings.$selectedSection.sink { [weak window] in window?.title = $0.title }
         window.delegate = self
         window.onEscape = { [weak self] in self?.handleEscape() ?? false }
 
@@ -37,7 +52,12 @@ import SwiftUI
         split.splitView.dividerStyle = .thin
         split.addSplitViewItem(sidebarItem); split.addSplitViewItem(detailItem)
         window.contentViewController = split
+        // Taking the split view controller sizes the window to the split view's own size,
+        // so the default size is set after it.
+        window.setFrame(NSRect(origin: .zero, size: NSSize(width: Self.width, height: Self.defaultHeight)), display: false)
         window.center()
+        // A frame saved while the window was wider comes back clamped to `maxSize`:
+        // measured, naming restores it at the fixed width, keeping its left edge and height.
         if defaults === UserDefaults.standard {
             window.setFrameAutosaveName("settings")
             window.setFrameUsingName("settings")

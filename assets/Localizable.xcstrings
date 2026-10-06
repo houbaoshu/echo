@@ -623,6 +623,16 @@
         }
       }
     },
+    "使用本地模型" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use local model"
+          }
+        }
+      }
+    },
     "保存" : {
       "localizations" : {
         "en" : {
@@ -2266,7 +2276,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Use local model"
+            "value" : "Local Model"
           }
         }
       }
@@ -2417,6 +2427,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Live Voice ended because the model changed text it had already spoken. The full reply is kept in the chat."
+          }
+        }
+      }
+    },
+    "模型服务" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model Provider"
           }
         }
       }
@@ -3315,16 +3335,6 @@
         }
       }
     },
-    "设置" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Settings"
-          }
-        }
-      }
-    },
     "设置…" : {
       "localizations" : {
         "en" : {
@@ -3957,6 +3967,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "reading the microphone format and installing the capture tap"
+          }
+        }
+      }
+    },
+    "豆包语音" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doubao Voice"
           }
         }
       }

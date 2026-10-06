@@ -10,7 +10,6 @@ enum WorkspaceStyle {
     static let body = Font.body
     static let medium = Font.body.weight(.medium)
     static let caption = Font.callout
-    static let pageTitle = Font.title2
     static let primary = Color(nsColor: .labelColor)
     /// For surfaces without a material of their own. On the sidebar, the project file
     /// inspector and the search palette, call sites use the hierarchical `.secondary`

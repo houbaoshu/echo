@@ -57,6 +57,8 @@ struct VoiceSettingsView: View {
                 TextField("音色 ID", text: $settings.voiceDraft.speaker, prompt: Text("输入音色 ID"))
                     .accessibilityLabel("音色 ID")
                     .accessibilityIdentifier("voiceSettings.speaker")
+            } header: {
+                Text("豆包语音")
             }
             Section {
                 HStack(spacing: 12) {

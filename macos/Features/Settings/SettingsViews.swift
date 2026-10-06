@@ -36,7 +36,6 @@ struct SettingsSidebar: View {
                 .accessibilityLabel("设置分区").accessibilityIdentifier("settings.sections")
         }.padding(.vertical, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .foregroundStyle(WorkspaceStyle.primary)
     }
     @ViewBuilder private func icon(_ section: SettingsSection) -> some View {
         switch section {
@@ -58,32 +57,27 @@ struct SettingsView: View {
     @ObservedObject var planets: PlanetStore
     private var section: SettingsSection { settings.selectedSection }
     var body: some View {
-        VStack(spacing: 0) {
-            // Each section is its own `Form`, so the card grouping, the label column and
-            // its width, the control column, the row separators and the narrow-pane
-            // stacking all come from `.formStyle(.grouped)`. The form scrolls itself,
-            // which is why there is no ScrollView here any more; the page title sits
-            // above it and stays put, the way a System Settings pane's title does.
-            VStack(alignment: .leading, spacing: 0) {
-                Text(section.title).font(WorkspaceStyle.pageTitle)
-                    .padding(.horizontal, 32).padding(.top, 28).padding(.bottom, 4)
-                Group {
-                    // Closing a retained settings window does not unmount its views.
-                    // Reset revealed credentials and field focus on close/reopen while
-                    // leaving the store's unsaved form values intact.
-                    // Keep the if/else chain: written as a switch, a swapped-in pane no longer
-                    // rejoins the key view loop (NativeAppKitEventTests.testSettingsKeyboardAndFocus).
-                    if section == .model { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
-                    else if section == .voice { VoiceSettingsView(settings: settings, voice: voice) }
-                    else if section == .planet { PlanetSettingsView(planets: planets) }
-                    else { PetSettingsView(pets: pets, settings: settings) }
-                }.formStyle(.grouped)
-            }.frame(maxWidth: 820, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .background(Color(nsColor: .textBackgroundColor))
-        }
-        .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.primary)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Each section is its own `Form`, so the card grouping, the label column and
+        // its width, the control column, the row separators and the narrow-pane
+        // stacking all come from `.formStyle(.grouped)`. The form scrolls itself,
+        // which is why there is no ScrollView here. The section's name is the window
+        // title, so the pane carries no heading of its own. The pane sets no font: the
+        // form's own body font is the same, and a font set here would also replace the
+        // form's semibold group headings (measured on macOS 27: they turn regular).
+        Group {
+            // Closing a retained settings window does not unmount its views.
+            // Reset revealed credentials and field focus on close/reopen while
+            // leaving the store's unsaved form values intact.
+            // Keep the if/else chain: written as a switch, a swapped-in pane no longer
+            // rejoins the key view loop (NativeAppKitEventTests.testSettingsKeyboardAndFocus).
+            if section == .model { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
+            else if section == .voice { VoiceSettingsView(settings: settings, voice: voice) }
+            else if section == .planet { PlanetSettingsView(planets: planets) }
+            else { PetSettingsView(pets: pets, settings: settings) }
+        }.formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .textBackgroundColor))
+        .foregroundStyle(WorkspaceStyle.primary)
     }
 }
 
@@ -164,6 +158,8 @@ struct ModelSettingsView: View {
                 }
                 TextField("默认模型", text: $settings.draft.model, prompt: Text("输入 Model ID"))
                     .accessibilityLabel("默认模型").accessibilityIdentifier("settings.model")
+            } header: {
+                Text("模型服务")
             }
             Section {
                 ViewThatFits(in: .horizontal) {
@@ -213,7 +209,7 @@ struct LocalModelSection: View {
     @State private var importing = false
     var body: some View {
         Section {
-            Toggle("本地模型", isOn: Binding(get: { settings.snapshot.localModelOnly }, set: { settings.setLocalModelOnly($0) }))
+            Toggle("使用本地模型", isOn: Binding(get: { settings.snapshot.localModelOnly }, set: { settings.setLocalModelOnly($0) }))
                 .toggleStyle(.switch).accessibilityIdentifier("settings.localModel.only")
             // Only one model can be imported for now, so the menu lists exactly what is
             // there and choosing is a no-op; it is a picker so the row reads like the others.
@@ -235,6 +231,8 @@ struct LocalModelSection: View {
                 Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
                     .accessibilityIdentifier("settings.localModel.notice")
             }
+        } header: {
+            Text("本地模型")
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { settings.importLocalModel(from: url) }

@@ -492,8 +492,18 @@ private struct ComposerHeightHost: View {
         main.showSettings()
         try await Task.sleep(for: .milliseconds(150))
         let settingsWindow = main.settingsController!.window!
-        XCTAssertTrue(settingsWindow !== window && settingsWindow.title == "设置", "Settings has its own window")
-        XCTAssertTrue(settingsWindow.toolbarStyle == .preference && settingsWindow.frameAutosaveName.isEmpty)
+        XCTAssertTrue(settingsWindow !== window && settingsWindow.title == main.settings.selectedSection.title,
+                     "Settings has its own window, titled with the open section, got \(settingsWindow.title)")
+        XCTAssertTrue(settingsWindow.toolbarStyle == .unified && settingsWindow.titlebarAppearsTransparent
+                      && settingsWindow.frameAutosaveName.isEmpty)
+        for section in [SettingsSection.voice, .model] {
+            main.settings.selectedSection = section
+            XCTAssertTrue(settingsWindow.title == section.title, "The title follows the section, got \(settingsWindow.title)")
+        }
+        XCTAssertTrue(settingsWindow.frame.width == SettingsWindowController.width
+                      && settingsWindow.minSize.width == SettingsWindowController.width
+                      && settingsWindow.maxSize.width == SettingsWindowController.width,
+                     "Settings has one width, got \(settingsWindow.frame) min \(settingsWindow.minSize) max \(settingsWindow.maxSize)")
         XCTAssertTrue(window.title == "无项目会话" && window.toolbar?.isVisible == true && !main.splitController.view.isHidden,
                      "Opening settings leaves the workspace title, toolbar and columns intact")
         let settingsFrame = settingsWindow.frame
