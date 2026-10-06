@@ -35,7 +35,7 @@ import AppKit
         self.companion = companion
         petItem = NSMenuItem(title: "", action: #selector(togglePet), keyEquivalent: "")
         super.init()
-        statusItem.button?.image = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "Echo")
+        statusItem.button?.image = Self.icon()
         statusItem.button?.setAccessibilityIdentifier("echo.statusItem")
         petItem.target = self
         // The app's name, untranslated, as the Dock tile's.
@@ -49,6 +49,17 @@ import AppKit
         menu.delegate = self
         menuNeedsUpdate(menu)
         statusItem.menu = menu
+    }
+
+    /// The pet's capsule from the asset catalog, filled because the outline reads too faint in the
+    /// menu bar. A symbol image is a template, so the menu bar tints it for light, dark and the
+    /// highlighted item. Should the catalog ever lose it, a system symbol stands in rather than an
+    /// empty item.
+    private static func icon() -> NSImage? {
+        let image = NSImage(symbolName: "custom.capsule.fill", variableValue: 1)
+            ?? NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: nil)
+        image?.accessibilityDescription = "Echo"
+        return image
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
