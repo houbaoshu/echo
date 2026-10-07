@@ -15,8 +15,6 @@ struct ModelConfiguration: Codable, Equatable, Sendable {
     var model = ""
     var apiProtocol: ModelAPIProtocol = .chatCompletions
 
-    private enum CodingKeys: String, CodingKey { case baseURL, model, apiProtocol }
-
     func rootURL() throws -> URL {
         guard let parts = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
               let host = parts.host, !host.isEmpty,
@@ -34,16 +32,6 @@ struct ModelConfiguration: Codable, Equatable, Sendable {
         result.model = model.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !requiresModel || !result.model.isEmpty else { throw SettingsError(localized: "请输入默认模型。") }
         return result
-    }
-}
-
-extension ModelConfiguration {
-    init(from decoder: any Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        baseURL = try values.decode(String.self, forKey: .baseURL)
-        model = try values.decode(String.self, forKey: .model)
-        // Settings saved before protocol selection used Chat Completions.
-        apiProtocol = try values.decodeIfPresent(ModelAPIProtocol.self, forKey: .apiProtocol) ?? .chatCompletions
     }
 }
 
@@ -128,15 +116,6 @@ enum ModelProvider: String, Codable, CaseIterable, Sendable {
         case .custom: ModelConfiguration(baseURL: "", model: "")
         }
     }
-    static func infer(from configuration: ModelConfiguration) -> Self {
-        let url = URLComponents(string: configuration.baseURL.trimmingCharacters(in: .whitespacesAndNewlines))
-        switch url?.host?.lowercased() {
-        case "api.openai.com": return .openAI
-        case "api.deepseek.com": return .deepSeek
-        default:
-            return ["localhost", "127.0.0.1", "::1", "[::1]"].contains(url?.host?.lowercased() ?? "") && url?.port == 11434 ? .ollama : .custom
-        }
-    }
 }
 
 struct ProviderSettings: Codable, Equatable {
@@ -167,29 +146,20 @@ struct SettingsSnapshot: Codable {
     private enum CodingKeys: String, CodingKey {
         case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, voiceSecretAccount, localModelOnly
     }
-    private enum LegacyKeys: String, CodingKey { case model, secretAccount }
+    /// Any version but this build's own, including the first, which kept one model and no provider.
+    static let unsupportedVersion = SettingsError(localized: "设置文件版本不受支持，原文件保留。请移走 settings.json 后重启应用。")
     init() {}
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        let version = try values.decode(Int.self, forKey: .version)
-        guard version == 1 || version == 2 else { throw SettingsError(localized: "设置文件版本不受支持。") }
+        guard try values.decode(Int.self, forKey: .version) == 2 else { throw Self.unsupportedVersion }
         selectedPetID = try values.decode(String.self, forKey: .selectedPetID)
         selectedPlanetID = try values.decodeIfPresent(String.self, forKey: .selectedPlanetID) ?? SettingsSnapshot.defaultPlanetID
         voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
         voiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .voiceSecretAccount)
         localModelOnly = try values.decodeIfPresent(Bool.self, forKey: .localModelOnly) ?? false
-        if version == 1 {
-            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
-            let model = try legacy.decode(ModelConfiguration.self, forKey: .model)
-            activeProvider = ModelProvider.infer(from: model)
-            // Adopt the existing Keychain reference; migration never copies or deletes a key.
-            providers = [activeProvider.rawValue: ProviderSettings(model: model,
-                secretAccount: try legacy.decodeIfPresent(String.self, forKey: .secretAccount))]
-        } else {
-            activeProvider = try values.decode(ModelProvider.self, forKey: .activeProvider)
-            providers = try values.decode([String: ProviderSettings].self, forKey: .providers)
-            guard providers[activeProvider.rawValue] != nil else { throw SettingsError(localized: "缺少当前 provider 配置。") }
-        }
+        activeProvider = try values.decode(ModelProvider.self, forKey: .activeProvider)
+        providers = try values.decode([String: ProviderSettings].self, forKey: .providers)
+        guard providers[activeProvider.rawValue] != nil else { throw SettingsError(localized: "缺少当前 provider 配置。") }
     }
 }
 
@@ -278,6 +248,9 @@ protocol ConnectionTesting: Sendable {
             do {
                 let decoded = try JSONDecoder().decode(SettingsSnapshot.self, from: Data(contentsOf: url))
                 snapshot = decoded
+            } catch let error as SettingsError where error == SettingsSnapshot.unsupportedVersion {
+                loadBlocked = true
+                notice = error.message
             } catch {
                 loadBlocked = true
                 notice = String(localized: "设置文件无法读取，原文件保留。请修复或移走 settings.json 后重启应用。")

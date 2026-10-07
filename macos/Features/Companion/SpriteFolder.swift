@@ -21,6 +21,7 @@ enum SpriteFolder {
         let displayName: String
         let description: String?
         let spritesheetPath: String?
+        let spriteVersionNumber: Int?
     }
 
     /// Read a folder the user chose. Both files must stay inside it, within the size limits.
@@ -32,6 +33,10 @@ enum SpriteFolder {
         guard manifestSize <= 1_048_576 else { throw SettingsError(localized: "pet.json 文件过大。") }
         let data = try Data(contentsOf: manifestURL)
         let manifest = try JSONDecoder().decode(Manifest.self, from: data)
+        // The 8 × 11 sheet with look directions. Older pets leave the field out and have 9 rows.
+        guard manifest.spriteVersionNumber == 2 else {
+            throw SettingsError(localized: "仅支持第 2 版精灵格式（pet.json 中的 spriteVersionNumber 须为 2）。")
+        }
         let relative = manifest.spritesheetPath ?? "spritesheet.webp"
         guard !relative.isEmpty, !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") else {
             throw SettingsError(localized: "精灵图必须使用文件夹内的相对路径。")

@@ -736,16 +736,15 @@ extension EchoIntegrationScenarios {
 
       }
     }
-    // MARK: Conversations older builds saved
+    // MARK: Conversations without native history
 
-    /// Only native history opens. A conversation an older build saved — a Rust-engine sidecar, or
-    /// messages kept in the manifest, the earliest of them still in the `text` format — is shown
-    /// as unsupported: it cannot run, it is never saved as native history, it reads the same at
-    /// every launch, and deleting it removes what it left behind.
-    @Test static func oldFormatConversationsAreUnsupportedAndCanBeDeleted() async throws {
+    /// Only native history opens. A conversation whose messages are kept in the manifest, with no
+    /// sidecar, is blocked: it cannot run, it is never saved as native history, it reads the same
+    /// at every launch, and it can be deleted.
+    @Test static func manifestOnlyConversationsAreBlockedAndCanBeDeleted() async throws {
       try await withSession { f in
         let fm = FileManager.default
-        let persistence = WorkspacePersistence(url: f.root.appendingPathComponent("old-formats/workspace.json"))
+        let persistence = WorkspacePersistence(url: f.root.appendingPathComponent("manifest-only/workspace.json"))
         var workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
         let current = try #require(workspace.selected)
         #expect(workspace.send("hello", conversationID: current.id))
@@ -753,25 +752,16 @@ extension EchoIntegrationScenarios {
         let currentMessages = current.store.messages
         workspace.flush(); workspace.shutdown()
 
-        // Add what older builds left: a Rust-engine sidecar with the copy a migration set aside,
-        // and a conversation kept in the manifest.
-        let rust = UUID(), inline = UUID()
-        let rustSidecar = Data(#"{"agentHistory":"{\"version\":1}","messages":[]}"#.utf8)
-        try fm.createDirectory(at: persistence.legacySessionsDirectory, withIntermediateDirectories: true)
-        try rustSidecar.write(to: persistence.legacySessionURL(rust))
-        let migrated = persistence.legacySessionsDirectory.appendingPathComponent("\(rust.uuidString).v1-migrated.json")
-        try rustSidecar.write(to: migrated)
+        let inline = UUID()
         var manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: persistence.url)) as! [String: Any]
         let task: [String: Any] = ["id": UUID().uuidString, "runID": UUID().uuidString, "title": "old", "summary": "已完成", "status": "completed"]
-        func entry(_ id: UUID, _ title: String, _ state: [String: Any]) -> [String: Any] {
-          ["id": id.uuidString, "title": title, "manuallyNamed": false, "lastUsed": 0,
-           "state": state.merging(["mainDraft": "", "followUpDraft": "", "activityDismissed": false, "activitiesCollapsed": false,
-                                   "task": task]) { $1 }]
+        let message: (String, String) -> [String: Any] = {
+          ["id": UUID().uuidString, "role": $0, "content": $1, "status": "completed", "timestamp": 0]
         }
         manifest["conversations"] = (manifest["conversations"] as! [[String: Any]]) + [
-          entry(rust, "Rust 会话", ["messages": [], "agentStored": true, "engine": "rust"]),
-          entry(inline, "早期会话", ["messages": [["id": UUID().uuidString, "role": "user", "text": "old user"],
-                                                 ["id": UUID().uuidString, "role": "assistant", "content": "old answer", "status": "completed"]]]),
+          ["id": inline.uuidString, "title": "早期会话", "manuallyNamed": false, "lastUsed": 0,
+           "state": ["messages": [message("user", "old user"), message("assistant", "old answer")],
+                     "mainDraft": "", "followUpDraft": "", "activityDismissed": false, "activitiesCollapsed": false, "task": task]],
         ]
         try JSONSerialization.data(withJSONObject: manifest).write(to: persistence.url)
         let requests = f.server.requests.count
@@ -781,30 +771,21 @@ extension EchoIntegrationScenarios {
           #expect(workspace.persistenceNotice == nil, "launch \(launch): the workspace itself loads")
           let native = try #require(workspace.conversation(id: current.id)).store
           #expect(native.agentLoadError == nil && native.messages == currentMessages && native.canSubmit, "launch \(launch)")
-          for id in [rust, inline] {
-            let store = try #require(workspace.conversation(id: id)).store
-            #expect(store.agentLoadError == WorkspacePersistence.unsupportedFormat && !store.canSubmit && !store.canRetry
-                    && !workspace.send("继续", conversationID: id) && !workspace.retry(conversationID: id), "launch \(launch)")
-          }
-          #expect(try #require(workspace.conversation(id: inline)).store.messages.map(\.content) == ["old user", "old answer"],
-                  "launch \(launch): what it saved is left as it is")
+          let store = try #require(workspace.conversation(id: inline)).store
+          #expect(store.agentLoadError == WorkspacePersistence.unreadableHistory && !store.canSubmit && !store.canRetry
+                  && !workspace.send("继续", conversationID: inline) && !workspace.retry(conversationID: inline), "launch \(launch)")
+          #expect(store.messages.map(\.content) == ["old user", "old answer"], "launch \(launch): what it saved is left as it is")
           workspace.flush(); workspace.shutdown()
           #expect(f.server.requests.count == requests, "launch \(launch): nothing reaches the model")
-          #expect(try Data(contentsOf: persistence.legacySessionURL(rust)) == rustSidecar
-                  && !fm.fileExists(atPath: persistence.sessionURL(rust).path) && !fm.fileExists(atPath: persistence.sessionURL(inline).path),
-                  "launch \(launch): never saved as native history")
+          #expect(!fm.fileExists(atPath: persistence.sessionURL(inline).path), "launch \(launch): never saved as native history")
         }
 
         workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
         defer { workspace.shutdown() }
-        workspace.deleteConversation(rust)
         workspace.deleteConversation(inline)
-        #expect(workspace.conversation(id: rust) == nil && workspace.conversation(id: inline) == nil
-                && workspace.conversation(id: current.id) != nil)
-        #expect(!fm.fileExists(atPath: persistence.legacySessionURL(rust).path) && !fm.fileExists(atPath: migrated.path),
-                "Deleting it removes the files an older build left")
+        #expect(workspace.conversation(id: inline) == nil && workspace.conversation(id: current.id) != nil)
         let saved = try String(contentsOf: persistence.url, encoding: .utf8)
-        #expect(!saved.contains(rust.uuidString) && !saved.contains(inline.uuidString) && !saved.contains("old answer"))
+        #expect(!saved.contains(inline.uuidString) && !saved.contains("old answer"))
       }
     }
   }

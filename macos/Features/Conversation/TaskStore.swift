@@ -44,7 +44,7 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, text, steering }
+    private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, steering }
     init(role: Role, content: String, status: Status = .completed) {
         self.role = role; self.content = content; self.status = status
     }
@@ -52,15 +52,11 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
         role = try values.decode(Role.self, forKey: .role)
-        // The earliest builds wrote `text`. Reading it keeps a workspace holding such a conversation
-        // readable, so that conversation can be reported as unsupported instead of the whole
-        // manifest failing to load.
-        content = try values.decodeIfPresent(String.self, forKey: .content) ?? values.decode(String.self, forKey: .text)
-        status = try values.decodeIfPresent(Status.self, forKey: .status) ?? .completed
-        timestamp = try values.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date(timeIntervalSince1970: 0)
+        content = try values.decode(String.self, forKey: .content)
+        status = try values.decode(Status.self, forKey: .status)
+        timestamp = try values.decode(Date.self, forKey: .timestamp)
         errorMessage = try values.decodeIfPresent(String.self, forKey: .errorMessage)
-        // Builds before the native engine also wrote 已接收 for accepted input, which today has
-        // no steering; it and any other unrecognised value read as none.
+        // A value this build does not know reads as none.
         steering = try values.decodeIfPresent(String.self, forKey: .steering).flatMap(Steering.init(rawValue:))
     }
     func encode(to encoder: any Encoder) throws {

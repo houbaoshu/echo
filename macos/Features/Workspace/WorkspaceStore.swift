@@ -38,13 +38,11 @@ struct WorkspaceSnapshot: Codable {
         var projectID: UUID?
         var title: String
         var manuallyNamed: Bool
-        /// Written only while the conversation is untitled; builds before it recognised that
-        /// state by the default title, which `isUntitled` still does for their archives.
+        /// Written only while the conversation is untitled.
         var untitled: Bool? = nil
         var lastUsed: Date
         var state: TaskStore.Snapshot
-        var isUntitled: Bool { untitled ?? (!manuallyNamed && Self.legacyDefaultTitles.contains(title)) }
-        private static let legacyDefaultTitles: Set = ["新会话", "新对话"]
+        var isUntitled: Bool { untitled ?? false }
     }
     var version = 1
     var projects: [WorkspaceProject]
@@ -78,20 +76,7 @@ struct WorkspaceSnapshot: Codable {
     func sessionURL(_ id: UUID) -> URL {
         sessionsDirectory.appendingPathComponent("\(id.uuidString).json")
     }
-    /// Where builds with the Rust engine kept their sidecars. Never read: a conversation found
-    /// only there is reported as unsupported, and deleting it removes what it left behind.
-    var legacySessionsDirectory: URL { url.deletingLastPathComponent().appendingPathComponent("agent-sessions") }
-    func legacySessionURL(_ id: UUID) -> URL {
-        legacySessionsDirectory.appendingPathComponent("\(id.uuidString).json")
-    }
-    /// Every file older builds may have kept for `id`: its Rust sidecar, the copy a migration set
-    /// aside, and a superseded migration snapshot.
-    private func legacyFiles(_ id: UUID) -> [URL] {
-        [legacySessionURL(id),
-         legacySessionsDirectory.appendingPathComponent("\(id.uuidString).v1-migrated.json"),
-         sessionsDirectory.appendingPathComponent("\(id.uuidString).v2-stale.json")]
-    }
-    static var unsupportedFormat: String { String(localized: "此会话使用旧版聊天记录格式，当前版本已不再支持，无法继续。可以在会话列表中删除它。") }
+    static var unreadableHistory: String { String(localized: "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。") }
     func saveSession(_ state: TaskStore.Snapshot, id: UUID) throws {
         let target = sessionURL(id)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -102,19 +87,14 @@ struct WorkspaceSnapshot: Codable {
         try data.write(to: target, options: .atomic)
     }
     func removeSession(_ id: UUID) throws {
-        for target in [sessionURL(id)] + legacyFiles(id) {
-            do { try FileManager.default.removeItem(at: target) }
-            catch CocoaError.fileNoSuchFile {}
-        }
+        do { try FileManager.default.removeItem(at: sessionURL(id)) }
+        catch CocoaError.fileNoSuchFile {}
     }
     /// Deletes sidecars no manifest conversation references, such as those left by deletions before
     /// sessions were removed. Only call after the manifest itself loaded cleanly.
     func pruneSessions(keeping ids: Set<UUID>) {
         let fm = FileManager.default
-        let files = [sessionsDirectory, legacySessionsDirectory].flatMap {
-            (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? []
-        }
-        guard !files.isEmpty,
+        guard let files = try? fm.contentsOfDirectory(at: sessionsDirectory, includingPropertiesForKeys: nil), !files.isEmpty,
               let siblings = try? fm.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil) else { return }
         // The backup and archives preserved by `load` may be the only way back to a history.
         // They need not decode, so any UUID text in them counts as a reference.
@@ -137,13 +117,10 @@ struct WorkspaceSnapshot: Codable {
         try Data(contentsOf: url).write(to: backupURL, options: .atomic)
     }
     /// A conversation's saved state. Only the native sidecar is history: when it is missing, an
-    /// Agent conversation is blocked — as unsupported when an older build's sidecar is all that is
-    /// left, as unreadable otherwise. Conversations kept in the manifest come back as saved; the
-    /// workspace decides whether their engine can open them.
+    /// Agent conversation is blocked as unreadable. Conversations kept in the manifest come back
+    /// as saved; the workspace decides whether their engine can open them.
     func restoreSession(_ saved: WorkspaceSnapshot.Conversation) -> TaskStore.Snapshot {
-        let unreadable = String(localized: "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。")
-        let fm = FileManager.default
-        if fm.fileExists(atPath: sessionURL(saved.id).path) {
+        if FileManager.default.fileExists(atPath: sessionURL(saved.id).path) {
             do {
                 var state = try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: sessionURL(saved.id)))
                 guard state.native != nil else { throw CocoaError(.fileReadCorruptFile) }
@@ -151,7 +128,7 @@ struct WorkspaceSnapshot: Codable {
                 return state
             } catch {
                 var state = saved.state
-                state.agentStored = true; state.loadError = unreadable
+                state.agentStored = true; state.loadError = Self.unreadableHistory
                 return state
             }
         }
@@ -159,7 +136,7 @@ struct WorkspaceSnapshot: Codable {
         // The manifest never holds native history: only the sidecar does.
         state.native = nil
         if saved.state.agentStored == true {
-            state.loadError = fm.fileExists(atPath: legacySessionURL(saved.id).path) ? Self.unsupportedFormat : unreadable
+            state.loadError = Self.unreadableHistory
         } else {
             // A load error saved with a manifest conversation is recomputed on every launch.
             state.loadError = nil
@@ -438,10 +415,10 @@ struct WorkspaceSnapshot: Codable {
 
     // Commands capture their target at the surface that issued them. Selection and
     // desktop activity are navigation state, never an implicit command destination.
-    /// Only native history opens. A conversation an older build saved — a Rust-engine sidecar, or
-    /// messages kept in the manifest — is shown as unsupported and blocked, with what it saved
-    /// left as it is until it is deleted. A native conversation in a workspace without the Agent
-    /// engine stays blocked too: another source would fork it.
+    /// Only native history opens. An Agent workspace blocks a conversation whose messages are in
+    /// the manifest but which has no native history, leaving what it saved as it is until it is
+    /// deleted. A native conversation in a workspace without the Agent engine stays blocked too:
+    /// another source would fork it.
     private func restoredStore(_ saved: WorkspaceSnapshot.Conversation,
                                persistence: WorkspacePersistence) -> TaskStore {
         var restored = persistence.restoreSession(saved)
@@ -452,7 +429,7 @@ struct WorkspaceSnapshot: Codable {
             restored.agentStored = true
             restored.loadError = String(localized: "此会话由 Foundation Models Agent 创建，当前无法打开，已禁止执行。")
         } else if agent, restored.native == nil, restored.loadError == nil, !restored.messages.isEmpty {
-            restored.loadError = WorkspacePersistence.unsupportedFormat
+            restored.loadError = WorkspacePersistence.unreadableHistory
         }
         return TaskStore(snapshot: restored, source: source)
     }

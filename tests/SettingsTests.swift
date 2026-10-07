@@ -37,7 +37,7 @@ import Testing
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("settings.json")
-        try Data(#"{"version":2,"activeProvider":"openAI","providers":{"openAI":{"model":{"baseURL":"https://api.openai.com/v1","model":""}}},"selectedPetID":"builtin:chiyan"}"#.utf8).write(to: url)
+        try Data(#"{"version":2,"activeProvider":"openAI","providers":{"openAI":{"model":{"baseURL":"https://api.openai.com/v1","model":"","apiProtocol":"chatCompletions"}}},"selectedPetID":"builtin:chiyan"}"#.utf8).write(to: url)
         let settings = SettingsStore(url: url, secrets: ProviderSecrets())
         #expect(!settings.snapshot.localModelOnly, "Settings saved before the switch leave it off")
         settings.setLocalModelOnly(true)
@@ -47,23 +47,22 @@ import Testing
         #expect(!SettingsStore(url: url, secrets: ProviderSecrets()).snapshot.localModelOnly)
     }
 
-    @Test @MainActor static func providerMigrationDraftsAndCredentialRotation() throws {
+    @Test @MainActor static func providerDraftsAndCredentialRotation() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("provider-settings-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("settings.json")
         let secrets = ProviderSecrets()
-        secrets.values = ["legacy": "deepseek-secret", "voice": "agent-plan-secret"]
-        let legacy = #"{"version":1,"model":{"baseURL":"https://api.deepseek.com/v1","model":"existing-deepseek"},"secretAccount":"legacy","selectedPetID":"builtin:chiyan","voiceSecretAccount":"voice","quickComposerHotKey":false}"#
-        try Data(legacy.utf8).write(to: url)
+        secrets.values = ["deepseek": "deepseek-secret", "voice": "agent-plan-secret"]
+        let saved = #"{"version":2,"activeProvider":"deepSeek","providers":{"deepSeek":{"model":{"baseURL":"https://api.deepseek.com/v1","model":"existing-deepseek","apiProtocol":"chatCompletions"},"secretAccount":"deepseek"}},"selectedPetID":"builtin:chiyan","voiceSecretAccount":"voice"}"#
+        try Data(saved.utf8).write(to: url)
         let settings = SettingsStore(url: url, secrets: secrets)
         #expect(settings.selectedProvider == .deepSeek && settings.apiKey == "deepseek-secret")
-        #expect(settings.snapshot.secretAccount == "legacy" && settings.draft.model == "existing-deepseek")
+        #expect(settings.snapshot.secretAccount == "deepseek" && settings.draft.model == "existing-deepseek")
         #expect(settings.draft.apiProtocol == .chatCompletions && !settings.isDirty)
-        // `quickComposerHotKey` belonged to the removed ⌥ Space shortcut; files that still carry it load unchanged.
         #expect(settings.snapshot.selectedPlanetID == SettingsSnapshot.defaultPlanetID,
                      "Settings saved before Live Voice had a planet fall back to the built-in one")
-        #expect(secrets.values.count == 2, "Migration adopts the original reference without touching Keychain")
+        #expect(secrets.values.count == 2, "Loading reads the saved references without touching Keychain")
         settings.selectProvider(.openAI)
         #expect(settings.apiKey.isEmpty && settings.draft == ModelProvider.openAI.defaults && settings.isDirty)
         #expect(try tryValue { try settings.savedModelCredentials().key } == "deepseek-secret", "Selection stays a draft until saved")
@@ -76,7 +75,7 @@ import Testing
         #expect(settings.apiKey == "openai-secret" && settings.draft.apiProtocol == .responses, "Switching retains per-provider drafts")
         settings.save()
         #expect(settings.notice == nil && !settings.isDirty && settings.snapshot.activeProvider == .openAI)
-        #expect(secrets.values["legacy"] == "deepseek-secret", "Saving another provider must not delete the migrated key")
+        #expect(secrets.values["deepseek"] == "deepseek-secret", "Saving another provider must not delete its key")
         #expect(try tryValue { try settings.savedVoiceCredentials().key } == "agent-plan-secret",
                      "Saving a model provider leaves the voice key alone")
         let reopened = SettingsStore(url: url, secrets: secrets)
@@ -85,7 +84,7 @@ import Testing
         reopened.selectProvider(.deepSeek)
         #expect(reopened.apiKey == "deepseek-secret" && reopened.draft.model == "existing-deepseek")
         reopened.apiKey = "rotated-deepseek"; reopened.save()
-        #expect(secrets.values["legacy"] == nil && secrets.values.values.contains("openai-secret"))
+        #expect(secrets.values["deepseek"] == nil && secrets.values.values.contains("openai-secret"))
         reopened.selectProvider(.openAI)
         #expect(reopened.apiKey == "openai-secret" && reopened.draft.apiProtocol == .responses)
         reopened.apiKey = ""; reopened.save()
@@ -108,6 +107,10 @@ import Testing
         reopened.selectProvider(.deepSeek)
         #expect(reopened.apiKey == "rotated-deepseek")
         reopened.restore()
+        try reopened.selectPet("new-pet"); try reopened.selectPlanet("builtin:test-planet")
+        let reload = SettingsStore(url: url, secrets: secrets)
+        #expect(reload.snapshot.selectedPetID == "new-pet" && reload.snapshot.selectedPlanetID == "builtin:test-planet",
+                "Pet and planet choices survive a reload")
         let json = try String(contentsOf: url, encoding: .utf8)
         for key in secrets.values.values { #expect(!json.contains(key), "JSON must only store Keychain references") }
         #expect(!json.contains("must-not-save"))
@@ -156,44 +159,28 @@ import Testing
             #expect(locked.apiKey == "replacement-deepseek")
         }
     }
-    @Test(arguments: ["https://unknown.example/v1", "http://localhost:11434/v1", "http://localhost:8080/v1", "https://api.openai.com/v1"])
-    @MainActor static func legacyEndpointMigration(baseURL: String) throws {
+    /// A file this build cannot read — another version, including the first, or a model without its
+    /// protocol — is reported and kept: no save overwrites it.
+    @Test(arguments: [
+        (#"{"version":99}"#, true),
+        (#"{"version":1,"model":{"baseURL":"https://api.deepseek.com/v1","model":"m"},"secretAccount":"old","selectedPetID":"builtin:chiyan"}"#, true),
+        (#"{"version":2,"activeProvider":"openAI","providers":{"openAI":{"model":{"baseURL":"https://api.openai.com/v1","model":"m"}}},"selectedPetID":"builtin:chiyan"}"#, false),
+    ])
+    @MainActor static func unreadableFileIsPreserved(json: String, unsupportedVersion: Bool) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("provider-settings-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let secrets = ProviderSecrets()
-        secrets.values["voice"] = "agent-plan-secret"
-        let provider: ModelProvider = baseURL == "http://localhost:11434/v1" ? .ollama : baseURL == "https://api.openai.com/v1" ? .openAI : .custom
-        // Custom legacy endpoints and no-key local endpoints retain model configuration.
-
-            let fixtureURL = directory.appendingPathComponent("\(UUID()).json")
-            let data = try JSONSerialization.data(withJSONObject: ["version": 1, "selectedPetID": "pet",
-                "model": ["baseURL": baseURL, "model": "legacy-model"], "secretAccount": "voice"])
-            try data.write(to: fixtureURL)
-            let migrated = SettingsStore(url: fixtureURL, secrets: secrets)
-            #expect(migrated.selectedProvider == provider && migrated.draft.baseURL == baseURL && migrated.draft.model == "legacy-model")
-            #expect(migrated.apiKey == (provider == .ollama ? "" : "agent-plan-secret"))
-            try migrated.selectPet("new-pet")
-            try migrated.selectPlanet("builtin:test-planet")
-            let reload = SettingsStore(url: fixtureURL, secrets: secrets)
-            #expect(reload.selectedProvider == provider && reload.snapshot.selectedPetID == "new-pet")
-            #expect(reload.snapshot.selectedPlanetID == "builtin:test-planet", "The planet choice survives a reload")
-    }
-    @Test @MainActor static func unknownVersionIsPreserved() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("provider-settings-\(UUID())")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let secrets = ProviderSecrets()
-        // Unknown versions cannot be overwritten by a model save.
         let unsupported = directory.appendingPathComponent("unsupported.json")
-        let original = Data(#"{"version":99}"#.utf8)
+        let original = Data(json.utf8)
         try original.write(to: unsupported)
         let blocked = SettingsStore(url: unsupported, secrets: secrets)
+        #expect((blocked.notice == SettingsSnapshot.unsupportedVersion.message) == unsupportedVersion && blocked.notice != nil)
         blocked.apiKey = "blocked-secret"; blocked.save()
+        #expect(throws: SettingsError.self) { try blocked.selectPet("builtin:other") }
         let retained = try Data(contentsOf: unsupported)
         #expect(blocked.notice != nil && retained == original)
         #expect(!secrets.values.values.contains("blocked-secret"))
-
     }
     /// The connection test runs the injected tester with the typed configuration.
     @Test @MainActor static func connectionTestUsesTheAgentTester() async throws {
@@ -201,10 +188,10 @@ import Testing
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("settings.json")
-        try Data(#"{"version":2,"activeProvider":"ollama","providers":{"ollama":{"model":{"baseURL":"http://localhost:11434/v1","model":"m"}}},"selectedPetID":"builtin:chiyan","nativeAgent":false}"#.utf8).write(to: url)
+        try Data(#"{"version":2,"activeProvider":"ollama","providers":{"ollama":{"model":{"baseURL":"http://localhost:11434/v1","model":"m","apiProtocol":"chatCompletions"}}},"selectedPetID":"builtin:chiyan"}"#.utf8).write(to: url)
         let tester = RecordingTester()
         let settings = SettingsStore(url: url, secrets: ProviderSecrets(), tester: tester)
-        #expect(settings.notice == nil, "A setting from the transition to the native engine is ignored")
+        #expect(settings.notice == nil)
         settings.testConnection()
         try await waitUntil { !settings.testing }
         #expect(tester.count == 1 && settings.testSucceeded)

@@ -266,13 +266,11 @@ struct PlanetEntry: Identifiable {
         return try? JSONDecoder().decode(Manifest.self, from: data)
     }
 
-    /// Mirrors the runtime's implicit grid, `runtime/src/model.rs:87-97`.
-    private static func defaultFrame(version: Int) -> Manifest.Frame {
-        Manifest.Frame(width: 192, height: 208, columns: 8, rows: version == 2 ? 11 : 9)
-    }
+    /// Mirrors the runtime's implicit grid in `Pet::from_manifest`, `runtime/src/model.rs`.
+    private static let defaultFrame = Manifest.Frame(width: 192, height: 208, columns: 8, rows: 11)
 
     private func entry(at directory: URL, id: String) -> PlanetEntry? {
-        guard let manifest = manifest(at: directory) else { return nil }
+        guard let manifest = manifest(at: directory), manifest.spriteVersionNumber == 2 else { return nil }
         let relative = manifest.spritesheetPath ?? "spritesheet.webp"
         guard !relative.isEmpty, !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") else { return nil }
         let sheet = directory.appendingPathComponent(relative)
@@ -281,7 +279,7 @@ struct PlanetEntry: Identifiable {
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               width > 0, height > 0, width <= 8192, height <= 8192, width * height <= 16_777_216 else { return nil }
-        let grid = manifest.frame ?? Self.defaultFrame(version: manifest.spriteVersionNumber ?? 1)
+        let grid = manifest.frame ?? Self.defaultFrame
         guard grid.width > 0, grid.height > 0, grid.columns > 0, grid.rows > 0,
               width == grid.width * grid.columns, height == grid.height * grid.rows else { return nil }
         // Frame 0 alone is the card's preview. Decoding the sheet once here is far cheaper than

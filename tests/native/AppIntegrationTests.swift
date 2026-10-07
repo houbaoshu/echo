@@ -9,9 +9,6 @@ final class AppIntegrationTests: XCTestCase {
     @MainActor func testHostedLaunchHasNoUserWorkspace() throws {
         XCTAssertEqual(ProcessInfo.processInfo.environment["ECHO_TEST_MODE"], "hosted")
         XCTAssertTrue(NSApp.windows.isEmpty)
-        let resources = try XCTUnwrap(Bundle.main.resourceURL)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: resources.appendingPathComponent("agent/conversation.md").path),
-                       "The app no longer ships the Rust engine's prompt")
     }
 
     /// The Agent needs no bundled prompt: the packaged app assembles its own instructions and

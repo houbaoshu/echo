@@ -82,13 +82,11 @@ import Testing
         failing.callbacks[0](.failed("before first text"))
         let archiveSource = seed.snapshot
         let decoder = JSONDecoder()
-        // The earliest builds wrote `text`: such a message still parses, so the workspace holding
-        // it loads and that conversation can be reported, and it is written back in today's form.
-        let earliest = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000001","role":"assistant","text":"old"}"#.utf8))
-        #expect(earliest.content == "old" && earliest.status == .completed && earliest.timestamp == Date(timeIntervalSince1970: 0))
-        let encodedText = String(decoding: try JSONEncoder().encode(earliest), as: UTF8.self)
-        #expect(!encodedText.contains("\"text\"") && encodedText.contains("\"content\""))
-        let queuedSteering = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000005","role":"user","content":"follow up","steering":"待处理"}"#.utf8))
+        // A message needs its content, status and time; the earliest builds' `text` form does not read.
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000001","role":"assistant","text":"old"}"#.utf8))
+        }
+        let queuedSteering = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000005","role":"user","content":"follow up","status":"completed","timestamp":0,"steering":"待处理"}"#.utf8))
         #expect(queuedSteering.steering == .queued, "A queued follow-up keeps its caption")
         var queuedArchive = archiveSource
         queuedArchive.messages = [queuedSteering]

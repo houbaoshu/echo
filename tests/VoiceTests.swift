@@ -1136,15 +1136,12 @@ extension EchoVoiceScenarios {
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent("settings.json")
-        let legacy = #"{"version":1,"selectedPetID":"builtin:chiyan","model":{"baseURL":"https://example.com/v1","model":"saved-model","customModels":["unused"],"hiddenModels":["hidden"]},"voice":{"speaker":"saved-voice","customSpeakers":["unused-voice"],"hiddenSpeakers":["hidden-voice"]}}"#
-        try Data(legacy.utf8).write(to: url)
-        let cacheURL = directory.appendingPathComponent("model-catalogs.json")
-        let unusedCache = Data("obsolete cache, intentionally invalid".utf8)
-        try unusedCache.write(to: cacheURL)
+        let saved = #"{"version":2,"activeProvider":"custom","providers":{"custom":{"model":{"baseURL":"https://example.com/v1","model":"saved-model","apiProtocol":"chatCompletions"}}},"selectedPetID":"builtin:chiyan","voice":{"speaker":"saved-voice"}}"#
+        try Data(saved.utf8).write(to: url)
         let tester = PendingModelTester(), secrets = FakeSecrets()
         let settings = SettingsStore(url: url, secrets: secrets, tester: tester)
         check(settings.draft.model == "saved-model" && settings.voiceDraft.speaker == "saved-voice" && settings.notice == nil,
-              "old dropdown settings retain selected IDs and ignore obsolete lists/cache")
+              "saved settings load the model and voice IDs")
         settings.draft.model = "  typed-model  "; settings.apiKey = "test-key"
         check(settings.isDirty && settings.snapshot.model.model == "saved-model", "typing changes only the draft")
         settings.restore()
@@ -1159,9 +1156,7 @@ extension EchoVoiceScenarios {
         check(restored.draft.model == "typed-model" && restored.voiceDraft.speaker == "saved-voice",
               "direct IDs persist across restart")
         let encoded = try String(contentsOf: url, encoding: .utf8)
-        check(!encoded.contains("customModels") && !encoded.contains("hiddenModels") && !encoded.contains("customSpeakers") && !encoded.contains("test-key"),
-              "new settings omit obsolete lists and plaintext credentials")
-        check(try Data(contentsOf: cacheURL) == unusedCache, "manual settings never read or rewrite obsolete cache")
+        check(!encoded.contains("test-key"), "settings never hold plaintext credentials")
         settings.draft.model = "unavailable-model"
         settings.testConnection(); await tick()
         let request = await tester.request, key = await tester.key
@@ -1383,12 +1378,10 @@ extension EchoVoiceScenarios {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("settings.json")
-        let legacy = Data("{\"version\":1,\"model\":{\"baseURL\":\"https://example.com/v1\",\"model\":\"test\"},\"selectedPetID\":\"builtin:chiyan\"}".utf8)
-        try legacy.write(to: url)
+        let saved = #"{"version":2,"activeProvider":"custom","providers":{"custom":{"model":{"baseURL":"https://example.com/v1","model":"test","apiProtocol":"chatCompletions"}}},"selectedPetID":"builtin:chiyan"}"#
+        try Data(saved.utf8).write(to: url)
         let secrets = FakeSecrets(), settings = SettingsStore(url: url, secrets: secrets)
-        check(settings.voiceDraft == VoiceConfiguration(), "old settings receive voice default")
-        let oldVoice = try JSONDecoder().decode(VoiceConfiguration.self, from: Data("{\"speaker\":\"legacy-voice\"}".utf8))
-        check(oldVoice.speaker == "legacy-voice", "legacy voice selection remains available as text")
+        check(settings.voiceDraft == VoiceConfiguration(), "settings without voice receive the voice default")
         settings.voiceDraft.speaker = "  custom-voice  "
         check(settings.isVoiceDirty && settings.snapshot.voice == nil, "typing voice ID changes only the draft")
         settings.restoreVoice()
@@ -2260,10 +2253,14 @@ extension EchoVoiceScenarios {
         try fm.createDirectory(at: empty, withIntermediateDirectories: true)
         refuses(empty, nil, "a folder without pet.json")
         refuses(try sandbox.folder("unnamed", from: "pets/chiyan") { $0["displayName"] = nil }, nil, "a manifest without a name")
-        refuses(try sandbox.folder("version", from: "pets/chiyan") { $0["spriteVersionNumber"] = 3; $0["displayName"] = "版本" },
-                nil, "a sheet the runtime cannot load")
+        // Only version 2: neither another version nor the older format, which leaves the field out.
+        let onlyVersion2 = "仅支持第 2 版精灵格式（pet.json 中的 spriteVersionNumber 须为 2）。"
+        for version in [3, 1, nil] as [Int?] {
+            refuses(try sandbox.folder("version-\(version ?? 0)", from: "pets/chiyan") { $0["spriteVersionNumber"] = version; $0["displayName"] = "版本" },
+                    onlyVersion2, "spriteVersionNumber \(version.map(String.init) ?? "missing")")
+        }
         let escaping = try sandbox.folder("escaping", from: "pets/chiyan") { $0["displayName"] = "越界" }
-        try JSONSerialization.data(withJSONObject: ["displayName": "越界", "spritesheetPath": "../renamed/spritesheet.webp"])
+        try JSONSerialization.data(withJSONObject: ["displayName": "越界", "spritesheetPath": "../renamed/spritesheet.webp", "spriteVersionNumber": 2])
             .write(to: escaping.appendingPathComponent("pet.json"))
         refuses(escaping, "精灵图必须使用文件夹内的相对路径。", "a sheet path that climbs out")
         let png = try sandbox.folder("png", from: "pets/chiyan", sheetPath: "sheet.png") { $0["displayName"] = "PNG" }
@@ -2340,12 +2337,12 @@ extension EchoVoiceScenarios {
         check(pet.hasPrefix("imported:") && planets.entries.last?.name == "精灵星球", "a pet folder imports as a planet")
         let installed = sandbox.installed()
 
-        func refuses(_ folder: URL, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
+        func refuses(_ folder: URL, _ message: String, reason: String? = nil, sourceLocation: SourceLocation = #_sourceLocation) {
             planets.notice = nil
             let count = planets.entries.count
             let result = planets.importPlanet(from: folder)
             check(result == nil && planets.notice?.hasPrefix("导入失败：") == true && planets.notice?.contains("|") == false
-                  && planets.entries.count == count,
+                  && reason.map { planets.notice == "导入失败：\($0)" } ?? true && planets.entries.count == count,
                   "\(message): \(planets.notice ?? "")", sourceLocation: sourceLocation)
             check(sandbox.installed() == installed, "\(message) leaves nothing behind", sourceLocation: sourceLocation)
         }
@@ -2355,13 +2352,16 @@ extension EchoVoiceScenarios {
         let corrupt = try sandbox.folder("corrupt", from: "planets/ember-planet") { $0["displayName"] = "损坏" }
         try Data("not a webp".utf8).write(to: corrupt.appendingPathComponent("spritesheet.webp"))
         refuses(corrupt, "a sheet that does not decode")
-        refuses(try sandbox.folder("version", from: "planets/ember-planet") { $0["spriteVersionNumber"] = 3; $0["displayName"] = "版本" },
-                "a sheet the runtime cannot load")
+        for version in [3, 1, nil] as [Int?] {
+            refuses(try sandbox.folder("version-\(version ?? 0)", from: "planets/ember-planet") { $0["spriteVersionNumber"] = version; $0["displayName"] = "版本" },
+                    "spriteVersionNumber \(version.map(String.init) ?? "missing")",
+                    reason: "仅支持第 2 版精灵格式（pet.json 中的 spriteVersionNumber 须为 2）。")
+        }
         refuses(try sandbox.folder("grid", from: "planets/ember-planet") {
             $0["displayName"] = "网格"; $0["frame"] = ["width": 100, "height": 100, "columns": 8, "rows": 11]
         }, "a sheet whose size does not match its grid")
         let escaping = try sandbox.folder("escaping", from: "planets/ember-planet") { $0["displayName"] = "越界" }
-        try JSONSerialization.data(withJSONObject: ["displayName": "越界", "spritesheetPath": "../renamed/spritesheet.webp"])
+        try JSONSerialization.data(withJSONObject: ["displayName": "越界", "spritesheetPath": "../renamed/spritesheet.webp", "spriteVersionNumber": 2])
             .write(to: escaping.appendingPathComponent("pet.json"))
         refuses(escaping, "a sheet path that climbs out")
 

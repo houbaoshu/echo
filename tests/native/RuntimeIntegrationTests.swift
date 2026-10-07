@@ -10,6 +10,24 @@ extension EchoIntegrationScenarios {
       #expect(throws: PetError.self) { try PetStore(directory: missing) }
     }
 
+    /// The runtime reads only version 2 manifests, whatever the import checked.
+    @Test static func onlyVersion2ManifestsLoad() throws {
+      let fm = FileManager.default
+      let source = EchoTestResources.resource("pets/chiyan")
+      let root = fm.temporaryDirectory.appendingPathComponent("echo-sprite-version-\(UUID())")
+      defer { try? fm.removeItem(at: root) }
+      var manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: source.appendingPathComponent("pet.json"))) as! [String: Any]
+      for version in [2, 1, 3, nil] as [Int?] {
+        let directory = root.appendingPathComponent("\(version ?? 0)")
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        try fm.copyItem(at: source.appendingPathComponent("spritesheet.webp"), to: directory.appendingPathComponent("spritesheet.webp"))
+        manifest["spriteVersionNumber"] = version
+        try JSONSerialization.data(withJSONObject: manifest).write(to: directory.appendingPathComponent("pet.json"))
+        if version == 2 { _ = try RuntimeHandle(directory: directory) }
+        else { #expect(throws: PetError.self, "spriteVersionNumber \(String(describing: version))") { try RuntimeHandle(directory: directory) } }
+      }
+    }
+
     @Test static func framesRemainUsableAfterRuntimeDestruction() throws {
       let store = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
       defer { store.stop() }

@@ -883,8 +883,6 @@ import Foundation
         check(workspace.persistenceNotice == nil, "Streaming persistence completes without a save error")
     }
 
-    /// An archive written before steering, tool states and the untitled state had types of their
-    /// own stored them as the text the interface showed. It reads back with the same meaning.
     /// Saving follows what `WorkspaceStore.snapshot` reads. Each saved field is changed on its own,
     /// through the narrowest way the app changes it, and has to reach the archive on disk: a field
     /// left out of observation would only be written with some other change.
@@ -972,6 +970,8 @@ import Foundation
         print("Saved-fields archive kept at \(root.path)")
     }
 
+    /// The archive stores steering and tool states as the text the interface showed. It reads back
+    /// with the same meaning; an untitled conversation is the one saved with `untitled`.
     @Test(.tags(.fast)) @MainActor static func archiveWithTextStatesReadsBackUnchanged() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-text-state-archive-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -987,19 +987,20 @@ import Foundation
             return #"{"callID":"\#(id)","entryID":1,"turnID":0,"command":"cmd-\#(id)","state":"\#(state)"\#(result)}"#
         }
         let task = #"{"id":"00000000-0000-0000-0000-0000000000a1","runID":"00000000-0000-0000-0000-0000000000a2","title":"t","summary":"已完成","status":"completed"}"#
-        func conversation(_ id: UUID, _ title: String, manuallyNamed: Bool, messages: [String], tools: [String]? = nil) -> String {
-            #"{"id":"\#(id)","title":"\#(title)","manuallyNamed":\#(manuallyNamed),"lastUsed":0,"state":{"task":\#(task),"#
+        func conversation(_ id: UUID, _ title: String, manuallyNamed: Bool, untitled: Bool = false, messages: [String], tools: [String]? = nil) -> String {
+            #"{"id":"\#(id)","title":"\#(title)","manuallyNamed":\#(manuallyNamed),"# + (untitled ? #""untitled":true,"# : "")
+                + #""lastUsed":0,"state":{"task":\#(task),"#
                 + #""messages":[\#(messages.joined(separator: ","))],"mainDraft":"","followUpDraft":"","activityDismissed":false,"#
                 + #""activitiesCollapsed":false"# + (tools.map { #","tools":[\#($0.joined(separator: ","))]"# } ?? "") + "}}"
         }
         let archive = #"{"version":1,"projects":[],"conversations":["#
-            + conversation(unnamed, "新会话", manuallyNamed: false,
+            + conversation(unnamed, "新会话", manuallyNamed: false, untitled: true,
                            messages: [message(1, "user"), message(2, "user", "待处理"), message(3, "user", "已中断"),
                                       message(4, "user", "已接收"), message(5, "assistant")],
                            tools: [tool("cut", "执行结果未知", #"{"status":"unknown"}"#), tool("lost", "执行中", nil),
                                    tool("queued", "待执行", nil), tool("done", "执行结束", #"{"exit_code":0}"#),
                                    tool("skipped", "未执行", #"{"status":"not_executed"}"#), tool("old", "已完成", #"{"exit_code":0}"#)]) + ","
-            + conversation(draftTitled, "新对话", manuallyNamed: false, messages: [message(6, "user"), message(7, "assistant")]) + ","
+            + conversation(draftTitled, "新对话", manuallyNamed: false, untitled: true, messages: [message(6, "user"), message(7, "assistant")]) + ","
             + conversation(renamed, "新对话", manuallyNamed: true, messages: [message(8, "user"), message(9, "assistant")])
             + "]}"
         try Data(archive.utf8).write(to: persistence.url)
@@ -1009,8 +1010,7 @@ import Foundation
         defer { workspace.shutdown() }
         #expect(workspace.persistenceNotice == nil)
         let first = try #require(workspace.conversation(id: unnamed))
-        // Queued at quit reopens as interrupted; 已接收 is what builds before the native engine
-        // wrote for accepted input, which carries no steering.
+        // Queued at quit reopens as interrupted; a steering value this build does not know reads as none.
         #expect(first.store.messages.map(\.steering) == [nil, .interrupted, .interrupted, nil, nil])
         #expect(first.store.messages.map(\.content) == ["m1", "m2", "m3", "m4", "m5"])
         // A call without a result reopens as unknown, as before; an unrecognised state is worked
@@ -1018,7 +1018,7 @@ import Foundation
         #expect(first.store.tools.map(\.state) == [.unknown, .unknown, .unknown, .finished, .notExecuted, .finished])
         #expect(first.store.tools.map(\.state.label) == ["执行结果未知", "执行结果未知", "执行结果未知", "执行结束", "未执行", "执行结束"])
 
-        // Default titles still read as untitled, unless the person chose that name.
+        // Only the saved state makes a conversation untitled, not a title that reads like a default.
         let second = try #require(workspace.conversation(id: draftTitled))
         let third = try #require(workspace.conversation(id: renamed))
         #expect([first, second, third].map(\.title) == ["新会话", "新对话", "新对话"])

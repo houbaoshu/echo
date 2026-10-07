@@ -26,11 +26,7 @@ impl PetRuntime {
             dx.is_finite() && dy.is_finite(),
             "invalid pointer coordinates"
         );
-        let look_frame = if self.pet.sprite_version_number == 2
-            && self.pet.frame.columns == 8
-            && self.pet.frame.rows >= 11
-            && dx.hypot(dy) > 1.0
-        {
+        let look_frame = if self.pet.has_look_frames() && dx.hypot(dy) > 1.0 {
             let angle = dx.atan2(-dy).to_degrees().rem_euclid(360.0);
             Some(72 + (angle / 22.5).round() as usize % 16)
         } else {

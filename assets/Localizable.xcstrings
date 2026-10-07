@@ -513,6 +513,16 @@
         }
       }
     },
+    "仅支持第 2 版精灵格式（pet.json 中的 spriteVersionNumber 须为 2）。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only version 2 sprites are supported (spriteVersionNumber in pet.json must be 2)."
+          }
+        }
+      }
+    },
     "仅支持预览普通文本和图片文件。" : {
       "localizations" : {
         "en" : {
@@ -2845,16 +2855,6 @@
         }
       }
     },
-    "此会话使用旧版聊天记录格式，当前版本已不再支持，无法继续。可以在会话列表中删除它。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This chat uses an old format Echo no longer supports, so it can’t continue. You can delete it from the sidebar."
-          }
-        }
-      }
-    },
     "此会话由 Foundation Models Agent 创建，当前无法打开，已禁止执行。" : {
       "localizations" : {
         "en" : {
@@ -3439,12 +3439,12 @@
         }
       }
     },
-    "设置文件版本不受支持。" : {
+    "设置文件版本不受支持，原文件保留。请移走 settings.json 后重启应用。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This version of the settings file isn’t supported."
+            "value" : "This version of the settings file isn’t supported, so it was left as is. Move settings.json, then restart Echo."
           }
         }
       }

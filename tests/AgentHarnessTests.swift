@@ -626,7 +626,7 @@ import Testing
         #expect(chat.store.task?.status == .completed)
         store.flush()
         let native = persistence.sessionURL(chat.id)
-        #expect(fm.fileExists(atPath: native.path) && !fm.fileExists(atPath: persistence.legacySessionURL(chat.id).path))
+        #expect(fm.fileExists(atPath: native.path))
         let manifest = try String(contentsOf: persistence.url, encoding: .utf8)
         #expect(!manifest.contains("\"content\"") && !manifest.contains("transcript")
                 && manifest.contains(#""agentStored" : true"#), "\(manifest)")

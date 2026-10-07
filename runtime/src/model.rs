@@ -36,7 +36,6 @@ pub struct FrameSpec {
 
 #[derive(Debug)]
 pub struct Pet {
-    pub sprite_version_number: u32,
     pub id: String,
     pub display_name: String,
     pub spritesheet_path: PathBuf,
@@ -49,8 +48,7 @@ pub struct Pet {
 struct PetFile {
     id: String,
     display_name: String,
-    #[serde(default = "legacy_version")]
-    sprite_version_number: u32,
+    sprite_version_number: Option<u32>,
     #[serde(default = "default_spritesheet")]
     spritesheet_path: String,
     frame: Option<FrameSpec>,
@@ -58,9 +56,6 @@ struct PetFile {
     animations: HashMap<String, AnimationSpec>,
 }
 
-fn legacy_version() -> u32 {
-    1
-}
 fn default_spritesheet() -> String {
     "spritesheet.webp".into()
 }
@@ -84,16 +79,18 @@ impl Pet {
 
     fn from_manifest(directory: &Path, raw: &str) -> Result<Self> {
         let file: PetFile = serde_json::from_str(raw).context("parse pet.json")?;
-        let rows = match file.sprite_version_number {
-            1 => 9,
-            2 => 11,
-            version => bail!("unsupported spriteVersionNumber: {version}"),
-        };
+        // Only the 11-row sheet with look directions. A manifest without the field is the older
+        // 9-row format, which is not read.
+        match file.sprite_version_number {
+            Some(2) => {}
+            Some(version) => bail!("unsupported spriteVersionNumber: {version}"),
+            None => bail!("spriteVersionNumber is missing; only version 2 is supported"),
+        }
         let frame = file.frame.unwrap_or(FrameSpec {
             width: 192,
             height: 208,
             columns: 8,
-            rows,
+            rows: 11,
         });
         ensure!(
             frame.width > 0 && frame.height > 0 && frame.columns > 0 && frame.rows > 0,
@@ -123,7 +120,7 @@ impl Pet {
         );
 
         let mut animations = default_animations();
-        if file.sprite_version_number == 2 && frame.columns == 8 && frame.rows >= 11 {
+        if has_look_frames(frame) {
             animations.insert(
                 "spinning".into(),
                 looping(
@@ -165,7 +162,6 @@ impl Pet {
             );
         }
         let pet = Self {
-            sprite_version_number: file.sprite_version_number,
             id: file.id,
             display_name: file.display_name,
             spritesheet_path: directory.join(relative_path),
@@ -178,6 +174,11 @@ impl Pet {
 
     pub fn frame_count(&self) -> usize {
         (self.frame.columns * self.frame.rows) as usize
+    }
+
+    /// Whether the sheet has the 16 look directions, frames 72 to 87.
+    pub fn has_look_frames(&self) -> bool {
+        has_look_frames(self.frame)
     }
 
     pub fn validate_animations(&self) -> Result<()> {
@@ -260,6 +261,11 @@ fn row_frames(row: usize, count: usize, ms: u64, final_ms: u64) -> Vec<Animation
             duration: Duration::from_millis(if column + 1 == count { final_ms } else { ms }),
         })
         .collect()
+}
+
+/// A sheet with its own grid keeps the look directions only where the standard one has them.
+fn has_look_frames(frame: FrameSpec) -> bool {
+    frame.columns == 8 && frame.rows >= 11
 }
 
 /// Cycles its frames for as long as the state lasts.
