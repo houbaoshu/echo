@@ -73,6 +73,14 @@
         "mode": "or",
         "includeXCTests": false
       }
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E116000000000000000000AA",
+        "name": "EchoRustTests"
+      },
+      "parallelizable": false
     }
   ]
 }

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Merged into the generated Info.plist of EchoRustTests. Xcode expands the build
+     settings, which tells CargoTestRun.swift where the workspace and its cargo output live. -->
+<dict>
+	<key>EchoProjectDirectory</key>
+	<string>$(PROJECT_DIR)</string>
+	<key>EchoCargoTestTargetDirectory</key>
+	<string>$(ECHO_CARGO_TEST_TARGET_DIR)</string>
+</dict>
+</plist>

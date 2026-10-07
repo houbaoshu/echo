@@ -115,6 +115,9 @@
 		FCF779D250617E9855A786C5 /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
 		FDD6712EDE6EB943758B64CA /* tests/fixtures/speech/mixed.wav in Resources */ = {isa = PBXBuildFile; fileRef = B628CE43BFCAC712B3D75BF1 /* tests/fixtures/speech/mixed.wav */; };
 		FF254346769C9FDC16CF24D0 /* tests/support/SessionFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20E8498B36C974B322A0269D /* tests/support/SessionFixture.swift */; };
+		E11600000000000000000B00 /* tests/RuntimeCargoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11600000000000000000F00 /* tests/RuntimeCargoTests.swift */; };
+		E11600000000000000000B01 /* tests/ExecBridgeCargoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11600000000000000000F01 /* tests/ExecBridgeCargoTests.swift */; };
+		E11600000000000000000B02 /* tests/support/CargoTestRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11600000000000000000F02 /* tests/support/CargoTestRun.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -305,6 +308,11 @@
 		F20000000000000000000010 /* macos/Features/Agent/AgentLocalChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentLocalChat.swift; sourceTree = "<group>"; };
 		F20000000000000000000012 /* tests/LocalChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/LocalChatTests.swift; sourceTree = "<group>"; };
 		F82E6758E135B6EA62E34341 /* Echo.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = Echo.icon; path = assets/Echo.icon; sourceTree = "<group>"; };
+		E116000000000000000000FF /* EchoRustTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoRustTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E11600000000000000000F00 /* tests/RuntimeCargoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/RuntimeCargoTests.swift; sourceTree = "<group>"; };
+		E11600000000000000000F01 /* tests/ExecBridgeCargoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/ExecBridgeCargoTests.swift; sourceTree = "<group>"; };
+		E11600000000000000000F02 /* tests/support/CargoTestRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/CargoTestRun.swift; sourceTree = "<group>"; };
+		E11600000000000000000F03 /* tests/support/EchoRustTests-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "tests/support/EchoRustTests-Info.plist"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -499,6 +507,7 @@
 				E113000000000000000000FF /* EchoVoiceTests.xctest */,
 				E112000000000000000000FF /* EchoIntegrationTests.xctest */,
 				E110000000000000000000FF /* EchoChatTests.xctest */,
+				E116000000000000000000FF /* EchoRustTests.xctest */,
 				E2DD4E7379914193D6F68337 /* EchoAppIntegrationTests.xctest */,
 				E2D88B0EC8C4D64A02775E4A /* EchoUITests.xctest */,
 				5A407C27DB7ECAE4527DA014 /* EchoCABITests.xctest */,
@@ -523,6 +532,8 @@
 				E90000000000000000000006 /* hosts */,
 				E90000000000000000000007 /* tools */,
 				7EC0845D8753AC831E0E60BC /* tests/ExecBridgeMemory.c */,
+				E11600000000000000000F00 /* tests/RuntimeCargoTests.swift */,
+				E11600000000000000000F01 /* tests/ExecBridgeCargoTests.swift */,
 			);
 			name = tests;
 			sourceTree = "<group>";
@@ -556,6 +567,8 @@
 				6BF4D83C4FDB9149833754EA /* tests/support/AgentVoiceFixture.swift */,
 				C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */,
 				655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */,
+				E11600000000000000000F02 /* tests/support/CargoTestRun.swift */,
+				E11600000000000000000F03 /* tests/support/EchoRustTests-Info.plist */,
 			);
 			name = support;
 			sourceTree = "<group>";
@@ -901,6 +914,21 @@
 			productReference = E115000000000000000000FF /* EchoViewTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		E116000000000000000000AA /* EchoRustTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E116000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoRustTests" */;
+			buildPhases = (
+				E116000000000000000000A1 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = EchoRustTests;
+			productName = EchoRustTests;
+			productReference = E116000000000000000000FF /* EchoRustTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		E120000000000000000000AA /* KeychainProbe */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E120000000000000000000EE /* Build configuration list for PBXNativeTarget "KeychainProbe" */;
@@ -970,6 +998,7 @@
 				E113000000000000000000AA /* EchoVoiceTests */,
 				E112000000000000000000AA /* EchoIntegrationTests */,
 				E110000000000000000000AA /* EchoChatTests */,
+				E116000000000000000000AA /* EchoRustTests */,
 				622BCBC3AA8DF672AAC38174 /* EchoAppIntegrationTests */,
 				03A21A103EBCD69617CCBCC0 /* EchoUITests */,
 				D195CA55926718EBFE5327CD /* EchoCABITests */,
@@ -1225,6 +1254,14 @@
 			files = (
 				85B5BEAB4EAFE9F730967F9B /* tests/hosts/main.swift in Sources */,
 				160380377B6FE55F49A4A4FB /* AppleSpeechDeviceTests.swift in Sources */,
+			);
+		};
+		E116000000000000000000A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				E11600000000000000000B00 /* tests/RuntimeCargoTests.swift in Sources */,
+				E11600000000000000000B01 /* tests/ExecBridgeCargoTests.swift in Sources */,
+				E11600000000000000000B02 /* tests/support/CargoTestRun.swift in Sources */,
 			);
 		};
 /* End PBXSourcesBuildPhase section */
@@ -1761,6 +1798,26 @@
 			};
 			name = Debug;
 		};
+		E116000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoRustTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "tests/support/EchoRustTests-Info.plist";
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoRustTests;
+			};
+			name = Debug;
+		};
+		E116000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoRustTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "tests/support/EchoRustTests-Info.plist";
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoRustTests;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1929,6 +1986,14 @@
 			buildConfigurations = (
 				5D1DB8573E85FC5A7A8C4F29 /* Debug configuration for PBXNativeTarget "EchoLiveTests" */,
 				0FDCBECFCD3A3F74E4F60EF7 /* Release configuration for PBXNativeTarget "EchoLiveTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		E116000000000000000000EE /* Build configuration list for PBXNativeTarget "EchoRustTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E116000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoRustTests" */,
+				E116000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoRustTests" */,
 			);
 			defaultConfigurationName = Release;
 		};

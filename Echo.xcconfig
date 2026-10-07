@@ -11,6 +11,9 @@ PRODUCT_NAME = $(TARGET_NAME)
 // EchoRuntime and EchoExecBridge are declared by their module.modulemap files.
 SWIFT_INCLUDE_PATHS = $(PROJECT_DIR)/runtime/include $(PROJECT_DIR)/exec-bridge/include
 ECHO_CARGO_TARGET_DIR = $(OBJROOT)/EchoCargo
+// EchoRustTests runs cargo test (debug profile) here, one subdirectory per package, so
+// test builds never touch the release libraries above and survive between runs.
+ECHO_CARGO_TEST_TARGET_DIR = $(OBJROOT)/EchoCargoTests
 OTHER_LDFLAGS = "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_runtime.a" "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_exec.a"
 
 // macos/App/Info.plist is complete and hand-maintained; Xcode must not synthesize
