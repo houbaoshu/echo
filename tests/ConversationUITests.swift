@@ -2,6 +2,7 @@ import XCTest
 import AppKit
 import FoundationModels
 import SwiftUI
+import Synchronization
 
 @MainActor private final class ComposerSecrets: SecretStore {
     var values: [String: String] = [:]
@@ -4263,12 +4264,12 @@ private struct ComposerHeightHost: View {
             split.splitView.layoutSubtreeIfNeeded()
             // Expand while the column is still opening, and collapse once it has opened:
             // the collapse sets back whatever width the expansion measured.
-            var opened = false
-            NSAnimationContext.runAnimationGroup({ _ in toggle(nil) }, completionHandler: { opened = true })
+            let opened = Mutex(false)
+            NSAnimationContext.runAnimationGroup({ _ in toggle(nil) }, completionHandler: { opened.withLock { $0 = true } })
             XCTAssertTrue(!item.isCollapsed, "The \(name) toggle opens it")
             workspace.fileBrowser.togglePreviewExpansion()
             try await waitUntil("the \(name) opens with the preview expanded, got \(describe())") {
-                opened && main.conversationItem.isCollapsed
+                opened.withLock { $0 } && main.conversationItem.isCollapsed
             }
             workspace.fileBrowser.togglePreviewExpansion()
             try await waitUntil("the columns are back after opening the \(name), got \(describe())") {

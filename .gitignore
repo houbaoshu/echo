@@ -8,9 +8,7 @@
 /build/
 /.build/
 
-# 本地签名与敏感证书材料
-/.local-signing/
-/.local-signing.backup.*/
+# 敏感证书材料
 *.p12
 *.pem
 *.key
@@ -31,9 +29,6 @@ xcuserdata/
 *.xcuserstate
 **/xcshareddata/IDEWorkspaceChecks.plist
 DerivedData/
-
-# 参考资料与本地素材
-/reference/
 
 # Claude Code 本地设置
 /.claude/settings.local.json

@@ -14,8 +14,8 @@ extern "C" {
  * result:  {"version":1,"outcome":"completed","output":string}
  *        | {"version":1,"outcome":"cancelled"}
  *        | {"version":1,"outcome":"failed","error":{"code":string,"message":string}}
- *   output is the CommandOutput JSON exactly as Mini Agent writes it into history, so the
- *   model sees the same bytes from either engine. "invalid_directory"
+ *   output is mini-agent-rs's CommandOutput serialized as JSON, in its field order, the
+ *   same text Mini Agent writes into history. "invalid_directory"
  *   means the directory no longer resolves to itself.
  *
  * start never blocks. It creates the runtime on first use; nothing else does.

@@ -436,13 +436,13 @@ import XCTest
             app.typeKey("s", modifierFlags: [.control, .command])
             let outline = app.outlines["workspace.sidebar"]
             XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
-            func label(_ title: String, project: Bool = false) -> XCUIElement {
+            @MainActor func label(_ title: String, project: Bool = false) -> XCUIElement {
                 outline.descendants(matching: .any)["conversation.\(project ? projectID : "recent").\(ids[title]!)"].firstMatch
             }
-            func row(_ title: String, project: Bool = false) -> XCUIElement {
+            @MainActor func row(_ title: String, project: Bool = false) -> XCUIElement {
                 outline.descendants(matching: .outlineRow).containing(.any, identifier: label(title, project: project).identifier).firstMatch
             }
-            func opened(_ title: String) {
+            @MainActor func opened(_ title: String) {
                 XCTAssertTrue(app.staticTexts["Offline reply: \(title)"].waitForExistence(timeout: 5))
             }
             for title in ["Recent Gamma", "Recent Delta", "Project Alpha"] {
@@ -488,18 +488,18 @@ import XCTest
             app.typeKey("s", modifierFlags: [.control, .command])
             let outline = app.outlines["workspace.sidebar"]
             XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
-            func label(_ title: String, project: Bool = false) -> XCUIElement {
+            @MainActor func label(_ title: String, project: Bool = false) -> XCUIElement {
                 outline.descendants(matching: .any)["conversation.\(project ? projectID : "recent").\(ids[title]!)"].firstMatch
             }
-            func row(_ title: String, project: Bool = false) -> XCUIElement {
+            @MainActor func row(_ title: String, project: Bool = false) -> XCUIElement {
                 outline.descendants(matching: .outlineRow).containing(.any, identifier: label(title, project: project).identifier).firstMatch
             }
-            func opened(_ title: String) {
+            @MainActor func opened(_ title: String) {
                 XCTAssertTrue(app.staticTexts["Offline reply: \(title)"].waitForExistence(timeout: 5))
             }
             row("Recent Delta").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
             opened("Recent Delta")
-            func project() -> XCUIElement {
+            @MainActor func project() -> XCUIElement {
                 // SwiftUI merges the hover button into this row's AX label,
                 // changing its identifier. The one-project fixture has a stable
                 // source-list row immediately below the Projects header.
@@ -540,7 +540,7 @@ import XCTest
             let sections = app.outlines["settings.sections"]
             XCTAssertTrue(sections.waitForExistence(timeout: 5), app.debugDescription)
             let names = ["模型", "语音", "星球", "精灵"]
-            func row(_ name: String) -> XCUIElement {
+            @MainActor func row(_ name: String) -> XCUIElement {
                 sections.descendants(matching: .outlineRow).containing(.any, identifier: "settings.section.\(name)").firstMatch
             }
             for name in names {

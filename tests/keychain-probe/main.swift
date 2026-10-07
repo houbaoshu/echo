@@ -15,7 +15,11 @@ guard CommandLine.arguments.count == 3 else { exit(1) }
 let mode = CommandLine.arguments[1]
 let service = CommandLine.arguments[2]
 guard service.hasPrefix("local.chiyan.keychain-regression.") else { exit(1) }
-check(SecKeychainSetUserInteractionAllowed(false), "disable test prompts")
+/// The probe exercises the legacy file keychain, and only this deprecated call turns off its
+/// interaction prompts. The attribute silences that one deprecation and nothing else.
+@diagnose(DeprecatedDeclaration, as: ignored)
+func disableKeychainPrompts() -> OSStatus { SecKeychainSetUserInteractionAllowed(false) }
+check(disableKeychainPrompts(), "disable test prompts")
 let marker = Data("synthetic-keychain-regression-value".utf8)
 var query: [String: Any] = [
     kSecClass as String: kSecClassGenericPassword,

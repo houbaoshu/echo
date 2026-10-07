@@ -1,4 +1,4 @@
-//! Timing and loop selection adapted from reference/codex-pets/ambient.rs.
+//! Timing and loop selection adapted from openai/codex codex-rs/tui/src/pets/ambient.rs.
 use crate::model::{Animation, Pet};
 use anyhow::{Result, ensure};
 use std::time::Duration;

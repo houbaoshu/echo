@@ -3,13 +3,14 @@ import EchoExecBridge
 import Foundation
 import Synchronization
 
-// Process execution for the native Agent engine, backed by the optional Rust execution core
-// (`exec-bridge`). The core runs one shell command per handle and knows nothing of models,
-// conversations or history; Swift decides where, when and whether a command runs.
+// Process execution for the native Agent engine, backed by the Rust execution core
+// (`exec-bridge`), which starts on first use. The core runs one shell command per handle and
+// knows nothing of models, conversations or history; Swift decides where, when and whether a
+// command runs.
 
 /// How one command ended.
 enum CommandOutcome: Sendable, Equatable {
-    /// The model-visible result: the CommandOutput JSON exactly as the Rust engine wrote it.
+    /// The model-visible result: mini-agent-rs's CommandOutput serialized as JSON.
     case completed(String)
     /// Stopped before it finished; every process it started is gone.
     case cancelled

@@ -1706,7 +1706,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				WRAPPER_NAME = KeychainProbe.app;
 			};
 			name = Debug;
@@ -1719,7 +1718,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				WRAPPER_NAME = KeychainProbe.app;
 			};
 			name = Release;
@@ -1733,7 +1731,6 @@
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				WRAPPER_NAME = KeychainProbeRebuilt.app;
 			};
 			name = Debug;
@@ -1747,7 +1744,6 @@
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				WRAPPER_NAME = KeychainProbeRebuilt.app;
 			};
 			name = Release;

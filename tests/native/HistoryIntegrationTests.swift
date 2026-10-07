@@ -52,7 +52,7 @@ extension EchoIntegrationScenarios {
       let outputs = native.entries.toolOutputs
       let stdout = try outputs.map { try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])["stdout"] as? String }
       #expect(stdout == ["before\n", "", "after\n"])
-      #expect(outputs.allSatisfy { $0.hasPrefix(#"{"stdout":"#) }, "The model saw the Rust engine's exact output format")
+      #expect(outputs.allSatisfy { $0.hasPrefix(#"{"stdout":"#) }, "The model saw mini-agent-rs's CommandOutput format")
       #expect(state.tools?.map(\.result) == outputs.map(Optional.some))
       let signatures = native.entries.compactMap { entry -> Data? in
         if case .reasoning(let reasoning) = entry { reasoning.signature } else { nil }

@@ -8,6 +8,7 @@
     }
   ],
   "defaultOptions": {
+    "codeCoverage": false,
     "language": "zh-Hans",
     "testTimeoutsEnabled": true,
     "defaultTestExecutionTimeAllowance": 600,

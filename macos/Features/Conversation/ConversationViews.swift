@@ -46,7 +46,6 @@ enum WorkspaceStyle {
     /// out as `Color.orange.opacity(0.12)`, so ink and ground cannot drift apart, and
     /// deepened under Increase Contrast so a 12% wash does not vanish there.
     static let warningFill = Color(nsColor: statusFill(.systemOrange))
-    static let successFill = Color(nsColor: statusFill(.systemGreen))
 
     private static func increasesContrast(_ appearance: NSAppearance) -> Bool {
         let contrast = appearance.bestMatch(from: [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua, .aqua, .darkAqua])

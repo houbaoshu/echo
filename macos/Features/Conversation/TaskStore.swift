@@ -456,11 +456,6 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     /// A Live Voice turn is spoken, not watched: its card stays folded instead of appearing while it runs.
     func foldActivity() { if !activitiesCollapsed { activitiesCollapsed = true } }
-    /// A failure is not a completion; a hidden card only returns as a bell so it is not lost.
-    func revealCollapsed() {
-        guard task != nil, activityDismissed else { return }
-        activityDismissed = false; activitiesCollapsed = true
-    }
     func markSeen() { if unseenCompletion != nil { unseenCompletion = nil } }
     func showMainWindow() { isMainWindowVisible = true; onVisibilityChange?(true) }
     func hideMainWindow() { isMainWindowVisible = false; onVisibilityChange?(false) }

@@ -1,4 +1,4 @@
-//! Manifest and animation semantics adapted from reference/codex-pets/model.rs.
+//! Manifest and animation semantics adapted from openai/codex codex-rs/tui/src/pets/model.rs.
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
