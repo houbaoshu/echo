@@ -1,24 +1,15 @@
-import AppKit
 import AVFoundation
 import Speech
 
-#if ECHO_LEGACY_PROBE
-@main
-#endif
 enum AppleSpeechDeviceTests {
-    @MainActor static func main() async {
-        _ = NSApplication.shared
-        do { try await run(selected: CommandLine.arguments.contains("--paused-only") ? "paused" : nil) }
-        catch { print("FAIL: \(error.localizedDescription)"); exit(1) }
-    }
     private static func resources() throws -> URL {
         guard let resources = Bundle.main.resourceURL else { throw SettingsError("Missing Speech fixture resources") }
         return resources
     }
-    @MainActor static func run(selected: String? = nil) async throws {
+    @MainActor static func run(selected: String) async throws {
             let fixtures = [("zh-CN", ["今天"]), ("en-US", ["weather"]), ("mixed", ["今天", "weather"]),
                             ("paused", ["第一句话", "第二句话", "第三句话"])]
-            for (language, fragments) in fixtures where selected == nil || selected == language {
+            for (language, fragments) in fixtures where language == selected {
                 let locale = try AppleSpeechRecognizer.speechLocale(preferredLanguages: ["zh-CN"], supportedLocales: SFSpeechRecognizer.supportedLocales())
                 let capability = SFSpeechRecognizer(locale: locale)
                 print("Speech \(locale.identifier): onDevice=\(capability?.supportsOnDeviceRecognition == true) available=\(capability?.isAvailable == true)")

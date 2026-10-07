@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 enum VoiceSoakOutcome: Sendable {
@@ -11,33 +10,16 @@ enum VoiceSoakOutcome: Sendable {
 // Opt-in idle soak. Holds one ASR socket open on pure silence to reproduce the drop that
 // only appears after a long quiet stretch, with no microphone, no synthesis and no model
 // in the way. Nothing is recorded and nothing is uploaded but zeroed PCM.
-#if ECHO_LEGACY_PROBE
-@main
-#endif
 struct VoiceSoakTests {
     @MainActor static var utterances = 0
     @MainActor static var outcome: VoiceSoakOutcome?
     @MainActor static var outcomeSeconds: Int64 = 0
-    @MainActor static func main() async {
-        _ = NSApplication.shared
-        do {
-            try await run()
-        } catch {
-            print("FAIL: \(error is SettingsError ? error.localizedDescription : "语音静默浸泡未能启动。")")
-            exit(error is VoiceSoakIncomplete ? 2 : 1)
-        }
-    }
-    @MainActor static func run(duration: Double? = nil, disconnectAt: Double? = nil) async throws {
+    /// `disconnectAt` tears the connection down at that second. It closes the socket under three
+    /// live operations, which is the race the reported error comes out of, so the origin lines and
+    /// the delegate's close and complete lines can be checked deliberately.
+    @MainActor static func run(duration: Double, disconnectAt cut: Double? = nil) async throws {
         utterances = 0; outcome = nil; outcomeSeconds = 0
-        let arguments = Array(CommandLine.arguments.dropFirst())
-        let limit = max(10, duration ?? arguments.first.flatMap(Double.init) ?? 120)
-        // Test-only teardown at a chosen moment. It closes the socket under three live
-        // operations, which is the race the reported error comes out of, so the origin
-        // lines and the delegate's close and complete lines can be checked deliberately.
-        var cut: Double? = disconnectAt
-        if let flag = arguments.firstIndex(of: "--cut"), flag + 1 < arguments.count {
-            cut = Double(arguments[flag + 1])
-        }
+        let limit = max(10, duration)
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
         let credentials = try settings.savedVoiceCredentials()
         print("静默浸泡：单条 ASR 连接，上行纯静音，目标 \(Int(limit)) 秒。无麦克风 / 无 TTS / 无模型。")
@@ -59,7 +41,7 @@ struct VoiceSoakTests {
         if let cut {
             disconnect = Task {
                 do { try await Task.sleep(for: .seconds(cut)) } catch { return }
-                print("  t=\(Int(cut))s 强制拆链（--cut）"); fflush(nil)
+                print("  t=\(Int(cut))s 强制拆链"); fflush(nil)
                 recognizer.cancel()
             }
         }
@@ -106,7 +88,7 @@ struct VoiceSoakTests {
         // A line that simply disappeared would satisfy the check above, so a forced teardown
         // has to show the downgraded event it is supposed to produce.
         if cut != nil, downgraded.isEmpty {
-            print("FAIL: --cut 强制拆链没有产生 afterClose=true 事件，降级逻辑未被覆盖。")
+            print("FAIL: 强制拆链没有产生 afterClose=true 事件，降级逻辑未被覆盖。")
             throw SettingsError("语音浸泡未满足连接或拆链验证条件。")
         }
         print("拆链检查：afterClose 降级 \(downgraded.count) 条，FAIL 0 条。")
@@ -116,11 +98,11 @@ struct VoiceSoakTests {
             print("PASS: \(elapsed()) 秒内连接保持在线，未断开（静默中返回 \(utterances) 次识别结果）。")
         case .ended:
             print("ENDED: ASR 在 \(outcomeSeconds) 秒后由服务端正常结束（final 帧），不是异常断开。")
-            throw VoiceSoakIncomplete()
+            throw SettingsError("语音识别连接在目标时长前由服务端正常结束，未完成浸泡。")
         case .dropped(let message):
-            // With --cut the drop is the point of the run, not a failure of it.
+            // With a forced disconnect the drop is the point of the run, not a failure of it.
             guard cut == nil else {
-                print("PASS(--cut): 强制拆链在 \(outcomeSeconds) 秒后按预期结束。UI 文案：\(message)")
+                print("PASS（强制拆链）：强制拆链在 \(outcomeSeconds) 秒后按预期结束。UI 文案：\(message)")
                 return
             }
             print("DROP: 连接在 \(outcomeSeconds) 秒后断开。")
@@ -130,5 +112,3 @@ struct VoiceSoakTests {
         }
     }
 }
-
-struct VoiceSoakIncomplete: Error {}

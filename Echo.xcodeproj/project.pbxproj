@@ -23,7 +23,6 @@
 		0B31A1F06E0BE2DC74A02DA1 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		0BB27615F70BEF3BF486FD84 /* macos/Features/ProjectBrowser/ProjectPathAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */; };
 		0D0285C1020B6D53204DB1B7 /* tests/native/SpeechDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6DAA41743D56B6467CB43F9 /* tests/native/SpeechDeviceTests.swift */; };
-		0D482A8E03DDC5C6B0384533 /* tests/fixtures/speech/en-US.wav in Resources */ = {isa = PBXBuildFile; fileRef = 1E53D6C44AD40EA364F6E230 /* tests/fixtures/speech/en-US.wav */; };
 		0FA787DDAEEE6CA7A1CB6062 /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
 		13097CB5A528800655A06D1D /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		15784511C1E7338371B29560 /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
@@ -46,7 +45,6 @@
 		62B9BFB9095B17879C439924 /* tests/support/NativeMemorySecrets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7385F3E986D8793A4584EE31 /* tests/support/NativeMemorySecrets.swift */; };
 		67E3BE61ADD66DEBB9546F63 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		6817F4D9EBEF250F3A26ED4F /* tests/native/CABITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70EFE33F996D835481AF1A0E /* tests/native/CABITests.swift */; };
-		6CEF48D6B5BCE99003A9F9BA /* tests/fixtures/speech/zh-CN.wav in Resources */ = {isa = PBXBuildFile; fileRef = D5E5E6CFBA9A83634534A68F /* tests/fixtures/speech/zh-CN.wav */; };
 		6D9FE29A4E0E07342425F117 /* tests/fixtures/speech/zh-CN.wav in Resources */ = {isa = PBXBuildFile; fileRef = D5E5E6CFBA9A83634534A68F /* tests/fixtures/speech/zh-CN.wav */; };
 		75548D3C52D3DD19C3BD3ECB /* tests/support/NativeMemorySecrets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7385F3E986D8793A4584EE31 /* tests/support/NativeMemorySecrets.swift */; };
 		775CBE322F97683D29D5475B /* tests/support/LoopbackModelServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D99CD76EFF731DB92DDFA79A /* tests/support/LoopbackModelServer.swift */; };
@@ -68,7 +66,6 @@
 		A2D38BC03062D573000AB0C0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2D38BBF3062D573000AB0C0 /* Assets.xcassets */; };
 		A48445E581B7F7391D46A313 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		A90FABF2D2B029FA59548B59 /* VoiceSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12500000000000000000F00 /* VoiceSoakTests.swift */; };
-		AD3FBE99C14C991DB4E0DF5A /* tests/fixtures/speech/mixed.wav in Resources */ = {isa = PBXBuildFile; fileRef = B628CE43BFCAC712B3D75BF1 /* tests/fixtures/speech/mixed.wav */; };
 		B1AA482C4F889BAA418DAE42 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		B704670FAF0415C2098489CE /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
 		B9DDF01A179493CDC0297D15 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
@@ -103,10 +100,6 @@
 		E11500000000000000000B00 /* ConversationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11500000000000000000F00 /* ConversationUITests.swift */; };
 		E12000000000000000000B00 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12000000000000000000F00 /* main.swift */; };
 		E12100000000000000000B00 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12000000000000000000F00 /* main.swift */; };
-		E12300000000000000000B00 /* AgentLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12300000000000000000F00 /* AgentLiveTests.swift */; };
-		E12400000000000000000B00 /* VoiceLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12400000000000000000F00 /* VoiceLiveTests.swift */; };
-		E12500000000000000000B00 /* VoiceSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12500000000000000000F00 /* VoiceSoakTests.swift */; };
-		E12600000000000000000B00 /* AppleSpeechDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12600000000000000000F00 /* AppleSpeechDeviceTests.swift */; };
 		E8EDE3C7E84B8F4E694DC62E /* tests/native/AppIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F5AC5D3C6E9200922133731 /* tests/native/AppIntegrationTests.swift */; };
 		EA00F9556CAAB30BC2B7D398 /* tests/native/RuntimeIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE960C7BBE6919DA1C1553E7 /* tests/native/RuntimeIntegrationTests.swift */; };
 		EE2B5A483F67D04C0F2A9F6A /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
@@ -118,7 +111,6 @@
 		F26EAD91B663BB2BCD833522 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		F68549B4E6629AA6F02A9CDC /* macos/Features/Agent/ExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1724D95EA440B9705DD87F8B /* macos/Features/Agent/ExecutionService.swift */; };
 		F7EF4AB9C967C47A9F18B500 /* tests/native/EchoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3FF57E62DA09C501023D462 /* tests/native/EchoUITests.swift */; };
-		FB26AB95988A510CC785270B /* tests/fixtures/speech/paused.wav in Resources */ = {isa = PBXBuildFile; fileRef = 9B8E739899162095ABA722F3 /* tests/fixtures/speech/paused.wav */; };
 		FC6EBE592730BDB220A9F612 /* VoiceLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12400000000000000000F00 /* VoiceLiveTests.swift */; };
 		FCF779D250617E9855A786C5 /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
 		FDD6712EDE6EB943758B64CA /* tests/fixtures/speech/mixed.wav in Resources */ = {isa = PBXBuildFile; fileRef = B628CE43BFCAC712B3D75BF1 /* tests/fixtures/speech/mixed.wav */; };
@@ -217,34 +209,6 @@
 			remoteGlobalIDString = E000000000000000000000A0;
 			remoteInfo = RustCore;
 		};
-		E123000000000000000000C1 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E0000000000000000000000F /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E000000000000000000000A0;
-			remoteInfo = RustCore;
-		};
-		E124000000000000000000C1 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E0000000000000000000000F /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E000000000000000000000A0;
-			remoteInfo = RustCore;
-		};
-		E125000000000000000000C1 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E0000000000000000000000F /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E000000000000000000000A0;
-			remoteInfo = RustCore;
-		};
-		E126000000000000000000C1 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E0000000000000000000000F /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E000000000000000000000A0;
-			remoteInfo = RustCore;
-		};
 		E5C1ED261CE0FDE057957737 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E0000000000000000000000F /* Project object */;
@@ -330,13 +294,9 @@
 		E120000000000000000000FF /* KeychainProbe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KeychainProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E12000000000000000000F00 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = main.swift; path = "tests/keychain-probe/main.swift"; sourceTree = "<group>"; };
 		E121000000000000000000FF /* KeychainProbeRebuilt.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KeychainProbeRebuilt.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		E123000000000000000000FF /* AgentLiveProbe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentLiveProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E12300000000000000000F00 /* AgentLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AgentLiveTests.swift; path = tests/AgentLiveTests.swift; sourceTree = "<group>"; };
-		E124000000000000000000FF /* VoiceLiveProbe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceLiveProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E12400000000000000000F00 /* VoiceLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceLiveTests.swift; path = tests/VoiceLiveTests.swift; sourceTree = "<group>"; };
-		E125000000000000000000FF /* VoiceSoakProbe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceSoakProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E12500000000000000000F00 /* VoiceSoakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VoiceSoakTests.swift; path = tests/VoiceSoakTests.swift; sourceTree = "<group>"; };
-		E126000000000000000000FF /* AppleSpeechCheck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AppleSpeechCheck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E12600000000000000000F00 /* AppleSpeechDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppleSpeechDeviceTests.swift; path = tests/AppleSpeechDeviceTests.swift; sourceTree = "<group>"; };
 		E2D88B0EC8C4D64A02775E4A /* EchoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2DD4E7379914193D6F68337 /* EchoAppIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoAppIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -367,6 +327,7 @@
 		E112000000000000000000EC /* Exceptions for "macos" folder in "EchoIntegrationTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/Info.plist,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
 			);
@@ -375,6 +336,7 @@
 		E113000000000000000000EC /* Exceptions for "macos" folder in "EchoVoiceTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/Info.plist,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
 			);
@@ -383,6 +345,7 @@
 		E114000000000000000000EC /* Exceptions for "macos" folder in "EchoWorkspaceTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/Info.plist,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
 			);
@@ -391,46 +354,16 @@
 		E115000000000000000000EC /* Exceptions for "macos" folder in "EchoViewTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/Info.plist,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
 			);
 			target = E115000000000000000000AA /* EchoViewTests */;
 		};
-		E123000000000000000000EC /* Exceptions for "macos" folder in "AgentLiveProbe" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				App/main.swift,
-				Features/Agent/CoreAILocalChat.swift,
-			);
-			target = E123000000000000000000AA /* AgentLiveProbe */;
-		};
-		E124000000000000000000EC /* Exceptions for "macos" folder in "VoiceLiveProbe" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				App/main.swift,
-				Features/Agent/CoreAILocalChat.swift,
-			);
-			target = E124000000000000000000AA /* VoiceLiveProbe */;
-		};
-		E125000000000000000000EC /* Exceptions for "macos" folder in "VoiceSoakProbe" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				App/main.swift,
-				Features/Agent/CoreAILocalChat.swift,
-			);
-			target = E125000000000000000000AA /* VoiceSoakProbe */;
-		};
-		E126000000000000000000EC /* Exceptions for "macos" folder in "AppleSpeechDeviceProbe" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				App/main.swift,
-				Features/Agent/CoreAILocalChat.swift,
-			);
-			target = E126000000000000000000AA /* AppleSpeechDeviceProbe */;
-		};
 		E69F3B51CE1B237D6FEB36E8 /* Exceptions for "macos" folder in "EchoLiveHost" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/Info.plist,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
 			);
@@ -443,10 +376,6 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				E0000000000000000000002B /* Exceptions for "macos" folder in "Echo" target */,
-				E126000000000000000000EC /* Exceptions for "macos" folder in "AppleSpeechDeviceProbe" target */,
-				E125000000000000000000EC /* Exceptions for "macos" folder in "VoiceSoakProbe" target */,
-				E124000000000000000000EC /* Exceptions for "macos" folder in "VoiceLiveProbe" target */,
-				E123000000000000000000EC /* Exceptions for "macos" folder in "AgentLiveProbe" target */,
 				E115000000000000000000EC /* Exceptions for "macos" folder in "EchoViewTests" target */,
 				E114000000000000000000EC /* Exceptions for "macos" folder in "EchoWorkspaceTests" target */,
 				E113000000000000000000EC /* Exceptions for "macos" folder in "EchoVoiceTests" target */,
@@ -497,26 +426,6 @@
 			);
 		};
 		E121000000000000000000A2 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			files = (
-			);
-		};
-		E123000000000000000000A2 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			files = (
-			);
-		};
-		E124000000000000000000A2 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			files = (
-			);
-		};
-		E125000000000000000000A2 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			files = (
-			);
-		};
-		E126000000000000000000A2 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
 			);
@@ -583,10 +492,6 @@
 			isa = PBXGroup;
 			children = (
 				E0000000000000000000001A /* Echo.app */,
-				E126000000000000000000FF /* AppleSpeechCheck.app */,
-				E125000000000000000000FF /* VoiceSoakProbe.app */,
-				E124000000000000000000FF /* VoiceLiveProbe.app */,
-				E123000000000000000000FF /* AgentLiveProbe.app */,
 				E121000000000000000000FF /* KeychainProbeRebuilt.app */,
 				E120000000000000000000FF /* KeychainProbe.app */,
 				E115000000000000000000FF /* EchoViewTests.xctest */,
@@ -1024,87 +929,6 @@
 			productReference = E121000000000000000000FF /* KeychainProbeRebuilt.app */;
 			productType = "com.apple.product-type.application";
 		};
-		E123000000000000000000AA /* AgentLiveProbe */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E123000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentLiveProbe" */;
-			buildPhases = (
-				E123000000000000000000A1 /* Sources */,
-				E123000000000000000000A2 /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				E123000000000000000000C2 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				E0000000000000000000002A /* macos */,
-			);
-			name = AgentLiveProbe;
-			productName = AgentLiveProbe;
-			productReference = E123000000000000000000FF /* AgentLiveProbe.app */;
-			productType = "com.apple.product-type.application";
-		};
-		E124000000000000000000AA /* VoiceLiveProbe */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E124000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceLiveProbe" */;
-			buildPhases = (
-				E124000000000000000000A1 /* Sources */,
-				E124000000000000000000A2 /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				E124000000000000000000C2 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				E0000000000000000000002A /* macos */,
-			);
-			name = VoiceLiveProbe;
-			productName = VoiceLiveProbe;
-			productReference = E124000000000000000000FF /* VoiceLiveProbe.app */;
-			productType = "com.apple.product-type.application";
-		};
-		E125000000000000000000AA /* VoiceSoakProbe */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E125000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceSoakProbe" */;
-			buildPhases = (
-				E125000000000000000000A1 /* Sources */,
-				E125000000000000000000A2 /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				E125000000000000000000C2 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				E0000000000000000000002A /* macos */,
-			);
-			name = VoiceSoakProbe;
-			productName = VoiceSoakProbe;
-			productReference = E125000000000000000000FF /* VoiceSoakProbe.app */;
-			productType = "com.apple.product-type.application";
-		};
-		E126000000000000000000AA /* AppleSpeechDeviceProbe */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E126000000000000000000EE /* Build configuration list for PBXNativeTarget "AppleSpeechDeviceProbe" */;
-			buildPhases = (
-				E126000000000000000000A1 /* Sources */,
-				E126000000000000000000A2 /* Frameworks */,
-				617A965700DAFFC779E2CC7B /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				E126000000000000000000C2 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				E0000000000000000000002A /* macos */,
-			);
-			name = AppleSpeechDeviceProbe;
-			productName = AppleSpeechDeviceProbe;
-			productReference = E126000000000000000000FF /* AppleSpeechCheck.app */;
-			productType = "com.apple.product-type.application";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -1139,10 +963,6 @@
 			targets = (
 				E000000000000000000000A0 /* RustCore */,
 				E0000000000000000000002F /* Echo */,
-				E126000000000000000000AA /* AppleSpeechDeviceProbe */,
-				E125000000000000000000AA /* VoiceSoakProbe */,
-				E124000000000000000000AA /* VoiceLiveProbe */,
-				E123000000000000000000AA /* AgentLiveProbe */,
 				E121000000000000000000AA /* KeychainProbeRebuilt */,
 				E120000000000000000000AA /* KeychainProbe */,
 				E115000000000000000000AA /* EchoViewTests */,
@@ -1179,15 +999,6 @@
 				13097CB5A528800655A06D1D /* pets in Resources */,
 				2BA7D416B8B284177C6B0063 /* planets in Resources */,
 				0FA787DDAEEE6CA7A1CB6062 /* tests/fixtures in Resources */,
-			);
-		};
-		617A965700DAFFC779E2CC7B /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			files = (
-				0D482A8E03DDC5C6B0384533 /* tests/fixtures/speech/en-US.wav in Resources */,
-				6CEF48D6B5BCE99003A9F9BA /* tests/fixtures/speech/zh-CN.wav in Resources */,
-				FB26AB95988A510CC785270B /* tests/fixtures/speech/paused.wav in Resources */,
-				AD3FBE99C14C991DB4E0DF5A /* tests/fixtures/speech/mixed.wav in Resources */,
 			);
 		};
 		72A06BFDE903275E43C80EAA /* Resources */ = {
@@ -1402,30 +1213,6 @@
 				E12100000000000000000B00 /* main.swift in Sources */,
 			);
 		};
-		E123000000000000000000A1 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			files = (
-				E12300000000000000000B00 /* AgentLiveTests.swift in Sources */,
-			);
-		};
-		E124000000000000000000A1 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			files = (
-				E12400000000000000000B00 /* VoiceLiveTests.swift in Sources */,
-			);
-		};
-		E125000000000000000000A1 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			files = (
-				E12500000000000000000B00 /* VoiceSoakTests.swift in Sources */,
-			);
-		};
-		E126000000000000000000A1 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			files = (
-				E12600000000000000000B00 /* AppleSpeechDeviceTests.swift in Sources */,
-			);
-		};
 		F8B21690F22344D4979CA61D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
@@ -1513,26 +1300,6 @@
 			target = E000000000000000000000A0 /* RustCore */;
 			targetProxy = E115000000000000000000C1 /* PBXContainerItemProxy */;
 		};
-		E123000000000000000000C2 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E000000000000000000000A0 /* RustCore */;
-			targetProxy = E123000000000000000000C1 /* PBXContainerItemProxy */;
-		};
-		E124000000000000000000C2 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E000000000000000000000A0 /* RustCore */;
-			targetProxy = E124000000000000000000C1 /* PBXContainerItemProxy */;
-		};
-		E125000000000000000000C2 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E000000000000000000000A0 /* RustCore */;
-			targetProxy = E125000000000000000000C1 /* PBXContainerItemProxy */;
-		};
-		E126000000000000000000C2 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E000000000000000000000A0 /* RustCore */;
-			targetProxy = E126000000000000000000C1 /* PBXContainerItemProxy */;
-		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -1600,7 +1367,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 				PRODUCT_MODULE_NAME = EchoLiveHost;
@@ -1613,7 +1380,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 				PRODUCT_MODULE_NAME = EchoLiveHost;
@@ -1934,12 +1701,11 @@
 		E120000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbe" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
-				SWIFT_SUPPRESS_WARNINGS = YES;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				WRAPPER_NAME = KeychainProbe.app;
 			};
@@ -1948,12 +1714,11 @@
 		E120000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbe" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
-				SWIFT_SUPPRESS_WARNINGS = YES;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				WRAPPER_NAME = KeychainProbe.app;
 			};
@@ -1962,13 +1727,12 @@
 		E121000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbeRebuilt" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
-				SWIFT_SUPPRESS_WARNINGS = YES;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				WRAPPER_NAME = KeychainProbeRebuilt.app;
 			};
@@ -1977,107 +1741,14 @@
 		E121000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbeRebuilt" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
+				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
-				SWIFT_SUPPRESS_WARNINGS = YES;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
 				WRAPPER_NAME = KeychainProbeRebuilt.app;
-			};
-			name = Release;
-		};
-		E123000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = AgentLiveProbe.app;
-			};
-			name = Debug;
-		};
-		E123000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = AgentLiveProbe.app;
-			};
-			name = Release;
-		};
-		E124000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceLiveProbe.app;
-			};
-			name = Debug;
-		};
-		E124000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceLiveProbe.app;
-			};
-			name = Release;
-		};
-		E125000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceSoakProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceSoakProbe.app;
-			};
-			name = Debug;
-		};
-		E125000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceSoakProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceSoakProbe.app;
-			};
-			name = Release;
-		};
-		E126000000000000000000D0 /* Debug configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
-				PRODUCT_NAME = AppleSpeechCheck;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-			};
-			name = Debug;
-		};
-		E126000000000000000000D1 /* Release configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
-				PRODUCT_NAME = AppleSpeechCheck;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
 			};
 			name = Release;
 		};
@@ -2254,38 +1925,6 @@
 			buildConfigurations = (
 				E121000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
 				E121000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
-			);
-			defaultConfigurationName = Release;
-		};
-		E123000000000000000000EE /* Build configuration list for PBXNativeTarget "AgentLiveProbe" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E123000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentLiveProbe" */,
-				E123000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentLiveProbe" */,
-			);
-			defaultConfigurationName = Release;
-		};
-		E124000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceLiveProbe" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E124000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceLiveProbe" */,
-				E124000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceLiveProbe" */,
-			);
-			defaultConfigurationName = Release;
-		};
-		E125000000000000000000EE /* Build configuration list for PBXNativeTarget "VoiceSoakProbe" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E125000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceSoakProbe" */,
-				E125000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceSoakProbe" */,
-			);
-			defaultConfigurationName = Release;
-		};
-		E126000000000000000000EE /* Build configuration list for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E126000000000000000000D0 /* Debug configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
-				E126000000000000000000D1 /* Release configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
 			);
 			defaultConfigurationName = Release;
 		};

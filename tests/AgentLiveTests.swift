@@ -1,11 +1,7 @@
-import AppKit
 import Foundation
 
 /// Opt-in real service acceptance. Uses saved credentials only in memory and
 /// synthetic conversations with disposable projects, never the user's history.
-#if ECHO_LEGACY_PROBE
-@main
-#endif
 @MainActor struct AgentLiveTests {
     static func wait(_ store: TaskStore, directoryPause: Bool = false) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(180))
@@ -14,21 +10,9 @@ import Foundation
             try await Task.sleep(for: .milliseconds(50))
         }
     }
-    static func main() async {
-        _ = NSApplication.shared
-        do {
-            try await run()
-            await ExecutionService.waitForShutdown()
-        } catch {
-            // Do not print arbitrary provider response bodies or model output.
-            print("FAIL: \(error is SettingsError ? error.localizedDescription : "实网 Agent 验收失败。")")
-            await ExecutionService.waitForShutdown()
-            exit(1)
-        }
-    }
     /// Direct answer, read/edit/verify with three bash calls, and a real coding task: failing tests
     /// to find, fix and confirm.
-    static func run(protocols: [ModelAPIProtocol] = ModelAPIProtocol.allCases) async throws {
+    static func run(protocols: [ModelAPIProtocol]) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
         let (saved, key) = try settings.savedModelCredentials()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")

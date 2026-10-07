@@ -1,22 +1,9 @@
-import AppKit
 import AVFoundation
 import Foundation
 
 // Opt-in integration check: only synthetic speech and a fresh model conversation are sent.
 // Credentials are read through the production Keychain store and never logged.
-#if ECHO_LEGACY_PROBE
-@main
-#endif
 struct VoiceLiveTests {
-    @MainActor static func main() async {
-        _ = NSApplication.shared
-        do {
-            try await run()
-        } catch {
-            print("FAIL: \(error is SettingsError ? error.localizedDescription : "语音实网检查失败。")")
-            exit(1)
-        }
-    }
     @MainActor static func synthesize(_ text: String, configuration: VoiceConfiguration, key: String) async throws -> Data {
         let (stream, input) = AsyncThrowingStream<String, Error>.makeStream()
         input.yield(text); input.finish()
@@ -29,7 +16,7 @@ struct VoiceLiveTests {
         guard !pcm.isEmpty else { throw SettingsError("合成未返回音频。") }
         return pcm
     }
-    @MainActor static func run(play: Bool = CommandLine.arguments.contains("--play")) async throws {
+    @MainActor static func run(play: Bool) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
         _ = try settings.savedModelCredentials()
         let credentials = try settings.savedVoiceCredentials()
@@ -87,9 +74,9 @@ struct VoiceLiveTests {
         guard store.task?.status == .completed,
               let reply = store.messages.last(where: { $0.role == .assistant })?.content,
               !reply.isEmpty, store.tools.isEmpty else {
-            throw SettingsError("Rust Agent 未完成普通语音回复。")
+            throw SettingsError("Agent 未完成普通语音回复。")
         }
-        print("Model PASS: \(reply.count) characters via Rust Agent, no tools")
+        print("Model PASS: \(reply.count) characters via the Agent, no tools")
 
         print("4/4 TTS: synthesizing the final Agent reply once…")
         let response = try await synthesize(reply, configuration: credentials.configuration, key: credentials.key)
