@@ -84,7 +84,7 @@ extension EchoVoiceScenarios {
 
         let voice = VoiceSessionController()
         defer { voice.shutdown() }
-        let settings = SettingsStore()
+        let settings = SettingsStore(secrets: FakeSecrets())
         let planets = PlanetStore(settings: settings, root: root, voice: voice)
         check(planets.active == nil, "an idle session decodes nothing")
 

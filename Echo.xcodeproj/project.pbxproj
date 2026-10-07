@@ -303,7 +303,6 @@
 		DE960C7BBE6919DA1C1553E7 /* tests/native/RuntimeIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/RuntimeIntegrationTests.swift; sourceTree = "<group>"; };
 		E0000000000000000000001A /* Echo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Echo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E0000000000000000000001B /* Echo.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Echo.xcconfig; sourceTree = "<group>"; };
-		E0000000000000000000001C /* Echo-Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Echo-Development.xcconfig"; sourceTree = "<group>"; };
 		E0000000000000000000001D /* pets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = pets; path = assets/pets; sourceTree = "<group>"; };
 		E0000000000000000000001E /* planets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = planets; path = assets/planets; sourceTree = "<group>"; };
 		E110000000000000000000FF /* EchoChatTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -571,7 +570,6 @@
 				F82E6758E135B6EA62E34341 /* Echo.icon */,
 				C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */,
 				C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */,
-				E0000000000000000000001C /* Echo-Development.xcconfig */,
 				E0000000000000000000001D /* pets */,
 				E0000000000000000000001E /* planets */,
 				E0000000000000000000002A /* macos */,
@@ -1538,37 +1536,14 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		030D00D0AC643C25E1B9531C /* TestPerformance configuration for PBXNativeTarget "Echo" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = Echo;
-				INFOPLIST_FILE = macos/App/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-			};
-			name = TestPerformance;
-		};
 		04EFA179844C25B248B56BD6 /* Release configuration for PBXNativeTarget "EchoCoreAudioProbe" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCoreAudioProbe;
 			};
 			name = Release;
-		};
-		0C1A9DC14734D66CB823D882 /* DevelopmentDebug configuration for PBXNativeTarget "EchoAppIntegrationTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
-			};
-			name = DevelopmentDebug;
 		};
 		0FDCBECFCD3A3F74E4F60EF7 /* Release configuration for PBXNativeTarget "EchoLiveTests" */ = {
 			isa = XCBuildConfiguration;
@@ -1581,61 +1556,6 @@
 			};
 			name = Release;
 		};
-		1599C4DF5444123A7256F867 /* TestPerformance configuration for PBXNativeTarget "EchoViewTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
-			};
-			name = TestPerformance;
-		};
-		17A44412F65D2D4DE1EE831F /* DevelopmentDebug configuration for PBXNativeTarget "EchoPerformanceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoPerformanceTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
-			};
-			name = DevelopmentDebug;
-		};
-		19F90618FD9EF1B4F47E61AA /* TestPerformance configuration for PBXNativeTarget "EchoChatTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
-			};
-			name = TestPerformance;
-		};
-		22B7DC6D02FA19DEE0E0B262 /* TestPerformance configuration for PBXProject "Echo" */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = E0000000000000000000001B /* Echo.xcconfig */;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = dwarf;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_TESTABILITY = YES;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_OPTIMIZATION_LEVEL = s;
-				GCC_PREPROCESSOR_DEFINITIONS = (
-					"DEBUG=1",
-					"$(inherited)",
-				);
-				ONLY_ACTIVE_ARCH = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG ECHO_TEST_SUPPORT $(inherited)";
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-			};
-			name = TestPerformance;
-		};
 		233B35A74F0FA07F5D3B0F67 /* Release configuration for PBXNativeTarget "EchoDeviceTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1647,54 +1567,10 @@
 			};
 			name = Release;
 		};
-		24E57788A25B61C46A2A9F12 /* TestPerformance configuration for PBXNativeTarget "EchoCABITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				ENABLE_ADDRESS_SANITIZER = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-framework",
-					Security,
-					"-framework",
-					SystemConfiguration,
-					"-framework",
-					CoreFoundation,
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
-				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-			};
-			name = TestPerformance;
-		};
-		2B1F5D93A013CCB653DFF4B0 /* DevelopmentDebug configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
-				PRODUCT_NAME = AppleSpeechCheck;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-			};
-			name = DevelopmentDebug;
-		};
-		2DF90D85ADAE379E28BFA324 /* DevelopmentDebug configuration for PBXNativeTarget "AgentLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = AgentLiveProbe.app;
-			};
-			name = DevelopmentDebug;
-		};
 		3968FD165DAF48DE95710AC1 /* Release configuration for PBXNativeTarget "EchoPerformanceTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoPerformanceTests;
@@ -1702,89 +1578,18 @@
 			};
 			name = Release;
 		};
-		3ABC5D686E6518355FE888A3 /* TestPerformance configuration for PBXNativeTarget "EchoUITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
-				TEST_TARGET_NAME = Echo;
-			};
-			name = TestPerformance;
-		};
-		3ABD6CD3F157C1D5408E6760 /* TestPerformance configuration for PBXNativeTarget "EchoLiveTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoLiveTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoLiveHost.app/Contents/MacOS/Echo";
-			};
-			name = TestPerformance;
-		};
-		3E3263AE4C744CF6F0AC90CA /* DevelopmentDebug configuration for PBXNativeTarget "EchoSpeechHost" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
-				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
-				PRODUCT_MODULE_NAME = EchoSpeechHost;
-				PRODUCT_NAME = AppleSpeechCheck;
-				WRAPPER_NAME = EchoSpeechHost.app;
-			};
-			name = DevelopmentDebug;
-		};
-		3E3EBD3C2ECC1766A78064B1 /* TestPerformance configuration for PBXNativeTarget "AgentLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = AgentLiveProbe.app;
-			};
-			name = TestPerformance;
-		};
 		3F5F8F2CF858AD440BA8A050 /* Debug configuration for PBXNativeTarget "EchoCoreAudioProbe" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCoreAudioProbe;
 			};
 			name = Debug;
 		};
-		40C39ED3BF9D0151F6F63B3E /* TestPerformance configuration for PBXNativeTarget "EchoVoiceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
-			};
-			name = TestPerformance;
-		};
-		413FF6747D018C67D809C100 /* TestPerformance configuration for PBXNativeTarget "EchoAppIntegrationTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
-			};
-			name = TestPerformance;
-		};
 		4F28FCB0833B54EC318CD0EC /* Debug configuration for PBXNativeTarget "EchoFrameworkRepros" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFrameworkRepros;
@@ -1821,23 +1626,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
 			};
 			name = Debug;
-		};
-		57D8403FA1C16D676AE4051A /* DevelopmentDebug configuration for PBXNativeTarget "EchoViewTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
-			};
-			name = DevelopmentDebug;
 		};
 		58BD19303566BC362D01ED90 /* Release configuration for PBXNativeTarget "EchoSpeechHost" */ = {
 			isa = XCBuildConfiguration;
@@ -1852,18 +1646,6 @@
 			};
 			name = Release;
 		};
-		5A3E7C4206CDF6C9C463BF62 /* DevelopmentDebug configuration for PBXNativeTarget "VoiceLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceLiveProbe.app;
-			};
-			name = DevelopmentDebug;
-		};
 		5D1DB8573E85FC5A7A8C4F29 /* Debug configuration for PBXNativeTarget "EchoLiveTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1874,70 +1656,6 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoLiveHost.app/Contents/MacOS/Echo";
 			};
 			name = Debug;
-		};
-		5F5459E05617E7DCD7BBC87E /* DevelopmentDebug configuration for PBXNativeTarget "EchoChatTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
-			};
-			name = DevelopmentDebug;
-		};
-		61E16180D25656FF8AACCE4F /* TestPerformance configuration for PBXNativeTarget "EchoFrameworkRepros" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFrameworkRepros;
-			};
-			name = TestPerformance;
-		};
-		631BFE9DC5D10C1A14943F82 /* Development configuration for PBXNativeTarget "EchoLiveTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoLiveTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoLiveHost.app/Contents/MacOS/Echo";
-			};
-			name = Development;
-		};
-		67764DBF7CF65458E4D6C55B /* Development configuration for PBXNativeTarget "EchoUITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
-				TEST_TARGET_NAME = Echo;
-			};
-			name = Development;
-		};
-		67E907370C400E80438BFD3D /* Development configuration for PBXNativeTarget "EchoPerformanceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoPerformanceTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
-			};
-			name = Development;
-		};
-		6A48A1D5F33886B91E741EF3 /* DevelopmentDebug configuration for PBXNativeTarget "EchoVoiceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
-			};
-			name = DevelopmentDebug;
 		};
 		76533DE637A362DC8CCDD42C /* Debug configuration for PBXNativeTarget "EchoUITests" */ = {
 			isa = XCBuildConfiguration;
@@ -1950,61 +1668,9 @@
 			};
 			name = Debug;
 		};
-		785031631C3B435469C97217 /* TestPerformance configuration for PBXNativeTarget "EchoDeviceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoDeviceTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoSpeechHost.app/Contents/MacOS/AppleSpeechCheck";
-			};
-			name = TestPerformance;
-		};
-		792DBE74BA1DA2615E46E477 /* TestPerformance configuration for PBXNativeTarget "EchoIntegrationTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
-			};
-			name = TestPerformance;
-		};
-		7941A107617C8846D71E9616 /* DevelopmentDebug configuration for PBXNativeTarget "EchoFrameworkRepros" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFrameworkRepros;
-			};
-			name = DevelopmentDebug;
-		};
-		7C24AADB0138B35F2FB9EC5D /* TestPerformance configuration for PBXNativeTarget "EchoWorkspaceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
-			};
-			name = TestPerformance;
-		};
-		7E2FB2A28CAE7CD014A97769 /* Development configuration for PBXNativeTarget "EchoFixtureServer" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFixtureServer;
-			};
-			name = Development;
-		};
 		7FBB9B5C377206D91EB02728 /* Debug configuration for PBXNativeTarget "EchoFixtureServer" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFixtureServer;
@@ -2014,7 +1680,6 @@
 		7FDAFFC3FD89832BC07822C6 /* Release configuration for PBXNativeTarget "EchoFrameworkRepros" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFrameworkRepros;
@@ -2032,54 +1697,9 @@
 			};
 			name = Debug;
 		};
-		84D06E58075760B5862DD680 /* DevelopmentDebug configuration for PBXNativeTarget "EchoUITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
-				TEST_TARGET_NAME = Echo;
-			};
-			name = DevelopmentDebug;
-		};
-		86E46208E0003DFC692F2A2B /* DevelopmentDebug configuration for PBXNativeTarget "EchoCoreAudioProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCoreAudioProbe;
-			};
-			name = DevelopmentDebug;
-		};
-		88AEAD973214DB06B69A690E /* TestPerformance configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
-				PRODUCT_NAME = AppleSpeechCheck;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-			};
-			name = TestPerformance;
-		};
-		8A9F782C5DC7C1F337B021B4 /* DevelopmentDebug configuration for PBXNativeTarget "EchoLiveHost" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = macos/Info.plist;
-				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = EchoLiveHost;
-				PRODUCT_NAME = Echo;
-				WRAPPER_NAME = EchoLiveHost.app;
-			};
-			name = DevelopmentDebug;
-		};
 		8B87AB235CA9125555A96483 /* Release configuration for PBXNativeTarget "EchoCABITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				ENABLE_ADDRESS_SANITIZER = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
@@ -2097,72 +1717,19 @@
 			};
 			name = Release;
 		};
-		934687588F45FCB79D3161EE /* Development configuration for PBXNativeTarget "EchoSpeechHost" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
-				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
-				PRODUCT_MODULE_NAME = EchoSpeechHost;
-				PRODUCT_NAME = AppleSpeechCheck;
-				WRAPPER_NAME = EchoSpeechHost.app;
-			};
-			name = Development;
-		};
 		9788B781B99A0B90CF97B22F /* Release configuration for PBXNativeTarget "EchoFixtureServer" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFixtureServer;
 			};
 			name = Release;
 		};
-		9A1A5160EF6BF844638DB667 /* DevelopmentDebug configuration for PBXNativeTarget "EchoDeviceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoDeviceTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoSpeechHost.app/Contents/MacOS/AppleSpeechCheck";
-			};
-			name = DevelopmentDebug;
-		};
-		9A495657E778382DF8146E92 /* TestPerformance configuration for PBXNativeTarget "VoiceLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceLiveProbe.app;
-			};
-			name = TestPerformance;
-		};
-		9D93A9D04BBBA7125FF43FA2 /* DevelopmentDebug configuration for PBXNativeTarget "KeychainProbeRebuilt" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
-				SWIFT_SUPPRESS_WARNINGS = YES;
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
-				WRAPPER_NAME = KeychainProbeRebuilt.app;
-			};
-			name = DevelopmentDebug;
-		};
 		A004261E9F0A551F0585E969 /* Debug configuration for PBXNativeTarget "EchoPerformanceTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoPerformanceTests;
@@ -2170,34 +1737,10 @@
 			};
 			name = Debug;
 		};
-		A1E225D6E3777232562AD978 /* Development configuration for PBXNativeTarget "EchoCoreAudioProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCoreAudioProbe;
-			};
-			name = Development;
-		};
-		A619333A3894AD59D4451F62 /* TestPerformance configuration for PBXNativeTarget "EchoLiveHost" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = macos/Info.plist;
-				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = EchoLiveHost;
-				PRODUCT_NAME = Echo;
-				WRAPPER_NAME = EchoLiveHost.app;
-			};
-			name = TestPerformance;
-		};
 		A711BD3B9D43218A776FD400 /* Release configuration for PBXNativeTarget "EchoAppIntegrationTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
@@ -2205,28 +1748,9 @@
 			};
 			name = Release;
 		};
-		AC421B476D46283834A723BE /* TestPerformance configuration for PBXNativeTarget "VoiceSoakProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceSoakProbe.app;
-			};
-			name = TestPerformance;
-		};
-		B2BE80F5FAB3130F6E3DEAEB /* DevelopmentDebug configuration for PBXAggregateTarget "RustCore" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-			};
-			name = DevelopmentDebug;
-		};
 		B6A5B949E41FD4DD831F77AE /* Debug configuration for PBXNativeTarget "EchoCABITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				ENABLE_ADDRESS_SANITIZER = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
@@ -2243,187 +1767,6 @@
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
 			};
 			name = Debug;
-		};
-		B9BE55A54ABAA4036108724B /* Development configuration for PBXNativeTarget "EchoLiveHost" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = macos/Info.plist;
-				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = EchoLiveHost;
-				PRODUCT_NAME = Echo;
-				WRAPPER_NAME = EchoLiveHost.app;
-			};
-			name = Development;
-		};
-		BB599283B500BE53C72F41F5 /* Development configuration for PBXNativeTarget "EchoAppIntegrationTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
-			};
-			name = Development;
-		};
-		BC922EC25F5E741774A2A67D /* DevelopmentDebug configuration for PBXNativeTarget "EchoWorkspaceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
-			};
-			name = DevelopmentDebug;
-		};
-		C3AE36B6786C5952EEABA5A7 /* DevelopmentDebug configuration for PBXNativeTarget "EchoIntegrationTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
-			};
-			name = DevelopmentDebug;
-		};
-		C4FCC78DDDF52372CCC3EAA1 /* DevelopmentDebug configuration for PBXNativeTarget "EchoCABITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				ENABLE_ADDRESS_SANITIZER = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-framework",
-					Security,
-					"-framework",
-					SystemConfiguration,
-					"-framework",
-					CoreFoundation,
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
-				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-			};
-			name = DevelopmentDebug;
-		};
-		CBC5A2755FE4C20C62B842DD /* TestPerformance configuration for PBXNativeTarget "EchoFixtureServer" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFixtureServer;
-			};
-			name = TestPerformance;
-		};
-		CFBA845D2A665B81A38DDC75 /* DevelopmentDebug configuration for PBXNativeTarget "EchoFixtureServer" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFixtureServer;
-			};
-			name = DevelopmentDebug;
-		};
-		D4D768C73EBB38EFBC7E7DFE /* TestPerformance configuration for PBXNativeTarget "KeychainProbeRebuilt" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
-				SWIFT_SUPPRESS_WARNINGS = YES;
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
-				WRAPPER_NAME = KeychainProbeRebuilt.app;
-			};
-			name = TestPerformance;
-		};
-		D6FC14D8925E339C9FA78E47 /* TestPerformance configuration for PBXNativeTarget "KeychainProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_SUPPRESS_WARNINGS = YES;
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
-				WRAPPER_NAME = KeychainProbe.app;
-			};
-			name = TestPerformance;
-		};
-		D7455667C335B081D16FEA0F /* DevelopmentDebug configuration for PBXProject "Echo" */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = E0000000000000000000001C /* Echo-Development.xcconfig */;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = dwarf;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_TESTABILITY = YES;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_OPTIMIZATION_LEVEL = 0;
-				GCC_PREPROCESSOR_DEFINITIONS = (
-					"DEBUG=1",
-					"$(inherited)",
-				);
-				ONLY_ACTIVE_ARCH = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG ECHO_TEST_SUPPORT $(inherited)";
-				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-			};
-			name = DevelopmentDebug;
-		};
-		DC80A3BDEDFC4F4EED98138A /* DevelopmentDebug configuration for PBXNativeTarget "EchoLiveTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoLiveTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoLiveHost.app/Contents/MacOS/Echo";
-			};
-			name = DevelopmentDebug;
-		};
-		DC9728264418023B685C9781 /* Development configuration for PBXNativeTarget "EchoDeviceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoDeviceTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoSpeechHost.app/Contents/MacOS/AppleSpeechCheck";
-			};
-			name = Development;
-		};
-		DF677491C6225B3BD17E932E /* Development configuration for PBXNativeTarget "EchoCABITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				ENABLE_ADDRESS_SANITIZER = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-framework",
-					Security,
-					"-framework",
-					SystemConfiguration,
-					"-framework",
-					CoreFoundation,
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
-				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-			};
-			name = Development;
 		};
 		E000000000000000000000D0 /* Debug configuration for PBXProject "Echo" */ = {
 			isa = XCBuildConfiguration;
@@ -2497,39 +1840,6 @@
 			};
 			name = Release;
 		};
-		E000000000000000000000D6 /* Development configuration for PBXProject "Echo" */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = E0000000000000000000001C /* Echo-Development.xcconfig */;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				GCC_NO_COMMON_BLOCKS = YES;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-			};
-			name = Development;
-		};
-		E000000000000000000000D7 /* Development configuration for PBXNativeTarget "Echo" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = Echo;
-				INFOPLIST_FILE = macos/App/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-			};
-			name = Development;
-		};
-		E000000000000000000000D8 /* Development configuration for PBXAggregateTarget "RustCore" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-			};
-			name = Development;
-		};
 		E03D486E050F507DC348CCEE /* Release configuration for PBXNativeTarget "EchoUITests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2544,9 +1854,7 @@
 		E110000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoChatTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
 			};
 			name = Debug;
@@ -2554,29 +1862,15 @@
 		E110000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoChatTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
 			};
 			name = Release;
 		};
-		E110000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoChatTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
-			};
-			name = Development;
-		};
 		E112000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoIntegrationTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
 			};
 			name = Debug;
@@ -2584,29 +1878,15 @@
 		E112000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoIntegrationTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
 			};
 			name = Release;
 		};
-		E112000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoIntegrationTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
-			};
-			name = Development;
-		};
 		E113000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoVoiceTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
 			};
 			name = Debug;
@@ -2614,29 +1894,15 @@
 		E113000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoVoiceTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
 			};
 			name = Release;
 		};
-		E113000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoVoiceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
-			};
-			name = Development;
-		};
 		E114000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoWorkspaceTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
 			};
 			name = Debug;
@@ -2644,29 +1910,15 @@
 		E114000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoWorkspaceTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
 			};
 			name = Release;
 		};
-		E114000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoWorkspaceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
-			};
-			name = Development;
-		};
 		E115000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoViewTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
 			};
 			name = Debug;
@@ -2674,22 +1926,10 @@
 		E115000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoViewTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
 				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
 			};
 			name = Release;
-		};
-		E115000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoViewTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_CODE_SIGN_FLAGS = "--timestamp=none";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
-			};
-			name = Development;
 		};
 		E120000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbe" */ = {
 			isa = XCBuildConfiguration;
@@ -2718,20 +1958,6 @@
 				WRAPPER_NAME = KeychainProbe.app;
 			};
 			name = Release;
-		};
-		E120000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_SUPPRESS_WARNINGS = YES;
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
-				WRAPPER_NAME = KeychainProbe.app;
-			};
-			name = Development;
 		};
 		E121000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbeRebuilt" */ = {
 			isa = XCBuildConfiguration;
@@ -2763,21 +1989,6 @@
 			};
 			name = Release;
 		};
-		E121000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbeRebuilt" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
-				SWIFT_SUPPRESS_WARNINGS = YES;
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
-				WRAPPER_NAME = KeychainProbeRebuilt.app;
-			};
-			name = Development;
-		};
 		E123000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentLiveProbe" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2801,18 +2012,6 @@
 				WRAPPER_NAME = AgentLiveProbe.app;
 			};
 			name = Release;
-		};
-		E123000000000000000000D2 /* Development configuration for PBXNativeTarget "AgentLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = AgentLiveProbe.app;
-			};
-			name = Development;
 		};
 		E124000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceLiveProbe" */ = {
 			isa = XCBuildConfiguration;
@@ -2838,18 +2037,6 @@
 			};
 			name = Release;
 		};
-		E124000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceLiveProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceLiveProbe.app;
-			};
-			name = Development;
-		};
 		E125000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceSoakProbe" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2874,18 +2061,6 @@
 			};
 			name = Release;
 		};
-		E125000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceSoakProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceSoakProbe.app;
-			};
-			name = Development;
-		};
 		E126000000000000000000D0 /* Debug configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2906,48 +2081,6 @@
 			};
 			name = Release;
 		};
-		E126000000000000000000D2 /* Development configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
-				PRODUCT_NAME = AppleSpeechCheck;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-			};
-			name = Development;
-		};
-		E4587057A4E073E23C12BDDA /* DevelopmentDebug configuration for PBXNativeTarget "VoiceSoakProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ECHO_LEGACY_PROBE";
-				WRAPPER_NAME = VoiceSoakProbe.app;
-			};
-			name = DevelopmentDebug;
-		};
-		EB8EC5DD9BB679ABD9270062 /* DevelopmentDebug configuration for PBXNativeTarget "Echo" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = Echo;
-				INFOPLIST_FILE = macos/App/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-			};
-			name = DevelopmentDebug;
-		};
-		EBA18CB523BD2B19DE28DCA5 /* TestPerformance configuration for PBXNativeTarget "EchoCoreAudioProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCoreAudioProbe;
-			};
-			name = TestPerformance;
-		};
 		EBB759D4A2A547F9986AF61C /* Debug configuration for PBXNativeTarget "EchoSpeechHost" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2961,61 +2094,6 @@
 			};
 			name = Debug;
 		};
-		EF8C2151E9F7663958C79085 /* Development configuration for PBXNativeTarget "EchoFrameworkRepros" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFrameworkRepros;
-			};
-			name = Development;
-		};
-		F0E13B6A9531DCA4D0C2B9DA /* DevelopmentDebug configuration for PBXNativeTarget "KeychainProbe" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				INFOPLIST_FILE = macos/Info.plist;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
-				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
-				PRODUCT_NAME = Echo;
-				SWIFT_SUPPRESS_WARNINGS = YES;
-				SWIFT_TREAT_WARNINGS_AS_ERRORS = NO;
-				WRAPPER_NAME = KeychainProbe.app;
-			};
-			name = DevelopmentDebug;
-		};
-		F18EEA6213580EB8614DED6E /* TestPerformance configuration for PBXNativeTarget "EchoPerformanceTests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				GENERATE_INFOPLIST_FILE = YES;
-				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoPerformanceTests;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
-			};
-			name = TestPerformance;
-		};
-		F7A5B059276761FC780EF146 /* TestPerformance configuration for PBXAggregateTarget "RustCore" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-			};
-			name = TestPerformance;
-		};
-		FD092F2C8E405793E52352EA /* TestPerformance configuration for PBXNativeTarget "EchoSpeechHost" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
-				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
-				PRODUCT_MODULE_NAME = EchoSpeechHost;
-				PRODUCT_NAME = AppleSpeechCheck;
-				WRAPPER_NAME = EchoSpeechHost.app;
-			};
-			name = TestPerformance;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -3024,9 +2102,6 @@
 			buildConfigurations = (
 				4F28FCB0833B54EC318CD0EC /* Debug configuration for PBXNativeTarget "EchoFrameworkRepros" */,
 				7FDAFFC3FD89832BC07822C6 /* Release configuration for PBXNativeTarget "EchoFrameworkRepros" */,
-				EF8C2151E9F7663958C79085 /* Development configuration for PBXNativeTarget "EchoFrameworkRepros" */,
-				7941A107617C8846D71E9616 /* DevelopmentDebug configuration for PBXNativeTarget "EchoFrameworkRepros" */,
-				61E16180D25656FF8AACCE4F /* TestPerformance configuration for PBXNativeTarget "EchoFrameworkRepros" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3035,9 +2110,6 @@
 			buildConfigurations = (
 				A004261E9F0A551F0585E969 /* Debug configuration for PBXNativeTarget "EchoPerformanceTests" */,
 				3968FD165DAF48DE95710AC1 /* Release configuration for PBXNativeTarget "EchoPerformanceTests" */,
-				67E907370C400E80438BFD3D /* Development configuration for PBXNativeTarget "EchoPerformanceTests" */,
-				17A44412F65D2D4DE1EE831F /* DevelopmentDebug configuration for PBXNativeTarget "EchoPerformanceTests" */,
-				F18EEA6213580EB8614DED6E /* TestPerformance configuration for PBXNativeTarget "EchoPerformanceTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3046,9 +2118,6 @@
 			buildConfigurations = (
 				B6A5B949E41FD4DD831F77AE /* Debug configuration for PBXNativeTarget "EchoCABITests" */,
 				8B87AB235CA9125555A96483 /* Release configuration for PBXNativeTarget "EchoCABITests" */,
-				DF677491C6225B3BD17E932E /* Development configuration for PBXNativeTarget "EchoCABITests" */,
-				C4FCC78DDDF52372CCC3EAA1 /* DevelopmentDebug configuration for PBXNativeTarget "EchoCABITests" */,
-				24E57788A25B61C46A2A9F12 /* TestPerformance configuration for PBXNativeTarget "EchoCABITests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3057,9 +2126,6 @@
 			buildConfigurations = (
 				7FBB9B5C377206D91EB02728 /* Debug configuration for PBXNativeTarget "EchoFixtureServer" */,
 				9788B781B99A0B90CF97B22F /* Release configuration for PBXNativeTarget "EchoFixtureServer" */,
-				7E2FB2A28CAE7CD014A97769 /* Development configuration for PBXNativeTarget "EchoFixtureServer" */,
-				CFBA845D2A665B81A38DDC75 /* DevelopmentDebug configuration for PBXNativeTarget "EchoFixtureServer" */,
-				CBC5A2755FE4C20C62B842DD /* TestPerformance configuration for PBXNativeTarget "EchoFixtureServer" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3068,9 +2134,6 @@
 			buildConfigurations = (
 				54206088F88CDC481F773CF8 /* Debug configuration for PBXNativeTarget "EchoLiveHost" */,
 				5455017B85227BC1964B0044 /* Release configuration for PBXNativeTarget "EchoLiveHost" */,
-				B9BE55A54ABAA4036108724B /* Development configuration for PBXNativeTarget "EchoLiveHost" */,
-				8A9F782C5DC7C1F337B021B4 /* DevelopmentDebug configuration for PBXNativeTarget "EchoLiveHost" */,
-				A619333A3894AD59D4451F62 /* TestPerformance configuration for PBXNativeTarget "EchoLiveHost" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3079,9 +2142,6 @@
 			buildConfigurations = (
 				EBB759D4A2A547F9986AF61C /* Debug configuration for PBXNativeTarget "EchoSpeechHost" */,
 				58BD19303566BC362D01ED90 /* Release configuration for PBXNativeTarget "EchoSpeechHost" */,
-				934687588F45FCB79D3161EE /* Development configuration for PBXNativeTarget "EchoSpeechHost" */,
-				3E3263AE4C744CF6F0AC90CA /* DevelopmentDebug configuration for PBXNativeTarget "EchoSpeechHost" */,
-				FD092F2C8E405793E52352EA /* TestPerformance configuration for PBXNativeTarget "EchoSpeechHost" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3090,9 +2150,6 @@
 			buildConfigurations = (
 				575AF9A28192AB9F615E2977 /* Debug configuration for PBXNativeTarget "EchoAppIntegrationTests" */,
 				A711BD3B9D43218A776FD400 /* Release configuration for PBXNativeTarget "EchoAppIntegrationTests" */,
-				BB599283B500BE53C72F41F5 /* Development configuration for PBXNativeTarget "EchoAppIntegrationTests" */,
-				0C1A9DC14734D66CB823D882 /* DevelopmentDebug configuration for PBXNativeTarget "EchoAppIntegrationTests" */,
-				413FF6747D018C67D809C100 /* TestPerformance configuration for PBXNativeTarget "EchoAppIntegrationTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3101,9 +2158,6 @@
 			buildConfigurations = (
 				800509FA909FFCE6C97202A5 /* Debug configuration for PBXNativeTarget "EchoDeviceTests" */,
 				233B35A74F0FA07F5D3B0F67 /* Release configuration for PBXNativeTarget "EchoDeviceTests" */,
-				DC9728264418023B685C9781 /* Development configuration for PBXNativeTarget "EchoDeviceTests" */,
-				9A1A5160EF6BF844638DB667 /* DevelopmentDebug configuration for PBXNativeTarget "EchoDeviceTests" */,
-				785031631C3B435469C97217 /* TestPerformance configuration for PBXNativeTarget "EchoDeviceTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3112,9 +2166,6 @@
 			buildConfigurations = (
 				3F5F8F2CF858AD440BA8A050 /* Debug configuration for PBXNativeTarget "EchoCoreAudioProbe" */,
 				04EFA179844C25B248B56BD6 /* Release configuration for PBXNativeTarget "EchoCoreAudioProbe" */,
-				A1E225D6E3777232562AD978 /* Development configuration for PBXNativeTarget "EchoCoreAudioProbe" */,
-				86E46208E0003DFC692F2A2B /* DevelopmentDebug configuration for PBXNativeTarget "EchoCoreAudioProbe" */,
-				EBA18CB523BD2B19DE28DCA5 /* TestPerformance configuration for PBXNativeTarget "EchoCoreAudioProbe" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3123,9 +2174,6 @@
 			buildConfigurations = (
 				76533DE637A362DC8CCDD42C /* Debug configuration for PBXNativeTarget "EchoUITests" */,
 				E03D486E050F507DC348CCEE /* Release configuration for PBXNativeTarget "EchoUITests" */,
-				67764DBF7CF65458E4D6C55B /* Development configuration for PBXNativeTarget "EchoUITests" */,
-				84D06E58075760B5862DD680 /* DevelopmentDebug configuration for PBXNativeTarget "EchoUITests" */,
-				3ABC5D686E6518355FE888A3 /* TestPerformance configuration for PBXNativeTarget "EchoUITests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3134,9 +2182,6 @@
 			buildConfigurations = (
 				E000000000000000000000D0 /* Debug configuration for PBXProject "Echo" */,
 				E000000000000000000000D1 /* Release configuration for PBXProject "Echo" */,
-				E000000000000000000000D6 /* Development configuration for PBXProject "Echo" */,
-				D7455667C335B081D16FEA0F /* DevelopmentDebug configuration for PBXProject "Echo" */,
-				22B7DC6D02FA19DEE0E0B262 /* TestPerformance configuration for PBXProject "Echo" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3145,9 +2190,6 @@
 			buildConfigurations = (
 				E000000000000000000000D2 /* Debug configuration for PBXNativeTarget "Echo" */,
 				E000000000000000000000D3 /* Release configuration for PBXNativeTarget "Echo" */,
-				E000000000000000000000D7 /* Development configuration for PBXNativeTarget "Echo" */,
-				EB8EC5DD9BB679ABD9270062 /* DevelopmentDebug configuration for PBXNativeTarget "Echo" */,
-				030D00D0AC643C25E1B9531C /* TestPerformance configuration for PBXNativeTarget "Echo" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3156,9 +2198,6 @@
 			buildConfigurations = (
 				E000000000000000000000D4 /* Debug configuration for PBXAggregateTarget "RustCore" */,
 				E000000000000000000000D5 /* Release configuration for PBXAggregateTarget "RustCore" */,
-				E000000000000000000000D8 /* Development configuration for PBXAggregateTarget "RustCore" */,
-				B2BE80F5FAB3130F6E3DEAEB /* DevelopmentDebug configuration for PBXAggregateTarget "RustCore" */,
-				F7A5B059276761FC780EF146 /* TestPerformance configuration for PBXAggregateTarget "RustCore" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3167,9 +2206,6 @@
 			buildConfigurations = (
 				E110000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoChatTests" */,
 				E110000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoChatTests" */,
-				E110000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoChatTests" */,
-				5F5459E05617E7DCD7BBC87E /* DevelopmentDebug configuration for PBXNativeTarget "EchoChatTests" */,
-				19F90618FD9EF1B4F47E61AA /* TestPerformance configuration for PBXNativeTarget "EchoChatTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3178,9 +2214,6 @@
 			buildConfigurations = (
 				E112000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoIntegrationTests" */,
 				E112000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoIntegrationTests" */,
-				E112000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoIntegrationTests" */,
-				C3AE36B6786C5952EEABA5A7 /* DevelopmentDebug configuration for PBXNativeTarget "EchoIntegrationTests" */,
-				792DBE74BA1DA2615E46E477 /* TestPerformance configuration for PBXNativeTarget "EchoIntegrationTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3189,9 +2222,6 @@
 			buildConfigurations = (
 				E113000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoVoiceTests" */,
 				E113000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoVoiceTests" */,
-				E113000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoVoiceTests" */,
-				6A48A1D5F33886B91E741EF3 /* DevelopmentDebug configuration for PBXNativeTarget "EchoVoiceTests" */,
-				40C39ED3BF9D0151F6F63B3E /* TestPerformance configuration for PBXNativeTarget "EchoVoiceTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3200,9 +2230,6 @@
 			buildConfigurations = (
 				E114000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoWorkspaceTests" */,
 				E114000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoWorkspaceTests" */,
-				E114000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoWorkspaceTests" */,
-				BC922EC25F5E741774A2A67D /* DevelopmentDebug configuration for PBXNativeTarget "EchoWorkspaceTests" */,
-				7C24AADB0138B35F2FB9EC5D /* TestPerformance configuration for PBXNativeTarget "EchoWorkspaceTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3211,9 +2238,6 @@
 			buildConfigurations = (
 				E115000000000000000000D0 /* Debug configuration for PBXNativeTarget "EchoViewTests" */,
 				E115000000000000000000D1 /* Release configuration for PBXNativeTarget "EchoViewTests" */,
-				E115000000000000000000D2 /* Development configuration for PBXNativeTarget "EchoViewTests" */,
-				57D8403FA1C16D676AE4051A /* DevelopmentDebug configuration for PBXNativeTarget "EchoViewTests" */,
-				1599C4DF5444123A7256F867 /* TestPerformance configuration for PBXNativeTarget "EchoViewTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3222,9 +2246,6 @@
 			buildConfigurations = (
 				E120000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbe" */,
 				E120000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbe" */,
-				E120000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbe" */,
-				F0E13B6A9531DCA4D0C2B9DA /* DevelopmentDebug configuration for PBXNativeTarget "KeychainProbe" */,
-				D6FC14D8925E339C9FA78E47 /* TestPerformance configuration for PBXNativeTarget "KeychainProbe" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3233,9 +2254,6 @@
 			buildConfigurations = (
 				E121000000000000000000D0 /* Debug configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
 				E121000000000000000000D1 /* Release configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
-				E121000000000000000000D2 /* Development configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
-				9D93A9D04BBBA7125FF43FA2 /* DevelopmentDebug configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
-				D4D768C73EBB38EFBC7E7DFE /* TestPerformance configuration for PBXNativeTarget "KeychainProbeRebuilt" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3244,9 +2262,6 @@
 			buildConfigurations = (
 				E123000000000000000000D0 /* Debug configuration for PBXNativeTarget "AgentLiveProbe" */,
 				E123000000000000000000D1 /* Release configuration for PBXNativeTarget "AgentLiveProbe" */,
-				E123000000000000000000D2 /* Development configuration for PBXNativeTarget "AgentLiveProbe" */,
-				2DF90D85ADAE379E28BFA324 /* DevelopmentDebug configuration for PBXNativeTarget "AgentLiveProbe" */,
-				3E3EBD3C2ECC1766A78064B1 /* TestPerformance configuration for PBXNativeTarget "AgentLiveProbe" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3255,9 +2270,6 @@
 			buildConfigurations = (
 				E124000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceLiveProbe" */,
 				E124000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceLiveProbe" */,
-				E124000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceLiveProbe" */,
-				5A3E7C4206CDF6C9C463BF62 /* DevelopmentDebug configuration for PBXNativeTarget "VoiceLiveProbe" */,
-				9A495657E778382DF8146E92 /* TestPerformance configuration for PBXNativeTarget "VoiceLiveProbe" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3266,9 +2278,6 @@
 			buildConfigurations = (
 				E125000000000000000000D0 /* Debug configuration for PBXNativeTarget "VoiceSoakProbe" */,
 				E125000000000000000000D1 /* Release configuration for PBXNativeTarget "VoiceSoakProbe" */,
-				E125000000000000000000D2 /* Development configuration for PBXNativeTarget "VoiceSoakProbe" */,
-				E4587057A4E073E23C12BDDA /* DevelopmentDebug configuration for PBXNativeTarget "VoiceSoakProbe" */,
-				AC421B476D46283834A723BE /* TestPerformance configuration for PBXNativeTarget "VoiceSoakProbe" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3277,9 +2286,6 @@
 			buildConfigurations = (
 				E126000000000000000000D0 /* Debug configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
 				E126000000000000000000D1 /* Release configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
-				E126000000000000000000D2 /* Development configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
-				2B1F5D93A013CCB653DFF4B0 /* DevelopmentDebug configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
-				88AEAD973214DB06B69A690E /* TestPerformance configuration for PBXNativeTarget "AppleSpeechDeviceProbe" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -3288,9 +2294,6 @@
 			buildConfigurations = (
 				5D1DB8573E85FC5A7A8C4F29 /* Debug configuration for PBXNativeTarget "EchoLiveTests" */,
 				0FDCBECFCD3A3F74E4F60EF7 /* Release configuration for PBXNativeTarget "EchoLiveTests" */,
-				631BFE9DC5D10C1A14943F82 /* Development configuration for PBXNativeTarget "EchoLiveTests" */,
-				DC80A3BDEDFC4F4EED98138A /* DevelopmentDebug configuration for PBXNativeTarget "EchoLiveTests" */,
-				3ABD6CD3F157C1D5408E6760 /* TestPerformance configuration for PBXNativeTarget "EchoLiveTests" */,
 			);
 			defaultConfigurationName = Release;
 		};

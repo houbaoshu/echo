@@ -1,16 +1,16 @@
 #!/bin/zsh
-# System validation only: consume Xcode products, never build or re-sign them.
+# System validation only: consume Xcode products, never build or modify them. The
+# unrelated-signer fixture is an ad-hoc copy made in this script's temporary directory.
 emulate -R zsh
 setopt ERR_EXIT NO_UNSET PIPE_FAIL
-app="" first="" rebuilt="" unrelated=""
+app="" first="" rebuilt=""
 while (( $# )); do
     case "$1" in
         --app) app="$2"; shift 2 ;;
         --keychain-first) first="$2"; shift 2 ;;
         --keychain-rebuilt) rebuilt="$2"; shift 2 ;;
-        --keychain-unrelated) unrelated="$2"; shift 2 ;;
         --help|-h)
-            echo "Usage: $0 --app BUILT_APP [--keychain-first APP --keychain-rebuilt APP --keychain-unrelated APP]"
+            echo "Usage: $0 --app BUILT_APP [--keychain-first APP --keychain-rebuilt APP]"
             exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
@@ -26,21 +26,26 @@ cleanup() {
 }
 trap cleanup EXIT
 /usr/bin/codesign --verify --deep --strict "$app"
-# The default Release acceptance is ad-hoc and entitlement-free.
-/usr/bin/codesign -d --verbose=4 "$app" 2>&1 | /usr/bin/grep '^Signature=adhoc$' >/dev/null
+# Every configuration signs with the team's Apple Development certificate and no entitlements.
+team="$(sed -nE 's/^DEVELOPMENT_TEAM = (.*)$/\1/p' "${0:A:h}/../Echo.xcconfig")"
+[[ -n "$team" ]] || { echo "No DEVELOPMENT_TEAM in Echo.xcconfig" >&2; exit 2 }
+/usr/bin/codesign --verify --strict -R '=anchor apple generic' "$app"
+/usr/bin/codesign -d --verbose=4 "$app" 2>&1 | /usr/bin/grep -x "TeamIdentifier=$team" >/dev/null || {
+    echo "FAIL: the bundle is not signed by team $team" >&2; exit 1
+}
 [[ -z "$(/usr/bin/codesign -d --entitlements - "$app" 2>/dev/null)" ]] || {
-    echo "FAIL: the Release bundle carries entitlements" >&2; exit 1
+    echo "FAIL: the bundle carries entitlements" >&2; exit 1
 }
 ditto "$app" "$temp_dir/tampered.app"
 echo tampered > "$temp_dir/tampered.app/Contents/Resources/pets/chiyan/pet.json"
 if /usr/bin/codesign --verify --strict "$temp_dir/tampered.app" 2>/dev/null; then
     echo "FAIL: a tampered resource passed strict verification" >&2; exit 1
 fi
-echo "PASS: ad-hoc signature, no entitlements, resource seal rejects tampering"
-[[ -n "$first$rebuilt$unrelated" ]] || exit 0
-for fixture in "$first" "$rebuilt" "$unrelated"; do
+echo "PASS: team $team Apple Development signature, no entitlements, resource seal rejects tampering"
+[[ -n "$first$rebuilt" ]] || exit 0
+for fixture in "$first" "$rebuilt"; do
     [[ -x "$fixture/Contents/MacOS/Echo" ]] || {
-        echo "All three prebuilt Keychain fixtures are required" >&2; exit 2
+        echo "Both prebuilt Keychain fixtures are required" >&2; exit 2
     }
 done
 for version in 0 1; do
@@ -56,6 +61,12 @@ if cmp -s "$temp_dir/0.hash" "$temp_dir/1.hash"; then
 fi
 requirement="$(cat "$temp_dir/0.requirement")"
 /usr/bin/codesign --verify --strict -R "=$requirement" "$rebuilt"
+# No build configuration signs ad-hoc any more, so the unrelated signer is the
+# rebuilt fixture re-signed ad-hoc: same bundle ID and code, different identity.
+unrelated="$temp_dir/unrelated/Echo.app"
+mkdir -p "$temp_dir/unrelated"
+ditto "$rebuilt" "$unrelated"
+/usr/bin/codesign --force --sign - --timestamp=none "$unrelated"
 /usr/bin/codesign --verify --strict "$unrelated"
 if /usr/bin/codesign --verify -R "=$requirement" "$unrelated" >/dev/null 2>&1; then
     echo "FAIL: unrelated signer matches the development identity" >&2; exit 1

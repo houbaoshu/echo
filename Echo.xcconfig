@@ -26,13 +26,21 @@ ENABLE_APP_SANDBOX = NO
 ENABLE_USER_SELECTED_FILES = NO
 REGISTER_APP_GROUPS = NO
 
-// Debug and Release are ad-hoc validation builds. Development selects an
-// Apple Development certificate in Echo-Development.xcconfig; Xcode performs
-// signing for both modes, without generated settings or a private keychain.
+// Every configuration and target is signed by Xcode with the team's Apple
+// Development certificate. The Keychain grants access to saved API keys by
+// that signing identity, so a rebuild keeps the grant; an ad-hoc signature is
+// tied to the code hash and would ask again after every build.
+//
+// The one exception is EchoUITests, set to Sign to Run Locally in the target:
+// Xcode gives its runner a sandbox and application-identifier entitlement, and
+// signing that with a certificate needs a provisioning profile, which would
+// register an App ID and this Mac with Apple. The runner never reads Echo's
+// keys, so a local signature costs nothing.
 CODE_SIGNING_ALLOWED = YES
 CODE_SIGNING_REQUIRED = YES
-CODE_SIGN_STYLE = Manual
-CODE_SIGN_IDENTITY = -
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = 5953LL8ZRM
 OTHER_CODE_SIGN_FLAGS = --timestamp=none
 
 // Preserve the app's existing runtime and entitlement behavior.

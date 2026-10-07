@@ -1,7 +1,7 @@
 #if DEBUG
 import AppKit
 
-/// Compiled only for Debug / DevelopmentDebug / TestPerformance.
+/// Compiled only for Debug.
 /// Validate every input before creating stores or consulting user credentials.
 @MainActor enum TestBootstrap {
     enum Mode { case hosted, ui(root: URL, defaults: UserDefaults) }

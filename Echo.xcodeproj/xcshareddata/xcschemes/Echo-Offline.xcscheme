@@ -12,7 +12,7 @@
          <TestPlanReference reference="container:TestPlans/EchoOffline.xctestplan" default="YES" />
       </TestPlans>
    </TestAction>
-   <LaunchAction buildConfiguration="DevelopmentDebug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO">
+   <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO">
       <BuildableProductRunnable runnableDebuggingMode="0">
          <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="E0000000000000000000002F" BuildableName="Echo.app" BlueprintName="Echo" ReferencedContainer="container:Echo.xcodeproj" />
       </BuildableProductRunnable>
