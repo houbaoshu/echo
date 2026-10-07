@@ -234,14 +234,6 @@ struct WorkspaceSnapshot: Codable {
         if isActivityListExpanded { return max(0, CGFloat(min(3, visiblePetActivities.count)) * (CompanionLayout.collapsedHeight + 8) - 8) + 12 }
         return CompanionLayout.collapsedHeight + CGFloat(min(2, max(0, visiblePetActivities.count - 1))) * 7
     }
-    /// Folding changes presentation only; the bell still owns the unread result.
-    func collapsePetActivity(conversationID: UUID) {
-        guard petActivityIDs.contains(conversationID), let store = conversation(id: conversationID)?.store else { return }
-        if petFollowUpID == conversationID { exitPetFollowUp() }
-        store.foldActivity()
-        if visiblePetActivities.isEmpty { isPetTrayCollapsed = true }
-        settleActivityList()
-    }
     /// Ignore this notification without opening its chat or stopping its task.
     /// Only a subsequent run can add this conversation back to the pet tray.
     func dismissPetActivity(conversationID: UUID) {
@@ -482,13 +474,6 @@ struct WorkspaceSnapshot: Codable {
         target.store.followUpDraft = ""
         return true
     }
-    /// End only the transient pet activity; its conversation and history remain available.
-    func endPetActivity(conversationID: UUID) {
-        guard !shuttingDown, petActivityIDs.contains(conversationID) else { return }
-        stop(conversationID: conversationID)
-        removePetActivity(conversationID)
-    }
-
     func stop(conversationID: UUID) {
         guard !shuttingDown, let target = conversation(id: conversationID) else { return }
         if voice.conversationID == conversationID { voice.stopReply() }
@@ -509,10 +494,6 @@ struct WorkspaceSnapshot: Codable {
         guard !shuttingDown, voice.snapshot.session.owner == nil,
               let target = conversation(id: conversationID) else { return false }
         return voice.activate(conversation: target, entry: "会话")
-    }
-    func stopVoiceReply(owner: VoiceSessionSnapshot.Owner) {
-        guard voice.snapshot.session.owner == owner else { return }
-        stop(conversationID: owner.conversationID)
     }
     /// `file`/`line` name the control that asked, for the call's termination log only.
     func endVoice(owner: VoiceSessionSnapshot.Owner, file: StaticString = #fileID, line: UInt = #line) {

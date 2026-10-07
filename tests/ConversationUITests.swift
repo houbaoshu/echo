@@ -1485,7 +1485,7 @@ private struct ComposerHeightHost: View {
                     XCTAssertTrue(selectedOwner == owner)
                     endVoiceCalled = true; workspace.endVoice(owner: selectedOwner)
                 },
-                toggleSpeaker: { workspace.toggleVoiceSpeakerMute(owner: $0) }))
+                toggleSpeaker: { workspace.toggleVoiceSpeakerMute(owner: $0) }, toggleTray: {}))
             .background(Color(nsColor: .windowBackgroundColor)))
         let petWindow = NSWindow(contentRect: canvas, styleMask: .borderless, backing: .buffered, defer: false)
         petWindow.contentView = petHost
@@ -1518,11 +1518,12 @@ private struct ComposerHeightHost: View {
         presentation.isHovered = true
         var sent: [String] = []
         var accepts = true
+        var trayToggles = 0
         let placement = ActivityPlacement()
         func controls(unseen: Int, running: Int = 0) -> some View {
             PetControls(store: store, voice: voice, presentation: presentation, placement: placement, unseenCompleted: unseen,
                         runningTasks: running,
-                        actions: PetControlActions(send: { sent.append($0); return accepts }))
+                        actions: PetControlActions(send: { sent.append($0); return accepts }, toggleTray: { trayToggles += 1 }))
                 .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
         }
         let host = NSHostingView(rootView: controls(unseen: 0))
@@ -1620,6 +1621,9 @@ private struct ComposerHeightHost: View {
         presentation.isHovered = true
         try await refresh()
         XCTAssertTrue(node("pet.activity.collapse")?.accessibilityPerformPress?() == true)
+        XCTAssertEqual(trayToggles, 1, "⌃ runs the tray action it was given")
+        // With no card left on the strip's store, the bell carries the unseen results passed in.
+        store.closeActivity()
         host.rootView = controls(unseen: 2)
         try await refresh()
         try snapshot("pet-controls-unread")
@@ -1633,9 +1637,7 @@ private struct ComposerHeightHost: View {
         presentation.isHovered = true
         try await refresh()
         XCTAssertTrue(node("pet.activity.expand")?.accessibilityPerformPress?() == true)
-        try await refresh()
-        XCTAssertTrue(!store.activitiesCollapsed && node("pet.activity.collapse") != nil && node("pet.activity.expand") == nil,
-                     "Opening the bell shows the card and turns the bell into ⌃")
+        XCTAssertEqual(trayToggles, 2, "The bell runs the same tray action")
     }
 
     /// The collapsed strip without a draft, with a short one and with one too long for its line,
@@ -1652,7 +1654,7 @@ private struct ComposerHeightHost: View {
                       ("long", "把这个项目里所有用到旧接口的地方都找出来，列一个清单再逐个改掉\n第二行不显示")]
         for (appearance, scheme) in [(NSAppearance.Name.aqua, ColorScheme.light), (.darkAqua, .dark)] {
             let host = NSHostingView(rootView: PetControls(store: store, voice: voice, presentation: presentation,
-                                                           placement: ActivityPlacement())
+                                                           placement: ActivityPlacement(), actions: PetControlActions(toggleTray: {}))
                 .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, scheme))
             let window = NSWindow(contentRect: canvas, styleMask: .borderless, backing: .buffered, defer: false)
             window.appearance = NSAppearance(named: appearance)
@@ -1739,7 +1741,7 @@ private struct ComposerHeightHost: View {
     /// composer is open: the follow-up button then shows and keeps its room, as on hover.
     private func petCardTextRows(store: TaskStore,
                                  followingUp: Bool = false) async throws -> [(rows: ClosedRange<CGFloat>, ink: ClosedRange<CGFloat>)] {
-        let host = NSHostingView(rootView: ActivityCapsule(store: store, send: {}, stop: {}, placement: ActivityPlacement())
+        let host = NSHostingView(rootView: ActivityCapsule(store: store, send: {}, placement: ActivityPlacement())
             .background(.white).environment(\.colorScheme, .light))
         let height = followingUp ? host.fittingSize.height : CompanionLayout.collapsedHeight
         host.frame = NSRect(x: 0, y: 0, width: CompanionLayout.capsuleWidth, height: height)
@@ -2861,7 +2863,7 @@ private struct ComposerHeightHost: View {
         var ended: [VoiceSessionSnapshot.Owner] = []
         func controls(unseen: Int) -> some View {
             PetControls(store: store, voice: voice, presentation: presentation, placement: ActivityPlacement(),
-                        unseenCompleted: unseen, actions: PetControlActions(endVoice: { ended.append($0) }))
+                        unseenCompleted: unseen, actions: PetControlActions(endVoice: { ended.append($0) }, toggleTray: {}))
                 .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
         }
         let host = NSHostingView(rootView: controls(unseen: 2))
@@ -2928,7 +2930,7 @@ private struct ComposerHeightHost: View {
         let placement = ActivityPlacement()
         var sent: [(String, UUID?)] = []
         let host = NSHostingView(rootView: PetControls(store: store, voice: voice, presentation: presentation, placement: placement,
-            workspace: workspace, actions: PetControlActions(send: { sent.append(($0, presentation.projectID)); return true }))
+            workspace: workspace, actions: PetControlActions(send: { sent.append(($0, presentation.projectID)); return true }, toggleTray: {}))
             .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight),
                               styleMask: .titled, backing: .buffered, defer: false)

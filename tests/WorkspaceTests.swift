@@ -45,26 +45,24 @@ import Foundation
         #expect(workspace.petTrayLevel == .list && workspace.keepsPetControlsExpanded, "The list keeps the controls")
         workspace.toggleActivityTray()
         #expect(workspace.petTrayLevel == .stack && workspace.keepsPetControlsExpanded)
-        workspace.collapsePetActivity(conversationID: second.id)
-        workspace.collapsePetActivity(conversationID: first.id)
-        #expect(workspace.petTrayLevel == .collapsed && !workspace.keepsPetControlsExpanded,
-                "Folding every card leaves the bell, which follows hover")
-        workspace.toggleActivityTray()
         workspace.dismissPetActivity(conversationID: first.id)
+        #expect(workspace.keepsPetControlsExpanded, "The last card keeps the controls")
         workspace.dismissPetActivity(conversationID: second.id)
         #expect(!workspace.keepsPetControlsExpanded, "Without cards the controls follow hover again")
     }
 
-    @MainActor @Test(.tags(.fast)) static func completionPreservesAFoldMadeDuringTheRun() throws {
+    @MainActor @Test(.tags(.fast)) static func completionKeepsATrayCollapsedDuringTheRun() throws {
         let source = WorkspaceTestSource()
         let workspace = WorkspaceStore(sourceFactory: { source })
         defer { workspace.shutdown() }
         #expect(workspace.sendQuickMessage("background"))
         let chat = try #require(workspace.activity)
-        workspace.collapsePetActivity(conversationID: chat.id)
-        source.receive?(.completed("explicitly folded result"))
-        #expect(!workspace.keepsPetControlsExpanded && !workspace.isPetActivityVisible,
-                "Completion preserves an explicit fold made during the run")
+        workspace.toggleActivityTray()
+        #expect(workspace.petTrayLevel == .collapsed && chat.store.isGenerating)
+        source.receive?(.completed("result after collapsing"))
+        #expect(workspace.petTrayLevel == .collapsed && !workspace.keepsPetControlsExpanded
+                && workspace.unseenCompletedCount == 1,
+                "Completion leaves a tray collapsed during the run collapsed, with the bell counting the result")
         workspace.toggleActivityTray()
         workspace.openPetActivity(conversationID: chat.id)
         #expect(workspace.send("viewed result", conversationID: chat.id))
@@ -105,7 +103,7 @@ import Foundation
         firstSource.receive?(.completed("跟进结果"))
         #expect(first.store.isFollowUpExpanded && workspace.isPetActivityVisible)
         #expect(workspace.unseenCompletedCount == 1)
-        workspace.collapsePetActivity(conversationID: first.id)
+        workspace.toggleActivityTray()
         #expect(workspace.petFollowUpID == nil && !workspace.isPetActivityVisible)
         #expect(workspace.petActivityIDs == [first.id] && workspace.unseenCompletedCount == 1)
         workspace.toggleActivityTray()
@@ -115,13 +113,8 @@ import Foundation
         let second = try #require(workspace.activity)
         sources.last?.receive?(.completed("第二个结果"))
         workspace.expandActivityList()
-        workspace.collapsePetActivity(conversationID: first.id)
-        #expect(workspace.visiblePetActivities.map(\.id) == [second.id])
-        #expect(workspace.unseenCompletedCount == 2)
-        workspace.collapsePetActivity(conversationID: second.id)
-        #expect(!workspace.isPetActivityVisible && workspace.unseenCompletedCount == 2)
-        workspace.toggleActivityTray()
-        #expect(workspace.visiblePetActivities.count == 2)
+        #expect(workspace.petTrayLevel == .list && workspace.visiblePetActivities.count == 2
+                && workspace.unseenCompletedCount == 2)
         let firstHistory = first.store.messages
         workspace.openPetActivity(conversationID: first.id)
         #expect(workspace.isMainWindowVisible && workspace.selectedID == first.id)
@@ -133,7 +126,7 @@ import Foundation
 
         workspace.isMainWindowVisible = false
         #expect(workspace.send("运行时收起", conversationID: first.id))
-        workspace.collapsePetActivity(conversationID: first.id)
+        workspace.toggleActivityTray()
         #expect(first.store.isGenerating)
         firstSource.receive?(.completed("收起后的结果"))
         #expect(!workspace.isPetActivityVisible && workspace.unseenCompletedCount == 1)
@@ -268,7 +261,7 @@ import Foundation
                 "The new notification goes on top")
 
         workspace.dismissPetActivity(conversationID: fourth.id)
-        workspace.collapsePetActivity(conversationID: third.id)
+        workspace.dismissPetActivity(conversationID: third.id)
         #expect(workspace.petTrayLevel == .list && workspace.visiblePetActivities.count == 2)
         workspace.openPetActivity(conversationID: second.id)
         #expect(workspace.visiblePetActivities.map(\.id) == [first.id])
@@ -366,51 +359,6 @@ import Foundation
         #expect(workspace.send("再产生新结果", conversationID: first.id))
         firstSource.receive?(.completed("仍然可以提醒"))
         #expect(workspace.isPetActivityVisible && workspace.unseenCompletedCount == 1)
-    }
-
-    @MainActor @Test static func endingPetActivitiesPreservesHistory() throws {
-        let source = WorkspaceTestSource()
-        let workspace = WorkspaceStore(sourceFactory: { source })
-        defer { workspace.shutdown() }
-
-        #expect(workspace.sendQuickMessage("已完成任务"))
-        let completed = try #require(workspace.activity)
-        source.receive?(.completed("保留这条回复"))
-        let completedHistory = completed.store.messages
-
-        #expect(workspace.sendQuickMessage("运行中的任务"))
-        let running = try #require(workspace.activity)
-        source.receive?(.progress("部分回复"))
-        workspace.enterPetFollowUp(running.id)
-        #expect(running.store.isGenerating && workspace.petFollowUpID == running.id)
-
-        let priorCancellations = source.cancellations
-        workspace.endPetActivity(conversationID: completed.id)
-        #expect(source.cancellations == priorCancellations && running.store.isGenerating,
-                "Closing a completed card cannot stop a different task")
-        #expect(!workspace.petActivityIDs.contains(completed.id))
-        #expect(workspace.conversation(id: completed.id)?.store.messages == completedHistory)
-        #expect(completed.store.task?.status == .completed)
-
-        workspace.endPetActivity(conversationID: running.id)
-        #expect(source.cancellations == priorCancellations + 1 && !running.store.isGenerating)
-        #expect(running.store.task?.status == .stopped)
-        #expect(workspace.petActivityIDs.isEmpty && !workspace.isPetActivityVisible)
-        #expect(workspace.petFollowUpID == nil && !running.store.isFollowUpExpanded)
-        #expect(workspace.conversations.count == 2,
-                "Ending activities keeps both conversations in history")
-        #expect(running.store.messages.contains { $0.content == "部分回复" && $0.status == .stopped })
-        let stoppedHistory = running.store.messages
-
-        source.receive?(.completed("迟到的回复"))
-        workspace.endPetActivity(conversationID: running.id)
-        #expect(source.cancellations == priorCancellations + 1 && running.store.messages == stoppedHistory,
-                "Late callbacks and repeated closes cannot revive or erase the ended activity")
-
-        #expect(workspace.send("继续历史会话", conversationID: completed.id))
-        #expect(workspace.petActivityIDs.contains(completed.id))
-        #expect(completed.store.messages.prefix(completedHistory.count).elementsEqual(completedHistory),
-                "The retained history remains available for a later follow-up")
     }
 
     @MainActor @Test static func draftsPromotionRestartAndOrdering() async throws {

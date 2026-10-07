@@ -105,9 +105,7 @@ private struct ActivityCloseButtonFrames: PreferenceKey {
 
 struct ActivityCapsule: View {
     @Bindable var store: TaskStore
-    var canStop: Bool = false
     let send: () -> Void
-    let stop: () -> Void
     var open: () -> Void = {}
     let placement: ActivityPlacement
     var title: String?
@@ -119,11 +117,11 @@ struct ActivityCapsule: View {
     @State private var hovered = false
     @State private var followUpFocusRequest = 0
 
-    init(store: TaskStore, canStop: Bool = false, send: @escaping () -> Void, stop: @escaping () -> Void,
+    init(store: TaskStore, send: @escaping () -> Void,
          open: @escaping () -> Void = {}, placement: ActivityPlacement, title: String? = nil,
          followUp: (() -> Void)? = nil, exit: (() -> Void)? = nil, end: (() -> Void)? = nil, stacked: Bool = false) {
-        self.store = store; self.canStop = canStop
-        self.send = send; self.stop = stop; self.open = open; self.placement = placement
+        self.store = store
+        self.send = send; self.open = open; self.placement = placement
         self.title = title; self.followUp = followUp; self.exit = exit; self.end = end; self.stacked = stacked
     }
     /// Only an ended task gets an icon; while it runs, the reply line already says it is working.
@@ -399,8 +397,8 @@ struct PetControlActions {
     var send: (String) -> Bool = { _ in false }
     /// The + menu's "添加项目文件夹…", run after the menu has closed.
     var addProjectFolder: () -> Void = {}
-    /// The bell and ⌃; without a workspace it toggles the shown store's card.
-    var toggleTray: (() -> Void)?
+    /// The bell and ⌃.
+    var toggleTray: () -> Void
 }
 
 /// The places in the strip's row, left to right: the voice bar's ✎ circle, the main pane (the
@@ -455,7 +453,7 @@ struct PetControls: View {
     /// The Live Voice planet, resolved by `PlanetStore`. Without it the voice mark falls back
     /// to the composer's waveform, so the button is never blank.
     var planet: PetStore?
-    var actions = PetControlActions()
+    var actions: PetControlActions
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
     /// The planet the strip draws: none while suspended, so the hidden strip observes no frames.
@@ -624,7 +622,7 @@ struct PetControls: View {
                 if surface.tray != .none {
                     Divider().frame(height: 14)
                     PetSegment(label: trayLabel(surface.tray), identifier: trayIdentifier(surface.tray),
-                               action: toggleTray) { trayIcon(surface) }
+                               action: actions.toggleTray) { trayIcon(surface) }
                         .accessibilityValue(surface.tray == .collapse ? "" : badgeValue(surface.badge))
                 }
             }
@@ -787,14 +785,12 @@ struct PetControls: View {
 
     @ViewBuilder private func trayCircle(_ surface: PetSurfacePresentation) -> some View {
         if surface.tray != .none {
-            PetSegment(label: trayLabel(surface.tray), identifier: trayIdentifier(surface.tray), action: toggleTray) {
+            PetSegment(label: trayLabel(surface.tray), identifier: trayIdentifier(surface.tray), action: actions.toggleTray) {
                 trayIcon(surface)
             }
             .accessibilityValue(surface.tray == .collapse ? "" : badgeValue(surface.badge))
         }
     }
-
-    private func toggleTray() { (actions.toggleTray ?? store.toggleActivities)() }
 
     /// A collapsed card is a bell carrying the task status; an expanded card turns it into ⌃.
     @ViewBuilder private func trayIcon(_ surface: PetSurfacePresentation) -> some View {
@@ -848,9 +844,7 @@ struct WorkspaceActivityCapsule: View {
     /// A card opens its chat when clicked; the front of a stack opens the list instead.
     @ViewBuilder private func card(_ conversation: WorkspaceConversation, stacked: Bool = false) -> some View {
         ActivityCapsule(store: conversation.store,
-            canStop: workspace.voice.conversationID == conversation.id && workspace.voice.presentation.isReplyAudioActive,
             send: { workspace.sendFollowUp(conversationID: conversation.id) },
-            stop: { workspace.stop(conversationID: conversation.id) },
             open: stacked ? { workspace.expandActivityList() } : { workspace.openPetActivity(conversationID: conversation.id) },
             placement: placement, title: conversation.displayTitle,
             followUp: { workspace.enterPetFollowUp(conversation.id) }, exit: { workspace.exitPetFollowUp() },

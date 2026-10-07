@@ -439,9 +439,6 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     // Project convention: dismissing a surface never cancels its task source.
     func closeActivity() { activityDismissed = true; isFollowUpExpanded = false; markSeen() }
-    func toggleActivities() {
-        if activitiesCollapsed { expandActivity() } else { activitiesCollapsed = true }
-    }
     /// Revealing the tray does not acknowledge any result.
     func expandActivity() { activityDismissed = false; activitiesCollapsed = false }
     /// Completion updates the unread result without folding the card or its composer.
