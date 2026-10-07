@@ -47,6 +47,7 @@ struct RecordingWaveform: View {
 struct VoiceSettingsView: View {
     @Bindable var settings: SettingsStore
     var voice: VoiceSessionController
+    @State private var revealsKey = false
     private var diagnostics: VoiceDiagnostics { .shared }
     private var testsDisabled: Bool { voice.testing || voice.isActive || voice.isDictating || !settings.canTestVoice }
     var body: some View {
@@ -54,6 +55,7 @@ struct VoiceSettingsView: View {
         // form's own rather than a hand-placed `Divider()`.
         Form {
             Section {
+                SettingsAPIKeyField(key: $settings.voiceAPIKey, revealed: $revealsKey, identifier: "voiceSettings.apiKey")
                 TextField("音色 ID", text: $settings.voiceDraft.speaker, prompt: Text("输入音色 ID"))
                     .accessibilityLabel("音色 ID")
                     .accessibilityIdentifier("voiceSettings.speaker")
@@ -109,7 +111,7 @@ struct VoiceSettingsView: View {
         }.textFieldStyle(.roundedBorder)
             .onChange(of: settings.voiceAPIKey) { _, _ in voice.invalidateTest() }
             .onChange(of: settings.voiceDraft) { _, _ in voice.invalidateTest() }
-            .onDisappear { voice.cancelTest() }
+            .onDisappear { voice.cancelTest(); revealsKey = false }
     }
     private func test(preview: Bool) {
         guard let key = try? settings.voiceTestKey() else { return }

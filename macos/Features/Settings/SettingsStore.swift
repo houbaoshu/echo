@@ -311,26 +311,19 @@ protocol ConnectionTesting: Sendable {
     }
     func savedVoiceCredentials() throws -> (configuration: VoiceConfiguration, key: String) {
         guard voiceKeyLoaded else { throw SettingsError(localized: "无法读取已保存的语音密钥，请检查钥匙串访问权限。") }
-        let key = try resolvedVoiceKey(savedVoiceKey)
-        VoiceDiagnostics.shared.record("1 API Key", "PASS", "来源=\(savedVoiceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "已保存的模型密钥" : "语音专用密钥")；非空且格式有效，服务端鉴权待连接验证")
+        let key = try Self.validatedVoiceKey(savedVoiceKey)
+        VoiceDiagnostics.shared.record("1 API Key", "PASS", "非空且格式有效，服务端鉴权待连接验证")
         return (try (snapshot.voice ?? VoiceConfiguration()).validated(), key)
     }
-    // An empty override shares the saved model credential without duplicating it in Keychain.
-    // Model form drafts must never silently change the credentials used by voice tests or calls.
-    private func resolvedVoiceKey(_ override: String) throws -> String {
-        let key: String
-        if !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { key = override }
-        else {
-            guard keyLoaded else { throw SettingsError(localized: "无法读取共用的模型 API Key，请在模型设置中重新保存。") }
-            key = savedKey
-        }
+    // Voice has only its own key; which model provider is selected never changes it.
+    private static func validatedVoiceKey(_ key: String) throws -> String {
         let value = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !value.contains("\r"), !value.contains("\n") else {
-            throw SettingsError(localized: "请在模型设置中保存可用于语音服务的 API Key。")
+            throw SettingsError(localized: "请在设置的语音页填写 API Key。")
         }
         return value
     }
-    func voiceTestKey() throws -> String { try resolvedVoiceKey(voiceAPIKey) }
+    func voiceTestKey() throws -> String { try Self.validatedVoiceKey(voiceAPIKey) }
     var canTestVoice: Bool { (try? voiceTestKey()) != nil }
     func restoreVoice() {
         voiceDraft = snapshot.voice ?? VoiceConfiguration(); voiceAPIKey = savedVoiceKey; voiceNotice = nil

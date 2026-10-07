@@ -878,7 +878,7 @@ enum VoiceCaptureWatchdog {
                 guard self.probeID == id, !Task.isCancelled else { return }
                 self.cancelTest()
                 VoiceDiagnostics.shared.record("连接测试", "FAIL", VoiceDiagnostics.reason(error))
-                self.testResult = (error as? SettingsError)?.message ?? String(localized: "语音测试失败，请检查专属密钥和网络。")
+                self.testResult = (error as? SettingsError)?.message ?? String(localized: "语音测试失败，请检查 API Key 和网络。")
             }
         }
     }

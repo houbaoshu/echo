@@ -626,6 +626,7 @@ import SwiftUI
         defer { try? FileManager.default.removeItem(at: root) }
         let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: ComposerSecrets())
         settings.draft.model = "test-model"; settings.apiKey = "test-key"; settings.save()
+        settings.voiceAPIKey = "test-voice"; settings.saveVoice()
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
         voice.attach(workspace: workspace, settings: settings)
@@ -750,10 +751,19 @@ import SwiftUI
         XCTAssertTrue(settings.selectedSection == .voice && list.selectedRow == 1, "Up arrow selects the previous section")
 
         // 6. The swapped pane rejoins the key view loop, so Tab still leaves the list.
-        try await tab(until: isFieldEditor(responder()), "the voice speaker field")
-        let speaker = settings.voiceDraft.speaker
+        func isSecureFieldEditor(_ view: NSView?) -> Bool {
+            (view as? NSTextView)?.isFieldEditor == true && String(describing: type(of: view!)).contains("Secure")
+        }
+        try await tab(until: isSecureFieldEditor(responder()), "the voice API Key secure field")
+        let voiceKey = settings.voiceAPIKey
         // "1" is the keystroke no input method absorbs into a composition, so these
         // assertions hold whichever input source the machine is on.
+        try await key(18)
+        XCTAssertTrue(settings.voiceAPIKey != voiceKey && settings.isVoiceDirty, "The voice API Key field takes typed text")
+        settings.restoreVoice()
+        try await settle()
+        try await tab(until: isFieldEditor(responder()) && !isSecureFieldEditor(responder()), "the voice speaker field")
+        let speaker = settings.voiceDraft.speaker
         try await key(18)
         XCTAssertTrue(settings.voiceDraft.speaker != speaker, "The voice field takes typed text")
         // Return is the section's default action, the way it is in any system form
@@ -774,8 +784,7 @@ import SwiftUI
         let baseURL = settings.draft.baseURL
         try await key(18)
         XCTAssertTrue(settings.draft.baseURL != baseURL && settings.isDirty, "Base URL edits mark the model settings dirty")
-        try await tab(until: (responder() as? NSTextView)?.isFieldEditor == true
-                      && String(describing: type(of: responder()!)).contains("Secure"), "the API Key secure field")
+        try await tab(until: isSecureFieldEditor(responder()), "the API Key secure field")
         let apiKey = settings.apiKey
         try await key(18)
         XCTAssertTrue(settings.apiKey != apiKey, "The secure field takes typed text")
@@ -828,7 +837,7 @@ import SwiftUI
         XCTAssertTrue(modelTestLabel == "测试连接", "The model page names its connection test 测试连接: \(modelTestLabel ?? "nil")")
         settings.selectedSection = .voice
         try await settle()
-        XCTAssertTrue(settings.canTestVoice, "The saved model credential is the voice test's fallback key")
+        XCTAssertTrue(settings.canTestVoice, "The voice page's own key enables its tests")
         let voiceTest = findAccessibility("voiceSettings.test", in: window.contentView!)
         XCTAssertTrue(voiceTest?.accessibilityLabel?() == modelTestLabel,
                      "The voice page names it the same: \(voiceTest?.accessibilityLabel?() ?? "nil")")

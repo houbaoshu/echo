@@ -2065,16 +2065,6 @@
         }
       }
     },
-    "无法读取共用的模型 API Key，请在模型设置中重新保存。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t read the shared model API key. Save it again in the Model section of Settings."
-          }
-        }
-      }
-    },
     "无法读取已保存的 API Key，请在设置中重新填写并保存。" : {
       "localizations" : {
         "en" : {
@@ -3709,12 +3699,12 @@
         }
       }
     },
-    "语音测试失败，请检查专属密钥和网络。" : {
+    "语音测试失败，请检查 API Key 和网络。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The voice test failed. Check your exclusive API key and network."
+            "value" : "The voice test failed. Check the API key and your network."
           }
         }
       }
@@ -3895,12 +3885,12 @@
         }
       }
     },
-    "语音鉴权失败，请检查 Agent Plan 专属密钥和套餐权限。" : {
+    "语音鉴权失败，请检查设置的语音页里的 API Key 和套餐权限。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Voice authentication failed. Check your Agent Plan exclusive API key and plan permissions."
+            "value" : "Voice authentication failed. Check the API key in the Voice section of Settings and your plan permissions."
           }
         }
       }
@@ -3955,12 +3945,12 @@
         }
       }
     },
-    "请在模型设置中保存可用于语音服务的 API Key。" : {
+    "请在设置的语音页填写 API Key。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Save an API key that works with the voice service in the Model section of Settings."
+            "value" : "Enter an API key in the Voice section of Settings."
           }
         }
       }

@@ -1416,22 +1416,23 @@ extension EchoVoiceScenarios {
         restored.voiceAPIKey = ""; restored.saveVoice()
         check(secrets.values.isEmpty && restored.snapshot.voiceSecretAccount == nil, "explicit key removal")
         rejects("missing voice credentials") { _ = try restored.savedVoiceCredentials() }
-        restored.apiKey = "shared-plan-key"; restored.save()
-        check(try restored.savedVoiceCredentials().key == "shared-plan-key", "voice defaults to saved model key")
-        restored.apiKey = "unsaved-model-key"
-        check(try restored.savedVoiceCredentials().key == "shared-plan-key", "unsaved model key never changes voice credentials")
-        restored.voiceAPIKey = "voice-override"; restored.saveVoice()
-        check(try restored.savedVoiceCredentials().key == "voice-override", "explicit voice key overrides shared model key")
-        restored.voiceAPIKey = ""; restored.saveVoice()
-        check(try restored.savedVoiceCredentials().key == "shared-plan-key", "clearing override restores shared model key")
-        restored.restore(); restored.apiKey = "rotated-plan-key"; restored.save()
-        check(try restored.savedVoiceCredentials().key == "rotated-plan-key", "model key rotation also updates shared voice key")
+        restored.apiKey = "model-key"; restored.save()
+        rejects("voice never borrows the saved model key") { _ = try restored.savedVoiceCredentials() }
+        check(!restored.canTestVoice, "without its own key the voice test stays off")
+        restored.voiceAPIKey = "voice-key"
+        check(restored.canTestVoice, "the voice test uses the key typed on the voice page")
+        restored.saveVoice()
+        check(try restored.savedVoiceCredentials().key == "voice-key", "voice uses its own saved key")
+        restored.restore(); restored.apiKey = "rotated-model-key"; restored.save()
+        check(try restored.savedVoiceCredentials().key == "voice-key", "model key rotation leaves the voice key alone")
+        restored.selectProvider(.deepSeek); restored.draft.model = "deepseek-chat"; restored.apiKey = "deepseek-key"; restored.save()
+        check(try restored.savedVoiceCredentials().key == "voice-key", "switching model provider leaves the voice key alone")
         let reloaded = SettingsStore(url: url, secrets: secrets)
-        check(try reloaded.savedVoiceCredentials().key == "rotated-plan-key", "shared voice credentials survive relaunch")
+        check(try reloaded.savedVoiceCredentials().key == "voice-key", "voice credentials survive relaunch")
         let logsBefore = VoiceDiagnostics.shared.lines.count
         _ = reloaded.canTestVoice; _ = reloaded.canTestVoice
         check(VoiceDiagnostics.shared.lines.count == logsBefore, "SwiftUI credential validation does not publish new logs")
-        check(!VoiceDiagnostics.shared.text.contains("rotated-plan-key"), "diagnostics never contain saved key values")
+        check(!VoiceDiagnostics.shared.text.contains("voice-key"), "diagnostics never contain saved key values")
         let secretCount = secrets.values.count
         let badURL = dir.appendingPathComponent("not-a-directory/settings.json")
         try Data().write(to: dir.appendingPathComponent("not-a-directory"))
@@ -2101,6 +2102,7 @@ extension EchoVoiceScenarios {
             let workspace = WorkspaceStore(voice: voice, sourceFactory: { FakeSource() })
             let settings = SettingsStore(secrets: FakeSecrets())
             settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
+            settings.voiceAPIKey = "voice"; settings.saveVoice()
             voice.attach(workspace: workspace, settings: settings)
             defer { voice.shutdown(); workspace.shutdown() }
             let a = workspace.selected!

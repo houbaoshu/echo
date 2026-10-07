@@ -3306,6 +3306,7 @@ private struct ComposerHeightHost: View {
         let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
+        settings.voiceAPIKey = "voice"; settings.saveVoice()
         voice.attach(workspace: workspace, settings: settings)
         defer { workspace.shutdown(); voice.shutdown() }
         let read = workspace.selected!

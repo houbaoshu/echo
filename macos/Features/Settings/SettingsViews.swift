@@ -108,13 +108,48 @@ struct SettingsTestResult: View {
     }
 }
 
-struct ModelSettingsView: View {
-    @Bindable var settings: SettingsStore
-    @State private var revealsKey = false
+/// The API Key row, the same on the model and voice sections: a secure field that can be
+/// revealed, and a button that clears it until the section is saved.
+struct SettingsAPIKeyField: View {
+    @Binding var key: String
+    @Binding var revealed: Bool
+    let identifier: String
+    /// Only the controls go grey, as the other rows' fields do; the label stays as it is.
+    var enabled = true
     /// Revealing swaps the secure field for a plain one — a different view, which
     /// takes the first responder with it when it goes. Hand it back to whichever
     /// field replaced it, so the caret does not vanish mid-edit.
-    @FocusState private var keyFieldFocused: Bool
+    @FocusState private var focused: Bool
+    var body: some View {
+        LabeledContent("API Key") {
+            HStack(spacing: 8) {
+                Group {
+                    if revealed { TextField("API Key", text: $key, prompt: Text("输入 API Key")) }
+                    else { SecureField("API Key", text: $key, prompt: Text("输入 API Key")) }
+                }.labelsHidden().focused($focused)
+                    .accessibilityLabel("API Key").accessibilityIdentifier(identifier)
+                Button {
+                    let editing = focused
+                    revealed.toggle()
+                    // The replacement exists only after this update; asking any
+                    // earlier focuses the field that is on its way out.
+                    if editing { DispatchQueue.main.async { focused = true } }
+                } label: { Image(systemName: revealed ? "eye.slash" : "eye") }
+                    .buttonStyle(.borderless).help(revealed ? "隐藏 API Key" : "显示 API Key")
+                    .accessibilityLabel(revealed ? "隐藏 API Key" : "显示 API Key")
+                    .accessibilityIdentifier("\(identifier).reveal")
+                Button { key = "" } label: { Image(systemName: "xmark.circle") }
+                    .buttonStyle(.borderless).disabled(key.isEmpty).help("清除 API Key，保存后生效")
+                    .accessibilityLabel("清除 API Key")
+                    .accessibilityIdentifier("\(identifier).clear")
+            }.disabled(!enabled)
+        }
+    }
+}
+
+struct ModelSettingsView: View {
+    @Bindable var settings: SettingsStore
+    @State private var revealsKey = false
     var body: some View {
         // A control that takes its own label keeps it, so the form — not this view —
         // decides where the label column ends and how a narrow pane stacks the row.
@@ -133,29 +168,8 @@ struct ModelSettingsView: View {
                 }.accessibilityLabel("协议").accessibilityIdentifier("settings.protocol")
                 TextField("Base URL", text: $settings.draft.baseURL, prompt: Text("https://api.openai.com/v1"))
                     .accessibilityLabel("Base URL").accessibilityIdentifier("settings.baseURL")
-                LabeledContent("API Key") {
-                    HStack(spacing: 8) {
-                        Group {
-                            if revealsKey { TextField("API Key", text: $settings.apiKey, prompt: Text("输入 API Key")) }
-                            else { SecureField("API Key", text: $settings.apiKey, prompt: Text("输入 API Key")) }
-                        }.labelsHidden().focused($keyFieldFocused)
-                            .accessibilityLabel("API Key").accessibilityIdentifier("settings.apiKey")
-                        Button {
-                            let editing = keyFieldFocused
-                            revealsKey.toggle()
-                            // The replacement exists only after this update; asking any
-                            // earlier focuses the field that is on its way out.
-                            if editing { DispatchQueue.main.async { keyFieldFocused = true } }
-                        } label: { Image(systemName: revealsKey ? "eye.slash" : "eye") }
-                            .buttonStyle(.borderless).help(revealsKey ? "隐藏 API Key" : "显示 API Key")
-                            .accessibilityLabel(revealsKey ? "隐藏 API Key" : "显示 API Key")
-                            .accessibilityIdentifier("settings.apiKey.reveal")
-                        Button { settings.apiKey = "" } label: { Image(systemName: "xmark.circle") }
-                            .buttonStyle(.borderless).disabled(settings.apiKey.isEmpty).help("清除 API Key，保存后生效")
-                            .accessibilityLabel("清除 API Key")
-                            .accessibilityIdentifier("settings.apiKey.clear")
-                    }.disabled(!settings.selectedProvider.requiresKey)
-                }
+                SettingsAPIKeyField(key: $settings.apiKey, revealed: $revealsKey, identifier: "settings.apiKey",
+                                    enabled: settings.selectedProvider.requiresKey)
                 TextField("默认模型", text: $settings.draft.model, prompt: Text("输入 Model ID"))
                     .accessibilityLabel("默认模型").accessibilityIdentifier("settings.model")
             } header: {

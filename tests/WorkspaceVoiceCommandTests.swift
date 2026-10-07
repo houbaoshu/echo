@@ -88,6 +88,7 @@ import Foundation
         })
         let settings = SettingsStore(secrets: CommandSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
+        settings.voiceAPIKey = "voice"; settings.saveVoice()
         voice.attach(workspace: workspace, settings: settings)
         defer { permission?.resume(returning: false); workspace.shutdown() }
         let a = workspace.selected!, sa = sources[0]
@@ -244,6 +245,7 @@ import Foundation
         let workspace = WorkspaceStore(voice: voice, sourceFactory: { CommandSource() })
         let settings = SettingsStore(secrets: CommandSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
+        settings.voiceAPIKey = "voice"; settings.saveVoice()
         voice.attach(workspace: workspace, settings: settings)
         defer { permission?.resume(returning: false); workspace.shutdown() }
 

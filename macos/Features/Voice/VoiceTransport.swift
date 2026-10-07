@@ -79,7 +79,7 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
     private var closing = false
     init(path: String, resource: String, key: String) throws {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !key.contains("\r"), !key.contains("\n") else { throw SettingsError(localized: "请在模型设置中保存可用于语音服务的 API Key。") }
+              !key.contains("\r"), !key.contains("\n") else { throw SettingsError(localized: "请在设置的语音页填写 API Key。") }
         label = path.hasPrefix("tts") ? "TTS" : "ASR"
         let connectID = UUID().uuidString
         connection = String(connectID.prefix(8))
@@ -185,7 +185,7 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
         VoiceDiagnostics.shared.record("3 连接", "FAIL", "\(label) [\(connection)] 上报 HTTP=\((task.response as? HTTPURLResponse)?.statusCode ?? 0) close=\(task.closeCode.rawValue) \(counters)；\(VoiceDiagnostics.reason(error))")
         if let http = task.response as? HTTPURLResponse {
             switch http.statusCode {
-            case 401, 403: return SettingsError(localized: "语音鉴权失败，请检查 Agent Plan 专属密钥和套餐权限。")
+            case 401, 403: return SettingsError(localized: "语音鉴权失败，请检查设置的语音页里的 API Key 和套餐权限。")
             case 429: return SettingsError(localized: "语音请求受限或套餐额度不足，请稍后重试。")
             case 400, 404: return SettingsError(localized: "语音接口或参数不可用，请检查语音配置。")
             case 101: break
