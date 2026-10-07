@@ -8,35 +8,42 @@ import Synchronization
 // engine cancels a generation when another one starts.
 
 /// Where the local model lives, judged from its files alone.
-enum LocalModelLocation {
+struct LocalModelLocation: Sendable {
     static let name = "qwen3_0_6b_4bit_dynamic"
-    /// Where an imported model goes.
-    static var installURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("local.chiyan.desktop-pet/Models/\(name)", isDirectory: true)
+    /// The folder a model is imported into.
+    let models: URL
+    /// Echo's own Models folder in Application Support, beside settings.json.
+    static var app: LocalModelLocation {
+        LocalModelLocation(models: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("local.chiyan.desktop-pet/Models", isDirectory: true))
     }
+    /// Where an imported model goes.
+    var installURL: URL { models.appendingPathComponent(Self.name, isDirectory: true) }
 
     /// `ECHO_LOCAL_MODEL_PATH` (development and tests), then the installed copy, then a copy
     /// inside the app. The first directory that exists decides.
-    static func find(environment: [String: String] = ProcessInfo.processInfo.environment,
-                     bundle: Bundle = .main) -> LocalModelAvailability {
+    func find(environment: [String: String] = ProcessInfo.processInfo.environment,
+              bundle: Bundle = .main) -> LocalModelAvailability {
         var candidates: [URL] = []
         if let path = environment["ECHO_LOCAL_MODEL_PATH"], !path.isEmpty {
             candidates.append(URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true))
         }
         candidates.append(installURL)
         if let resources = bundle.resourceURL {
-            candidates.append(resources.appendingPathComponent("Models/\(name)", isDirectory: true))
+            candidates.append(resources.appendingPathComponent("Models/\(Self.name)", isDirectory: true))
         }
         guard let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return .missing }
-        if let problem = problem(in: url) { return .invalid(problem) }
+        if let problem = Self.problem(in: url) { return .invalid(problem) }
         return .ready(url.resolvingSymlinksInPath())
     }
+
+    /// Installs the model at `source` as this folder's model; see `install(from:to:)`.
+    func install(from source: URL) -> String? { Self.install(from: source, to: installURL) }
 
     /// Copies the model at `source` to `destination` after checking it is complete and is the model
     /// Echo expects. Whatever was at `destination` goes to the Trash (a link is removed, not what it
     /// points to). Returns the failure to show, or nil.
-    static func install(from source: URL, to destination: URL = installURL) -> String? {
+    static func install(from source: URL, to destination: URL) -> String? {
         if let problem = problem(in: source) { return String(localized: "无法导入：\(problem)。") }
         let files = FileManager.default
         let partial = destination.deletingLastPathComponent().appendingPathComponent(".\(name).importing-\(UUID().uuidString)")

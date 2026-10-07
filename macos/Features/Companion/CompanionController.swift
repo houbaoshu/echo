@@ -87,11 +87,10 @@ import SwiftUI
     /// How the status item and the pet's menu bring Echo forward; tests record the request instead.
     var systemOpen: (SystemOpen.Destination) -> Void = { SystemOpen.open($0) }
 
-    init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore? = nil, pets: PetCatalog? = nil,
+    init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore, pets: PetCatalog? = nil,
          planets: PlanetStore? = nil, defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.workspace = workspace
-        let settings = settings ?? SettingsStore()
         self.settings = settings; self.pets = pets ?? PetCatalog(settings: settings)
         let planets = planets ?? PlanetStore(settings: settings, voice: workspace.voice)
         self.planets = planets

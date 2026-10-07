@@ -16,9 +16,22 @@ MCP 只能运行 scheme 默认测试计划里的 target，切换测试计划无�
 
 ## UI 测试
 
-EchoUITests 会接管键盘并把输入法切到 US。
-不要顺带跑整个 EchoUITests；只跑和本次改动相关的 UI 测试，跑之前先告诉我。
+EchoUITests 和 NativeAppKitEventTests 同等对待：两者都会把 Echo 拉到前台并发送按键。
+EchoUITests 经系统的 testmanagerd 发出真实的键盘鼠标事件，会接管键盘；
+NativeAppKitEventTests 在 Echo 进程内派发按键事件。EchoOffline 测试计划包含 NativeAppKitEventTests。
+不要顺带跑整个 EchoUITests；只跑和本次改动相关的测试，跑之前先告诉我，跑 EchoOffline 之前也一样。
 完整的 UI 测试由我决定什么时候跑。
+
+测试代码不切换输入法，也不改系统设置。XCUITest 打字时，testmanagerd 按当前键盘布局把字符换算成按键；
+当前是输入法、换算不了时，它可能临时切换键盘布局，结束后恢复。
+
+测试结果不能取决于键盘布局、键盘导航设置、当前输入法或开测时哪个应用在前台：
+- 进程内合成按键事件时，字母、数字和标点的键码按当前键盘布局查（NativeAppKitEventTests 的 TestKey），不写死 QWERTY 键码。
+- 依赖 Echo 在前台的测试自己把 Echo 带到前台。
+- 和键盘导航有关的断言按 AppKit 当前的设置分支。
+
+测试尽量不让系统真的响警告声：验证某个按键“不起作用”时，检查菜单项是否可用或处理函数的返回值，
+不要把按键送到没有对象处理的地方。
 
 ## 本地化
 

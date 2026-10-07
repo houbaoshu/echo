@@ -237,6 +237,9 @@ protocol ConnectionTesting: Sendable {
     private(set) var importingLocalModel = false
     var localModelNotice: String?
     private let url: URL?
+    /// Where the offline model is imported and looked for. Like `url`, nil keeps the store off
+    /// disk: there is no model.
+    let localModels: LocalModelLocation?
     private let secrets: any SecretStore
     private let tester: any ConnectionTesting
     private struct Credential {
@@ -268,8 +271,9 @@ protocol ConnectionTesting: Sendable {
             value.model != snapshot.settings(for: provider).model || value.key != (credentials[provider]?.key ?? "")
         }
     }
-    init(url: URL? = nil, secrets: any SecretStore = KeychainSecretStore(), tester: any ConnectionTesting = NativeConnectionTester()) {
-        self.url = url; self.secrets = secrets; self.tester = tester
+    init(url: URL? = nil, localModels: LocalModelLocation? = nil, secrets: any SecretStore = KeychainSecretStore(),
+         tester: any ConnectionTesting = NativeConnectionTester()) {
+        self.url = url; self.localModels = localModels; self.secrets = secrets; self.tester = tester
         if let url, FileManager.default.fileExists(atPath: url.path) {
             do {
                 let decoded = try JSONDecoder().decode(SettingsSnapshot.self, from: Data(contentsOf: url))
@@ -355,20 +359,20 @@ protocol ConnectionTesting: Sendable {
         } catch { voiceNotice = error is SettingsError ? error.localizedDescription : String(localized: "语音配置保存失败，请检查目录写入权限。") }
     }
     func refreshLocalModel() {
-        localModel = LocalModelLocation.find()
+        localModel = localModels?.find() ?? .missing
         if case .ready(let url) = localModel {
             localModelName = LocalModelLocation.displayName(in: url) ?? url.lastPathComponent
         } else { localModelName = nil }
     }
     /// Copies a model folder the user picked into Echo's Models folder, checking it first.
     func importLocalModel(from source: URL) {
-        guard !importingLocalModel else { return }
+        guard !importingLocalModel, let localModels else { return }
         importingLocalModel = true; localModelNotice = nil
         Task {
             let failure = await Task.detached {
                 let access = source.startAccessingSecurityScopedResource()
                 defer { if access { source.stopAccessingSecurityScopedResource() } }
-                return LocalModelLocation.install(from: source)
+                return localModels.install(from: source)
             }.value
             importingLocalModel = false
             localModelNotice = failure ?? String(localized: "已导入本地模型。")

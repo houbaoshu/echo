@@ -27,7 +27,7 @@ final class CoreAILocalChatBackend: LocalChatBackend {
     private let pressure: any DispatchSourceMemoryPressure
 
     init(idle: Duration = CoreAILocalChatBackend.idleUnload,
-         locate: @escaping @Sendable () -> LocalModelAvailability = { LocalModelLocation.find() }) {
+         locate: @escaping @Sendable () -> LocalModelAvailability) {
         self.locate = locate
         self.idle = idle
         pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .global(qos: .utility))

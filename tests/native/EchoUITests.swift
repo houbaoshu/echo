@@ -86,7 +86,6 @@ import XCTest
             XCTAssertTrue(editor.waitForExistence(timeout: 5))
             editor.click(); editor.typeText("first conversation"); app.typeKey(.return, modifierFlags: [])
             XCTAssertTrue(app.staticTexts["Offline reply: first conversation"].waitForExistence(timeout: 5))
-            app.typeKey(.escape, modifierFlags: [])
             composer(app).click(); composer(app).typeText("draft retained")
             XCTAssertEqual(composer(app).value as? String, "draft retained")
             app.typeKey("n", modifierFlags: .command)
@@ -500,9 +499,7 @@ import XCTest
             row("Recent Delta").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
             opened("Recent Delta")
             @MainActor func project() -> XCUIElement {
-                // SwiftUI merges the hover button into this row's AX label,
-                // changing its identifier. The one-project fixture has a stable
-                // source-list row immediately below the Projects header.
+                // The one-project fixture has its project row immediately below the Projects header.
                 outline.descendants(matching: .outlineRow).element(boundBy: 1)
             }
             XCTAssertTrue(project().debugDescription.contains("Project 00"), project().debugDescription)
@@ -511,10 +508,15 @@ import XCTest
             opened("Recent Delta")
             project().coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
             XCTAssertTrue(label("Project Alpha", project: true).waitForExistence(timeout: 3))
+            // With the pointer on the row the button shows and takes the click. Accessibility
+            // reaches it as the row's named action, which ConversationViewTests checks.
             project().coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).hover()
-            XCTAssertTrue(project().debugDescription.contains("新对话"), project().debugDescription)
             project().coordinate(withNormalizedOffset: .init(dx: 0.90, dy: 0.5)).click()
-            XCTAssertTrue(app.buttons["conversation.project"].label.contains("Project 00"))
+            // Recent Delta has messages, so it shows no project picker; only a new, empty chat
+            // does, and this one names the project the click started it in.
+            let picker = app.buttons["conversation.project"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 3))
+            XCTAssertTrue(picker.label.contains("Project 00"), picker.label)
             let rowCount = outline.descendants(matching: .outlineRow).count
             app.typeKey("k", modifierFlags: .command)
             let search = app.searchFields["搜索聊天"]

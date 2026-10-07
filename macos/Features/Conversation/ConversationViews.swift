@@ -261,6 +261,9 @@ struct WorkspaceSidebar: View {
                 .accessibilityLabel(project.name)
                 .accessibilityValue(projectExpanded(project) ? "已展开聊天" : "已收起聊天")
                 .accessibilityHint("点击展开或收起项目聊天")
+                // The pencil button never reaches accessibility on its own: SwiftUI folds it
+                // into this row. The row offers what it does as an action instead.
+                .accessibilityAction(named: "在此项目中新建对话") { newProjectConversation(project.id) }
                 .accessibilityIdentifier("workspace.project.\(project.id)")
                 .contextMenu { projectMenu(project) }
                 .modifier(ProjectFolderDropTarget(drop: projectFolderDrop))

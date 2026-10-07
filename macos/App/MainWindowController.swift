@@ -83,9 +83,8 @@ import SwiftUI
     let sidebarListFocus = SidebarListFocus()
 
     init(workspace: WorkspaceStore, defaults: UserDefaults = .standard, windowOverride: WorkspaceWindow? = nil,
-         settings: SettingsStore? = nil, pets: PetCatalog? = nil, planets: PlanetStore? = nil) {
+         settings: SettingsStore, pets: PetCatalog? = nil, planets: PlanetStore? = nil) {
         self.workspace = workspace; self.defaults = defaults
-        let settings = settings ?? SettingsStore()
         self.settings = settings; self.pets = pets ?? PetCatalog(settings: settings)
         // Without a planets root the store resolves to nothing and the voice mark falls back to
         // the composer's waveform, which is what the test hosts want.

@@ -14,6 +14,12 @@ import Synchronization
     func remove(_ account: String) throws { values[account] = nil }
 }
 
+/// Settings for a test that opens the Settings window: fake secrets, and a Models folder
+/// in the temporary directory for the local model pane to look in.
+@MainActor private func settingsWindowStore() -> SettingsStore {
+    SettingsStore(localModels: LocalModelLocation(models: EchoTestResources.output("models-\(UUID())")), secrets: ComposerSecrets())
+}
+
 @MainActor private final class PreviewSource: TaskSource {
     var histories: [[ConversationMessage]] = []
     var receive: (@MainActor (TaskEvent) -> Void)?
@@ -319,7 +325,7 @@ private struct ComposerHeightHost: View {
         defaults.set("{{30, 1}, {1410, 869}}", forKey: "main.frame")
         defaults.set(false, forKey: "main.sidebarVisible"); defaults.set(true, forKey: "main.inspectorVisible")
         defaults.set(339, forKey: "main.sidebarWidth"); defaults.set(311, forKey: "main.inspectorWidth")
-        let main = MainWindowController(workspace: workspace, defaults: defaults)
+        let main = MainWindowController(workspace: workspace, defaults: defaults, settings: settingsWindowStore())
         defer { main.shutdown() }
         guard let window = main.window else { throw SettingsError("No window") }
         main.present()
@@ -622,7 +628,8 @@ private struct ComposerHeightHost: View {
         let conversation = workspace.selected!
         let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 650),
                                      styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(), windowOverride: window)
+        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(), windowOverride: window,
+                                        settings: SettingsStore(secrets: ComposerSecrets()))
         main.present()
         defer { main.shutdown(); workspace.shutdown() }
         func refresh() async throws {
@@ -712,7 +719,8 @@ private struct ComposerHeightHost: View {
         let conversation = workspace.selected!
         let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 650),
                                      styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(), windowOverride: window)
+        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(), windowOverride: window,
+                                        settings: SettingsStore(secrets: ComposerSecrets()))
         main.present()
         defer { runner.gate.open(); main.shutdown(); workspace.shutdown() }
         func refresh() async throws {
@@ -1210,7 +1218,8 @@ private struct ComposerHeightHost: View {
                                      styleMask: [.titled, .resizable, .fullSizeContentView],
                                      backing: .buffered, defer: false)
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
-                                        windowOverride: window)
+                                        windowOverride: window,
+                                        settings: settingsWindowStore())
         defer { main.shutdown() }
 
         // Test 1: Enter with whitespace draft does not send or stop
@@ -1413,7 +1422,8 @@ private struct ComposerHeightHost: View {
                                      styleMask: [.titled, .resizable, .fullSizeContentView],
                                      backing: .buffered, defer: false)
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
-                                        windowOverride: window)
+                                        windowOverride: window,
+                                        settings: settingsWindowStore())
         defer { main.shutdown() }
 
         // Exercise the real session lifecycle with fake audio and transport. A
@@ -3543,7 +3553,7 @@ private struct ComposerHeightHost: View {
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
         let defaults = EchoTestResources.defaults()
-        let main = MainWindowController(workspace: workspace, defaults: defaults)
+        let main = MainWindowController(workspace: workspace, defaults: defaults, settings: SettingsStore(secrets: ComposerSecrets()))
         defer { main.shutdown() }
 
         // 1. Three-column layout is preserved
@@ -4128,7 +4138,7 @@ private struct ComposerHeightHost: View {
             let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
             defer { workspace.shutdown(); voice.shutdown() }
             XCTAssertTrue(workspace.associateProject(workspace.addProject(url: root), conversationID: workspace.selected!.id))
-            let main = MainWindowController(workspace: workspace, defaults: standard)
+            let main = MainWindowController(workspace: workspace, defaults: standard, settings: SettingsStore(secrets: ComposerSecrets()))
             XCTAssertTrue(main.splitController.splitView.autosaveName == "main" && main.window?.frameAutosaveName == "main",
                          "Standard defaults arm AppKit's autosave")
             let window = try XCTUnwrap(main.window)
@@ -4189,7 +4199,7 @@ private struct ComposerHeightHost: View {
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
-        let main = MainWindowController(workspace: workspace, defaults: standard)
+        let main = MainWindowController(workspace: workspace, defaults: standard, settings: SettingsStore(secrets: ComposerSecrets()))
         // Disarmed before the defaults are put back, or its next deferred write lands after them.
         defer { main.shutdown(); main.splitController.splitView.autosaveName = nil; main.window?.setFrameAutosaveName("") }
         main.present()
@@ -4222,7 +4232,8 @@ private struct ComposerHeightHost: View {
         let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
         XCTAssertTrue(workspace.associateProject(workspace.addProject(url: root), conversationID: workspace.selected!.id))
-        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults())
+        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
+                                        settings: SettingsStore(secrets: ComposerSecrets()))
         defer { main.shutdown() }
         main.present()
         let split = main.splitController
@@ -4295,6 +4306,38 @@ private struct ComposerHeightHost: View {
             try await Task.sleep(for: .milliseconds(100))
         }
         throw SettingsError("Real events need the workspace window frontmost under the pointer")
+    }
+
+    /// The project row's pencil button only appears under the pointer, and SwiftUI folds it into
+    /// the row, so accessibility gets it as the row's named action instead.
+    func testProjectRowOffersNewChatAsANamedAction() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-project-action-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        defer { workspace.shutdown() }
+        let projectID = workspace.addProject(url: root)
+        let plain = try XCTUnwrap(workspace.selected)
+        XCTAssertNil(plain.projectID)
+        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
+                                        settings: SettingsStore(secrets: ComposerSecrets()))
+        defer { main.shutdown() }
+        main.sidebarItem.isCollapsed = false
+        main.present()
+        let sidebar = main.sidebarItem.viewController.view
+        var row: AnyObject?
+        for _ in 0..<50 where row == nil {
+            try await Task.sleep(for: .milliseconds(20)); sidebar.layoutSubtreeIfNeeded()
+            row = findAccessibility("workspace.project.\(projectID)", in: sidebar)
+        }
+        let project = try XCTUnwrap(row, "The project row is exposed to accessibility")
+        let actions: [NSAccessibilityCustomAction] = project.accessibilityCustomActions?() ?? []
+        let action = try XCTUnwrap(actions.first { $0.name == "在此项目中新建对话" },
+                                   "The row offers its new chat by name: \(actions.map(\.name))")
+        XCTAssertTrue(action.handler?() ?? (action.target?.perform(action.selector, with: action) != nil))
+        let opened = try XCTUnwrap(workspace.selected)
+        XCTAssertTrue(opened.id != plain.id && opened.projectID == projectID,
+                     "The action opens a new chat in the project, got \(String(describing: opened.projectID))")
     }
 
     private func findView(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {

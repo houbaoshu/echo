@@ -256,8 +256,7 @@ struct LocalModelSection: View {
     private func reveal() {
         if case .ready(let url) = settings.localModel {
             NSWorkspace.shared.activateFileViewerSelecting([url])
-        } else {
-            let folder = LocalModelLocation.installURL.deletingLastPathComponent()
+        } else if let folder = settings.localModels?.models {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             NSWorkspace.shared.open(folder)
         }

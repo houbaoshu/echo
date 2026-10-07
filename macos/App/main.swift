@@ -21,7 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .hosted: return
                 case .ui(let root, let defaults):
                     installMenus()
-                    let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: TestBootstrap.Secrets())
+                    let settings = SettingsStore(url: root.appendingPathComponent("settings.json"),
+                        localModels: LocalModelLocation(models: root.appendingPathComponent("Models", isDirectory: true)),
+                        secrets: TestBootstrap.Secrets())
                     if settings.draft.model.isEmpty {
                         settings.selectProvider(.ollama)
                         settings.draft.model = "offline-fixture"
@@ -99,14 +101,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = DictationDiagnostics.shared
         installMenus()
         do {
-            let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
+            let localModels = LocalModelLocation.app
+            let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"),
+                                         localModels: localModels)
             let pets = PetCatalog(settings: settings,
                                   builtinRoot: Bundle.main.resourceURL?.appendingPathComponent("pets"),
                                   importedRoot: SettingsStore.directory.appendingPathComponent("pets"))
             pets.onFailure = { [weak self] error in self?.showFailure(error) }
             self.pets = pets
             let store = try pets.loadInitial()
-            let localChat = LocalChatService(backend: CoreAILocalChatBackend())
+            let localChat = LocalChatService(backend: CoreAILocalChatBackend(locate: { localModels.find() }))
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: WorkspacePersistence.defaultURL),
                                            sourceFactory: { AgentHarness(settings: settings, local: localChat) })
             // Live Voice's planet. It loads its sprite only while a call is running, so the app

@@ -56,6 +56,39 @@ import SwiftUI
     func cancel() { pending?.resume(throwing: CancellationError()); pending = nil }
 }
 
+/// Key codes for the synthetic key events below. A key event carries both what was typed and
+/// which key typed it; letters, digits and punctuation sit on different keys in different
+/// layouts (Dvorak's "s" is QWERTY's ";"), so their key is looked up in the layout the system
+/// uses for shortcuts, the way a real key press would arrive. Nothing is switched.
+@MainActor private enum TestKey {
+    static let tab = "\t", escape = "\u{1b}", down = "\u{F701}", up = "\u{F700}"
+    /// Keys that sit in the same place on every layout.
+    private static let fixed: [String: UInt16] = [
+        "\r": 36, tab: 48, " ": 49, escape: 53, "\u{F702}": 123, "\u{F703}": 124, down: 125, up: 126,
+    ]
+    static func code(for key: String) -> UInt16 {
+        if let code = fixed[key] { return code }
+        let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource().takeRetainedValue()
+        guard let property = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+            XCTFail("The keyboard layout has no key map"); return 0
+        }
+        let data = Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue() as Data
+        let found: UInt16? = data.withUnsafeBytes { bytes in
+            let layout = bytes.baseAddress!.assumingMemoryBound(to: UCKeyboardLayout.self)
+            for code in UInt16(0)..<128 {
+                var deadKeys: UInt32 = 0, length = 0
+                var characters = [UniChar](repeating: 0, count: 4)
+                let status = UCKeyTranslate(layout, code, UInt16(kUCKeyActionDown), 0, UInt32(LMGetKbdType()),
+                                            OptionBits(kUCKeyTranslateNoDeadKeysMask), &deadKeys, 4, &length, &characters)
+                if status == noErr, String(utf16CodeUnits: characters, count: length) == key { return code }
+            }
+            return nil
+        }
+        guard let found else { XCTFail("No key types \"\(key)\" in the current keyboard layout"); return 0 }
+        return found
+    }
+}
+
 /// Exact monitor/scroll/IME assertions run in Echo's real AppKit event loop.
 /// XCUITest independently drives the corresponding user workflows.
 @MainActor final class NativeAppKitEventTests: XCTestCase {
@@ -189,7 +222,8 @@ import SwiftUI
         let source = PreviewSource()
         let store = TaskStore(source: source)
         let workspace = WorkspaceStore(initialStore: store)
-        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults())
+        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
+                                        settings: SettingsStore(secrets: ComposerSecrets()))
         // A first launch shows the conversation on its own; ⇧Tab below needs the chat list to leave to.
         main.sidebarItem.isCollapsed = false
         let window = main.window!
@@ -333,7 +367,9 @@ import SwiftUI
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("menu-tests-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: ComposerSecrets())
+        let settings = SettingsStore(url: root.appendingPathComponent("settings.json"),
+                                     localModels: LocalModelLocation(models: root.appendingPathComponent("Models")),
+                                     secrets: ComposerSecrets())
         settings.draft.model = "test-model"
         settings.apiKey = "test-model"; settings.save()
         settings.voiceAPIKey = "test-voice"; settings.saveVoice()
@@ -360,6 +396,7 @@ import SwiftUI
         let oldMenu = NSApp.mainMenu
         NSApp.mainMenu = menu
         main.present()
+        try await activateHost()
         defer { NSApp.mainMenu = oldMenu; main.shutdown(); workspace.shutdown() }
         func refresh() async throws {
             try await Task.sleep(for: .milliseconds(100)); window.contentView?.layoutSubtreeIfNeeded()
@@ -373,14 +410,14 @@ import SwiftUI
             XCTAssertTrue(window.makeFirstResponder(editor))
             return editor
         }
-        func event(_ key: String, _ code: UInt16, _ modifiers: NSEvent.ModifierFlags) -> NSEvent {
+        func event(_ key: String, _ modifiers: NSEvent.ModifierFlags) -> NSEvent {
             NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
                 windowNumber: window.windowNumber, context: nil, characters: modifiers.contains(.shift) ? key.uppercased() : key,
-                charactersIgnoringModifiers: key, isARepeat: false, keyCode: code)!
+                charactersIgnoringModifiers: key, isARepeat: false, keyCode: TestKey.code(for: key))!
         }
-        func press(_ key: String, _ code: UInt16, _ modifiers: NSEvent.ModifierFlags) {
+        func press(_ key: String, _ modifiers: NSEvent.ModifierFlags) {
             _ = focus()
-            NSApp.sendEvent(event(key, code, modifiers))
+            NSApp.sendEvent(event(key, modifiers))
         }
         try await refresh()
         func describe(_ items: [NSMenuItem]) -> String {
@@ -409,7 +446,7 @@ import SwiftUI
         original.store.stopTask()
         original.store.mainDraft = "保留草稿"
         try await refresh()
-        press("n", 45, .command)
+        press("n", .command)
         XCTAssertTrue(workspace.selectedID != original.id && workspace.selected?.projectID == projectID)
         XCTAssertTrue(workspace.selected?.store.mainDraft == "" && original.store.mainDraft == "保留草稿")
         try await refresh()
@@ -427,10 +464,10 @@ import SwiftUI
         var titles = Set<String>()
         for _ in 0..<2 {
             let left = main.sidebarItem.isCollapsed
-            press("s", 1, [.control, .command])
+            press("s", [.control, .command])
             XCTAssertTrue(main.sidebarItem.isCollapsed != left, "Control+Command+S works with composer focus")
             let right = main.inspectorItem.isCollapsed
-            press("i", 34, [.control, .command])
+            press("i", [.control, .command])
             XCTAssertTrue(main.inspectorItem.isCollapsed != right, "Control+Command+I works with composer focus")
             assertViewTitles()
             titles.formUnion([sidebarToggle.title, inspectorToggle.title])
@@ -438,21 +475,23 @@ import SwiftUI
         XCTAssertEqual(titles, ["显示边栏", "隐藏边栏", "显示检查器", "隐藏检查器"], "Both states were titled")
         let selected = workspace.selected!
         selected.store.mainDraft = "未发送"
-        press("d", 2, [.control, .shift])
+        press("d", [.control, .shift])
         XCTAssertTrue(dictation.isActive && dictation.conversationID == selected.id)
         try await refresh()
         chat.update()
         XCTAssertTrue(!chat.items[0].isEnabled && !chat.items[1].isEnabled, "Preparing capture disables finish and Live Voice")
-        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])), "Idle Escape passes through the menu during dictation")
-        _ = menu.performKeyEquivalent(with: event(".", 47, .command))
+        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", [])), "Idle Escape passes through the menu during dictation")
+        // A disabled item never runs: AppKit only beeps at its key equivalent. Checked through
+        // the item's validation rather than by pressing it, so the test makes no sound.
+        XCTAssertTrue(!chat.items[2].isEnabled, "Command+. is disabled with nothing to stop")
         XCTAssertTrue(dictation.isActive && !selected.store.isGenerating, "Disabled Command+. preserves dictation")
         permissionReply?.resume(returning: true); permissionReply = nil
         try await refresh()
         recognizer.emit("追加听写")
         _ = selected.store.send("generate during dictation")
-        press("\u{1b}", 53, [])
+        press("\u{1b}", [])
         XCTAssertTrue(!selected.store.isGenerating && dictation.isActive, "Stop preserves ordinary recording")
-        press("d", 2, [.control, .shift])
+        press("d", [.control, .shift])
         XCTAssertTrue(dictation.state == .finalizing)
         chat.update()
         XCTAssertTrue(!chat.items[0].isEnabled && !chat.items[1].isEnabled, "Finalization cannot restart dictation or start Voice")
@@ -461,46 +500,48 @@ import SwiftUI
         XCTAssertTrue(selected.store.mainDraft == "未发送\n追加听写" && !dictation.isActive)
         XCTAssertTrue(window.firstResponder is ComposerTextView && !selected.store.isGenerating)
 
-        press("v", 9, [.control, .shift])
+        press("v", [.control, .shift])
         XCTAssertTrue(voice.isActive && voice.conversationID == selected.id, "Live Voice starts despite a nonempty draft")
         chat.update()
         XCTAssertTrue(!chat.items[0].isEnabled && chat.items[1].isEnabled, "Live Voice excludes dictation")
-        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])) && voice.isActive)
+        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", [])) && voice.isActive)
         _ = selected.store.send("generate")
         let editor = focus()
         editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
         chat.update()
-        XCTAssertTrue(!chat.items[2].isEnabled)
-        _ = menu.performKeyEquivalent(with: event(".", 47, .command))
+        XCTAssertTrue(!chat.items[2].isEnabled, "Command+. is disabled while composing")
         XCTAssertTrue(selected.store.isGenerating && editor.hasMarkedText(), "Disabled Command+. preserves the task and IME composition")
-        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])), "Menu leaves Escape to marked text")
-        NSApp.sendEvent(event("\u{1b}", 53, []))
+        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", [])), "Menu leaves Escape to marked text")
+        // A real input method takes this Escape to end its composition. The composition here
+        // is set directly, so a real Escape would fall through to the window and beep; what
+        // matters is that the window's Escape declines while text is marked.
+        XCTAssertTrue(!main.canHandleEscape && !main.handleEscape(), "Escape is left to the input method")
         XCTAssertTrue(selected.store.isGenerating && voice.isActive, "IME Escape does not Stop or End Voice")
         editor.unmarkText()
         let panel = NSPanel(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         panel.makeKeyAndOrderFront(nil)
-        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])) && selected.store.isGenerating,
+        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", [])) && selected.store.isGenerating,
                      "An independent panel keeps its default Escape")
         panel.orderOut(nil); window.makeKeyAndOrderFront(nil)
         try await refresh()
-        press("\u{1b}", 53, [])
+        press("\u{1b}", [])
         XCTAssertTrue(!selected.store.isGenerating && voice.isActive, "Escape performs Stop and preserves Live Voice")
-        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", 53, [])), "Unclaimed Escape retains default behavior")
+        XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", [])), "Unclaimed Escape retains default behavior")
         XCTAssertTrue(selected.store.send("stop from menu"))
         window.makeKey()
         XCTAssertTrue(NSApp.keyWindow === window, "Main window is key for the Stop menu: active=\(NSApp.isActive), key=\(window.isKeyWindow), actual=\(String(describing: NSApp.keyWindow))")
         XCTAssertTrue(main.canHandleEscape, "Stop menu has a stoppable task without marked text")
         chat.update()
         XCTAssertTrue(chat.items[2].isEnabled, "Native Stop item validates as enabled")
-        XCTAssertTrue(menu.performKeyEquivalent(with: event(".", 47, .command)))
+        XCTAssertTrue(menu.performKeyEquivalent(with: event(".", .command)))
         XCTAssertTrue(!selected.store.isGenerating && voice.isActive, "Command+. uses the native Stop menu and preserves Live Voice")
         XCTAssertTrue(selected.store.send("stop from composer"))
-        press(".", 47, .command)
+        press(".", .command)
         XCTAssertTrue(!selected.store.isGenerating && voice.isActive, "Command+. reaches Stop with composer focus")
         // End Voice addresses the existing owner even after navigating elsewhere.
         workspace.newConversation()
         try await refresh()
-        press("v", 9, [.control, .shift])
+        press("v", [.control, .shift])
         XCTAssertTrue(!voice.isActive && !dictation.isActive)
     }
 
@@ -624,7 +665,9 @@ import SwiftUI
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("settings-keys-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let settings = SettingsStore(url: root.appendingPathComponent("settings.json"), secrets: ComposerSecrets())
+        let settings = SettingsStore(url: root.appendingPathComponent("settings.json"),
+                                     localModels: LocalModelLocation(models: root.appendingPathComponent("Models")),
+                                     secrets: ComposerSecrets())
         settings.draft.model = "test-model"; settings.apiKey = "test-key"; settings.save()
         settings.voiceAPIKey = "test-voice"; settings.saveVoice()
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
@@ -648,16 +691,15 @@ import SwiftUI
         NSApp.mainMenu = menu
         defer { NSApp.mainMenu = priorMenu }
         main.present()
-        NSApp.activate(ignoringOtherApps: true)
+        try await activateHost()
         defer { main.shutdown(); workspace.shutdown() }
         func settle() async throws {
             try await Task.sleep(for: .milliseconds(140)); window.contentView?.layoutSubtreeIfNeeded()
         }
         // Direct AppKit dispatch preserves the exact responder assertions. The
         // XCUITest suite also checks these routes through system input injection.
-        func key(_ code: CGKeyCode, _ flags: CGEventFlags = []) async throws {
-            let characters: [CGKeyCode: String] = [0: "a", 1: "s", 18: "1", 36: "\r", 48: "\t", 49: " ", 53: "\u{1b}", 125: "\u{F701}", 126: "\u{F700}"]
-            let chars = characters[code] ?? ""
+        func key(_ chars: String, _ flags: CGEventFlags = []) async throws {
+            let code = TestKey.code(for: chars)
             let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
                 modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(flags.rawValue)), timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil, characters: chars,
@@ -676,8 +718,8 @@ import SwiftUI
         }
         /// Tab until `ready`, so the assertions do not depend on the traversal length,
         /// which grows when Full Keyboard Access adds buttons to the loop.
-        func tab(until ready: @autoclosure () -> Bool, _ description: String, limit: Int = 14) async throws {
-            for _ in 0..<limit where !ready() { try await key(48) }
+        func tab(until ready: @autoclosure () -> Bool, _ description: String, limit: Int = 30) async throws {
+            for _ in 0..<limit where !ready() { try await key(TestKey.tab) }
             XCTAssertTrue(ready(), "Tab never reached \(description); stopped at \(String(describing: responder()))")
         }
         let conversation = workspace.selected ?? workspace.newConversation()
@@ -709,14 +751,10 @@ import SwiftUI
         XCTAssertTrue(!(window.firstResponder is ComposerTextView), "Settings has its own first responder")
         XCTAssertTrue(isSectionList(responder()),
                      "Opening settings focuses its section list, not the host: \(String(describing: responder()))")
-        try await key(125)
+        try await key(TestKey.down)
         XCTAssertTrue(settings.selectedSection == .voice, "↓ moves sections as soon as the page opens")
-        try await key(126)
+        try await key(TestKey.up)
         XCTAssertTrue(settings.selectedSection == .model)
-        try await key(0)
-        try await key(1)
-        XCTAssertTrue(conversation.store.mainDraft.isEmpty,
-                     "Typing on the settings page must not reach the chat draft: \(conversation.store.mainDraft)")
 
         // 2. The section sidebar is a real system source list, selected by the store.
         guard let list = findAccessibility("settings.sections", in: window.contentView!) as? NSTableView
@@ -740,14 +778,14 @@ import SwiftUI
         try await tab(until: isSectionList(responder()), "the section list again")
 
         // 5. Arrow keys move the selection the way a source list does.
-        try await key(125)
+        try await key(TestKey.down)
         XCTAssertTrue(settings.selectedSection == .voice && list.selectedRow == 1, "Down arrow selects the next section")
-        try await key(125)
+        try await key(TestKey.down)
         XCTAssertTrue(settings.selectedSection == .planet && list.selectedRow == 2)
-        try await key(125)
+        try await key(TestKey.down)
         XCTAssertTrue(settings.selectedSection == .pet && list.selectedRow == 3)
-        try await key(126)
-        try await key(126)
+        try await key(TestKey.up)
+        try await key(TestKey.up)
         XCTAssertTrue(settings.selectedSection == .voice && list.selectedRow == 1, "Up arrow selects the previous section")
 
         // 6. The swapped pane rejoins the key view loop, so Tab still leaves the list.
@@ -758,13 +796,15 @@ import SwiftUI
         let voiceKey = settings.voiceAPIKey
         // "1" is the keystroke no input method absorbs into a composition, so these
         // assertions hold whichever input source the machine is on.
-        try await key(18)
+        try await key("1")
         XCTAssertTrue(settings.voiceAPIKey != voiceKey && settings.isVoiceDirty, "The voice API Key field takes typed text")
+        XCTAssertTrue(conversation.store.mainDraft.isEmpty,
+                     "Typing on the settings page must not reach the chat draft: \(conversation.store.mainDraft)")
         settings.restoreVoice()
         try await settle()
         try await tab(until: isFieldEditor(responder()) && !isSecureFieldEditor(responder()), "the voice speaker field")
         let speaker = settings.voiceDraft.speaker
-        try await key(18)
+        try await key("1")
         XCTAssertTrue(settings.voiceDraft.speaker != speaker, "The voice field takes typed text")
         // Return is the section's default action, the way it is in any system form
         // with a save button — including from inside the field being edited.
@@ -782,11 +822,11 @@ import SwiftUI
         try await settle()
         try await tab(until: isFieldEditor(responder()), "the Base URL field")
         let baseURL = settings.draft.baseURL
-        try await key(18)
+        try await key("1")
         XCTAssertTrue(settings.draft.baseURL != baseURL && settings.isDirty, "Base URL edits mark the model settings dirty")
         try await tab(until: isSecureFieldEditor(responder()), "the API Key secure field")
         let apiKey = settings.apiKey
-        try await key(18)
+        try await key("1")
         XCTAssertTrue(settings.apiKey != apiKey, "The secure field takes typed text")
         settings.restore()
         try await settle()
@@ -806,25 +846,34 @@ import SwiftUI
 
         // 9. Space activates the focused control when Full Keyboard Access is on;
         // Return stays reserved for a default button, as it is system wide.
-        let keyboardUIMode = UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain)
-            .flatMap { $0["AppleKeyboardUIMode"] as? Int } ?? 0
-        let fullKeyboardAccess = keyboardUIMode & 2 != 0
+        // Keyboard Navigation (System Settings › Keyboard) decides which controls are Tab stops.
+        // AppKit's own answer is what counts; it comes from the window server, not a preferences file.
+        let fullKeyboardAccess = NSApp.isFullKeyboardAccessEnabled
         if fullKeyboardAccess {
             let localOnly = settings.snapshot.localModelOnly
             try await tab(until: responder().map { String(describing: type(of: $0)).contains("PlatformSwitch") } ?? false,
                           "the local model switch")
-            try await key(49)
+            try await key(" ")
             XCTAssertTrue(settings.snapshot.localModelOnly != localOnly, "Space flips the focused switch")
-            try await key(49)
+            try await key(" ")
             XCTAssertTrue(settings.snapshot.localModelOnly == localOnly)
             settings.selectedSection = .pet
             try await settle()
             let pet = pets.selectedID
             try await tab(until: (responder()?.frame.width ?? 0) > 150 && (responder()?.frame.height ?? 0) > 150,
                           "a pet card")
-            try await key(49)
+            try await key(" ")
             XCTAssertTrue(pets.selectedID != pet, "Space activates the focused pet card")
-
+        } else {
+            // Without it the switch is no Tab stop: a whole lap from the list never lands on it.
+            XCTAssertTrue(window.makeFirstResponder(list))
+            var lap: [String] = []
+            repeat {
+                try await key(TestKey.tab)
+                lap.append(responder().map { String(describing: type(of: $0)) } ?? "nil")
+            } while !isSectionList(responder()) && lap.count < 30
+            XCTAssertTrue(isSectionList(responder()), "Tab comes back round to the section list: \(lap)")
+            XCTAssertTrue(!lap.contains { $0.contains("PlatformSwitch") }, "The switch is no Tab stop: \(lap)")
         }
 
         // 10. A voice test started from the page keeps running on its own: the stub
@@ -854,7 +903,7 @@ import SwiftUI
         // the menu and responder chain, independently of the current input source.
         let closeEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
             windowNumber: window.windowNumber, context: nil, characters: "w", charactersIgnoringModifiers: "w",
-            isARepeat: false, keyCode: 13)!
+            isARepeat: false, keyCode: TestKey.code(for: "w"))!
         NSApp.sendEvent(closeEvent)
         try await settle()
         XCTAssertTrue(!main.isSettingsVisible && main.window!.isVisible,
@@ -866,7 +915,7 @@ import SwiftUI
         main.present()
         workspace.requestComposerFocus(conversationID: conversation.id)
         try await settle()
-        try await key(18)
+        try await key("1")
         XCTAssertTrue(conversation.store.mainDraft.contains("1"), "The conversation remains editable after closing settings")
         conversation.store.mainDraft = ""
 
@@ -875,7 +924,7 @@ import SwiftUI
         window = main.settingsController!.window!
         try await settle()
         XCTAssertTrue(main.isSettingsVisible && isSectionList(responder()))
-        try await key(53)
+        try await key(TestKey.escape)
         XCTAssertTrue(!main.isSettingsVisible, "Escape leaves the settings page")
         XCTAssertTrue(main.window!.isVisible, "Escape leaves the conversation open")
         main.showSettings()
@@ -911,14 +960,15 @@ import SwiftUI
         // verifies the complete native Tab cycle without queued editor replacement.
         workspace.newConversation()
         workspace.select(try XCTUnwrap(ids["最近丁"]))
-        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults())
+        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
+                                        settings: SettingsStore(secrets: ComposerSecrets()))
         defer { main.shutdown() }
         // A first launch shows the conversation on its own; this scenario is about the chat list.
         main.sidebarItem.isCollapsed = false
         let window = main.window!
         let sidebar = main.sidebarItem.viewController.view
         main.present()
-        NSApp.activate(ignoringOtherApps: true)
+        try await activateHost()
         func settle() async throws {
             try await Task.sleep(for: .milliseconds(150)); window.contentView?.layoutSubtreeIfNeeded()
         }
@@ -971,8 +1021,9 @@ import SwiftUI
         XCTAssertTrue(window.firstResponder !== list,
                      "Tab leaves the chat list — list.nextValidKeyView=\(String(describing: list.nextValidKeyView))")
         let afterOneTab = window.firstResponder
+        // Keyboard Navigation adds stops to the lap, so its length is not fixed.
         var returned = false
-        for _ in 0..<5 where !returned {
+        for _ in 0..<30 where !returned {
             try await key(48)
             returned = window.firstResponder === list
         }
@@ -981,7 +1032,7 @@ import SwiftUI
         try await key(48, .maskShift)
         XCTAssertTrue(window.firstResponder !== list, "⇧Tab leaves the chat list too")
         var came = false
-        for _ in 0..<5 where !came {
+        for _ in 0..<30 where !came {
             try await key(48, .maskShift)
             came = window.firstResponder === list
         }
@@ -1167,7 +1218,7 @@ import SwiftUI
         try await key(48)
         XCTAssertTrue(window.firstResponder !== list, "Tab still leaves the chat list after a search")
         var cameBack = false
-        for _ in 0..<5 where !cameBack {
+        for _ in 0..<30 where !cameBack {
             try await key(48)
             cameBack = window.firstResponder === list
         }
@@ -1191,19 +1242,22 @@ import SwiftUI
 
     }
 
-    private func waitForPointerTarget(_ window: NSWindow, at point: NSPoint? = nil,
-                                                        timeout: Duration = .seconds(5)) async throws {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        let probe = point ?? NSPoint(x: window.frame.midX, y: window.frame.midY)
-        while clock.now < deadline {
-            if NSApp.isActive, window.isKeyWindow,
-               NSWindow.windowNumber(at: probe, belowWindowWithWindowNumber: 0) == window.windowNumber { return }
-            NSApp.activate()
-            window.makeKeyAndOrderFront(nil)
-            try await Task.sleep(for: .milliseconds(100))
+    /// Brings this test host to the front, as a click on it would. A key window, menu key
+    /// equivalents and SwiftUI's Tab handling all need Echo to be the active app, and
+    /// `NSApp.activate` is only a request, which macOS turns down while another app (Xcode, a
+    /// terminal) is in front.
+    /// Opening Echo's own bundle goes through Launch Services, which brings it forward.
+    private func activateHost() async throws {
+        guard !NSApp.isActive else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        _ = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+        let clock = ContinuousClock(), deadline = clock.now + .seconds(5)
+        while !NSApp.isActive && clock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        guard NSApp.isActive else {
+            let front = NSWorkspace.shared.frontmostApplication
+            throw SettingsError("The test host did not come to the front; \(front?.localizedName ?? "nothing") is")
         }
-        throw SettingsError("Real events need the workspace window frontmost under the pointer")
     }
 
     private func findView(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {

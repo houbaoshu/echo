@@ -41,8 +41,11 @@ final class AppIntegrationTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["ECHO_LOCAL_MODEL_PATH"] != nil else {
             throw XCTSkip("Set ECHO_LOCAL_MODEL_PATH to an exported model to run the local model")
         }
-        guard case .ready = LocalModelLocation.find() else { return XCTFail("\(LocalModelLocation.find())") }
-        let backend = CoreAILocalChatBackend()
+        // The model comes from ECHO_LOCAL_MODEL_PATH; a Models folder that does not exist keeps the installed copy out.
+        let location = LocalModelLocation(models: FileManager.default.temporaryDirectory
+            .appendingPathComponent("echo-local-models-\(UUID())", isDirectory: true))
+        guard case .ready = location.find() else { return XCTFail("\(location.find())") }
+        let backend = CoreAILocalChatBackend(locate: { location.find() })
         let harness = AgentHarness(resolveModel: { throw SettingsError("no cloud model") },
                                    local: LocalChatService(backend: backend), localOnly: { true })
         let store = TaskStore(source: harness)
