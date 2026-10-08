@@ -75,13 +75,23 @@ actor PendingModelTester: ConnectionTesting {
     func setPlaybackPaused(_ paused: Bool) { playbackPaused = paused }
     var outputMuted = false
     func setOutputMuted(_ muted: Bool) { outputMuted = muted }
+    /// While set, each chunk is recorded and then stays playing, as audio still being heard, until
+    /// `releasePlayback()`. Interrupting or stopping playback ends it, as it does in VoiceAudio.
+    var holdsPlayback = false
+    private var heldPlays: [CheckedContinuation<Void, Never>] = []
+    var pendingPlays: Int { heldPlays.count }
+    func releasePlayback() {
+        let held = heldPlays; heldPlays = []
+        for play in held { play.resume() }
+    }
     func play(_ data: Data) async throws {
-        if let onPlay { try await onPlay(data) }
-        else { played.append(data) }
+        if let onPlay { try await onPlay(data); return }
+        played.append(data)
+        if holdsPlayback { await withCheckedContinuation { heldPlays.append($0) } }
     }
     func drain() async throws { await onDrain?() }
-    func interruptPlayback() { stops += 1; playbackPaused = false; playbackFrames = 0 }
-    func stop() { stopCalls += 1; capturing = false; playbackPaused = false; monitoring = false; playbackFrames = 0; input?.finish(); input = nil }
+    func interruptPlayback() { stops += 1; playbackPaused = false; playbackFrames = 0; releasePlayback() }
+    func stop() { stopCalls += 1; capturing = false; playbackPaused = false; monitoring = false; playbackFrames = 0; releasePlayback(); input?.finish(); input = nil }
 }
 @MainActor final class FakeRecognizer: VoiceRecognizing {
     var callback: (@MainActor (ASRResult) -> Void)?
@@ -136,6 +146,16 @@ actor PendingModelTester: ConnectionTesting {
         histories.append(messages); callback = receive
     }
     func cancel() {}
+}
+/// Microphone permission the test answers, which holds a call in its starting phase meanwhile.
+@MainActor final class HeldPermission {
+    private var pending: CheckedContinuation<Bool, Never>?
+    var isWaiting: Bool { pending != nil }
+    func ask() async -> Bool { await withCheckedContinuation { pending = $0 } }
+    func answer(_ allowed: Bool) {
+        let request = pending; pending = nil
+        request?.resume(returning: allowed)
+    }
 }
 @MainActor final class FakeSecrets: SecretStore {
     var values: [String: String] = [:]

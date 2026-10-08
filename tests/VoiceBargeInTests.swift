@@ -5,26 +5,30 @@ import Combine
 import Foundation
 
 @MainActor private final class BargeInFixture {
+    static let reply = "今天的天气非常晴朗，适合出门散步。"
     let audio = FakeAudio()
-    let source = FakeSource()
-    lazy var store = TaskStore(source: source)
+    let puppet = PuppetModel()
+    lazy var store = TaskStore(source: AgentHarness(resolveModel: { [puppet] in puppet.factory }))
     var recognizers: [FakeRecognizer] = []
     var synths: [FakeSynthesizer] = []
     let timeout: Duration
     lazy var voice = VoiceSessionController(audio: audio, recognizer: { [unowned self] in
         let r = FakeRecognizer(); recognizers.append(r); return r
     }, synthesizer: { [unowned self] in
-        let s = FakeSynthesizer(); synths.append(s); return s
+        let s = FakeSynthesizer(); s.emitsAudio = true; synths.append(s); return s
     }, tailProtectionDuration: .milliseconds(40), bargeInTimeout: timeout, permission: { true })
     lazy var conversation = WorkspaceConversation(store: store)
     init(timeout: Duration = .seconds(3)) { self.timeout = timeout }
+    var userTexts: [String] { store.messages.filter { $0.role == .user }.map(\.content) }
+    /// Speaks the completed reply, its first audio still playing: the Agent hands TTS the whole
+    /// reply at once, so the audio is held to stay in the middle of playback.
     func start() async throws {
+        audio.holdsPlayback = true
         voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "fake")
         await VoiceTests.tick()
         recognizers[0].emit("用户原来的问题", start: 0, end: 200, final: true)
-        source.callback?(.progress("今天的天气非常晴朗，适合出门散步。"))
-        await VoiceTests.tick()
-        try await synths[0].callback?(Data([1, 2]))
+        try await puppet.reply(Self.reply)
+        await VoiceTests.waitUntil { audio.pendingPlays == 1 }
     }
     func frames(_ count: Int, _ data: Data = VoiceTests.activityPCM(), epoch: Int? = nil) async {
         let epoch = epoch ?? audio.captureEpoch
@@ -124,44 +128,48 @@ extension VoiceTests {
             defer { f.shutdown() }
             try await f.start()
             let run = f.store.task!.runID, oldEpoch = f.audio.captureEpoch
-            let oldModel = f.source.callback!, oldTTS = f.synths[0].callback!
+            let oldTTS = f.synths[0].callback!
             f.store.mainDraft = "保留文字草稿"
             check(f.voice.snapshot.bargeIn == .armed(run) && f.audio.monitoring && f.recognizers.count == 1,
                   "first playback arms only local capture; ASR stays closed")
             await f.probe()
-            check(f.audio.playbackPaused && f.store.isGenerating && !f.synths[0].cancelled
+            // The Agent speaks a turn once it has completed; that completed turn is what must survive.
+            check(f.audio.playbackPaused && f.store.task?.status == .completed && !f.synths[0].cancelled
                   && f.voice.snapshot.bargeIn == .checking(run) && f.voice.status == "正在确认讲话…",
                   "local activity pauses playback without cancelling or submitting")
             await f.frames(20, epoch: oldEpoch)
             check(f.recognizers.count == 1, "queued pre-pause PCM cannot advance confirmation or reach ASR")
             await f.recognize()
-            check(f.recognizers.count == 2 && f.audio.playbackPaused && f.store.isGenerating,
+            check(f.recognizers.count == 2 && f.audio.playbackPaused && f.store.task?.status == .completed,
                   "fresh ASR is opened only after independent post-tail activity")
             check(f.recognizers[1].receivedAudio == [Data(repeating: activityPCM(amplitude: 0.08), count: 5)],
                   "upload begins with clean pre-roll, excluding all playback and tail samples")
             f.recognizers[0].emit("迟到的定稿", start: 0, end: 300, final: true)
-            check(f.source.histories.count == 1 && !f.synths[0].cancelled, "old ASR cannot confirm the probe")
+            check(f.userTexts.count == 1 && !f.synths[0].cancelled, "old ASR cannot confirm the probe")
             f.recognizers[1].emit("我想换一个问题", start: 0, end: 300, final: finalFirst)
-            check(f.synths[0].cancelled && f.store.messages[1].status == .stopped && !f.audio.playbackPaused,
-                  "fresh partial or final confirms barge-in and cancels model/TTS/playback")
+            check(f.synths[0].cancelled && f.store.messages[1].role == .assistant && f.store.messages[1].status == .completed
+                  && !f.audio.playbackPaused,
+                  "fresh partial or final confirms barge-in and cancels TTS and playback, keeping the completed reply")
             check(f.voice.snapshot.session.owner?.conversationID == f.conversation.id
                   && f.store.mainDraft == "保留文字草稿", "barge-in preserves owner and draft")
             if !finalFirst {
-                check(f.source.histories.count == 1 && f.voice.subtitle == "我想换一个问题",
+                check(f.userTexts.count == 1 && f.voice.subtitle == "我想换一个问题",
                       "confirmed partial stops output but never creates a user message")
                 // Even after confirmation, a revision back to the assistant must not submit.
                 f.recognizers[1].emit("今天的天气非常晴朗", start: 0, end: 400, final: true)
-                check(f.source.histories.count == 1, "echo revisions stay guarded through the first final")
+                check(f.userTexts.count == 1, "echo revisions stay guarded through the first final")
                 f.recognizers[1].emit("我想换一个问题", start: 0, end: 500, final: true)
             }
-            check(f.source.histories.count == 2 && f.source.histories.last?.last?.content == "我想换一个问题",
+            try await f.puppet.waitForRequests(2)
+            check(f.userTexts == ["用户原来的问题", "我想换一个问题"] && f.puppet.requests[1].userTexts.last == "我想换一个问题",
                   "one fresh final submits exactly one new user turn")
-            f.recognizers[1].emit("我想换一个问题", start: 0, end: 500, final: true)
-            oldModel(.completed("旧回复迟到"))
+            // The same final again. ASR stays open while the Agent works, so it must be the very
+            // utterance that submitted: one ending later counts as new speech.
+            f.recognizers[1].emit("我想换一个问题", start: 0, end: finalFirst ? 300 : 500, final: true)
             do { try await oldTTS(Data([3, 4])); check(false, "old TTS must reject") }
             catch is CancellationError {  }
-            check(f.source.histories.count == 2 && f.store.messages[1].status == .stopped
-                  && f.voice.snapshot.bargeIn == .off, "duplicates and old model/TTS cannot affect the new run")
+            check(f.userTexts.count == 2 && f.store.messages[1].status == .completed
+                  && f.voice.snapshot.bargeIn == .off, "duplicates and old TTS cannot affect the new run")
         }
 
         let f = BargeInFixture()
@@ -170,12 +178,12 @@ extension VoiceTests {
         defer { finishDrain?.resume(); f.shutdown() }
         try await f.start()
         let run = f.store.task!.runID
-        f.source.callback?(.completed("今天的天气非常晴朗，适合出门散步。"))
-        await tick()
-        check(f.voice.snapshot.replyAudio == .draining(run), "fixture is in model-completed playback drain")
+        f.audio.releasePlayback()
+        await waitUntil { finishDrain != nil }
+        check(f.voice.snapshot.replyAudio == .draining(run), "fixture is in playback drain after synthesis finished")
         await f.probe(); await f.recognize()
         f.recognizers[1].emit("我还有个问题", start: 0, end: 300, final: true)
-        check(f.store.messages[1].status == .completed && f.source.histories.count == 2,
+        check(f.store.messages[1].status == .completed && f.userTexts.count == 2,
               "barge-in during drain preserves completed assistant text")
         let state = f.voice.snapshot
         finishDrain?.resume(); finishDrain = nil
@@ -205,11 +213,12 @@ extension VoiceTests {
             await f.probe()
             await f.frames(12)
             await f.frames(12, Data(repeating: 0, count: 640))
-            check(f.recognizers.count == 1 && f.source.histories.count == 1,
+            check(f.recognizers.count == 1 && f.userTexts.count == 1,
                   "speaker-only echo and its tail never open ASR or create a turn")
             try await Task.sleep(for: .milliseconds(250))
-            check(!f.audio.playbackPaused && !f.synths[0].cancelled && f.store.isGenerating
-                  && f.voice.snapshot.bargeIn == .armed(f.store.task!.runID),
+            let run = f.store.task!.runID
+            check(!f.audio.playbackPaused && !f.synths[0].cancelled && f.voice.snapshot.replyAudio == .playing(run)
+                  && f.voice.snapshot.bargeIn == .armed(run),
                   "unconfirmed acoustic probe resumes the same reply")
         }
         for echo in ["今天的天气非常晴朗。", "今天的天气非常清朗", "？！"] {
@@ -218,15 +227,15 @@ extension VoiceTests {
             try await f.start(); await f.probe(); await f.recognize()
             f.recognizers[1].emit(echo, start: 0, end: 300, final: false)
             f.recognizers[1].emit(echo, start: 0, end: 500, final: true)
-            check(f.source.histories.count == 1 && f.voice.subtitle.isEmpty && !f.synths[0].cancelled,
+            check(f.userTexts.count == 1 && f.voice.subtitle.isEmpty && !f.synths[0].cancelled,
                   "residual echo/empty transcript cannot confirm or submit")
             try await Task.sleep(for: .milliseconds(250))
-            check(!f.audio.playbackPaused && f.recognizers[1].cancelled && f.store.isGenerating,
-                  "echo-only probe closes its ASR and resumes the existing run")
+            check(!f.audio.playbackPaused && f.recognizers[1].cancelled && f.voice.snapshot.replyAudio == .playing(f.store.task!.runID),
+                  "echo-only probe closes its ASR and resumes the existing reply")
             let state = f.voice.snapshot
             f.recognizers[1].emit("迟到的不同文字", start: 0, end: 600, final: true)
             f.recognizers[1].onReady?()
-            check(f.voice.snapshot == state && f.source.histories.count == 1,
+            check(f.voice.snapshot == state && f.userTexts.count == 1,
                   "timed-out probe callbacks cannot become ordinary user input")
         }
     }
@@ -264,14 +273,16 @@ extension VoiceTests {
             }
             await tick()
             check(old.cancelled, "\(action) closes pending barge-in ASR")
-            let histories = f.source.histories.count
+            let users = f.userTexts.count
             old.emit("迟到的插话", start: 0, end: 500, final: true)
             old.onReady?()
             try await Task.sleep(for: .milliseconds(290))
-            check(f.source.histories.count == histories && !f.audio.playbackPaused,
+            check(f.userTexts.count == users && !f.audio.playbackPaused,
                   "\(action) invalidates late ASR and the old probe timer")
             if action == "send" {
-                check(f.voice.snapshot.bargeIn == .off && f.voice.snapshot.recognition == .off(.currentReply),
+                // The Agent listens while the replacement runs, on a recognizer of its own.
+                check(f.voice.snapshot.bargeIn == .off && f.voice.snapshot.recognition == .listening
+                      && f.recognizers.last !== old && f.store.isGenerating,
                       "old probe cannot rearm over a replacement run")
             } else if action == "end" || action == "failure" {
                 check(!f.voice.isActive && !f.audio.capturing, "ending leaves no capture or probe resources")
@@ -288,12 +299,12 @@ extension VoiceTests {
             defer { finishDrain?.resume(); f.shutdown() }
             try await f.start(); await f.probe(); await f.recognize()
             let run = f.store.task!.runID
-            f.source.callback?(.progress("今天的天气非常晴朗，适合出门散步。带好水。"))
-            await tick()
+            // The Agent sends no more model text after the final reply; TTS can still deliver audio.
+            f.audio.holdsPlayback = false
             try await f.synths[0].callback?(Data([4, 5]))
             check(f.audio.playbackPaused && f.recognizers.count == 2,
-                  "later model deltas and TTS chunks cannot bypass a paused probe")
-            f.source.callback?(.completed("今天的天气非常晴朗，适合出门散步。带好水。"))
+                  "later TTS chunks cannot bypass a paused probe")
+            f.audio.releasePlayback()
             await tick()
             try await Task.sleep(for: .milliseconds(250))
             check(!f.audio.playbackPaused && f.voice.snapshot.replyAudio == .draining(run)
@@ -304,21 +315,26 @@ extension VoiceTests {
             check(f.voice.snapshot.bargeIn == .off && f.recognizers.count == 3,
                   "normal drain and tail recovery clear the local monitor before fresh listening")
             f.recognizers[1].emit("旧候选", start: 0, end: 300, final: true)
-            check(f.source.histories.count == 1, "late candidate remains invalid after normal recovery")
+            check(f.userTexts.count == 1, "late candidate remains invalid after normal recovery")
         }
         do {
-            let audio = FakeAudio(), source = FakeSource(), synth = FakeSynthesizer()
-            let store = TaskStore(source: source)
+            let audio = FakeAudio(), synth = FakeSynthesizer(), permission = HeldPermission()
+            synth.emitsAudio = true
+            let (store, puppet) = agentStore()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
-                synthesizer: { synth }, captureTimeout: .milliseconds(70), permission: { true })
+                synthesizer: { synth }, captureTimeout: .milliseconds(70), permission: { await permission.ask() })
             let conversation = WorkspaceConversation(store: store)
-            defer { voice.shutdown(); store.shutdown() }
-            voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "fake")
-            await tick()
+            var finishDrain: CheckedContinuation<Void, Never>?
+            audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
+            defer { finishDrain?.resume(); permission.answer(false); voice.shutdown(); store.shutdown() }
+            // The reply completes while the call starts, so speaking it at activation closes the
+            // startup watchdog before any packet and only the monitor's watchdog remains.
             store.send("麦克风首包之前的文字")
-            source.callback?(.progress("开始播报"))
-            await tick()
-            try await synth.callback?(Data([0, 0]))
+            voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "fake")
+            try await puppet.reply("开始播报")
+            await waitUntil { store.task?.status == .completed && permission.isWaiting }
+            permission.answer(true)
+            await waitUntil { finishDrain != nil }
             check(audio.monitoring, "text reply enables local monitoring even before the first capture packet")
             try await Task.sleep(for: .milliseconds(120))
             check(!voice.isActive && voice.error?.contains("没有返回音频") == true,

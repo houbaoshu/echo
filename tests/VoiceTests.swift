@@ -25,6 +25,11 @@ extension EchoVoiceScenarios {
         }
         #expect(condition(), "Asynchronous condition did not become true before the deadline", sourceLocation: sourceLocation)
     }
+    /// A conversation on the native Agent whose model requests `puppet` answers.
+    @MainActor static func agentStore() -> (TaskStore, PuppetModel) {
+        let puppet = PuppetModel()
+        return (TaskStore(source: AgentHarness(resolveModel: { puppet.factory })), puppet)
+    }
     /// Live Voice's planet: which clip a state asks for, and what a mid-call swap has to do.
     @Test @MainActor static func planetTests() async throws {
         _ = NSApplication.shared
@@ -204,7 +209,7 @@ extension EchoVoiceScenarios {
             if case .endCall = decision { audio.onFailure?("音频设备已变化，通话已结束，请重新开始。", .deviceChange) }
         }
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
             var recognizers: [FakeRecognizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
@@ -235,7 +240,7 @@ extension EchoVoiceScenarios {
             check(!audio.capturing, "the ended call released the microphone")
         }
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, permission: { true })
             let conversation = WorkspaceConversation(store: store)
@@ -311,8 +316,11 @@ extension EchoVoiceScenarios {
     }
     @Test(.tags(.fast)) @MainActor static func snapshotLifecycleTests() async throws {
         _ = NSApplication.shared
-        let source = FakeSource(), audio = FakeAudio(), recognizer = FakeRecognizer(), synth = FakeSynthesizer()
-        let store = TaskStore(source: source), voice = VoiceSessionController(audio: audio, recognizer: { recognizer },
+        let audio = FakeAudio(), recognizer = FakeRecognizer(), synth = FakeSynthesizer()
+        let (store, puppet) = agentStore()
+        // The Agent hands TTS the whole final reply at once; holding its audio keeps it playing.
+        synth.emitsAudio = true; audio.holdsPlayback = true
+        let voice = VoiceSessionController(audio: audio, recognizer: { recognizer },
             synthesizer: { synth }, tailProtectionDuration: .milliseconds(20), permission: { true })
         let conversation = WorkspaceConversation(store: store)
         var published: [VoiceSessionSnapshot] = []
@@ -329,19 +337,23 @@ extension EchoVoiceScenarios {
               "current startup lifecycle publishes active recognition")
         store.send("测试状态")
         let run = store.task!.runID
-        check(voice.status == "正在思考… · 暂停聆听" && voice.snapshot.replyAudio == .none
-              && voice.snapshot.recognition == .off(.currentReply), "model starts without inventing playback and pauses recognition")
-        source.callback?(.progress("回答")); await tick()
-        check(voice.snapshot.replyAudio == .preparing(run) && voice.status == "正在准备播报… · 暂停聆听", "text synthesis preparation is distinct from playback")
-        try await synth.callback?(Data([0, 0]))
+        check(voice.status == "正在请求模型… · 可补充语音" && voice.snapshot.replyAudio == .none
+              && voice.snapshot.recognition == .listening, "the Agent request shows its step without inventing playback and keeps listening")
+        try await puppet.reply("回答")
+        await waitUntil { audio.pendingPlays == 1 }
+        // Synthesis begins and its first audio arrives within one turn of the main actor.
+        check(published.contains { $0.replyAudio == .preparing(run) && $0.recognition == .off(.currentReply)
+                && $0.presentation(modelIsGenerating: false).status == "正在准备播报… · 暂停聆听" },
+              "text synthesis preparation is distinct from playback")
         check(voice.snapshot.replyAudio == .playing(run) && voice.snapshot.recognition == .off(.currentReply)
               && voice.status == "正在播报 · 可打断" && voice.snapshot.bargeIn == .armed(run),
               "playback keeps ASR closed and arms local barge-in monitoring")
         let beforeSpeakerMute = voice.snapshot
         let interrupts = audio.stops
         voice.toggleSpeakerMute()
+        // The Agent speaks a turn once it has completed, so the reply to keep is the playback.
         check(voice.snapshot.speakerMuted && audio.outputMuted && !audio.playbackPaused
-              && !voice.isMuted && audio.stops == interrupts && store.isGenerating,
+              && !voice.isMuted && audio.stops == interrupts && !synth.cancelled && store.task?.status == .completed,
               "speaker mute silences output without pausing playback, muting microphone or stopping the reply")
         var expectedMuted = beforeSpeakerMute
         expectedMuted.speakerMuted = true
@@ -353,16 +365,19 @@ extension EchoVoiceScenarios {
         check(voice.snapshot.microphone == .muted && voice.snapshot.recognition == .off(.muted)
               && voice.snapshot.replyAudio == .playing(run) && voice.status == "正在播报 · 麦克风已静音",
               "mute atomically updates input preference without masking playback")
-        source.callback?(.completed("回答")); await tick()
+        audio.releasePlayback()
+        await waitUntil { finishPlayback != nil }
         check(voice.snapshot.replyAudio == .draining(run) && !store.isGenerating && voice.presentation.isReplyAudioActive
               && voice.status == "正在播报 · 麦克风已静音",
-              "completed model retains draining audio state")
+              "finished synthesis of the completed reply retains draining audio state")
         finishPlayback?.resume(); finishPlayback = nil
         await waitUntil { voice.snapshot.replyAudio == .none && voice.snapshot.recognition == .off(.muted) }
         check(voice.snapshot.replyAudio == .none && voice.isMuted && voice.snapshot.recognition == .off(.muted)
               && voice.status == "麦克风已静音",
               "drain completion preserves user mute")
-        voice.toggleMute(); await tick()
+        // Unmuting right after played audio waits out the tail first.
+        voice.toggleMute()
+        await waitUntil { voice.snapshot.recognition == .listening }
         check(voice.status == "正在聆听" && voice.snapshot.microphone == .enabled && voice.snapshot.recognition == .listening, "existing unmute resumes recognition")
         check(voice.snapshot.speakerMuted && audio.outputMuted, "microphone toggles and reply drain preserve speaker mute")
         audio.onFailure?("设备变化", .deviceChange)
@@ -397,7 +412,7 @@ extension EchoVoiceScenarios {
             }
         }
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
             audio.holdsStarts = true
             var recognizers = 0
             let voice = VoiceSessionController(audio: audio, recognizer: { recognizers += 1; return FakeRecognizer() },
@@ -421,7 +436,7 @@ extension EchoVoiceScenarios {
                   "a build that finishes after the end never activates the call or opens recognition")
         }
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
             audio.holdsStarts = true
             var recognizers = 0
             let voice = VoiceSessionController(audio: audio, recognizer: { recognizers += 1; return FakeRecognizer() },
@@ -941,42 +956,65 @@ extension EchoVoiceScenarios {
 
     @Test(.tags(.fast)) @MainActor static func captureWatchdogPauseTests() async throws {
         _ = NSApplication.shared
-        // Both starting during a reply and pausing before the first PCM packet
-        // must keep an intentional capture pause out of the startup timeout.
+        // The Agent listens while it works; its intentional capture pause is speaking the final
+        // reply. Whether that pause begins with the call or after listening began, before the
+        // first PCM packet it must keep the startup timeout out of the pause.
         for alreadyGenerating in [true, false] {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio(), permission = HeldPermission()
+            let (store, puppet) = agentStore()
             var recognizers: [FakeRecognizer] = []
+            // Once listening has begun, the reply has to reach the pause before the armed timeout
+            // does; nothing the test holds orders the two, so that case gets a timeout the reply
+            // reliably beats.
+            let timeout: Duration = alreadyGenerating ? .milliseconds(100) : .milliseconds(300)
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let recognizer = FakeRecognizer(); recognizers.append(recognizer); return recognizer
-            }, synthesizer: { FakeSynthesizer() }, captureTimeout: .milliseconds(100), permission: { true })
+            }, synthesizer: { FakeSynthesizer() }, captureTimeout: timeout,
+               permission: { alreadyGenerating ? await permission.ask() : true })
             let conversation = WorkspaceConversation(store: store)
-            defer { voice.shutdown(); store.shutdown() }
-            if alreadyGenerating { store.send("existing text reply") }
-            voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
-            await tick()
-            if !alreadyGenerating { store.send("text before first PCM packet") }
+            var finishDrain: CheckedContinuation<Void, Never>?
+            audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
+            defer { finishDrain?.resume(); permission.answer(false); voice.shutdown(); store.shutdown() }
+            if alreadyGenerating {
+                // The reply completes while the call waits for its microphone, so activation opens
+                // recognition and pauses it for the reply at once, with no packet in between.
+                store.send("existing text reply")
+                voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
+                try await puppet.reply("text reply completed")
+                await waitUntil { store.task?.status == .completed && permission.isWaiting }
+                permission.answer(true)
+            } else {
+                voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
+                await tick()
+                store.send("text before first PCM packet")
+                check(!audio.capturePaused && voice.snapshot.recognition == .listening,
+                      "the Agent keeps capture open while it works")
+                try await puppet.reply("text reply completed")
+            }
+            await waitUntil { finishDrain != nil }
+            check(audio.capturePaused && recognizers.count == 1 && recognizers[0].cancelled,
+                  "speaking the final reply intentionally pauses capture before its first packet")
             let runID = store.task?.runID
-            check(audio.capturePaused, "model generation intentionally pauses capture before its first packet")
-            try await Task.sleep(for: .milliseconds(180))
-            check(voice.isActive && voice.error == nil && store.isGenerating && store.task?.runID == runID,
-                  "paused capture never times out or stops the existing text reply")
+            try await Task.sleep(for: timeout + .milliseconds(80))
+            check(voice.isActive && voice.error == nil && store.task?.runID == runID && store.task?.status == .completed,
+                  "paused capture never times out or disturbs the completed reply")
 
-            source.callback?(.completed("text reply completed"))
-            await tick()
-            check(!audio.capturePaused && voice.snapshot.recognition == .listening,
-                  "completed text reply resumes capture and recognition")
+            finishDrain?.resume(); finishDrain = nil
+            await waitUntil { voice.snapshot.recognition == .listening }
+            check(!audio.capturePaused && voice.snapshot.recognition == .listening && recognizers.count == 2,
+                  "playback that played no audio resumes capture and recognition at once")
             if alreadyGenerating {
                 // A packet queued before the input boundary must not satisfy the
                 // watchdog for the newly resumed capture.
                 audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: audio.captureEpoch - 1))
-                try await Task.sleep(for: .milliseconds(180))
+                try await Task.sleep(for: timeout + .milliseconds(80))
                 check(!voice.isActive && voice.error?.contains("没有返回音频") == true && !audio.capturing,
                       "resumed capture still times out without a current-epoch first packet")
                 check(store.messages.last?.status == .completed,
                       "capture timeout preserves the completed text reply")
             } else {
                 audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: audio.captureEpoch))
-                try await Task.sleep(for: .milliseconds(180))
+                try await Task.sleep(for: timeout + .milliseconds(80))
                 check(voice.isActive && voice.error == nil && recognizers.last?.packets == 1,
                       "valid first packet after recovery cancels the capture timeout")
             }
@@ -1015,7 +1053,7 @@ extension EchoVoiceScenarios {
         // Replays run 4: capture starts, the watchdog is armed, a device change restarts the
         // engine for longer than the timeout, and the first packet arrives only after recovery.
         func makeCall() -> (FakeAudio, VoiceSessionController, TaskStore) {
-            let audio = FakeAudio(), store = TaskStore(source: FakeSource())
+            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, captureTimeout: timeout,
                                                permission: { true })
@@ -1058,7 +1096,8 @@ extension EchoVoiceScenarios {
     @Test(.tags(.fast)) @MainActor static func mutedPlaybackTailProtectionTests() async throws {
         _ = NSApplication.shared
         for unmuteBeforeExpiry in [true, false] {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
             let synth = FakeSynthesizer(); synth.emitsAudio = true
             var recognizers: [FakeRecognizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
@@ -1072,13 +1111,12 @@ extension EchoVoiceScenarios {
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
             await tick()
             recognizers[0].emit("语音测试", start: 0, end: 200, final: true)
-            source.callback?(.progress("播报"))
-            await tick()
+            try await puppet.reply("播报")
+            await waitUntil { finishDrain != nil }
             check(!audio.played.isEmpty, "reply has played audio before muting")
             voice.toggleMute()
-            source.callback?(.completed("播报"))
             await tick()
-            // Model completion must not start the protection clock before drain ends.
+            // The model completed before playback began; the protection clock still waits for the drain.
             try await Task.sleep(for: .milliseconds(260))
             check(voice.isMuted && voice.snapshot.replyAudio == .draining(store.task!.runID)
                   && recognizers.count == 1 && audio.capturePaused,
@@ -1113,7 +1151,7 @@ extension EchoVoiceScenarios {
         let audio = FakeAudio(), recognizer = FakeRecognizer()
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer },
                                            captureTimeout: .milliseconds(100), permission: { true })
-        let conversation = WorkspaceConversation(store: TaskStore(source: FakeSource()))
+        let conversation = WorkspaceConversation(store: TaskStore(source: idleAgent()))
         defer { voice.shutdown() }
         voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
         try await Task.sleep(for: .milliseconds(180))
@@ -1434,8 +1472,9 @@ extension EchoVoiceScenarios {
         check(secrets.values.count == secretCount && failed.snapshot.voiceSecretAccount == nil, "failed disk save rolls back newly stored secret")
     }
     @Test(.tags(.fast)) @MainActor static func playbackDoesNotCreateUserTurn() async throws {
-        let audio = FakeAudio(), source = FakeSource()
-        let store = TaskStore(source: source), synth = FakeSynthesizer()
+        let audio = FakeAudio(), synth = FakeSynthesizer()
+        let (store, puppet) = agentStore()
+        synth.emitsAudio = true; audio.holdsPlayback = true
         var recognizers: [FakeRecognizer] = []
         let voice = VoiceSessionController(audio: audio, recognizer: {
             let item = FakeRecognizer(); recognizers.append(item); return item
@@ -1443,68 +1482,77 @@ extension EchoVoiceScenarios {
         let conversation = WorkspaceConversation(store: store)
         var finishPlayback: CheckedContinuation<Void, Never>?
         audio.onDrain = { await withCheckedContinuation { finishPlayback = $0 } }
-        defer { voice.shutdown(); store.shutdown() }
+        defer { finishPlayback?.resume(); voice.shutdown(); store.shutdown() }
+        func users() -> [ConversationMessage] { store.messages.filter { $0.role == .user } }
         voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
         await tick()
         check(recognizers.count == 1 && voice.snapshot.recognition == .listening, "voice starts listening")
         recognizers[0].emit("用户的问题", start: 0, end: 400, final: true)
-        let reply = source.callback!, assistantID = store.messages[1].id
         let user = store.messages[0]
-        check(source.histories.count == 1, "one voice confirmation starts one model run")
-        check(recognizers[0].cancelled, "final voice confirmation immediately pauses ASR")
-        check(voice.snapshot.recognition == .off(.currentReply), "recognition state is paused during reply")
+        try await puppet.waitForRequests(1)
+        check(puppet.requests.count == 1 && users() == [user], "one voice confirmation starts one model run")
+        check(!recognizers[0].cancelled && voice.snapshot.recognition == .listening,
+              "the Agent keeps recognition open while the model works")
         recognizers[0].emit("用户的问题", start: 0, end: 400, final: true)
-        check(source.histories.count == 1, "duplicate voice final on paused ASR does not submit")
+        check(users() == [user], "a duplicate voice final does not submit again")
+        let reply = "助手正在回答问题"
+        try await puppet.reply(reply)
+        await waitUntil { audio.pendingPlays == 1 }
+        check(recognizers[0].cancelled && voice.snapshot.recognition == .off(.currentReply),
+              "speaking the final reply pauses ASR")
+        // What the microphone hears of the reply, as ASR would revise it.
         for (index, text) in ["助手", "助手正在回答", "助手正在回答问题"].enumerated() {
-            reply(.progress(text))
-            await tick()
-            try await synth.callback?(Data([1, 2]))
             let start = (index + 1) * 1000
             recognizers[0].emit(text + "。", start: start, end: start + 300, final: false)
-            check(store.isGenerating && voice.presentation.isReplyAudioActive && !synth.cancelled, "interim echo must not interrupt playback")
+            check(voice.presentation.isReplyAudioActive && !synth.cancelled, "interim echo must not interrupt playback")
             recognizers[0].emit(text, start: start, end: start + 400, final: true)
-            check(source.histories.count == 1, "TTS echo must not create another model run")
-            check(store.messages.filter { $0.role == .user } == [user], "assistant playback must not become user input")
-            check(store.messages[1].id == assistantID && store.messages[1].content == text, "progress updates the same assistant")
+            check(puppet.requests.count == 1, "TTS echo must not create another model run")
+            check(users() == [user], "assistant playback must not become user input")
         }
-        reply(.completed("助手正在回答问题"))
-        await tick()
-        check(voice.presentation.isReplyAudioActive && finishPlayback != nil, "model completion does not imply playback has drained")
+        audio.releasePlayback()
+        await waitUntil { finishPlayback != nil }
+        check(voice.presentation.isReplyAudioActive && finishPlayback != nil, "the end of synthesis does not imply playback has drained")
         check(voice.snapshot.recognition == .off(.currentReply), "recognition remains paused while draining")
         recognizers[0].emit("助手正在回答问题。", start: 4000, end: 4400, final: true)
-        check(source.histories.count == 1 && voice.presentation.isReplyAudioActive, "echo during audio drain cannot submit or stop playback")
+        check(puppet.requests.count == 1 && voice.presentation.isReplyAudioActive, "echo during audio drain cannot submit or stop playback")
         finishPlayback?.resume(); finishPlayback = nil
         await tick()
-        check(source.histories.count == 1 && store.messages[1].status == .completed,
+        check(puppet.requests.count == 1 && store.messages[1].status == .completed && store.messages[1].content == reply,
               "completed and playback finishing must not submit another turn")
-        check(store.messages.count == 2 && store.messages.filter { $0.role == .user } == [user], "only the actual user turn is recorded")
+        check(store.messages.count == 2 && users() == [user], "only the actual user turn is recorded")
         check(voice.snapshot.recognition == .off(.recovery) && voice.status == "正在恢复聆听", "drain completion enters recovery tail protection")
         // During recovery, speech is still ignored and does not submit
         recognizers[0].emit("助手正在回答问题", start: 5000, end: 5400, final: true)
-        check(source.histories.count == 1, "delayed ASR echo after playback is ignored")
+        check(puppet.requests.count == 1, "delayed ASR echo after playback is ignored")
         // Wait for tail protection duration (100ms + margin)
         try await Task.sleep(for: .milliseconds(150))
         check(recognizers.count == 2 && voice.snapshot.recognition == .listening && voice.status == "正在聆听",
               "tail protection completion starts fresh ASR")
         recognizers[1].emit("助手正在回答问题", start: 7000, end: 7400, final: true)
-        check(source.histories.count == 2 && store.messages.last?.role == .assistant,
+        try await puppet.waitForRequests(2)
+        check(users().count == 2 && users().last?.content == reply,
               "the user may repeat the same words in a later genuine turn")
     }
     @Test(.tags(.fast)) @MainActor static func lifecycleTests() async throws {
         _ = NSApplication.shared
-        let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: FakeSource())
-        let actual = TaskStore(source: source)
+        let audio = FakeAudio(), store = TaskStore(source: idleAgent())
+        let (actual, puppet) = agentStore()
         actual.mainDraft = "未发送草稿"; actual.followUpDraft = "跟进草稿"
-        let workspace = WorkspaceStore(initialStore: actual)
+        let workspace = WorkspaceStore(initialStore: actual, sourceFactory: { idleAgent() })
         let conversation = workspace.selected!
         var recognizers: [FakeRecognizer] = [], synthesizers: [FakeSynthesizer] = []
+        var synthesizerPlaysAudio = true
         let voice = VoiceSessionController(audio: audio, recognizer: {
             let item = FakeRecognizer(); recognizers.append(item); return item
         }, synthesizer: {
-            let item = FakeSynthesizer(); synthesizers.append(item); return item
+            let item = FakeSynthesizer(); item.emitsAudio = synthesizerPlaysAudio; synthesizers.append(item); return item
         }, tailProtectionDuration: .milliseconds(30), permission: { true })
+        var finishDrain: CheckedContinuation<Void, Never>?
+        func holdDrain() { audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } } }
+        func releaseDrain() { audio.onDrain = nil; finishDrain?.resume(); finishDrain = nil }
+        func userTexts() -> [String] { actual.messages.filter { $0.role == .user }.map(\.content) }
         voice.attach(workspace: workspace, settings: SettingsStore(secrets: FakeSecrets()))
-        defer { voice.shutdown(); workspace.voice.shutdown(); workspace.shutdown() }
+        defer { releaseDrain(); voice.shutdown(); workspace.voice.shutdown(); workspace.shutdown() }
         voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
         await tick()
         check(audio.capturing && voice.isActive && recognizers.count == 1, "start owns one capture and ASR")
@@ -1519,33 +1567,42 @@ extension EchoVoiceScenarios {
         recognizers[0].emit("你好", start: 0, end: 200, final: false)
         check(actual.messages.isEmpty && voice.subtitle == "你好", "partial only updates subtitle")
         recognizers[0].emit("你好", start: 0, end: 200, final: true)
-        check(actual.messages.filter { $0.role == .user }.count == 1, "final sends user message")
+        check(userTexts() == ["你好"], "final sends user message")
         check(actual.mainDraft == "未发送草稿" && actual.followUpDraft == "跟进草稿", "voice preserves both drafts")
-        check(recognizers[0].cancelled, "final submission cancels old recognizer")
+        check(!recognizers[0].cancelled && voice.snapshot.recognition == .listening,
+              "the Agent keeps the recognizer open while the model works")
         recognizers[0].emit("你好", start: 0, end: 200, final: true)
-        check(source.histories.count == 1, "repeated final does not send again")
-        source.callback?(.progress("你")); source.callback?(.progress("你好"))
-        await tick()
-        check(synthesizers[0].chunks == ["你", "好"], "TTS receives ordered deltas")
-        try await synthesizers[0].callback?(Data([1, 2]))
-        check(audio.played == [Data([1, 2])], "current audio plays")
+        check(userTexts() == ["你好"], "repeated final does not send again")
+        try await puppet.waitForRequests(1)
+        holdDrain()
+        try await puppet.reply("你好")
+        await waitUntil { finishDrain != nil }
+        check(synthesizers.count == 1 && synthesizers[0].chunks == ["你好"], "TTS receives the final reply as one input")
+        check(audio.played == [Data([0, 0])], "current audio plays")
         // A cancelled recognizer cannot bypass local barge-in confirmation.
         recognizers[0].emit("换个话题", start: 1000, end: 1200, final: false)
-        check(actual.isGenerating && !synthesizers[0].cancelled, "stale recognition cannot interrupt model or synthesis")
-        check(source.histories.count == 1, "interim speech during playback does not stop playback")
+        check(actual.task?.status == .completed && !synthesizers[0].cancelled, "stale recognition cannot interrupt the reply or its synthesis")
+        check(puppet.requests.count == 1, "interim speech during playback does not stop playback")
         recognizers[0].emit("换个话题", start: 1000, end: 1300, final: true)
-        check(source.histories.count == 1, "confirmed speech during playback cannot start a new turn")
-        actual.stopTask()
+        check(puppet.requests.count == 1 && userTexts() == ["你好"], "confirmed speech during playback cannot start a new turn")
+        // The Agent's turn completed before it was spoken: Stop is the voice's, as the workspace routes it.
+        voice.stopReply()
         check(synthesizers[0].cancelled, "manual stop cancels current voice reply")
         check(voice.isActive, "stop reply leaves call active")
-        // Wait for tail protection from stop
-        try await Task.sleep(for: .milliseconds(50))
+        releaseDrain()
+        await waitUntil { recognizers.count == 2 && voice.snapshot.recognition == .listening }
         check(recognizers.count == 2 && voice.snapshot.recognition == .listening, "tail protection resumes listening with new recognizer")
+        // A reply that plays no audio, so its Stop resumes listening without a tail.
+        synthesizerPlaysAudio = false
         actual.send("键盘补充")
-        source.callback?(.progress("键盘回答")); await tick()
+        holdDrain()
+        try await puppet.reply("键盘回答")
+        await waitUntil { finishDrain != nil }
         check(synthesizers.count == 2, "manual message is also spoken")
-        actual.stopTask()
+        voice.stopReply()
         check(voice.isActive && synthesizers[1].cancelled, "stop reply leaves call active")
+        releaseDrain()
+        synthesizerPlaysAudio = true
         voice.toggleMute()
         let messageCount = actual.messages.count
         let countBeforeMute = recognizers.count
@@ -1557,22 +1614,36 @@ extension EchoVoiceScenarios {
         check(actual.messages.count == messageCount && recognizers.count == countBeforeMute + 1, "unmute rejects prior connection")
         recognizers.last!.emit("恢复", start: 0, end: 200, final: true)
         check(actual.messages.last?.content == "恢复" || actual.messages.contains { $0.content == "恢复" }, "unmute new timeline works")
-        source.callback?(.completed("已恢复")); await tick()
-        try await Task.sleep(for: .milliseconds(50))
+        let recovered = recognizers.count
+        try await puppet.reply("已恢复")
+        await waitUntil { voice.snapshot.recognition == .listening && recognizers.count > recovered }
         for round in 1...5 {
-            let rIdx = recognizers.count - 1
-            recognizers[rIdx].emit("第\(round)轮 hello", start: round * 1000, end: round * 1000 + 300, final: true)
-            source.callback?(.progress("回答\(round)")); source.callback?(.completed("回答\(round)")); await tick()
-            try await Task.sleep(for: .milliseconds(50))
+            let current = recognizers.count
+            recognizers[current - 1].emit("第\(round)轮 hello", start: round * 1000, end: round * 1000 + 300, final: true)
+            try await puppet.reply("回答\(round)")
+            await waitUntil { voice.snapshot.recognition == .listening && recognizers.count > current }
             check(voice.isActive && actual.task?.status == .completed && !voice.presentation.isReplyAudioActive, "continuous round \(round) completes and returns to listening")
         }
-        check(source.histories.last?.contains { $0.content == "回答4" } == true, "completed voice replies enter next-turn model context")
-        check(source.histories.last?.contains { $0.content == "你好" && $0.role == .assistant } == true, "nonempty stopped reply enters context")
+        check(puppet.requests.last?.replies.contains("回答4") == true, "completed voice replies enter next-turn model context")
+        check(puppet.requests.last?.replies.contains("你好") == true,
+              "a completed reply whose playback Stop cut short stays in context")
+        // Speech still being spoken when text starts a run is not discarded: its final steers that run.
         let currentR = recognizers.last!
         currentR.emit("讲话中", start: 7000, end: 7100, final: false)
-        actual.send("讲话期间键盘发起的新请求")
+        let requests = puppet.requests.count
+        check(actual.send("讲话期间键盘发起的新请求"), "text starts a run while speech is under way")
+        let run = actual.task?.runID
         currentR.emit("讲话完成", start: 7000, end: 7300, final: true)
-        check(source.histories.last?.last?.content == "讲话期间键盘发起的新请求", "text send during speech discards unconfirmed speech")
+        check(Array(userTexts().suffix(2)) == ["讲话期间键盘发起的新请求", "讲话完成"] && actual.task?.runID == run
+              && actual.messages.last?.steering == .queued,
+              "speech finalized after a text send steers the run that text started")
+        try await puppet.waitForRequests(requests + 1)
+        if puppet.requests.last?.userTexts.last != "讲话完成" {
+            try await puppet.reply("先回一句")
+            try await puppet.waitForRequests(requests + 2)
+        }
+        check(Array(puppet.requests.last?.userTexts.suffix(2) ?? []) == ["讲话期间键盘发起的新请求", "讲话完成"],
+              "the model receives the steering after the text that started the run")
         workspace.deleteConversation(conversation.id)
         check(!voice.isActive && !audio.capturing, "deleting conversation releases capture")
         let fresh = workspace.selected!
@@ -1581,30 +1652,33 @@ extension EchoVoiceScenarios {
         check(!voice.isActive && !audio.capturing && voice.error == "设备变化", "device failure closes whole call")
         let deniedAudio = FakeAudio()
         let denied = VoiceSessionController(audio: deniedAudio, permission: { false })
-        denied.start(conversation: WorkspaceConversation(store: TaskStore()), configuration: VoiceConfiguration(), key: "test")
+        denied.start(conversation: WorkspaceConversation(store: TaskStore(source: idleAgent())), configuration: VoiceConfiguration(), key: "test")
         await tick()
         check(!denied.isActive && !deniedAudio.capturing && denied.error != nil, "permission refusal never captures")
         denied.shutdown()
         let raceAudio = FakeAudio()
         let race = VoiceSessionController(audio: raceAudio, permission: { await tick(); return true })
-        race.start(conversation: WorkspaceConversation(store: TaskStore()), configuration: VoiceConfiguration(), key: "test")
+        race.start(conversation: WorkspaceConversation(store: TaskStore(source: idleAgent())), configuration: VoiceConfiguration(), key: "test")
         race.end(); await tick(); await tick()
         check(!raceAudio.capturing && !race.isActive, "hangup during permission cannot restart recording")
         race.shutdown()
     }
     @Test(.tags(.fast)) @MainActor static func phase3InvariantsTests() async throws {
         _ = NSApplication.shared
-        // 1. ASR/TTS mutual exclusion: no simultaneous upload and playback, upload stops during reply
+        // 1. ASR/TTS mutual exclusion: input stays open while the Agent works, and no upload during playback
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
+            audio.holdsPlayback = true
             var recognizers: [FakeRecognizer] = [], synths: [FakeSynthesizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
             }, synthesizer: {
-                let s = FakeSynthesizer(); synths.append(s); return s
+                let s = FakeSynthesizer(); s.emitsAudio = true; synths.append(s); return s
             }, tailProtectionDuration: .milliseconds(40), permission: { true })
             let conversation = WorkspaceConversation(store: store)
-            defer { voice.shutdown(); store.shutdown() }
+            var finishDrain: CheckedContinuation<Void, Never>?
+            defer { finishDrain?.resume(); voice.shutdown(); store.shutdown() }
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
             await tick()
             check(recognizers.count == 1 && !recognizers[0].cancelled, "initial ASR is open")
@@ -1614,46 +1688,48 @@ extension EchoVoiceScenarios {
             await tick()
             check(recognizers[0].packets == 1, "listening ASR receives audio packets")
 
-            // Finalize speech -> immediately pauses ASR
+            // Finalize speech -> the Agent keeps ASR and capture open while it works
             recognizers[0].emit("问题一", start: 0, end: 300, final: true)
-            check(recognizers[0].cancelled, "final submission immediately cancels ASR connection")
-            check(audio.capturePaused, "audio capture is paused on final submission")
-            check(voice.snapshot.recognition == .off(.currentReply), "recognition is .off(.currentReply) on submit")
-
-            // Yield audio during reply -> packet count does NOT increase
-            let packetsBefore = recognizers[0].packets
-            audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: 1))
+            let run = store.task!.runID
+            check(!recognizers[0].cancelled && !audio.capturePaused && voice.snapshot.recognition == .listening,
+                  "a final submission keeps ASR and capture open during the model request")
+            audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: audio.captureEpoch))
             await tick()
-            check(recognizers[0].packets == packetsBefore, "ASR packet count does not increase during reply")
+            check(recognizers[0].packets == 2, "ASR keeps receiving audio during the model request")
 
-            // Simulated user speech or echo while model is generating
+            // Speech while the model is generating steers the run instead of starting a second one
+            try await puppet.waitForRequests(1)
             recognizers[0].emit("生成中讲话", start: 500, end: 800, final: true)
-            check(source.histories.count == 1, "speech during generation does not start second run")
+            check(store.task?.runID == run && store.messages.filter { $0.role == .user }.map(\.content) == ["问题一", "生成中讲话"],
+                  "speech during generation steers the same run")
+            try await puppet.reply("先说一句")
+            try await puppet.reply("回复内容")
 
-            // Stream assistant text and audio
-            source.callback?(.progress("回复内容"))
-            await tick()
-            check(synths.count == 1, "synthesis started")
-            try await synths[0].callback?(Data([1, 2]))
-            check(audio.played == [Data([1, 2])], "audio played")
+            // The final reply is spoken
+            await waitUntil { audio.pendingPlays == 1 }
+            check(synths.count == 1 && synths[0].chunks == ["回复内容"], "synthesis started with the final reply")
+            check(audio.played == [Data([0, 0])], "audio played")
             check(voice.snapshot.replyAudio.runID != nil, "reply audio is active")
+            // Its first audio has armed barge-in, so capture now only feeds the local monitor.
+            check(recognizers[0].cancelled && audio.monitoring && voice.snapshot.recognition == .off(.currentReply),
+                  "speaking the reply closes ASR and leaves capture to the barge-in monitor")
 
             // Yield audio during playback -> packet count does NOT increase
-            audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: 1))
+            let packetsBefore = recognizers[0].packets
+            audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: audio.captureEpoch))
             await tick()
             check(recognizers[0].packets == packetsBefore, "ASR packet count does not increase during playback")
 
             // Simulated speech during playback -> cannot cancel model or TTS, cannot queue
             recognizers[0].emit("播放中讲话", start: 1000, end: 1200, final: false)
-            check(!synths[0].cancelled && store.isGenerating, "speech during playback cannot stop TTS or model")
+            check(!synths[0].cancelled && store.task?.status == .completed, "speech during playback cannot stop TTS or the reply")
             recognizers[0].emit("播放中讲话", start: 1000, end: 1300, final: true)
-            check(source.histories.count == 1, "speech during playback cannot submit new message")
+            check(store.messages.filter { $0.role == .user }.count == 2, "speech during playback cannot submit new message")
 
-            // Complete model while audio drain is pending
-            var finishDrain: CheckedContinuation<Void, Never>?
+            // Synthesis finishes while audio drain is pending
             audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
-            source.callback?(.completed("回复内容"))
-            await tick()
+            audio.releasePlayback()
+            await waitUntil { finishDrain != nil }
             check(!store.isGenerating && voice.snapshot.replyAudio.runID != nil, "model complete but audio is still draining")
             check(voice.snapshot.recognition == .off(.currentReply), "recognition remains paused while draining")
 
@@ -1669,48 +1745,26 @@ extension EchoVoiceScenarios {
             check(!audio.capturePaused, "capture unpaused after tail protection")
         }
 
-        // 2. Tail protection bypass when no audio played (e.g. text-only run or stopped before audio)
+        // 2. Mute / Unmute orthogonality during playback and tail protection
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
-            var recognizers: [FakeRecognizer] = []
-            let voice = VoiceSessionController(audio: audio, recognizer: {
-                let r = FakeRecognizer(); recognizers.append(r); return r
-            }, tailProtectionDuration: .seconds(2), permission: { true })
-            let conversation = WorkspaceConversation(store: store)
-            defer { voice.shutdown(); store.shutdown() }
-
-            // Start a model run BEFORE voice starts -> becomes textOnlyRunID
-            store.send("前置文字请求")
-            voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
-            await tick()
-            check(recognizers.isEmpty && voice.snapshot.recognition == .off(.currentReply), "starts waiting for text run")
-
-            // Text run completes
-            source.callback?(.completed("完成文字"))
-            await tick()
-            // Immediately resumes listening without 2-second tail protection!
-            check(recognizers.count == 1 && voice.snapshot.recognition == .listening,
-                  "text-only run completion skips tail protection and immediately resumes listening")
-        }
-
-        // 3. Mute / Unmute orthogonality during playback and tail protection
-        do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
             var recognizers: [FakeRecognizer] = [], synths: [FakeSynthesizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
             }, synthesizer: {
-                let s = FakeSynthesizer(); synths.append(s); return s
+                let s = FakeSynthesizer(); s.emitsAudio = true; synths.append(s); return s
             }, tailProtectionDuration: .milliseconds(40), permission: { true })
             let conversation = WorkspaceConversation(store: store)
-            defer { voice.shutdown(); store.shutdown() }
+            var finishDrain: CheckedContinuation<Void, Never>?
+            audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
+            defer { finishDrain?.resume(); voice.shutdown(); store.shutdown() }
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
             await tick()
 
             recognizers[0].emit("语音测试", start: 0, end: 200, final: true)
-            source.callback?(.progress("播报"))
-            await tick()
-            try await synths[0].callback?(Data([1, 2]))
+            try await puppet.reply("播报")
+            await waitUntil { finishDrain != nil }
             check(voice.snapshot.replyAudio.runID != nil, "audio is playing")
 
             // Mute during playback
@@ -1723,7 +1777,7 @@ extension EchoVoiceScenarios {
                   "unmute during playback rearms the local gate without opening ASR")
 
             // Drain audio to enter tail protection
-            source.callback?(.completed("播报"))
+            finishDrain?.resume(); finishDrain = nil
             await tick()
             check(voice.snapshot.recognition == .off(.recovery), "entered recovery")
 
@@ -1741,51 +1795,56 @@ extension EchoVoiceScenarios {
                   "unmute when idle opens fresh ASR")
         }
 
-        // 4. Stop and Text interruption during reply and tail protection
+        // 3. Stop during the reply and during the next turn
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
             var recognizers: [FakeRecognizer] = [], synths: [FakeSynthesizer] = []
+            // Long enough that a resume without the tail is told apart from one after it.
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
             }, synthesizer: {
-                let s = FakeSynthesizer(); synths.append(s); return s
-            }, tailProtectionDuration: .milliseconds(40), permission: { true })
+                let s = FakeSynthesizer(); s.emitsAudio = true; synths.append(s); return s
+            }, tailProtectionDuration: .seconds(1), permission: { true })
             let conversation = WorkspaceConversation(store: store)
-            defer { voice.shutdown(); store.shutdown() }
+            var finishDrain: CheckedContinuation<Void, Never>?
+            audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
+            defer { finishDrain?.resume(); voice.shutdown(); store.shutdown() }
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
             await tick()
 
             // Start reply with audio
             recognizers[0].emit("第一轮", start: 0, end: 200, final: true)
-            source.callback?(.progress("内容"))
-            await tick()
-            try await synths[0].callback?(Data([1, 2]))
+            try await puppet.reply("内容")
+            await waitUntil { finishDrain != nil }
 
             // Stop while audio playing -> enters tail protection because audio was played
             voice.stopReply()
-            check(synths[0].cancelled && store.messages.last?.status == .stopped, "stop cancels TTS and stops task")
+            check(synths[0].cancelled && store.task?.status == .completed && store.messages.last?.status == .completed,
+                  "stop cancels TTS and leaves the completed reply as it is")
             check(voice.snapshot.recognition == .off(.recovery), "stop after audio enters tail protection")
+            finishDrain?.resume(); finishDrain = nil
 
-            // Text send during tail protection -> cancels recovery task, replaces reply
+            // Text sent during the tail starts the next turn; the Agent keeps the tail running through it.
             store.send("打断恢复的文字")
-            check(voice.snapshot.recognition == .off(.currentReply), "text send cancels recovery task and pauses ASR")
-            try await Task.sleep(for: .milliseconds(60))
-            check(recognizers.count == 1, "cancelled recovery task does not open ASR")
+            try await puppet.waitForRequests(2)
+            check(voice.snapshot.recognition == .off(.recovery) && recognizers.count == 1 && audio.capturePaused,
+                  "a text turn started during tail protection keeps the tail")
 
-            // Stop without audio -> immediately resumes listening
+            // Stop without audio -> resumes listening without waiting for the tail
             voice.stopReply()
-            await tick()
+            await waitUntil { store.task?.status == .stopped && voice.snapshot.recognition == .listening }
             check(recognizers.count == 2 && voice.snapshot.recognition == .listening,
-                  "stop without audio immediately resumes listening")
+                  "stop without audio resumes listening without waiting for the tail")
 
             // End voice -> immediately stops and never resumes
             voice.end()
             check(recognizers[1].cancelled && voice.snapshot.session == .inactive, "end voice cancels ASR and becomes inactive")
         }
 
-        // 5. Stale input epoch rejection
+        // 4. Stale input epoch rejection
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
             var recognizers: [FakeRecognizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
@@ -1813,7 +1872,7 @@ extension EchoVoiceScenarios {
         do {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, permission: { false })
-            let store = TaskStore(source: FakeSource())
+            let store = TaskStore(source: idleAgent())
             let conversation = WorkspaceConversation(store: store)
             defer { voice.shutdown(); store.shutdown() }
             let started = voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
@@ -1830,7 +1889,7 @@ extension EchoVoiceScenarios {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                captureTimeout: .milliseconds(40), permission: { true })
-            let store = TaskStore(source: FakeSource())
+            let store = TaskStore(source: idleAgent())
             let conversation = WorkspaceConversation(store: store)
             defer { voice.shutdown(); store.shutdown() }
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
@@ -1846,7 +1905,7 @@ extension EchoVoiceScenarios {
         do {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() }, permission: { true })
-            let store = TaskStore(source: FakeSource())
+            let store = TaskStore(source: idleAgent())
             let conversation = WorkspaceConversation(store: store)
             defer { voice.shutdown(); store.shutdown() }
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
@@ -1863,28 +1922,34 @@ extension EchoVoiceScenarios {
 
         // 4. ASR active pause vs abnormal disconnect
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
             var recognizers: [FakeRecognizer] = [], synths: [FakeSynthesizer] = []
+            // A tail long enough that skipping it is visible.
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
             }, synthesizer: {
                 let s = FakeSynthesizer(); synths.append(s); return s
-            }, tailProtectionDuration: .milliseconds(30), permission: { true })
+            }, tailProtectionDuration: .seconds(2), permission: { true })
             let conversation = WorkspaceConversation(store: store)
-            defer { voice.shutdown(); store.shutdown() }
+            var finishDrain: CheckedContinuation<Void, Never>?
+            audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
+            defer { finishDrain?.resume(); voice.shutdown(); store.shutdown() }
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
             await tick()
             check(recognizers.count == 1 && voice.snapshot.recognition == .listening, "ASR listening")
 
-            // Active pause on final speech: must NOT produce error
+            // Active pause to speak the final reply: must NOT produce error
             recognizers[0].emit("语音输入", start: 0, end: 200, final: true)
-            check(voice.snapshot.recognition == .off(.currentReply), "recognition actively paused for reply")
+            try await puppet.reply("回答")
+            await waitUntil { finishDrain != nil }
+            check(voice.snapshot.recognition == .off(.currentReply) && recognizers[0].cancelled, "recognition actively paused for reply")
             check(voice.error == nil, "active pause of ASR does not set error")
 
-            // Complete reply and recover listening (FakeSynthesizer emits no audio -> skips tail wait)
-            source.callback?(.completed("回答"))
-            await tick(); await tick()
-            check(recognizers.count == 2 && voice.snapshot.recognition == .listening, "listening restored")
+            // Finish playback and recover listening (FakeSynthesizer emits no audio -> skips tail wait)
+            finishDrain?.resume(); finishDrain = nil
+            await waitUntil { recognizers.count == 2 && voice.snapshot.recognition == .listening }
+            check(recognizers.count == 2 && voice.snapshot.recognition == .listening, "listening restored without the tail")
             check(voice.error == nil, "recovery has no error")
 
             // Abnormal disconnect while listening
@@ -1900,12 +1965,13 @@ extension EchoVoiceScenarios {
             check(voice2.error == "ASR 服务异常断开", "abnormal ASR disconnect reports error")
         }
 
-        // 5. TTS fatal failure: model completed preserves completed text
+        // 5. TTS fatal failure: the completed reply keeps its text
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
             var synths: [FakeSynthesizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() }, synthesizer: {
-                let s = FakeSynthesizer(); synths.append(s); return s
+                let s = FakeSynthesizer(); s.failure = SettingsError("语音合成没有返回音频，请检查音色。"); synths.append(s); return s
             }, permission: { true })
             let conversation = WorkspaceConversation(store: store)
             defer { voice.shutdown(); store.shutdown() }
@@ -1913,15 +1979,9 @@ extension EchoVoiceScenarios {
             await tick()
 
             store.send("提问")
-            source.callback?(.progress("已生成的回复"))
-            await tick()
+            try await puppet.reply("已生成的回复")
+            await waitUntil { !voice.isActive }
             check(synths.count == 1, "synthesis started")
-
-            // Set TTS failure before completion finishes text input stream
-            synths[0].failure = SettingsError("语音合成没有返回音频，请检查音色。")
-            source.callback?(.completed("已生成的回复"))
-            await tick(); await tick()
-
             check(!voice.isActive && !audio.capturing, "TTS failure ends voice session")
             check(voice.error == "语音合成没有返回音频，请检查音色。", "TTS error is surfaced")
             check(store.task?.status == .completed, "model completed status is preserved, NOT changed to stopped")
@@ -1929,38 +1989,10 @@ extension EchoVoiceScenarios {
                   "completed text is fully preserved in conversation message")
         }
 
-        // 6. TTS fatal failure: model still generating preserves partial text as stopped
+        // 6. Playback stall fault injection
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
-            var synths: [FakeSynthesizer] = []
-            let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() }, synthesizer: {
-                let s = FakeSynthesizer(); synths.append(s); return s
-            }, permission: { true })
-            let conversation = WorkspaceConversation(store: store)
-            defer { voice.shutdown(); store.shutdown() }
-            voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
-            await tick()
-
-            store.send("提问")
-            source.callback?(.progress("部分生成的回复"))
-            await tick()
-            check(store.isGenerating, "model is still generating")
-            check(synths.count == 1, "synthesis started")
-
-            // Trigger failure in synth on next chunk while model is still generating
-            synths[0].onChunk = { _ in throw SettingsError("TTS 服务断开") }
-            source.callback?(.progress("部分生成的回复 · 第二段"))
-            await tick(); await tick()
-            check(!voice.isActive && !audio.capturing, "TTS failure ends voice session")
-            check(voice.error == "TTS 服务断开", "TTS error is reported")
-            check(store.task?.status == .stopped, "model task is stopped")
-            check(store.messages.last?.status == .stopped && store.messages.last?.content == "部分生成的回复 · 第二段",
-                  "partial message is preserved as stopped")
-        }
-
-        // 7. Playback stall fault injection
-        do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
             var synths: [FakeSynthesizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() }, synthesizer: {
                 let s = FakeSynthesizer(); s.emitsAudio = true; synths.append(s); return s
@@ -1972,15 +2004,16 @@ extension EchoVoiceScenarios {
             await tick()
 
             store.send("提问")
-            source.callback?(.progress("内容"))
-            await tick(); await tick()
+            try await puppet.reply("内容")
+            await waitUntil { !voice.isActive }
             check(!voice.isActive && !audio.capturing, "playback stall ends voice session")
             check(voice.error == "播放器队列停滞，请检查音频输出设备。", "playback stall reports error")
         }
 
-        // 8. Model error fault injection
+        // 7. Model error fault injection
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, permission: { true })
             let conversation = WorkspaceConversation(store: store)
@@ -1989,17 +2022,19 @@ extension EchoVoiceScenarios {
             await tick()
 
             store.send("提问")
-            source.callback?(.failed("模型超出额度"))
-            await tick()
+            try await puppet.answer(.fail(AgentModelError(message: "模型超出额度")))
+            await waitUntil { !voice.isActive }
             check(!voice.isActive && !audio.capturing, "model failure ends voice call")
             check(voice.error == "模型超出额度", "voice reports model failure")
-            check(store.task?.status == .failed && store.messages.last?.status == .failed,
-                  "model message preserves .failed status, NOT overwritten to stopped")
+            // The Agent records a model failure on the turn, not on a reply message.
+            check(store.task?.status == .failed && store.task?.summary == "模型超出额度"
+                  && !store.messages.contains { $0.status == .stopped },
+                  "the turn preserves .failed status, NOT overwritten to stopped")
         }
 
-        // 9. Sleep notification cleanup
+        // 8. Sleep notification cleanup
         do {
-            let audio = FakeAudio(), store = TaskStore(source: FakeSource())
+            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
             var recognizers: [FakeRecognizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
@@ -2019,9 +2054,10 @@ extension EchoVoiceScenarios {
             check(voice.error == nil, "sleep notification is clean shutdown without error")
         }
 
-        // 10. Fault recovery: clean restart without resending, replaying or stale capture
+        // 9. Fault recovery: clean restart without resending, replaying or stale capture
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
             var recognizers: [FakeRecognizer] = [], synths: [FakeSynthesizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
@@ -2043,7 +2079,7 @@ extension EchoVoiceScenarios {
             check(restarted, "explicit re-start succeeds")
             await tick()
             check(voice.isActive && voice.error == nil && audio.capturing, "re-started call is active and clears prior error")
-            check(source.histories.isEmpty, "re-start does NOT resend past messages")
+            check(puppet.requests.isEmpty, "re-start does NOT resend past messages")
             check(synths.isEmpty, "re-start does NOT replay past audio")
 
             // Stale audio packet from previous session (epoch 1 when new session has higher epoch)
@@ -2053,17 +2089,20 @@ extension EchoVoiceScenarios {
 
             // Clean speech round succeeds
             recognizers.last?.emit("新一轮问题", start: 0, end: 200, final: true)
-            check(source.histories.count == 1 && store.messages.contains { $0.role == .user && $0.content == "新一轮问题" }, "new turn functions normally")
+            try await puppet.waitForRequests(1)
+            check(puppet.requests.count == 1 && puppet.requests[0].userTexts == ["新一轮问题"]
+                  && store.messages.contains { $0.role == .user && $0.content == "新一轮问题" }, "new turn functions normally")
         }
 
-        // 11. Tail protection recovery task cancellation on end
+        // 10. Tail protection recovery task cancellation on end
         do {
-            let audio = FakeAudio(), source = FakeSource(), store = TaskStore(source: source)
+            let audio = FakeAudio()
+            let (store, puppet) = agentStore()
             var recognizers: [FakeRecognizer] = [], synths: [FakeSynthesizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
             }, synthesizer: {
-                let s = FakeSynthesizer(); synths.append(s); return s
+                let s = FakeSynthesizer(); s.emitsAudio = true; synths.append(s); return s
             }, tailProtectionDuration: .milliseconds(50), permission: { true })
             let conversation = WorkspaceConversation(store: store)
             defer { voice.shutdown(); store.shutdown() }
@@ -2071,11 +2110,8 @@ extension EchoVoiceScenarios {
             await tick()
 
             recognizers[0].emit("语音", start: 0, end: 100, final: true)
-            source.callback?(.progress("回复"))
-            await tick()
-            try await synths[0].callback?(Data([1, 2]))
-            source.callback?(.completed("回复"))
-            await tick()
+            try await puppet.reply("回复")
+            await waitUntil { voice.snapshot.recognition == .off(.recovery) }
 
             check(voice.snapshot.recognition == .off(.recovery), "entered tail protection recovery")
             // Call end while in recovery
@@ -2087,12 +2123,12 @@ extension EchoVoiceScenarios {
             check(voice.snapshot.session == .inactive, "session remains inactive")
         }
 
-        // 12. Workspace delete conversation cleans up voice and attributed error
+        // 11. Workspace delete conversation cleans up voice and attributed error
         do {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, permission: { true })
-            let workspace = WorkspaceStore(voice: voice, sourceFactory: { FakeSource() })
+            let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
             let settings = SettingsStore(secrets: FakeSecrets())
             settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
             settings.voiceAPIKey = "voice"; settings.saveVoice()
@@ -2115,13 +2151,13 @@ extension EchoVoiceScenarios {
             check(voice.conversationID == nil, "voice does not implicitly start on another conversation")
         }
 
-        // 13. Companion notice deduplication: visible main window vs hidden
+        // 12. Companion notice deduplication: visible main window vs hidden
         do {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, permission: { true })
             let store = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-            let workspace = WorkspaceStore(voice: voice, sourceFactory: { FakeSource() })
+            let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
             let settings = SettingsStore(secrets: FakeSecrets())
             settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
             let companion = CompanionController(petStore: store, workspace: workspace, settings: settings,
