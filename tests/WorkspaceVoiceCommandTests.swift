@@ -69,9 +69,6 @@ import Foundation
         }
     }
     @Test static func routesVoiceCommands() async throws {
-        func check(_ condition: @autoclosure () -> Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
-            #expect(condition(), "\(message)", sourceLocation: sourceLocation)
-        }
         let audio = CommandAudio()
         var permission: CheckedContinuation<Bool, Never>?
         var recognizers: [CommandRecognizer] = [], synths: [CommandSynthesizer] = []
@@ -91,30 +88,30 @@ import Foundation
         func userTexts(_ conversation: WorkspaceConversation) -> [String] {
             conversation.store.messages.filter { $0.role == .user }.map(\.content)
         }
-        check(workspace.send("A initial", conversationID: a.id), "A accepts explicit text command")
+        #expect(workspace.send("A initial", conversationID: a.id), "A accepts explicit text command")
         let initial = PuppetStream()
         try await ma.answer(.stream(initial))
         try await initial.send(["initial ", "partial", "…", "…"])
         try await wait("A's reply streams") { a.store.replyStream.live?.hasPrefix("initial partial") == true }
         let b = workspace.newConversation(), mb = puppets.models[1]
         let initialRun = a.store.task!.runID
-        check(workspace.startVoice(conversationID: a.id), "Voice starts on explicit A while viewing B")
+        #expect(workspace.startVoice(conversationID: a.id), "Voice starts on explicit A while viewing B")
         let firstOwner = voice.snapshot.session.owner!
-        check(a.store.isGenerating && a.store.task?.runID == initialRun && ma.cancelledCount == 0
+        #expect(a.store.isGenerating && a.store.task?.runID == initialRun && ma.cancelledCount == 0
               && a.store.replyStream.live?.hasPrefix("initial partial") == true,
               "Starting Voice preserves the existing model and partial")
-        check(!workspace.startVoice(conversationID: b.id) && !voice.start(conversation: b, configuration: .init(), key: "test"),
+        #expect(!workspace.startVoice(conversationID: b.id) && !voice.start(conversation: b, configuration: .init(), key: "test"),
               "Workspace and controller both reject a second Session while starting")
-        check(workspace.selectedID == b.id && voice.snapshot.session == .starting(firstOwner), "Rejected start never navigates or migrates")
-        check(workspace.send("B parallel", conversationID: b.id) && a.store.isGenerating, "A Voice allows an independent B model")
+        #expect(workspace.selectedID == b.id && voice.snapshot.session == .starting(firstOwner), "Rejected start never navigates or migrates")
+        #expect(workspace.send("B parallel", conversationID: b.id) && a.store.isGenerating, "A Voice allows an independent B model")
         await tick(); permission?.resume(returning: true); permission = nil; await tick()
-        check(voice.snapshot.session == .active(firstOwner) && recognizers.count == 1 && voice.snapshot.recognition == .listening
+        #expect(voice.snapshot.session == .active(firstOwner) && recognizers.count == 1 && voice.snapshot.recognition == .listening
               && audio.capturing, "Active Voice listens during the existing Agent run, where speech would steer it")
-        check(!workspace.startVoice(conversationID: b.id), "Active Session rejects a second start")
+        #expect(!workspace.startVoice(conversationID: b.id), "Active Session rejects a second start")
         let bReply = PuppetStream()
         try await mb.answer(.stream(bReply))
         try await initial.send(["full", "…"]); try await bReply.send(["B partial", "…", "…"]); await tick()
-        check(synths.isEmpty, "Text of A's and B's runs never enters TTS while it is written")
+        #expect(synths.isEmpty, "Text of A's and B's runs never enters TTS while it is written")
         initial.finish()
         try await wait("A's final reply is spoken") { synths.count == 1 && !synths[0].chunks.isEmpty }
         let aFinal = try #require(a.store.responseMessage?.content)
@@ -124,136 +121,133 @@ import Foundation
         let oldASR = recognizers[1]
         oldASR.emit("unconfirmed", final: false)
         a.store.mainDraft = " \n "
-        check(!workspace.sendMainMessage(conversationID: a.id) && !oldASR.cancelled && voice.subtitle == "unconfirmed",
+        #expect(!workspace.sendMainMessage(conversationID: a.id) && !oldASR.cancelled && voice.subtitle == "unconfirmed",
               "Whitespace preserves pending recognition and draft")
-        check(!workspace.send("invalid", conversationID: UUID()) && !oldASR.cancelled, "Invalid destination has no cancellation side effects")
+        #expect(!workspace.send("invalid", conversationID: UUID()) && !oldASR.cancelled, "Invalid destination has no cancellation side effects")
         a.store.mainDraft = "A spoken text"
-        check(workspace.sendMainMessage(conversationID: a.id) && a.store.mainDraft.isEmpty, "Main draft clears only on accepted submission")
-        check(oldASR.cancelled && voice.subtitle.isEmpty && workspace.selectedID == b.id, "A send discards pending ASR without selecting A")
+        #expect(workspace.sendMainMessage(conversationID: a.id) && a.store.mainDraft.isEmpty, "Main draft clears only on accepted submission")
+        #expect(oldASR.cancelled && voice.subtitle.isEmpty && workspace.selectedID == b.id, "A send discards pending ASR without selecting A")
         oldASR.emit("late final", final: true)
-        check(userTexts(a) == ["A initial", "A spoken text"], "Delayed discarded final cannot submit")
+        #expect(userTexts(a) == ["A initial", "A spoken text"], "Delayed discarded final cannot submit")
         let spoken = PuppetStream()
         try await ma.answer(.stream(spoken))
         try await spoken.send(["stopped ", "answer", "…", "…"]); await tick()
-        check(synths.count == 1, "A's new run is not spoken while it is written")
+        #expect(synths.count == 1, "A's new run is not spoken while it is written")
         let aState = voice.snapshot, aCancels = ma.cancelledCount
         workspace.stop(conversationID: b.id)
         try await wait("B stops") { !b.store.isGenerating }
-        check(voice.snapshot == aState && ma.cancelledCount == aCancels, "B Stop cannot touch A")
+        #expect(voice.snapshot == aState && ma.cancelledCount == aCancels, "B Stop cannot touch A")
         let bMessageCount = b.store.messages.count
-        check(workspace.retry(conversationID: b.id) && b.store.messages.count == bMessageCount, "B Continue adds no message of its own")
+        #expect(workspace.retry(conversationID: b.id) && b.store.messages.count == bMessageCount, "B Continue adds no message of its own")
         try await mb.reply("B retried")
         try await wait("B answers") { !b.store.isGenerating }
-        check(synths.count == 1 && voice.snapshot == aState, "B Continue and completion cannot enter A TTS or change A state")
+        #expect(synths.count == 1 && voice.snapshot == aState, "B Continue and completion cannot enter A TTS or change A state")
         a.store.followUpDraft = "A replacement"; a.store.toggleFollowUp()
         let aRun = a.store.task?.runID
-        check(workspace.sendFollowUp(conversationID: a.id), "A follow-up is accepted while A's run is written")
-        check(a.store.followUpDraft.isEmpty && a.store.isFollowUpExpanded && a.store.task?.runID == aRun
+        #expect(workspace.sendFollowUp(conversationID: a.id), "A follow-up is accepted while A's run is written")
+        #expect(a.store.followUpDraft.isEmpty && a.store.isFollowUpExpanded && a.store.task?.runID == aRun
               && a.store.messages.last?.steering == .queued,
               "The follow-up steers the same run, clears its draft, and keeps the editor open")
         spoken.send("…"); spoken.finish()
         try await ma.waitForRequests(3)
-        check(ma.requests[2].userTexts == ["A initial", "A spoken text", "A replacement"],
+        #expect(ma.requests[2].userTexts == ["A initial", "A spoken text", "A replacement"],
               "The steered request carries the follow-up after the earlier input")
         let replacement = PuppetStream()
         try await ma.answer(.stream(replacement))
         try await replacement.send(["replacement ", "partial", "…", "…"]); await tick()
         workspace.toggleVoiceMute(owner: firstOwner)
         workspace.stop(conversationID: a.id)
-        check(a.store.task?.status == .stopping && voice.snapshot.recognition == .off(.stopping), "Stop waits for cleanup with input paused")
+        #expect(a.store.task?.status == .stopping && voice.snapshot.recognition == .off(.stopping), "Stop waits for cleanup with input paused")
         let stoppingState = voice.snapshot, stopCount = audio.interruptions
         workspace.stop(conversationID: a.id)
-        check(voice.snapshot == stoppingState && audio.interruptions == stopCount, "Repeated Stop during cleanup is a no-op")
+        #expect(voice.snapshot == stoppingState && audio.interruptions == stopCount, "Repeated Stop during cleanup is a no-op")
         try await wait("A stops") { !a.store.isGenerating }
-        check(voice.isActive && voice.isMuted && a.store.task?.status == .stopped
+        #expect(voice.isActive && voice.isMuted && a.store.task?.status == .stopped
               && !a.store.messages.contains { $0.content.hasPrefix("replacement") },
               "Stop retains Session and user mute, and drops the cut-off reply")
         let users = userTexts(a)
-        check(workspace.retry(conversationID: a.id), "A Continue uses shared command path")
+        #expect(workspace.retry(conversationID: a.id), "A Continue uses shared command path")
         try await ma.waitForRequests(4)
-        check(userTexts(a) == users && ma.requests[3].kinds.last == "continue"
+        #expect(userTexts(a) == users && ma.requests[3].kinds.last == "continue"
               && !ma.requests[3].replies.contains { $0.hasPrefix("replacement") },
               "Voice Continue appends no user message and leaves out the cut-off reply")
-        check(workspace.send("B next", conversationID: b.id), "B can generate during A's Continue")
+        #expect(workspace.send("B next", conversationID: b.id), "B can generate during A's Continue")
         let bRun = b.store.task!.runID, bCancels = mb.cancelledCount
         audio.onStop = {
-            check(voice.snapshot.session == .ending(firstOwner), "Ending keeps its original owner until resource release")
-            check(!workspace.startVoice(conversationID: b.id) && !workspace.send("ending", conversationID: a.id),
+            #expect(voice.snapshot.session == .ending(firstOwner), "Ending keeps its original owner until resource release")
+            #expect(!workspace.startVoice(conversationID: b.id) && !workspace.send("ending", conversationID: a.id),
                   "Ending rejects duplicate Voice and owner submissions")
             workspace.endVoice(owner: firstOwner)
         }
         workspace.endVoice(owner: firstOwner); audio.onStop = nil
-        check(!voice.isActive && !audio.capturing && a.store.isGenerating && ma.cancelledCount == aCancels + 1,
+        #expect(!voice.isActive && !audio.capturing && a.store.isGenerating && ma.cancelledCount == aCancels + 1,
               "End releases A's Session and leaves its Agent run going")
-        check(b.store.isGenerating && b.store.task?.runID == bRun && mb.cancelledCount == bCancels, "End A leaves B untouched")
-        check(voice.conversationID == nil, "End never implicitly starts B")
-        check(workspace.startVoice(conversationID: a.id), "A can explicitly start a fresh Session")
+        #expect(b.store.isGenerating && b.store.task?.runID == bRun && mb.cancelledCount == bCancels, "End A leaves B untouched")
+        #expect(voice.conversationID == nil, "End never implicitly starts B")
+        #expect(workspace.startVoice(conversationID: a.id), "A can explicitly start a fresh Session")
         let nextOwner = voice.snapshot.session.owner!
         workspace.endVoice(owner: firstOwner); workspace.toggleVoiceMute(owner: firstOwner); workspace.toggleVoiceSpeakerMute(owner: firstOwner)
         voice.reveal(owner: firstOwner)
-        check(workspace.selectedID == b.id, "Old reveal controls cannot navigate to a fresh Session")
-        check(voice.snapshot.session.owner == nextOwner && !voice.isMuted && !voice.snapshot.speakerMuted, "Old same-conversation controls cannot affect a new Session")
-        check(workspace.send("during permission", conversationID: a.id) && a.store.messages.last?.steering == .queued,
+        #expect(workspace.selectedID == b.id, "Old reveal controls cannot navigate to a fresh Session")
+        #expect(voice.snapshot.session.owner == nextOwner && !voice.isMuted && !voice.snapshot.speakerMuted, "Old same-conversation controls cannot affect a new Session")
+        #expect(workspace.send("during permission", conversationID: a.id) && a.store.messages.last?.steering == .queued,
               "Starting Session accepts text, which steers A's run")
         let startingSynths = synths.count
         await tick(); permission?.resume(returning: true); permission = nil; await tick()
-        check(voice.snapshot.recognition == .listening && synths.count == startingSynths, "Activation listens during A's run")
+        #expect(voice.snapshot.recognition == .listening && synths.count == startingSynths, "Activation listens during A's run")
         // The Continue request answers first; with the follow-up queued, its text is not the reply.
         try await ma.reply("continued")
         try await ma.waitForRequests(5)
-        check(ma.requests[4].userTexts.last == "during permission", "The follow-up sent while starting reaches the model")
+        #expect(ma.requests[4].userTexts.last == "during permission", "The follow-up sent while starting reaches the model")
         // A completed reply can still own audio awaiting drain. A text command cancels that audio
         // while retaining the completed message's terminal state.
         var finishDrain: CheckedContinuation<Void, Never>?
         audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
         try await ma.reply("startup text")
         try await wait("the final's audio drains") { finishDrain != nil }
-        check(!a.store.isGenerating && voice.snapshot.replyAudio.runID != nil && synths.count == startingSynths + 1
+        #expect(!a.store.isGenerating && voice.snapshot.replyAudio.runID != nil && synths.count == startingSynths + 1
               && synths.last?.chunks == ["startup text"], "Only the final reply is spoken, and the fixture holds its audio")
         let completedMessage = a.store.messages.last!
-        check(workspace.send("replace draining audio", conversationID: a.id), "Text replaces audio after model completion")
-        check(a.store.messages.contains(completedMessage) && synths.last?.cancelled == true,
+        #expect(workspace.send("replace draining audio", conversationID: a.id), "Text replaces audio after model completion")
+        #expect(a.store.messages.contains(completedMessage) && synths.last?.cancelled == true,
               "Replacing audio preserves the completed text status")
         finishDrain?.resume(); finishDrain = nil; audio.onDrain = nil; await tick()
-        check(a.store.isGenerating && a.store.messages.last?.content == "replace draining audio", "Old drain cannot finish the new run")
+        #expect(a.store.isGenerating && a.store.messages.last?.content == "replace draining audio", "Old drain cannot finish the new run")
         workspace.endVoice(owner: nextOwner)
         b.store.mainDraft = "B follow-up"
-        check(workspace.sendMainMessage(conversationID: b.id) && b.store.mainDraft.isEmpty && b.store.messages.last?.steering == .queued,
+        #expect(workspace.sendMainMessage(conversationID: b.id) && b.store.mainDraft.isEmpty && b.store.messages.last?.steering == .queued,
               "Without Live Voice a chat steers its running turn the same way")
-        check(workspace.startVoice(conversationID: a.id), "Permission cancellation fixture starts")
+        #expect(workspace.startVoice(conversationID: a.id), "Permission cancellation fixture starts")
         let cancelledOwner = voice.snapshot.session.owner!
         await tick(); workspace.endVoice(owner: cancelledOwner)
         permission?.resume(returning: true); permission = nil; await tick()
-        check(!voice.isActive && !audio.capturing, "End during permission rejects the late approval")
+        #expect(!voice.isActive && !audio.capturing, "End during permission rejects the late approval")
         workspace.deleteConversation(a.id)
-        check(!workspace.send("deleted", conversationID: a.id) && !workspace.retry(conversationID: a.id)
+        #expect(!workspace.send("deleted", conversationID: a.id) && !workspace.retry(conversationID: a.id)
               && !workspace.startVoice(conversationID: a.id), "Deleted conversation commands are rejected")
-        check(workspace.startVoice(conversationID: b.id) && voice.conversationID == b.id,
+        #expect(workspace.startVoice(conversationID: b.id) && voice.conversationID == b.id,
               "B starts only after an explicit command once A has ended")
         let bOwner = voice.snapshot.session.owner!
-        check(bOwner.conversationID == b.id, "B session owner has conversation id")
+        #expect(bOwner.conversationID == b.id, "B session owner has conversation id")
         var revealedID: UUID?
         workspace.onRevealVoice = { revealedID = $0 }
         let prevFocus = workspace.composerFocusRequest
         workspace.revealVoice(owner: bOwner)
-        check(workspace.selectedID == b.id && workspace.isMainWindowVisible, "revealVoice selects target conversation")
-        check(workspace.composerFocusID == b.id && workspace.composerFocusRequest > prevFocus, "revealVoice requests composer focus")
-        check(revealedID == b.id, "revealVoice invokes onRevealVoice callback")
+        #expect(workspace.selectedID == b.id && workspace.isMainWindowVisible, "revealVoice selects target conversation")
+        #expect(workspace.composerFocusID == b.id && workspace.composerFocusRequest > prevFocus, "revealVoice requests composer focus")
+        #expect(revealedID == b.id, "revealVoice invokes onRevealVoice callback")
         audio.onFailure?("B fatal failure", .deviceChange)
-        check(!voice.isActive && voice.error == "B fatal failure", "B failure ends session and sets error")
-        check(voice.snapshot.error?.conversationID == b.id, "error is attributed to B")
+        #expect(!voice.isActive && voice.error == "B fatal failure", "B failure ends session and sets error")
+        #expect(voice.snapshot.error?.conversationID == b.id, "error is attributed to B")
         workspace.deleteConversation(b.id)
-        check(voice.snapshot.error == nil, "deleting B clears its attributed error")
-        check(!voice.isActive && !audio.capturing, "voice resources remain released after deleting B")
+        #expect(voice.snapshot.error == nil, "deleting B clears its attributed error")
+        #expect(!voice.isActive && !audio.capturing, "voice resources remain released after deleting B")
     }
 
     /// The pet's own Live Voice entry. The main window's button binds the conversation being
     /// read; this one must never do that — it brings its own conversation and leaves the
     /// selection, the sidebar and the desktop activity exactly as they were.
     @Test static func petStartsItsOwnConversation() async {
-        func check(_ condition: @autoclosure () -> Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
-            #expect(condition(), "\(message)", sourceLocation: sourceLocation)
-        }
         let audio = CommandAudio()
         var permission: CheckedContinuation<Bool, Never>?
         let voice = VoiceSessionController(audio: audio, recognizer: { CommandRecognizer() },
@@ -268,41 +262,41 @@ import Foundation
         defer { permission?.resume(returning: false); workspace.shutdown() }
 
         let reading = workspace.selected!
-        check(workspace.send("正在读的聊天", conversationID: reading.id), "The chat being read is a real conversation")
+        #expect(workspace.send("正在读的聊天", conversationID: reading.id), "The chat being read is a real conversation")
         let activityBefore = workspace.activityID
 
-        check(workspace.startVoiceInNewConversation(), "The pet entry starts Live Voice")
+        #expect(workspace.startVoiceInNewConversation(), "The pet entry starts Live Voice")
         let first = voice.snapshot.session.owner!
-        check(workspace.selectedID == reading.id && first.conversationID != reading.id,
+        #expect(workspace.selectedID == reading.id && first.conversationID != reading.id,
               "The pet entry brings its own conversation and leaves the read one selected")
-        check(workspace.conversation(id: first.conversationID) != nil
+        #expect(workspace.conversation(id: first.conversationID) != nil
               && !workspace.conversations.contains { $0.id == first.conversationID },
               "That conversation is a draft, so the sidebar is unchanged until it speaks")
-        check(workspace.activityID == activityBefore, "Starting alone never claims the desktop activity")
-        check(!workspace.startVoiceInNewConversation(), "A second pet start is rejected while one runs")
+        #expect(workspace.activityID == activityBefore, "Starting alone never claims the desktop activity")
+        #expect(!workspace.startVoiceInNewConversation(), "A second pet start is rejected while one runs")
 
         // Ending without a word leaves an empty draft nobody saw; the next start reuses it.
         workspace.endVoice(owner: first)
-        check(voice.snapshot.session.owner == nil, "Ending releases the session")
-        check(workspace.startVoiceInNewConversation()
+        #expect(voice.snapshot.session.owner == nil, "Ending releases the session")
+        #expect(workspace.startVoiceInNewConversation()
               && voice.snapshot.session.owner?.conversationID == first.conversationID,
               "A start nobody spoke into is reused rather than piling up drafts")
         workspace.endVoice(owner: voice.snapshot.session.owner!)
 
         // An empty draft the main window is showing is still off limits.
         let blank = workspace.newConversation()
-        check(workspace.selectedID == blank.id, "A fresh empty draft is what the main window now shows")
-        check(workspace.startVoiceInNewConversation(), "The pet entry starts while an empty draft is selected")
+        #expect(workspace.selectedID == blank.id, "A fresh empty draft is what the main window now shows")
+        #expect(workspace.startVoiceInNewConversation(), "The pet entry starts while an empty draft is selected")
         let third = voice.snapshot.session.owner!
-        check(third.conversationID != blank.id && workspace.selectedID == blank.id,
+        #expect(third.conversationID != blank.id && workspace.selectedID == blank.id,
               "The selected empty draft is never reused, so reading it is not interrupted")
 
         // The first spoken line is what turns that draft into a conversation of its own.
-        check(workspace.send("第一句话", conversationID: third.conversationID), "Live Voice submits into its own conversation")
-        check(workspace.conversations.contains { $0.id == third.conversationID }
+        #expect(workspace.send("第一句话", conversationID: third.conversationID), "Live Voice submits into its own conversation")
+        #expect(workspace.conversations.contains { $0.id == third.conversationID }
               && workspace.conversation(id: third.conversationID)?.title == "第一句话",
               "Speaking promotes the draft into the sidebar under its first line")
-        check(workspace.selectedID == blank.id, "Promotion still leaves the viewed conversation selected")
+        #expect(workspace.selectedID == blank.id, "Promotion still leaves the viewed conversation selected")
         workspace.endVoice(owner: third)
     }
 }
