@@ -17,7 +17,7 @@ extension EchoIntegrationScenarios {
     /// whether a Stop is written over it, races it, or its save fails.
     static func directAnswerAndStopRules(_ f: SessionFixture) async throws {
       let workspace = f.workspace
-      let factory = { f.source() }
+      let factory = { f.harness() }
       let chat = try #require(workspace.selected)
       #expect(chat.store.send("hello"))
       try await wait("direct answer") { !chat.store.isGenerating }
@@ -29,7 +29,7 @@ extension EchoIntegrationScenarios {
 
       var stoppedAfterCompletion = chat.store.snapshot
       stoppedAfterCompletion.task?.status = .stopped
-      let lateStop = TaskStore(snapshot: stoppedAfterCompletion, source: factory())
+      let lateStop = TaskStore(snapshot: stoppedAfterCompletion, harness: factory())
       defer { lateStop.shutdown() }
       #expect(!lateStop.canRetry && !lateStop.retry(), "A Stop that lands after the turn completed offers no continue")
       lateStop.shutdown()
@@ -86,7 +86,7 @@ extension EchoIntegrationScenarios {
       #expect(settings.notice == nil)
       let workspace = WorkspaceStore(
         persistence: WorkspacePersistence(url: temp.appendingPathComponent("reopen/workspace.json")),
-        sourceFactory: { f.settingsSource(settings) })
+        harnessFactory: { f.settingsHarness(settings) })
       defer { workspace.shutdown() }
       let chat = try #require(workspace.selected)
       #expect(chat.store.send("hello before settings change"))
@@ -134,10 +134,10 @@ extension EchoIntegrationScenarios {
       modelContext: (_ recovered: TaskStore, _ expected: TaskStore.Snapshot) -> Void
     ) async throws {
       let temp = f.root
-      let factory = { f.source() }
+      let factory = { f.harness() }
       for failure in ["missing", "corrupt"] {
         let persistence = WorkspacePersistence(url: temp.appendingPathComponent("history-\(seed)-\(failure)/workspace.json"))
-        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+        let workspace = WorkspaceStore(persistence: persistence, harnessFactory: factory)
         defer { workspace.shutdown() }
         let projectID = workspace.addProject(url: temp)
         let chat = workspace.newConversation(projectID: projectID)
@@ -158,7 +158,7 @@ extension EchoIntegrationScenarios {
         // Saving and restarting while the file is unreadable must preserve
         // its reference without replacing it with the empty fallback state.
         for _ in 0..<2 {
-          let unreadable = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+          let unreadable = WorkspaceStore(persistence: persistence, harnessFactory: factory)
           defer { unreadable.shutdown() }
           let blocked = (try #require(unreadable.conversation(id: chat.id))).store
           #expect(blocked.agentLoadError != nil && !blocked.canSubmit && !blocked.canRetry)
@@ -178,7 +178,7 @@ extension EchoIntegrationScenarios {
         }
 
         try original.write(to: historyURL, options: .atomic)
-        let restored = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+        let restored = WorkspaceStore(persistence: persistence, harnessFactory: factory)
         defer { restored.shutdown() }
         let recovered = (try #require(restored.conversation(id: chat.id))).store
         #expect(recovered.agentLoadError == nil && recovered.canSubmit,
@@ -199,7 +199,7 @@ extension EchoIntegrationScenarios {
     /// The first save of a new conversation fails: the send is rejected and the draft survives a restart.
     static func initialSaveFailureKeepsDraft(_ f: SessionFixture) async throws {
       let persistence = WorkspacePersistence(url: f.root.appendingPathComponent("initial-save-failure/workspace.json"))
-      let workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
+      let workspace = WorkspaceStore(persistence: persistence, harnessFactory: { f.harness() })
       defer { workspace.shutdown() }
       let chat = try #require(workspace.selected)
       chat.store.mainDraft = "prompt to keep"
@@ -209,7 +209,7 @@ extension EchoIntegrationScenarios {
               && chat.store.notice?.contains("保存失败") == true,
               "A rejected send must leave the draft available for recovery")
       workspace.shutdown()
-      let restored = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
+      let restored = WorkspaceStore(persistence: persistence, harnessFactory: { f.harness() })
       defer { restored.shutdown() }
       #expect(restored.conversation(id: chat.id)?.store.mainDraft == "prompt to keep",
               "The draft must survive reopening after an initial Agent save failure")
@@ -224,7 +224,7 @@ extension EchoIntegrationScenarios {
       f.workspace.flush()
       try FileManager.default.moveItem(at: f.persistence.sessionURL(chat.id),
                                        to: f.root.appendingPathComponent("preserved-chat.json"))
-      let unreadable = WorkspaceStore(persistence: f.persistence, sourceFactory: { f.source() })
+      let unreadable = WorkspaceStore(persistence: f.persistence, harnessFactory: { f.harness() })
       defer { unreadable.shutdown() }
       #expect(unreadable.conversation(id: chat.id)?.store.agentLoadError != nil)
       #expect(unreadable.conversation(id: chat.id)?.store.send("must not execute") == false)
@@ -440,11 +440,11 @@ extension EchoIntegrationScenarios {
       try await withSession { f in
         let temp = f.root
 
-        let factory = { f.source() }
+        let factory = { f.harness() }
         // A binding that cannot be saved is rolled back and its pending call never runs.
         let bindPersistence = WorkspacePersistence(
           url: temp.appendingPathComponent("bind-failure/workspace.json"))
-        let bindWorkspace = WorkspaceStore(persistence: bindPersistence, sourceFactory: factory)
+        let bindWorkspace = WorkspaceStore(persistence: bindPersistence, harnessFactory: factory)
         defer { bindWorkspace.shutdown() }
         let unbound = try #require(bindWorkspace.selected)
         unbound.store.send("tool")
@@ -565,7 +565,7 @@ extension EchoIntegrationScenarios {
         let temp = f.root
         let workspace = f.workspace
         let persistence = f.persistence
-        let factory = { f.source() }
+        let factory = { f.harness() }
         let project = temp.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let projectID = workspace.addProject(url: project)
@@ -599,7 +599,7 @@ extension EchoIntegrationScenarios {
         workspace.flush()
         let manifest = try String(contentsOf: persistence.url, encoding: .utf8)
         #expect(!manifest.contains("工具输出") && !manifest.contains("agentHistory"))
-        let recovered = WorkspaceStore(persistence: persistence, sourceFactory: factory)
+        let recovered = WorkspaceStore(persistence: persistence, harnessFactory: factory)
         defer { recovered.shutdown() }
         let restored = (try #require(recovered.conversation(id: responses.id)))
         #expect(restored.store.tools == responses.store.tools)
@@ -608,7 +608,7 @@ extension EchoIntegrationScenarios {
         var legacySummary = responses.store.snapshot
         legacySummary.task?.summary = String(
           try #require(responses.store.responseMessage).content.prefix(180))
-        let restoredSummary = TaskStore(snapshot: legacySummary, source: factory())
+        let restoredSummary = TaskStore(snapshot: legacySummary, harness: factory())
         defer { restoredSummary.shutdown() }
         #expect(
           restoredSummary.task?.summary == "已完成"
@@ -667,7 +667,7 @@ extension EchoIntegrationScenarios {
         let temp = f.root
         let workspace = f.workspace
 
-        let factory = { f.source() }
+        let factory = { f.harness() }
         let project = temp.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let projectID = workspace.addProject(url: project)
@@ -705,7 +705,7 @@ extension EchoIntegrationScenarios {
         try await wait("delete releases after cleanup") { !afterDelete.store.isGenerating }
         #expect(afterDelete.store.task?.status == .completed)
 
-        let crashRecovery = WorkspaceStore(persistence: crashPersistence, sourceFactory: factory)
+        let crashRecovery = WorkspaceStore(persistence: crashPersistence, harnessFactory: factory)
         defer { crashRecovery.shutdown() }
         let interrupted = (try #require(crashRecovery.conversation(id: holder.id)))
         #expect(interrupted.store.task?.status == .interrupted)
@@ -745,7 +745,7 @@ extension EchoIntegrationScenarios {
       try await withSession { f in
         let fm = FileManager.default
         let persistence = WorkspacePersistence(url: f.root.appendingPathComponent("manifest-only/workspace.json"))
-        var workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
+        var workspace = WorkspaceStore(persistence: persistence, harnessFactory: { f.harness() })
         let current = try #require(workspace.selected)
         #expect(workspace.send("hello", conversationID: current.id))
         try await wait("native reply") { !current.store.isGenerating }
@@ -767,7 +767,7 @@ extension EchoIntegrationScenarios {
         let requests = f.server.requests.count
 
         for launch in 1...2 {
-          workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
+          workspace = WorkspaceStore(persistence: persistence, harnessFactory: { f.harness() })
           #expect(workspace.persistenceNotice == nil, "launch \(launch): the workspace itself loads")
           let native = try #require(workspace.conversation(id: current.id)).store
           #expect(native.agentLoadError == nil && native.messages == currentMessages && native.canSubmit, "launch \(launch)")
@@ -780,7 +780,7 @@ extension EchoIntegrationScenarios {
           #expect(!fm.fileExists(atPath: persistence.sessionURL(inline).path), "launch \(launch): never saved as native history")
         }
 
-        workspace = WorkspaceStore(persistence: persistence, sourceFactory: { f.source() })
+        workspace = WorkspaceStore(persistence: persistence, harnessFactory: { f.harness() })
         defer { workspace.shutdown() }
         workspace.deleteConversation(inline)
         #expect(workspace.conversation(id: inline) == nil && workspace.conversation(id: current.id) != nil)

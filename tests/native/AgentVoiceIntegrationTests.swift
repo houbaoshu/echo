@@ -13,9 +13,9 @@ extension EchoIntegrationScenarios {
     @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses], ["tool", "model", "directory", "queue", "stop"])
     static func voiceRouting(apiProtocol: ModelAPIProtocol, scenario: String) async throws {
       try await withSession { session in
-        let makeSource = { AgentFixture.source(server: session.server, protocol: apiProtocol) }
-        let f = AgentVoiceFixture(source: makeSource())
-        f.sourceFactory = makeSource
+        let makeHarness = { AgentFixture.harness(server: session.server, protocol: apiProtocol) }
+        let f = AgentVoiceFixture(harness: makeHarness())
+        f.harnessFactory = makeHarness
         defer { f.shutdown() }
         let project = session.root.appendingPathComponent("\(apiProtocol)-\(scenario)")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -121,9 +121,9 @@ extension EchoIntegrationScenarios {
     @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
     static func streamedMarkdown(apiProtocol: ModelAPIProtocol) async throws {
       try await withSession { session in
-        let makeSource = { AgentFixture.source(server: session.server, protocol: apiProtocol) }
-        let f = AgentVoiceFixture(source: makeSource())
-        f.sourceFactory = makeSource
+        let makeHarness = { AgentFixture.harness(server: session.server, protocol: apiProtocol) }
+        let f = AgentVoiceFixture(harness: makeHarness())
+        f.harnessFactory = makeHarness
         defer { f.shutdown() }
         await f.start()
         f.voice.toggleSpeakerMute()

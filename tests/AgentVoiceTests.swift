@@ -457,7 +457,7 @@ extension VoiceTests {
             default: try await emit.text("继续后的回复")
             }
         }
-        let f = AgentVoiceFixture(source: AgentHarness(resolveModel: { model.factory }))
+        let f = AgentVoiceFixture(harness: AgentHarness(resolveModel: { model.factory }))
         defer { f.shutdown() }
         var completions: [String] = []
         let subscription = f.store.lifecycle.sink { if case .reply(_, .completed(let text)) = $0 { completions.append(text) } }

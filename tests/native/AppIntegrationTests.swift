@@ -26,7 +26,7 @@ final class AppIntegrationTests: XCTestCase {
         XCTAssertTrue(instructions.contains("list_files") && instructions.contains("read_file"))
         XCTAssertTrue(AgentInstructions.text(tools: ["list_files", "read_file", "bash"]).contains("use the bash tool"))
         let harness = AgentHarness(settings: settings)
-        let store = TaskStore(source: harness)
+        let store = TaskStore(harness: harness)
         defer { store.shutdown() }
         XCTAssertTrue(store.canSubmit && !harness.isRunning)
         XCTAssertFalse(ExecutionService.coreStarted)
@@ -45,7 +45,7 @@ final class AppIntegrationTests: XCTestCase {
         let backend = CoreAILocalChatBackend(locate: { location.find() })
         let harness = AgentHarness(resolveModel: { throw SettingsError("no cloud model") },
                                    local: LocalChatService(backend: backend), localOnly: { true })
-        let store = TaskStore(source: harness)
+        let store = TaskStore(harness: harness)
         defer { store.shutdown() }
         var snapshots: [String] = []
         let watch = observeChanges({ store.replyStream.live }, initial: true) { if let live = $0 { snapshots.append(live) } }

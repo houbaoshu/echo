@@ -282,7 +282,7 @@ private struct HeldExecutor: LanguageModelExecutor {
 
     func testTranscriptTailAnchors() async throws {
         let model = HeldModel()
-        let store = TaskStore(source: AgentHarness(resolveModel: { model.factory }))
+        let store = TaskStore(harness: AgentHarness(resolveModel: { model.factory }))
         let workspace = WorkspaceStore(initialStore: store)
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
                                         settings: SettingsStore(secrets: ComposerSecrets()))
@@ -439,7 +439,7 @@ private struct HeldExecutor: LanguageModelExecutor {
             await withCheckedContinuation { permissionReply = $0 }
         })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(dictation: dictation, voice: voice, sourceFactory: { HeldModel.session() })
+        let workspace = WorkspaceStore(dictation: dictation, voice: voice, harnessFactory: { HeldModel.session() })
         dictation.attach(workspace: workspace)
         voice.attach(workspace: workspace, settings: settings)
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(), settings: settings)
@@ -642,7 +642,7 @@ private struct HeldExecutor: LanguageModelExecutor {
     func testProjectPickerKeyboardScroll() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("picker-scroll-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
-        let workspace = WorkspaceStore(sourceFactory: { HeldModel.session() })
+        let workspace = WorkspaceStore(harnessFactory: { HeldModel.session() })
         defer { workspace.shutdown() }
         for index in 0..<20 {
             let folder = root.appendingPathComponent("project-\(index)")
@@ -696,7 +696,7 @@ private struct HeldExecutor: LanguageModelExecutor {
     func testSearchResultAccessibilityActivation() async throws {
         NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"),
                       with: NSNumber(value: true), with: "AXEnhancedUserInterface")
-        let workspace = WorkspaceStore(sourceFactory: { HeldModel.session() })
+        let workspace = WorkspaceStore(harnessFactory: { HeldModel.session() })
         defer { workspace.shutdown() }
         let target = workspace.newConversation()
         target.store.send("无障碍目标会话")
@@ -739,7 +739,7 @@ private struct HeldExecutor: LanguageModelExecutor {
         settings.draft.model = "test-model"; settings.apiKey = "test-key"; settings.save()
         settings.voiceAPIKey = "test-voice"; settings.saveVoice()
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { HeldModel.session() })
+        let workspace = WorkspaceStore(voice: voice, harnessFactory: { HeldModel.session() })
         voice.attach(workspace: workspace, settings: settings)
         let pets = PetCatalog(settings: settings, builtinRoot: EchoTestResources.resource("pets"))
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
@@ -1011,7 +1011,7 @@ private struct HeldExecutor: LanguageModelExecutor {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("sidebar-keys-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let workspace = WorkspaceStore(sourceFactory: { HeldModel.session() })
+        let workspace = WorkspaceStore(harnessFactory: { HeldModel.session() })
         defer { workspace.shutdown() }
         let projectID = workspace.addProject(url: root)
         var ids: [String: UUID] = [:]

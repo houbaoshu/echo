@@ -24,7 +24,7 @@ import Foundation
             print("START: \(api.title) tool capability, direct answer, read/edit/verify, coding task"); fflush(nil)
             let endpoint = AgentEndpoint(config, key: key)
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
-                sourceFactory: {
+                harnessFactory: {
                     AgentHarness(resolveModel: {
                         let transport = AgentTransport.make(for: endpoint)
                         return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }

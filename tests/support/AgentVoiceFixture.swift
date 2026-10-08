@@ -6,26 +6,26 @@ import Foundation
     let audio = FakeAudio()
     /// Answers the model requests of the fixture's own conversation.
     let puppet = PuppetModel()
-    let source: AgentHarness
+    let harness: AgentHarness
     /// Other conversations get an Agent whose requests are never answered.
-    var sourceFactory: () -> AgentHarness = { AgentHarness(resolveModel: { PuppetModel().factory }) }
+    var harnessFactory: () -> AgentHarness = { AgentHarness(resolveModel: { PuppetModel().factory }) }
     var recognizers: [FakeRecognizer] = []
     var synths: [FakeSynthesizer] = []
     var finishDrain: CheckedContinuation<Void, Never>?
     var permission: @MainActor () async -> Bool = { true }
-    lazy var store = TaskStore(source: source)
+    lazy var store = TaskStore(harness: harness)
     lazy var voice = VoiceSessionController(audio: audio, recognizer: { [unowned self] in
         let client = FakeRecognizer(); recognizers.append(client); return client
     }, synthesizer: { [unowned self] in
         let client = FakeSynthesizer(); client.emitsAudio = true; synths.append(client); return client
     }, tailProtectionDuration: .milliseconds(40), bargeInTimeout: .milliseconds(200),
        permission: { [unowned self] in await permission() })
-    lazy var workspace = WorkspaceStore(initialStore: store, voice: voice, sourceFactory: { [unowned self] in sourceFactory() })
+    lazy var workspace = WorkspaceStore(initialStore: store, voice: voice, harnessFactory: { [unowned self] in harnessFactory() })
     lazy var conversation = workspace.selected!
     lazy var settings = SettingsStore(secrets: FakeSecrets())
-    init(source: AgentHarness? = nil) {
+    init(harness: AgentHarness? = nil) {
         let puppet = puppet
-        self.source = source ?? AgentHarness(resolveModel: { puppet.factory })
+        self.harness = harness ?? AgentHarness(resolveModel: { puppet.factory })
     }
     /// User messages of the fixture's conversation, in order.
     var userTexts: [String] { store.messages.filter { $0.role == .user }.map(\.content) }

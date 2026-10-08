@@ -459,7 +459,7 @@ struct ChatSearchPalette: View {
         followUpDraft: "",
         activityDismissed: false,
         activitiesCollapsed: false
-    ), source: nil)
+    ), harness: nil)
     let workspace = WorkspaceStore(initialStore: store)
     return ChatSearchPalette(workspace: workspace, close: {})
 }

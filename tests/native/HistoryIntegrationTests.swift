@@ -34,7 +34,7 @@ extension EchoIntegrationScenarios {
         let bytes = try Data(contentsOf: f.persistence.sessionURL(work.id))
         let state = try JSONDecoder().decode(TaskStore.Snapshot.self, from: bytes)
         try verifyNative(state, api: api)
-        let restored = WorkspaceStore(persistence: f.persistence, sourceFactory: { f.source() })
+        let restored = WorkspaceStore(persistence: f.persistence, harnessFactory: { f.harness() })
         defer { restored.shutdown() }
         let conversation = try #require(restored.conversation(id: work.id))
         #expect(!conversation.store.isGenerating)

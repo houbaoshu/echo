@@ -34,7 +34,7 @@ import Testing
             self.project = project
             self.runner = runner
             let harness = AgentHarness(resolveModel: { model.factory }, runner: runner)
-            store = snapshot.map { TaskStore(snapshot: $0, source: harness) } ?? TaskStore(source: harness)
+            store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.projectDirectory = { [unowned self] in self.project }
             store.acquireDirectory = { [unowned self] path, ready in self.leases.append("acquire \(path)"); ready() }
             store.releaseDirectory = { [unowned self] in self.leases.append("release") }
@@ -120,7 +120,7 @@ import Testing
     /// the generation ends, so the chat never draws the partial text twice.
     @Test func aReplyBeingWrittenIsNotYetAMessage() async throws {
         let puppet = PuppetModel()
-        let store = TaskStore(source: AgentHarness(resolveModel: { puppet.factory }))
+        let store = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }))
         defer { store.shutdown() }
         #expect(store.send("讲讲天气"))
         try await puppet.waitForRequests(1)
@@ -212,7 +212,7 @@ import Testing
         #expect(looping.store.tools.count == 30 && looping.store.tools.allSatisfy { $0.state == .finished })
         #expect(looping.store.canRetry && looping.native.turns.last?.outcome == .stepLimit)
 
-        let unset = TaskStore(source: AgentHarness(resolveModel: { throw SettingsError("请先在设置中配置并保存默认模型。") }))
+        let unset = TaskStore(harness: AgentHarness(resolveModel: { throw SettingsError("请先在设置中配置并保存默认模型。") }))
         unset.checkpoint = { _ in }
         #expect(unset.send("hello"))
         try await Self.wait("settings failure") { !unset.isGenerating }
@@ -450,13 +450,13 @@ import Testing
     /// had: a failure placeholder added by an earlier reopen, or text shown before a crash that the
     /// transcript never saved. Neither is the old demo cleanup, so the outcome stays as it was.
     @Test func reopeningKeepsTheOutcome() async throws {
-        let unset = TaskStore(source: AgentHarness(resolveModel: { throw SettingsError("请先在设置中配置并保存默认模型。") }))
+        let unset = TaskStore(harness: AgentHarness(resolveModel: { throw SettingsError("请先在设置中配置并保存默认模型。") }))
         unset.checkpoint = { _ in }
         #expect(unset.send("hello"))
         try await Self.wait("settings failure") { !unset.isGenerating }
         var reopened = unset.snapshot
         for _ in 0..<3 {
-            let store = TaskStore(snapshot: reopened, source: AgentHarness(resolveModel: { throw SettingsError("x") }))
+            let store = TaskStore(snapshot: reopened, harness: AgentHarness(resolveModel: { throw SettingsError("x") }))
             #expect(store.task?.status == .failed && store.task?.summary == "请先在设置中配置并保存默认模型。")
             #expect(store.messages.map(\.role) == [.user, .assistant] && store.canRetry)
             reopened = store.snapshot
@@ -616,7 +616,7 @@ import Testing
         let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
         let model = ScriptedAgentModel { request, emit, _ in try await emit.text("reply \(request.userTexts.count)") }
         func workspace() -> WorkspaceStore {
-            WorkspaceStore(persistence: persistence, sourceFactory: { AgentHarness(resolveModel: { model.factory }) })
+            WorkspaceStore(persistence: persistence, harnessFactory: { AgentHarness(resolveModel: { model.factory }) })
         }
         var store = workspace()
         let chat = try #require(store.selected)

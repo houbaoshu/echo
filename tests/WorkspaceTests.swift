@@ -27,7 +27,7 @@ import FoundationModels
 
     @MainActor @Test(.tags(.fast)) static func petControlsStayExpandedWhileAnyCardShows() async throws {
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(!workspace.keepsPetControlsExpanded, "Without cards the controls follow hover")
         #expect(workspace.sendQuickMessage("first"))
@@ -62,7 +62,7 @@ import FoundationModels
 
     @MainActor @Test(.tags(.fast)) static func completionKeepsATrayCollapsedDuringTheRun() async throws {
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(workspace.sendQuickMessage("background"))
         let chat = try #require(workspace.activity)
@@ -82,7 +82,7 @@ import FoundationModels
 
     @MainActor @Test static func petCardsStayUnreadUntilOpened() async throws {
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(workspace.sendQuickMessage("第一张卡片"))
         let first = try #require(workspace.activity)
@@ -150,7 +150,7 @@ import FoundationModels
     /// a window already showing keeps its chat, and Live Voice still takes it to the call.
     @MainActor @Test(.tags(.fast)) static func petOpensTheMainWindowOnANewChat() async throws {
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         let blank = try #require(workspace.selected)
         #expect(workspace.sendQuickMessage("第一张卡片"))
@@ -208,7 +208,7 @@ import FoundationModels
 
     @MainActor @Test(.tags(.fast)) static func petTrayStepsBetweenCollapsedStackAndList() async throws {
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         func notify(_ text: String) async throws -> WorkspaceConversation {
             #expect(workspace.sendQuickMessage(text))
@@ -270,7 +270,7 @@ import FoundationModels
 
     @MainActor @Test(.tags(.fast)) static func singlePetNotificationKeepsOneStepTray() async throws {
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(workspace.sendQuickMessage("唯一的通知"))
         let only = try #require(workspace.activity)
@@ -288,7 +288,7 @@ import FoundationModels
 
     @MainActor @Test static func ignoringPetNotificationsPreservesHistoryAndFutureResults() async throws {
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         let selection = workspace.selectedID
         var opens = 0
@@ -365,11 +365,11 @@ import FoundationModels
         defer { try? FileManager.default.removeItem(at: directory) }
         let persistence = WorkspacePersistence(url: directory.appendingPathComponent("workspace.json"))
         let puppets = PuppetSessions()
-        var workspace = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
+        var workspace = WorkspaceStore(persistence: persistence, harnessFactory: puppets.factory)
         var draft = workspace.selected!
         let draftModel = try #require(puppets.last)
         // Reopening reads the native histories, as the app does.
-        func reopen() -> WorkspaceStore { WorkspaceStore(persistence: persistence, sourceFactory: { idleAgent() }) }
+        func reopen() -> WorkspaceStore { WorkspaceStore(persistence: persistence, harnessFactory: { idleAgent() }) }
         check(workspace.conversations.isEmpty, "Startup opens a composer without a sidebar conversation")
         check(workspace.activityID == nil && workspace.activityStore.task == nil, "First launch has no active conversation or task")
         check(!workspace.isMainWindowVisible && !workspace.activityStore.isActivityVisible && !workspace.voice.isActive,
@@ -414,7 +414,7 @@ import FoundationModels
         }
         workspace.shutdown()
         try persistence.save(seeded)
-        workspace = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
+        workspace = WorkspaceStore(persistence: persistence, harnessFactory: puppets.factory)
         check(workspace.selectedID != seeded.selectedID && workspace.selected?.store.messages.isEmpty == true,
               "Restart selects an unsent composer instead of the last historical conversation")
         check(workspace.activityID == nil && workspace.activity == nil && workspace.activityStore.task == nil,
@@ -512,7 +512,7 @@ import FoundationModels
         check(reloaded.conversations.first { $0.id == projectDraft.id }?.store.messages.first?.content == "项目草稿", "Committed message survives reload")
         reloaded.shutdown()
 
-        let fresh = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
+        let fresh = WorkspaceStore(persistence: persistence, harnessFactory: puppets.factory)
         let freshDraft = fresh.selected!
         let historyIDs = fresh.conversations.map(\.id)
         let historicalMessages = fresh.conversations.map { $0.store.messages }
@@ -542,7 +542,7 @@ import FoundationModels
             #expect(condition(), "\(message)", sourceLocation: sourceLocation)
         }
         let puppets = PuppetSessions()
-        let ws = WorkspaceStore(sourceFactory: puppets.factory)
+        let ws = WorkspaceStore(harnessFactory: puppets.factory)
         defer { ws.shutdown() }
         let mainDraft = ws.selected!
         mainDraft.store.mainDraft = "主窗口里的草稿"
@@ -669,7 +669,7 @@ import FoundationModels
         defer { try? FileManager.default.removeItem(at: root) }
         let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
         let puppets = PuppetSessions()
-        let ws = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
+        let ws = WorkspaceStore(persistence: persistence, harnessFactory: puppets.factory)
         defer { ws.shutdown() }
         let a = ws.addProject(url: root.appendingPathComponent("A")), b = ws.addProject(url: root.appendingPathComponent("B"))
         let first = ws.selected!
@@ -685,7 +685,7 @@ import FoundationModels
         let tiedDate = Date(timeIntervalSince1970: 100)
         first.lastUsed = tiedDate; second.lastUsed = tiedDate
         ws.flush()
-        let collisionReload = WorkspaceStore(persistence: persistence, sourceFactory: { idleAgent() })
+        let collisionReload = WorkspaceStore(persistence: persistence, harnessFactory: { idleAgent() })
         let expectedID = [first.id, second.id].sorted { $0.uuidString < $1.uuidString }.first!
         #expect(collisionReload.newConversation(projectID: a).id == expectedID, "Equal recency uses stable UUID order after restart")
         #expect(collisionReload.conversation(id: first.id)?.store.mainDraft == "first draft"
@@ -718,7 +718,7 @@ import FoundationModels
         #expect(ws.associateFolder(root.appendingPathComponent("B/../A"), conversationID: second.id))
         #expect(second.projectID == a && ws.projects.count == 3, "Folder paths are deduplicated")
         ws.flush()
-        let reload = WorkspaceStore(persistence: persistence, sourceFactory: { idleAgent() })
+        let reload = WorkspaceStore(persistence: persistence, harnessFactory: { idleAgent() })
         #expect(reload.conversation(id: first.id)?.projectID == a && !reload.canAssociateProject(conversationID: first.id))
         #expect(reload.newConversation(projectID: a).id == second.id)
         #expect(reload.selected?.store.mainDraft == "second draft")
@@ -741,7 +741,7 @@ import FoundationModels
         }
         var snapshot = second.store.snapshot
         snapshot.native = toolsOnly
-        let toolStore = TaskStore(snapshot: snapshot, source: idleAgent())
+        let toolStore = TaskStore(snapshot: snapshot, harness: idleAgent())
         #expect(toolStore.messages.isEmpty && toolStore.tools.count == 1 && toolStore.tools[0].state == .finished)
         let toolWorkspace = WorkspaceStore(initialStore: toolStore)
         #expect(!toolWorkspace.canAssociateProject(conversationID: toolWorkspace.selectedID!))
@@ -753,7 +753,7 @@ import FoundationModels
         defer { try? FileManager.default.removeItem(at: root) }
         let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
         // The app's launches all read native histories.
-        func launch() -> WorkspaceStore { WorkspaceStore(persistence: persistence, sourceFactory: { idleAgent() }) }
+        func launch() -> WorkspaceStore { WorkspaceStore(persistence: persistence, harnessFactory: { idleAgent() }) }
         let ws = launch()
         let kept = ws.selected!
         kept.store.send("保留的会话")
@@ -827,7 +827,7 @@ import FoundationModels
         defer { try? FileManager.default.removeItem(at: directory) }
         let persistence = WorkspacePersistence(url: directory.appendingPathComponent("workspace.json"))
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(persistence: persistence, harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         let conversation = workspace.selected!
         let model = try #require(puppets.last)
@@ -861,7 +861,7 @@ import FoundationModels
             check(history?.task?.status == .running && history?.messages.map(\.content) == ["streaming request"],
                   "A save while the reply streams holds the request, never the partial reply")
             if let history {
-                let restored = TaskStore(snapshot: history, source: idleAgent())
+                let restored = TaskStore(snapshot: history, harness: idleAgent())
                 check(restored.task?.status == .interrupted && restored.messages.map(\.content) == ["streaming request", ""]
                       && restored.messages.last?.status == .interrupted && restored.canRetry,
                       "A save made while the reply streamed restores as interrupted, with Continue")
@@ -889,7 +889,7 @@ import FoundationModels
         let url = root.appendingPathComponent("workspace.json")
         let puppets = PuppetSessions()
         func open() -> WorkspaceStore {
-            WorkspaceStore(persistence: WorkspacePersistence(url: url), sourceFactory: puppets.factory)
+            WorkspaceStore(persistence: WorkspacePersistence(url: url), harnessFactory: puppets.factory)
         }
 
         // A chat with a finished reply, a project, and an empty draft: then a fresh launch, so the
@@ -1011,7 +1011,7 @@ import FoundationModels
         }
 
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(persistence: persistence, harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(workspace.persistenceNotice == nil)
         let first = try #require(workspace.conversation(id: unnamed))

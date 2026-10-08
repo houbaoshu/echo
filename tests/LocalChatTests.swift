@@ -60,7 +60,7 @@ import Testing
             let cloud = cloud
             let harness = AgentHarness(resolveModel: { cloud.count += 1; throw SettingsError("no cloud model") },
                                        local: service, localOnly: { true }, runner: runner)
-            store = snapshot.map { TaskStore(snapshot: $0, source: harness) } ?? TaskStore(source: harness)
+            store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.checkpoint = { [unowned self] in self.saved.append($0) }
         }
         func idle() async throws { try await AgentHarnessTests.wait("turn ends") { !self.store.isGenerating } }
@@ -319,7 +319,7 @@ import Testing
             self.source = source
             let harness = AgentHarness(resolveModel: { try source.make() }, local: LocalChatService(backend: backend),
                                        localOnly: { source.localOnly })
-            store = snapshot.map { TaskStore(snapshot: $0, source: harness) } ?? TaskStore(source: harness)
+            store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.projectDirectory = { project }
             store.acquireDirectory = { _, ready in ready() }
             store.checkpoint = { [unowned self] in self.saved.append($0) }

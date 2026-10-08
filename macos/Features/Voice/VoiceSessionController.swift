@@ -389,7 +389,7 @@ enum VoiceCaptureWatchdog {
             guard !text.isEmpty else { return }
             // The utterance is over either way, so these words stop standing in for a
             // message: an accepted one has become that message, and a refused one either
-            // left its own behind — `TaskStore.sendAgent` appends before it can fail —
+            // left its own behind — `TaskStore.send` appends before it can fail —
             // or is accounted for by the notice the chat is already showing. Keeping
             // them would show the same sentence twice, or show one that was never sent.
             updateSnapshot { $0.subtitle = pendingSubtitle }
@@ -470,7 +470,7 @@ enum VoiceCaptureWatchdog {
         case .started(let id):
             interruptReply(); runID = id; handledFinalRunID = nil
             delta = VoiceTextDelta(); playedAudioForCurrentRun = false
-            resumeAgentListening()
+            resumeListening()
         case .reply(let id, let reply):
             guard runID == id else { return }
             switch reply {
@@ -500,7 +500,7 @@ enum VoiceCaptureWatchdog {
         stopRecognition(reason: .currentReply)
         feed(message.content); textInput?.finish()
     }
-    private func resumeAgentListening() {
+    private func resumeListening() {
         guard case .active = snapshot.session, !submitting,
               store?.task?.status != .stopping, snapshot.replyAudio == .none,
               synthesisTask == nil, recoveryTask == nil, recognizer == nil else { return }
@@ -679,7 +679,7 @@ enum VoiceCaptureWatchdog {
         submitting = false
         if submissionHadAudio { scheduleListeningRecovery(runID: runID, playedAudio: true) }
         else if recoveryTask != nil { updateSnapshot { $0.recognition = .off(.recovery) } }
-        else { resumeAgentListening() }
+        else { resumeListening() }
         submissionHadAudio = false
     }
     func stopReply() {

@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let dictation = DictationController(audio: TestBootstrap.Audio(),
                         recognizer: { TestBootstrap.Recognizer() }, permission: { true })
                     let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("workspace.json")),
-                        dictation: dictation, voice: voice, sourceFactory: { AgentHarness(resolveModel: { TestBootstrap.OfflineModel.factory }) })
+                        dictation: dictation, voice: voice, harnessFactory: { AgentHarness(resolveModel: { TestBootstrap.OfflineModel.factory }) })
                     try TestBootstrap.seed(workspace: workspace, root: root)
                     let planets = PlanetStore(settings: settings, root: Bundle.main.resourceURL?.appendingPathComponent("planets"),
                         importedRoot: root.appendingPathComponent("planets"), voice: voice)
@@ -114,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let store = try pets.loadInitial()
             let localChat = LocalChatService(backend: CoreAILocalChatBackend(locate: { localModels.find() }))
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: WorkspacePersistence.defaultURL),
-                                           sourceFactory: { AgentHarness(settings: settings, local: localChat) })
+                                           harnessFactory: { AgentHarness(settings: settings, local: localChat) })
             // Live Voice's planet. It loads its sprite only while a call is running, so the app
             // starts with nothing decoded beyond the pet itself.
             let planets = PlanetStore(settings: settings,

@@ -12,18 +12,18 @@ import Testing
     }
 }
 
-/// Agent sources for the loopback model server. Each turn resolves the protocol, as settings are
+/// Harnesses for the loopback model server. Each turn resolves the protocol, as settings are
 /// read at each turn.
 @MainActor enum AgentFixture {
-    static func source(baseURL: String, protocol current: @escaping @MainActor () -> ModelAPIProtocol) -> AgentHarness {
+    static func harness(baseURL: String, protocol current: @escaping @MainActor () -> ModelAPIProtocol) -> AgentHarness {
         AgentHarness(resolveModel: {
             let endpoint = AgentEndpoint(baseURL: baseURL, model: "fixture", apiKey: nil, apiProtocol: current())
             let transport = AgentTransport.make(for: endpoint)
             return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: ledger, budget: budget) }
         })
     }
-    static func source(server: LoopbackModelServer, protocol apiProtocol: ModelAPIProtocol) -> AgentHarness {
-        source(baseURL: server.baseURL) { apiProtocol }
+    static func harness(server: LoopbackModelServer, protocol apiProtocol: ModelAPIProtocol) -> AgentHarness {
+        harness(baseURL: server.baseURL) { apiProtocol }
     }
 }
 
@@ -32,7 +32,7 @@ import Testing
     let server: LoopbackModelServer
     let persistence: WorkspacePersistence
     var protocolName = ModelAPIProtocol.chatCompletions
-    lazy var workspace = WorkspaceStore(persistence: persistence, sourceFactory: { [unowned self] in self.source() })
+    lazy var workspace = WorkspaceStore(persistence: persistence, harnessFactory: { [unowned self] in self.harness() })
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-session-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -40,9 +40,9 @@ import Testing
         do { server = try LoopbackModelServer() }
         catch { try? FileManager.default.removeItem(at: root); throw error }
     }
-    func source() -> AgentHarness { AgentFixture.source(baseURL: server.baseURL) { [unowned self] in self.protocolName } }
-    /// A source that reads the model configuration from saved settings.
-    func settingsSource(_ settings: SettingsStore) -> AgentHarness { AgentHarness(settings: settings) }
+    func harness() -> AgentHarness { AgentFixture.harness(baseURL: server.baseURL) { [unowned self] in self.protocolName } }
+    /// A harness that reads the model configuration from saved settings.
+    func settingsHarness(_ settings: SettingsStore) -> AgentHarness { AgentHarness(settings: settings) }
     func close() async throws {
         workspace.shutdown()
         defer { try? FileManager.default.removeItem(at: root) }

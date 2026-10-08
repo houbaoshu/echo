@@ -1238,7 +1238,7 @@ struct NativeComposer: NSViewRepresentable {
         followUpDraft: "",
         activityDismissed: false,
         activitiesCollapsed: false
-    ), source: nil)
+    ), harness: nil)
     let workspace = WorkspaceStore(initialStore: store)
     return WorkspaceConversationView(workspace: workspace, planets: PlanetStore())
         .frame(width: 700, height: 560)

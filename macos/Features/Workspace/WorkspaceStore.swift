@@ -290,7 +290,7 @@ struct WorkspaceSnapshot: Codable {
     @ObservationIgnored var onRevealVoice: ((UUID) -> Void)?
     @ObservationIgnored var onOpenPetActivity: (() -> Void)?
     private let emptyActivity = TaskStore()
-    private let sourceFactory: (() -> AgentHarness)?
+    private let harnessFactory: (() -> AgentHarness)?
     private let persistence: WorkspacePersistence?
     @ObservationIgnored private var lifecycleObservations: [UUID: AnyCancellable] = [:]
     @ObservationIgnored private var saveWork: DispatchWorkItem?
@@ -314,21 +314,21 @@ struct WorkspaceSnapshot: Codable {
     convenience init(persistence: WorkspacePersistence,
                      dictation: DictationController = DictationController(),
                      voice: VoiceSessionController = VoiceSessionController(),
-                     sourceFactory: @escaping () -> AgentHarness) {
-        self.init(persistence: persistence, initialStore: nil, dictation: dictation, voice: voice, sourceFactory: sourceFactory)
+                     harnessFactory: @escaping () -> AgentHarness) {
+        self.init(persistence: persistence, initialStore: nil, dictation: dictation, voice: voice, harnessFactory: harnessFactory)
     }
-    /// A workspace that is never saved. Without `sourceFactory` its conversations cannot send.
+    /// A workspace that is never saved. Without `harnessFactory` its conversations cannot send.
     convenience init(initialStore: TaskStore? = nil,
                      dictation: DictationController = DictationController(),
                      voice: VoiceSessionController = VoiceSessionController(),
-                     sourceFactory: (() -> AgentHarness)? = nil) {
-        self.init(persistence: nil, initialStore: initialStore, dictation: dictation, voice: voice, sourceFactory: sourceFactory)
+                     harnessFactory: (() -> AgentHarness)? = nil) {
+        self.init(persistence: nil, initialStore: initialStore, dictation: dictation, voice: voice, harnessFactory: harnessFactory)
     }
     private init(persistence: WorkspacePersistence?, initialStore: TaskStore?, dictation: DictationController,
-                 voice: VoiceSessionController, sourceFactory: (() -> AgentHarness)?) {
+                 voice: VoiceSessionController, harnessFactory: (() -> AgentHarness)?) {
         self.dictation = dictation; self.voice = voice
         self.persistence = persistence
-        self.sourceFactory = sourceFactory
+        self.harnessFactory = harnessFactory
         voiceObservation = observeChanges({ voice.snapshot.session.owner == nil }, initial: true) { [weak self] ended in
             if ended { self?.finishVoiceConversation() }
         }
@@ -428,7 +428,7 @@ struct WorkspaceSnapshot: Codable {
         if restored.native == nil, restored.loadError == nil, !restored.messages.isEmpty {
             restored.loadError = WorkspacePersistence.unreadableHistory
         }
-        return TaskStore(snapshot: restored, source: sourceFactory?())
+        return TaskStore(snapshot: restored, harness: harnessFactory?())
     }
     @discardableResult func send(_ text: String, conversationID: UUID) -> Bool {
         guard !shuttingDown, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -555,9 +555,9 @@ struct WorkspaceSnapshot: Codable {
             try self.persistence?.saveSession(state, id: id)
             // Ensure a new conversation is discoverable before any tool starts.
             // The manifest stores references; tool updates write only this sidecar.
-            if !self.persistedAgentIDs.contains(id) {
+            if !self.persistedSessionIDs.contains(id) {
                 try self.persistence?.save(self.snapshot)
-                self.persistedAgentIDs.insert(id)
+                self.persistedSessionIDs.insert(id)
             }
         }
         let scheduler = directoryScheduler
@@ -602,7 +602,7 @@ struct WorkspaceSnapshot: Codable {
             }
         }
     }
-    @ObservationIgnored private var persistedAgentIDs: Set<UUID> = []
+    @ObservationIgnored private var persistedSessionIDs: Set<UUID> = []
     private func didUse(_ id: UUID) {
         let usedAt = Date()
         // A blank composer becomes a sidebar conversation only after the first real message.
@@ -668,7 +668,7 @@ struct WorkspaceSnapshot: Codable {
         if conversations.isEmpty && drafts.isEmpty { _ = newConversation() }
         // Remove the history sidecar only once neither the manifest nor its backup references it.
         guard flush(), let persistence else { return }
-        persistedAgentIDs.remove(id)
+        persistedSessionIDs.remove(id)
         do { try persistence.refreshBackup(); try persistence.removeSession(id) }
         catch { persistenceNotice = String(localized: "会话记录删除失败：\(error.localizedDescription)") }
     }
@@ -696,7 +696,7 @@ struct WorkspaceSnapshot: Codable {
         byRecency(drafts.filter { $0.id != excluding && $0.projectID == projectID && canAssociateProject(conversationID: $0.id) }).first
     }
     private func makeDraft(projectID: UUID?) -> WorkspaceConversation {
-        let conversation = WorkspaceConversation(projectID: projectID, title: "新对话", store: TaskStore(source: sourceFactory?()))
+        let conversation = WorkspaceConversation(projectID: projectID, title: "新对话", store: TaskStore(harness: harnessFactory?()))
         drafts.append(conversation); bind(conversation)
         return conversation
     }

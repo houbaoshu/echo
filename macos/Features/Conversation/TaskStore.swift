@@ -76,7 +76,7 @@ struct ActivityTask: Codable, Equatable {
     var status: TaskStatus
 }
 
-// Each conversation owns a cancellable source; window visibility never owns its lifetime.
+// Each conversation owns a cancellable turn; window visibility never owns its lifetime.
 /// The latest assistant reply as the model writes it, for surfaces that follow a live
 /// conversation. The previous reply stays until the next reply's first real text; a model
 /// step that turns into a tool call, or is stopped, is withdrawn and the previous reply returns.
@@ -223,8 +223,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @ObservationIgnored var releaseDirectory: (() -> Void)?
     var agentLoadError: String?
     /// The Agent engine; nil only for a conversation that cannot send.
-    private var harness: AgentHarness? { source }
-    private let source: AgentHarness?
+    private let harness: AgentHarness?
     private var retired = false
     @ObservationIgnored private var responseMessageID: UUID?
     @ObservationIgnored var onUserAction: (() -> Void)?
@@ -253,8 +252,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                  // A blocked conversation has no history of its own to save.
                  native: agentLoadError == nil ? harness?.persistentState : nil)
     }
-    convenience init(snapshot: Snapshot, source: AgentHarness?) {
-        self.init(source: source)
+    convenience init(snapshot: Snapshot, harness: AgentHarness?) {
+        self.init(harness: harness)
         task = snapshot.task
         if task?.status == .running || task?.status == .stopping {
             task?.status = .interrupted
@@ -298,8 +297,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         activitiesCollapsed = snapshot.activitiesCollapsed
     }
 
-    init(source: AgentHarness? = nil) {
-        self.source = source
+    init(harness: AgentHarness? = nil) {
+        self.harness = harness
         harness?.host = self
     }
     var activityCount: Int { task == nil || activityDismissed ? 0 : 1 }
@@ -331,11 +330,12 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     @discardableResult func send(_ draft: String) -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return sendAgent(text)
+        guard canSubmit, !text.isEmpty else { return false }
+        return isGenerating ? steer(text) : beginTurn(text: text)
     }
     @discardableResult func retry() -> Bool {
         guard !retired, canRetry else { return false }
-        return beginNative(text: nil)
+        return beginTurn(text: nil)
     }
     func stopTask() {
         guard isGenerating, task?.status != .stopping, let harness else { return }
@@ -343,7 +343,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         needsDirectory = false; waitingForProject = false
         cancelDirectoryWait?(); harness.stop()
     }
-    // Project convention: dismissing a surface never cancels its task source.
+    // Project convention: dismissing a surface never cancels its running turn.
     func closeActivity() { activityDismissed = true; isFollowUpExpanded = false; markSeen() }
     /// Revealing the tray does not acknowledge any result.
     func expandActivity() { activityDismissed = false; activitiesCollapsed = false }
@@ -366,12 +366,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         onUserAction = nil; onVisibilityChange = nil
     }
 
-    private func sendAgent(_ text: String) -> Bool {
-        guard canSubmit, !text.isEmpty else { return false }
-        return isGenerating ? steerNative(text) : beginNative(text: text)
-    }
-
-    @discardableResult private func saveAgent() -> Bool {
+    @discardableResult private func saveTurn() -> Bool {
         do { try checkpoint?(snapshot); return true }
         catch {
             let failure = recordSaveFailure(error)
@@ -395,9 +390,9 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         harness.provideDirectory(url)
     }
 
-    // MARK: - Native engine
+    // MARK: - Turns
 
-    private func beginNative(text: String?) -> Bool {
+    private func beginTurn(text: String?) -> Bool {
         guard let harness, !harness.isRunning else { return false }
         storageFailure = nil; notice = nil; responseMessageID = nil
         if task == nil { task = .init(id: UUID(), runID: UUID(), title: String((text ?? String(localized: "继续处理|任务标题", defaultValue: "继续处理")).prefix(80)), summary: "", status: .running) }
@@ -410,20 +405,20 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         }
         activityDismissed = false; onUserAction?(); lifecycle.send(.started(task!.runID))
         // The input is saved before any model request can see it.
-        guard saveAgent() else { task?.status = .failed; return false }
+        guard saveTurn() else { task?.status = .failed; return false }
         harness.begin()
         return true
     }
 
     /// Input sent while a turn runs goes before the turn's next model request.
-    private func steerNative(_ text: String) -> Bool {
+    private func steer(_ text: String) -> Bool {
         guard let harness else { return false }
         var message = ConversationMessage(role: .user, content: text)
         message.steering = .queued; messages.append(message)
         harness.enqueue(messageID: message.id, text: text)
         needsDirectory = false; waitingForProject = false
         onUserAction?()
-        return saveAgent()
+        return saveTurn()
     }
 }
 

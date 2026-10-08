@@ -8,7 +8,7 @@ import Foundation
     static let reply = "今天的天气非常晴朗，适合出门散步。"
     let audio = FakeAudio()
     let puppet = PuppetModel()
-    lazy var store = TaskStore(source: AgentHarness(resolveModel: { [puppet] in puppet.factory }))
+    lazy var store = TaskStore(harness: AgentHarness(resolveModel: { [puppet] in puppet.factory }))
     var recognizers: [FakeRecognizer] = []
     var synths: [FakeSynthesizer] = []
     let timeout: Duration

@@ -28,7 +28,7 @@ extension EchoVoiceScenarios {
     /// A conversation on the native Agent whose model requests `puppet` answers.
     @MainActor static func agentStore() -> (TaskStore, PuppetModel) {
         let puppet = PuppetModel()
-        return (TaskStore(source: AgentHarness(resolveModel: { puppet.factory })), puppet)
+        return (TaskStore(harness: AgentHarness(resolveModel: { puppet.factory })), puppet)
     }
     /// Live Voice's planet: which clip a state asks for, and what a mid-call swap has to do.
     @Test @MainActor static func planetTests() async throws {
@@ -209,7 +209,7 @@ extension EchoVoiceScenarios {
             if case .endCall = decision { audio.onFailure?("音频设备已变化，通话已结束，请重新开始。", .deviceChange) }
         }
         do {
-            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
+            let audio = FakeAudio(), store = TaskStore(harness: idleAgent())
             var recognizers: [FakeRecognizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
@@ -240,7 +240,7 @@ extension EchoVoiceScenarios {
             check(!audio.capturing, "the ended call released the microphone")
         }
         do {
-            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
+            let audio = FakeAudio(), store = TaskStore(harness: idleAgent())
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, permission: { true })
             let conversation = WorkspaceConversation(store: store)
@@ -412,7 +412,7 @@ extension EchoVoiceScenarios {
             }
         }
         do {
-            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
+            let audio = FakeAudio(), store = TaskStore(harness: idleAgent())
             audio.holdsStarts = true
             var recognizers = 0
             let voice = VoiceSessionController(audio: audio, recognizer: { recognizers += 1; return FakeRecognizer() },
@@ -436,7 +436,7 @@ extension EchoVoiceScenarios {
                   "a build that finishes after the end never activates the call or opens recognition")
         }
         do {
-            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
+            let audio = FakeAudio(), store = TaskStore(harness: idleAgent())
             audio.holdsStarts = true
             var recognizers = 0
             let voice = VoiceSessionController(audio: audio, recognizer: { recognizers += 1; return FakeRecognizer() },
@@ -1053,7 +1053,7 @@ extension EchoVoiceScenarios {
         // Replays run 4: capture starts, the watchdog is armed, a device change restarts the
         // engine for longer than the timeout, and the first packet arrives only after recovery.
         func makeCall() -> (FakeAudio, VoiceSessionController, TaskStore) {
-            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
+            let audio = FakeAudio(), store = TaskStore(harness: idleAgent())
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, captureTimeout: timeout,
                                                permission: { true })
@@ -1151,7 +1151,7 @@ extension EchoVoiceScenarios {
         let audio = FakeAudio(), recognizer = FakeRecognizer()
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer },
                                            captureTimeout: .milliseconds(100), permission: { true })
-        let conversation = WorkspaceConversation(store: TaskStore(source: idleAgent()))
+        let conversation = WorkspaceConversation(store: TaskStore(harness: idleAgent()))
         defer { voice.shutdown() }
         voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
         try await Task.sleep(for: .milliseconds(180))
@@ -1535,10 +1535,10 @@ extension EchoVoiceScenarios {
     }
     @Test(.tags(.fast)) @MainActor static func lifecycleTests() async throws {
         _ = NSApplication.shared
-        let audio = FakeAudio(), store = TaskStore(source: idleAgent())
+        let audio = FakeAudio(), store = TaskStore(harness: idleAgent())
         let (actual, puppet) = agentStore()
         actual.mainDraft = "未发送草稿"; actual.followUpDraft = "跟进草稿"
-        let workspace = WorkspaceStore(initialStore: actual, sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(initialStore: actual, harnessFactory: { idleAgent() })
         let conversation = workspace.selected!
         var recognizers: [FakeRecognizer] = [], synthesizers: [FakeSynthesizer] = []
         var synthesizerPlaysAudio = true
@@ -1652,13 +1652,13 @@ extension EchoVoiceScenarios {
         check(!voice.isActive && !audio.capturing && voice.error == "设备变化", "device failure closes whole call")
         let deniedAudio = FakeAudio()
         let denied = VoiceSessionController(audio: deniedAudio, permission: { false })
-        denied.start(conversation: WorkspaceConversation(store: TaskStore(source: idleAgent())), configuration: VoiceConfiguration(), key: "test")
+        denied.start(conversation: WorkspaceConversation(store: TaskStore(harness: idleAgent())), configuration: VoiceConfiguration(), key: "test")
         await tick()
         check(!denied.isActive && !deniedAudio.capturing && denied.error != nil, "permission refusal never captures")
         denied.shutdown()
         let raceAudio = FakeAudio()
         let race = VoiceSessionController(audio: raceAudio, permission: { await tick(); return true })
-        race.start(conversation: WorkspaceConversation(store: TaskStore(source: idleAgent())), configuration: VoiceConfiguration(), key: "test")
+        race.start(conversation: WorkspaceConversation(store: TaskStore(harness: idleAgent())), configuration: VoiceConfiguration(), key: "test")
         race.end(); await tick(); await tick()
         check(!raceAudio.capturing && !race.isActive, "hangup during permission cannot restart recording")
         race.shutdown()
@@ -1844,7 +1844,7 @@ extension EchoVoiceScenarios {
 
         // 4. Stale input epoch rejection
         do {
-            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
+            let audio = FakeAudio(), store = TaskStore(harness: idleAgent())
             var recognizers: [FakeRecognizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
@@ -1872,7 +1872,7 @@ extension EchoVoiceScenarios {
         do {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, permission: { false })
-            let store = TaskStore(source: idleAgent())
+            let store = TaskStore(harness: idleAgent())
             let conversation = WorkspaceConversation(store: store)
             defer { voice.shutdown(); store.shutdown() }
             let started = voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
@@ -1889,7 +1889,7 @@ extension EchoVoiceScenarios {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                captureTimeout: .milliseconds(40), permission: { true })
-            let store = TaskStore(source: idleAgent())
+            let store = TaskStore(harness: idleAgent())
             let conversation = WorkspaceConversation(store: store)
             defer { voice.shutdown(); store.shutdown() }
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
@@ -1905,7 +1905,7 @@ extension EchoVoiceScenarios {
         do {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() }, permission: { true })
-            let store = TaskStore(source: idleAgent())
+            let store = TaskStore(harness: idleAgent())
             let conversation = WorkspaceConversation(store: store)
             defer { voice.shutdown(); store.shutdown() }
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
@@ -2034,7 +2034,7 @@ extension EchoVoiceScenarios {
 
         // 8. Sleep notification cleanup
         do {
-            let audio = FakeAudio(), store = TaskStore(source: idleAgent())
+            let audio = FakeAudio(), store = TaskStore(harness: idleAgent())
             var recognizers: [FakeRecognizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let r = FakeRecognizer(); recognizers.append(r); return r
@@ -2128,7 +2128,7 @@ extension EchoVoiceScenarios {
             let audio = FakeAudio()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, permission: { true })
-            let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
+            let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
             let settings = SettingsStore(secrets: FakeSecrets())
             settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
             settings.voiceAPIKey = "voice"; settings.saveVoice()
@@ -2157,7 +2157,7 @@ extension EchoVoiceScenarios {
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                                                synthesizer: { FakeSynthesizer() }, permission: { true })
             let store = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-            let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
+            let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
             let settings = SettingsStore(secrets: FakeSecrets())
             settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
             let companion = CompanionController(petStore: store, workspace: workspace, settings: settings,

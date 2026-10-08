@@ -25,7 +25,7 @@ import AppKit
         guard pet.image.width > 0 else { throw SettingsError("搬移后的应用无法加载精灵。") }
         let endpoint = AgentEndpoint(baseURL: config.baseURL, model: "fixture", apiKey: nil, apiProtocol: .chatCompletions)
         let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("workspace.json")),
-            sourceFactory: {
+            harnessFactory: {
                 AgentHarness(resolveModel: {
                     let transport = AgentTransport.make(for: endpoint)
                     return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }

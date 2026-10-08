@@ -156,7 +156,7 @@ extension EchoVoiceScenarios {
     /// While VoiceAudio recovers from a device change nothing can arrive; the first-packet
     /// timeout waits it out and gives the recovered microphone a full timeout, as the call's does.
     @Test @MainActor static func deviceRecoveryTests() async throws {
-        let store = TaskStore(source: idleAgent()), conversation = WorkspaceConversation(store: store)
+        let store = TaskStore(harness: idleAgent()), conversation = WorkspaceConversation(store: store)
         defer { store.shutdown() }
         let timeout = Duration.milliseconds(100)
         func makeDictation() -> (FakeAudio, DictationRecognizer, DictationController) {
@@ -224,7 +224,7 @@ extension EchoVoiceScenarios {
         }
         let url = EchoTestResources.resource("fixtures/apple-dictation-pause-20260914.json")
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
-        let engine = TestAppleSpeechEngine(), store = TaskStore(source: idleAgent())
+        let engine = TestAppleSpeechEngine(), store = TaskStore(harness: idleAgent())
         let dictation = DictationController(audio: FakeAudio(), recognizer: {
             try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         }, permission: { true })
@@ -273,7 +273,7 @@ extension EchoVoiceScenarios {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600,
                 "Transcript diagnostics are private to the current user")
-        let store = TaskStore(source: idleAgent())
+        let store = TaskStore(harness: idleAgent())
         store.mainDraft = "已有草稿"
         var ordinaryDictation = true
         let trace = DictationTrace(logger: logger, recordingID: UUID(), conversationID: UUID(), store: store,
@@ -439,7 +439,7 @@ extension EchoVoiceScenarios {
             return delayedRecognizer
         }, permission: { true })
         let delayedVoice = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() }, permission: { true })
-        let delayedWorkspace = WorkspaceStore(initialStore: TaskStore(source: idleAgent()), dictation: delayed, voice: delayedVoice)
+        let delayedWorkspace = WorkspaceStore(initialStore: TaskStore(harness: idleAgent()), dictation: delayed, voice: delayedVoice)
         let emptySettings = SettingsStore(secrets: FakeSecrets())
         delayed.attach(workspace: delayedWorkspace)
         delayedVoice.attach(workspace: delayedWorkspace, settings: emptySettings)

@@ -23,7 +23,7 @@ import Synchronization
 /// A native Agent conversation whose model the test answers.
 @MainActor private func puppetStore() -> (TaskStore, PuppetModel) {
     let puppet = PuppetModel()
-    return (TaskStore(source: AgentHarness(resolveModel: { puppet.factory })), puppet)
+    return (TaskStore(harness: AgentHarness(resolveModel: { puppet.factory })), puppet)
 }
 
 /// Answers the workspace message `text` with `answer` and waits for its turn to end.
@@ -323,7 +323,7 @@ private struct ComposerHeightHost: View {
         if NSApp.responds(to: accessibilitySetter) {
             NSApp.perform(accessibilitySetter, with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         }
-        let store = TaskStore(source: idleAgent())
+        let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -720,7 +720,7 @@ private struct ComposerHeightHost: View {
 
     func testStoppingAndDictationEscape() async throws {
         let puppet = PuppetModel(), runner = HeldRunner()
-        let agentStore = TaskStore(source: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
+        let agentStore = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
         let recognizer = ComposerRecognizer()
         let dictation = DictationController(audio: ComposerAudio(), recognizer: { recognizer }, permission: { true })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
@@ -1243,7 +1243,7 @@ private struct ComposerHeightHost: View {
     func testEscapeAndKeyboardCommands() async throws {
         let (storeA, modelA) = puppetStore()
         let voice = VoiceSessionController(), dictation = DictationController()
-        let workspace = WorkspaceStore(initialStore: storeA, dictation: dictation, voice: voice, sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(initialStore: storeA, dictation: dictation, voice: voice, harnessFactory: { idleAgent() })
         defer { workspace.shutdown(); voice.shutdown() }
         let conversationA = workspace.selected!
         let conversationB = workspace.newConversation()
@@ -1358,9 +1358,9 @@ private struct ComposerHeightHost: View {
     }
 
     func testLiveVoiceComposerStatesAndAttribution() async throws {
-        let storeA = TaskStore(source: idleAgent())
+        let storeA = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
-        let workspace = WorkspaceStore(initialStore: storeA, dictation: dictation, voice: voice, sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(initialStore: storeA, dictation: dictation, voice: voice, harnessFactory: { idleAgent() })
         defer { workspace.shutdown(); voice.shutdown() }
         let conversationA = workspace.selected!
         let conversationB = workspace.newConversation()
@@ -1455,7 +1455,7 @@ private struct ComposerHeightHost: View {
     }
 
     func testSettingsAndCompanionVoiceIntegration() async throws {
-        let store = TaskStore(source: idleAgent())
+        let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() },
             synthesizer: { ComposerSynthesizer() }, permission: { true })
         let dictation = DictationController()
@@ -1691,7 +1691,7 @@ private struct ComposerHeightHost: View {
     func testPetCollapsedDraftLine() async throws {
         // Every render is wanted even when one check fails.
         continueAfterFailure = true
-        let store = TaskStore(source: idleAgent())
+        let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         defer { store.shutdown(); voice.shutdown() }
         let presentation = PetControlsPresentation()
@@ -1730,7 +1730,7 @@ private struct ComposerHeightHost: View {
     /// and leaving closes it again. Clicking into it is covered with real events in EchoUITests.
     func testPetDraftLineHoverPeeksComposer() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
         let companion = CompanionController(petStore: pet, workspace: workspace,
                                             settings: SettingsStore(secrets: ComposerSecrets()), defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -1775,7 +1775,7 @@ private struct ComposerHeightHost: View {
                                  followingUp: Bool = false) async throws -> [(rows: ClosedRange<CGFloat>, ink: ClosedRange<CGFloat>)] {
         let store = TaskStore(snapshot: .init(
             task: ActivityTask(id: UUID(), runID: UUID(), title: title, summary: summary, status: .completed),
-            messages: [], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false), source: nil)
+            messages: [], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false), harness: nil)
         defer { store.shutdown() }
         XCTAssertEqual(store.cardSummary, summary)
         if followingUp { store.toggleFollowUp() }
@@ -1884,7 +1884,7 @@ private struct ComposerHeightHost: View {
 
     func testPetStackPeeksBelowFrontCardInBothPlacements() async throws {
         let sessions = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
+        let workspace = WorkspaceStore(harnessFactory: sessions.factory)
         defer { workspace.shutdown() }
         for text in ["第一条", "第二条", "第三条"] {
             XCTAssertTrue(workspace.sendQuickMessage(text))
@@ -1924,7 +1924,7 @@ private struct ComposerHeightHost: View {
 
     func testPetStackFrontCardIsAButtonThatExpandsTheList() async throws {
         let sessions = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
+        let workspace = WorkspaceStore(harnessFactory: sessions.factory)
         defer { workspace.shutdown() }
         for text in ["第一条", "第二条"] {
             XCTAssertTrue(workspace.sendQuickMessage(text))
@@ -1956,7 +1956,7 @@ private struct ComposerHeightHost: View {
     func testIgnoringPetNotificationThroughCloseButton() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let sessions = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
+        let workspace = WorkspaceStore(harnessFactory: sessions.factory)
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -2007,7 +2007,7 @@ private struct ComposerHeightHost: View {
     func testCompletedPetControlsSurvivePointerExit() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let sessions = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
+        let workspace = WorkspaceStore(harnessFactory: sessions.factory)
         let companion = CompanionController(petStore: pet, workspace: workspace,
                                             settings: SettingsStore(secrets: ComposerSecrets()), defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -2056,7 +2056,7 @@ private struct ComposerHeightHost: View {
     func testCompanionQuickComposerLifecycle() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let sessions = PuppetSessions()
-        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
+        let workspace = WorkspaceStore(harnessFactory: sessions.factory)
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -2223,7 +2223,7 @@ private struct ComposerHeightHost: View {
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "", status: .completed),
             messages: [.init(role: .user, content: "跑个任务"), .init(role: .assistant, content: "任务结果")],
             mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false)
-        let finishedTask = TaskStore(snapshot: archive, source: idleAgent())
+        let finishedTask = TaskStore(snapshot: archive, harness: idleAgent())
         defer { finishedTask.shutdown() }
         XCTAssertTrue(finishedTask.task?.summary == "已完成", "The stored task still records its outcome")
         let agentDone = try await texts(of: finishedTask)
@@ -2231,7 +2231,7 @@ private struct ComposerHeightHost: View {
 
         archive.task?.status = .interrupted
         archive.task?.summary = "已中断 · 可继续跟进"
-        let brokenTask = TaskStore(snapshot: archive, source: idleAgent())
+        let brokenTask = TaskStore(snapshot: archive, harness: idleAgent())
         defer { brokenTask.shutdown() }
         let agentBroken = try await texts(of: brokenTask)
         XCTAssertTrue(agentBroken.contains { $0.contains("已中断 · 可继续跟进") },
@@ -2261,7 +2261,7 @@ private struct ComposerHeightHost: View {
         }
 
         let puppet = PuppetModel(), runner = HeldRunner()
-        let store = TaskStore(source: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
+        let store = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { runner.gate.open(); workspace.shutdown() }
         // 关联项目 lists available projects and is disabled without one.
@@ -2319,7 +2319,7 @@ private struct ComposerHeightHost: View {
         let finished = TaskStore(snapshot: .init(
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已完成", status: .completed),
             messages: [user, reply], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
-            tools: [], native: ran), source: idleAgent())
+            tools: [], native: ran), harness: idleAgent())
         defer { finished.shutdown() }
         XCTAssertEqual(finished.tools.map(\.state), [.finished, .notExecuted, .unknown, .unknown],
                        "A call restored without a result is unknown")
@@ -2335,7 +2335,7 @@ private struct ComposerHeightHost: View {
         let unfinished = TaskStore(snapshot: .init(
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已中断 · 可继续跟进", status: .interrupted),
             messages: [user], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
-            tools: [], native: asked), source: idleAgent())
+            tools: [], native: asked), harness: idleAgent())
         defer { unfinished.shutdown() }
         XCTAssertTrue(unfinished.canRetry)
         let interrupted = try await texts(of: unfinished)
@@ -2358,7 +2358,7 @@ private struct ComposerHeightHost: View {
                 try await emit.text("目录没有列出")
             }
         }
-        let store = TaskStore(source: AgentHarness(resolveModel: { model.factory }))
+        let store = TaskStore(harness: AgentHarness(resolveModel: { model.factory }))
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown() }
         func texts() async throws -> [String] {
@@ -2399,7 +2399,7 @@ private struct ComposerHeightHost: View {
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let dictation = DictationController()
         defer { voice.shutdown(); dictation.shutdown() }
-        let puppet = PuppetModel(), store = TaskStore(source: AgentHarness(resolveModel: { puppet.factory }))
+        let puppet = PuppetModel(), store = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }))
         defer { store.shutdown() }
         let view = NSHostingView(rootView: ConversationView(store: store, voice: voice, dictation: dictation,
             startDictation: {}, startVoice: {}, conversationID: UUID(),
@@ -2469,7 +2469,7 @@ private struct ComposerHeightHost: View {
         }, synthesizer: { ComposerSynthesizer() }, permission: { true })
         let dictation = DictationController()
         let workspace = WorkspaceStore(dictation: dictation, voice: voice,
-                                       sourceFactory: { AgentHarness(resolveModel: { puppet.factory }) })
+                                       harnessFactory: { AgentHarness(resolveModel: { puppet.factory }) })
         let settings = SettingsStore(secrets: ComposerSecrets())
         defer { workspace.shutdown(); voice.shutdown(); dictation.shutdown() }
         let conversation = workspace.selected!
@@ -2560,7 +2560,7 @@ private struct ComposerHeightHost: View {
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已中断 · 可继续跟进", status: .interrupted),
             messages: [queued, .init(role: .assistant, content: "只写了一半", status: .interrupted)],
             mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false)
-        let broken = TaskStore(snapshot: archive, source: idleAgent())
+        let broken = TaskStore(snapshot: archive, harness: idleAgent())
         defer { broken.shutdown() }
         let brokenID = UUID()
         let brokenVoice = VoiceSessionController()
@@ -2606,7 +2606,7 @@ private struct ComposerHeightHost: View {
         }, synthesizer: { ComposerSynthesizer() }, permission: { true })
         let dictation = DictationController()
         let workspace = WorkspaceStore(dictation: dictation, voice: voice,
-                                       sourceFactory: { AgentHarness(resolveModel: { puppet.factory }) })
+                                       harnessFactory: { AgentHarness(resolveModel: { puppet.factory }) })
         let settings = SettingsStore(secrets: ComposerSecrets())
         defer { workspace.shutdown(); voice.shutdown(); dictation.shutdown() }
         let conversation = workspace.selected!
@@ -2779,7 +2779,7 @@ private struct ComposerHeightHost: View {
             let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
                 let recognizer = ComposerRecognizer(); recognizers.append(recognizer); return recognizer
             }, synthesizer: { ComposerSynthesizer() }, permission: { true })
-            let workspace = WorkspaceStore(voice: voice, sourceFactory: sessions.factory)
+            let workspace = WorkspaceStore(voice: voice, harnessFactory: sessions.factory)
             let settings = SettingsStore(secrets: ComposerSecrets())
             let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
             defer { companion.shutdown() }
@@ -2910,7 +2910,7 @@ private struct ComposerHeightHost: View {
     }
 
     func testPetVoiceConnectingAndBell() async throws {
-        let store = TaskStore(source: idleAgent())
+        let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         defer { store.shutdown(); voice.shutdown() }
         let presentation = PetControlsPresentation()
@@ -2974,7 +2974,7 @@ private struct ComposerHeightHost: View {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pet-project-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let store = TaskStore(source: idleAgent())
+        let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: store, dictation: DictationController(), voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -3047,7 +3047,7 @@ private struct ComposerHeightHost: View {
         try Data("notes".utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: root) }
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3099,7 +3099,7 @@ private struct ComposerHeightHost: View {
         for directory in [known] + folders + packages { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
         try Data("notes".utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: root) }
-        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
         defer { workspace.shutdown() }
         let knownID = workspace.addProject(url: known)
         let projectChat = workspace.newConversation(projectID: knownID)
@@ -3148,7 +3148,7 @@ private struct ComposerHeightHost: View {
     func testCompanionBubblePanel() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3190,7 +3190,7 @@ private struct ComposerHeightHost: View {
                 defaults.set(descriptor, forKey: "NSWindow Frame \(CompanionController.petFrameAutosaveName)")
             }
             let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-            return CompanionController(petStore: pet, workspace: WorkspaceStore(sourceFactory: { idleAgent() }),
+            return CompanionController(petStore: pet, workspace: WorkspaceStore(harnessFactory: { idleAgent() }),
                                        settings: SettingsStore(secrets: ComposerSecrets()), defaults: defaults)
         }
         let main = try XCTUnwrap(NSScreen.main).visibleFrame
@@ -3239,7 +3239,7 @@ private struct ComposerHeightHost: View {
     func testPetHidesOnlyForTheVoiceConversationOnScreen() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3299,7 +3299,7 @@ private struct ComposerHeightHost: View {
     func testPetHidesAndShowsOnRequest() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3369,7 +3369,7 @@ private struct ComposerHeightHost: View {
     func testPetVoiceEntryStartsItsOwnConversation() async throws {
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() },
                                            synthesizer: { ComposerSynthesizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
         settings.voiceAPIKey = "voice"; settings.saveVoice()
@@ -3406,7 +3406,7 @@ private struct ComposerHeightHost: View {
     /// opens on a new chat.
     func testPetRestoresAMinimizedMainWindowOnItsChat() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3439,7 +3439,7 @@ private struct ComposerHeightHost: View {
     }
 
     func testComposerPreservesEditorStateAcrossVoiceUpdates() async throws {
-        let store = TaskStore(source: idleAgent())
+        let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -3518,7 +3518,7 @@ private struct ComposerHeightHost: View {
     /// The list keeps its identity across a switch, so nothing appears or disappears to hang
     /// the restore on; only the browser's location changes.
     func testProjectTreeScrollRestoration() async throws {
-        let store = TaskStore(source: idleAgent())
+        let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -3602,7 +3602,7 @@ private struct ComposerHeightHost: View {
         if NSApp.responds(to: accessibilitySetter) {
             NSApp.perform(accessibilitySetter, with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         }
-        let store = TaskStore(source: idleAgent())
+        let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -4189,7 +4189,7 @@ private struct ComposerHeightHost: View {
         var savedFrame = NSRect.zero
         do {
             let voice = VoiceSessionController(), dictation = DictationController()
-            let workspace = WorkspaceStore(initialStore: TaskStore(source: idleAgent()), dictation: dictation, voice: voice)
+            let workspace = WorkspaceStore(initialStore: TaskStore(harness: idleAgent()), dictation: dictation, voice: voice)
             defer { workspace.shutdown(); voice.shutdown() }
             XCTAssertTrue(workspace.associateProject(workspace.addProject(url: root), conversationID: workspace.selected!.id))
             let main = MainWindowController(workspace: workspace, defaults: standard, settings: SettingsStore(secrets: ComposerSecrets()))
@@ -4251,7 +4251,7 @@ private struct ComposerHeightHost: View {
 
         // Relaunch: a fresh workspace and window read back what the first one left.
         let voice = VoiceSessionController(), dictation = DictationController()
-        let workspace = WorkspaceStore(initialStore: TaskStore(source: idleAgent()), dictation: dictation, voice: voice)
+        let workspace = WorkspaceStore(initialStore: TaskStore(harness: idleAgent()), dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
         let main = MainWindowController(workspace: workspace, defaults: standard, settings: SettingsStore(secrets: ComposerSecrets()))
         // Disarmed before the defaults are put back, or its next deferred write lands after them.
@@ -4283,7 +4283,7 @@ private struct ComposerHeightHost: View {
         defer { try? FileManager.default.removeItem(at: root) }
         try Data("notes".utf8).write(to: root.appendingPathComponent("notes.txt"))
         let voice = VoiceSessionController(), dictation = DictationController()
-        let workspace = WorkspaceStore(initialStore: TaskStore(source: idleAgent()), dictation: dictation, voice: voice)
+        let workspace = WorkspaceStore(initialStore: TaskStore(harness: idleAgent()), dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
         XCTAssertTrue(workspace.associateProject(workspace.addProject(url: root), conversationID: workspace.selected!.id))
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
@@ -4368,7 +4368,7 @@ private struct ComposerHeightHost: View {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-project-action-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
         defer { workspace.shutdown() }
         let projectID = workspace.addProject(url: root)
         let plain = try XCTUnwrap(workspace.selected)
@@ -4490,7 +4490,7 @@ private struct ComposerHeightHost: View {
         let sessions = PuppetSessions()
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: url), dictation: dictation, voice: voice,
-                                       sourceFactory: sessions.factory)
+                                       harnessFactory: sessions.factory)
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: SettingsStore(secrets: ComposerSecrets()),
                                             defaults: EchoTestResources.defaults())

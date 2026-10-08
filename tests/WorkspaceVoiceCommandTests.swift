@@ -81,7 +81,7 @@ import Foundation
             let client = CommandSynthesizer(); synths.append(client); return client
         }, permission: { await withCheckedContinuation { permission = $0 } })
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: puppets.factory)
+        let workspace = WorkspaceStore(voice: voice, harnessFactory: puppets.factory)
         let settings = SettingsStore(secrets: CommandSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
         settings.voiceAPIKey = "voice"; settings.saveVoice()
@@ -260,7 +260,7 @@ import Foundation
                                            synthesizer: { CommandSynthesizer() },
                                            permission: { await withCheckedContinuation { permission = $0 } })
         // Its conversations only need to be Agent sessions; no turn is answered.
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
+        let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: CommandSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
         settings.voiceAPIKey = "voice"; settings.saveVoice()

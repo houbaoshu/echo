@@ -14,13 +14,13 @@ import Testing
     }
     static func chat() -> (TaskStore, PuppetModel) {
         let puppet = PuppetModel()
-        return (TaskStore(source: AgentHarness(resolveModel: { puppet.factory })), puppet)
+        return (TaskStore(harness: AgentHarness(resolveModel: { puppet.factory })), puppet)
     }
     /// Reopens a conversation from what it saved, through the archive's JSON.
     static func reopen(_ snapshot: TaskStore.Snapshot) throws -> (TaskStore, PuppetModel) {
         let archived = try JSONDecoder().decode(TaskStore.Snapshot.self, from: JSONEncoder().encode(snapshot))
         let puppet = PuppetModel()
-        return (TaskStore(snapshot: archived, source: AgentHarness(resolveModel: { puppet.factory })), puppet)
+        return (TaskStore(snapshot: archived, harness: AgentHarness(resolveModel: { puppet.factory })), puppet)
     }
 
     @Test static func sendStopRetryAndShutdown() async throws {
