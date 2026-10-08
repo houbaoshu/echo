@@ -3,19 +3,13 @@
   "configurations": [
     {
       "id": "8a62644e-caf0-4659-b430-6506e477e275",
-      "name": "Fast",
+      "name": "Default",
       "options": {}
     }
   ],
   "defaultOptions": {
     "codeCoverage": false,
     "language": "zh-Hans",
-    "environmentVariableEntries": [
-      {
-        "key": "ECHO_TEST_MODE",
-        "value": "hosted"
-      }
-    ],
     "testTimeoutsEnabled": true,
     "defaultTestExecutionTimeAllowance": 180,
     "maximumTestExecutionTimeAllowance": 240
@@ -32,17 +26,18 @@
     {
       "target": {
         "containerPath": "container:Echo.xcodeproj",
+        "identifier": "E116000000000000000000AA",
+        "name": "EchoRustTests"
+      },
+      "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
         "identifier": "E113000000000000000000AA",
         "name": "EchoVoiceTests"
       },
-      "parallelizable": false,
-      "selectedTags": {
-        "tags": [
-          "fast"
-        ],
-        "mode": "or",
-        "includeXCTests": false
-      }
+      "parallelizable": false
     },
     {
       "target": {
@@ -50,14 +45,7 @@
         "identifier": "E114000000000000000000AA",
         "name": "EchoWorkspaceTests"
       },
-      "parallelizable": false,
-      "selectedTags": {
-        "tags": [
-          "fast"
-        ],
-        "mode": "or",
-        "includeXCTests": false
-      }
+      "parallelizable": false
     },
     {
       "target": {
@@ -65,20 +53,13 @@
         "identifier": "E115000000000000000000AA",
         "name": "EchoViewTests"
       },
-      "parallelizable": false,
-      "selectedTags": {
-        "tags": [
-          "fast"
-        ],
-        "mode": "or",
-        "includeXCTests": false
-      }
+      "parallelizable": false
     },
     {
       "target": {
         "containerPath": "container:Echo.xcodeproj",
-        "identifier": "E116000000000000000000AA",
-        "name": "EchoRustTests"
+        "identifier": "E112000000000000000000AA",
+        "name": "EchoIntegrationTests"
       },
       "parallelizable": false
     }

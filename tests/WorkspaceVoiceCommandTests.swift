@@ -59,7 +59,7 @@ import Foundation
 /// Workspace commands while Live Voice owns one conversation. Every conversation runs on the native
 /// Agent with its own puppet model, so text sent during a turn steers it, only a turn's final reply
 /// is spoken, and ending the call leaves the Agent running (see AgentVoiceTests for the voice side).
-@MainActor @Suite(.serialized, .tags(.fast)) enum WorkspaceVoiceCommandTests {
+@MainActor @Suite(.serialized) enum WorkspaceVoiceCommandTests {
     static func tick() async { try? await Task.sleep(for: .milliseconds(25)) }
     static func wait(_ label: String, _ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))

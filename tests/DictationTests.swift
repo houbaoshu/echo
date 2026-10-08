@@ -18,7 +18,7 @@ import Foundation
 }
 
 extension EchoVoiceScenarios {
-@Suite(.serialized, .tags(.fast)) enum DictationTests {
+@Suite(.serialized) enum DictationTests {
     @Test @MainActor static func recordFinishCancelAndPreview() async throws {
         let audio = FakeAudio(), recognizer = DictationRecognizer(), (store, puppet) = VoiceTests.agentStore()
         var prepareFailure: SettingsError? = SettingsError("Apple 本地语音识别当前不可用")

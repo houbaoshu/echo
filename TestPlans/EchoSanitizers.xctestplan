@@ -9,12 +9,6 @@
   ],
   "defaultOptions": {
     "codeCoverage": false,
-    "environmentVariableEntries": [
-      {
-        "key": "ECHO_TEST_MODE",
-        "value": "hosted"
-      }
-    ],
     "testTimeoutsEnabled": true,
     "defaultTestExecutionTimeAllowance": 180,
     "maximumTestExecutionTimeAllowance": 240,

@@ -1,7 +1,13 @@
 import XCTest
 @testable import EchoLiveHost
 
+// Each class sets its own allowance; EchoLiveTests' maximum must be at least as long,
+// because a larger value is cut back to the plan's maximum.
 final class LiveTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        executionTimeAllowance = 600
+    }
     @MainActor func testAgentChatCompletions() async throws {
         try await AgentLiveTests.run(protocols: [.chatCompletions])
     }
@@ -14,6 +20,10 @@ final class LiveTests: XCTestCase {
 }
 
 final class SoakTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        executionTimeAllowance = 900
+    }
     @MainActor func testConnectionSurvivesRequestedDuration() async throws {
         let seconds = ProcessInfo.processInfo.environment["ECHO_SOAK_SECONDS"].flatMap(Double.init) ?? 120
         try await VoiceSoakTests.run(duration: seconds)

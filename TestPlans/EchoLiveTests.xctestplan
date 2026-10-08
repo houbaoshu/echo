@@ -3,7 +3,7 @@
   "configurations": [
     {
       "id": "2b226098-e78b-4c81-8bfe-7353511d0a17",
-      "name": "EchoLive",
+      "name": "Default",
       "options": {}
     }
   ],
@@ -11,14 +11,8 @@
     "codeCoverage": false,
     "language": "zh-Hans",
     "testTimeoutsEnabled": true,
-    "defaultTestExecutionTimeAllowance": 600,
-    "maximumTestExecutionTimeAllowance": 660,
-    "environmentVariableEntries": [
-      {
-        "key": "ECHO_LIVE_PLAYBACK",
-        "value": "0"
-      }
-    ]
+    "defaultTestExecutionTimeAllowance": 180,
+    "maximumTestExecutionTimeAllowance": 960
   },
   "testTargets": [
     {
@@ -27,10 +21,15 @@
         "identifier": "130F86779B6F28C656B0525F",
         "name": "EchoLiveTests"
       },
-      "parallelizable": false,
-      "selectedTests": [
-        "LiveTests"
-      ]
+      "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:Echo.xcodeproj",
+        "identifier": "31FCCAC3298A0A6D11619C4D",
+        "name": "EchoDeviceTests"
+      },
+      "parallelizable": false
     }
   ]
 }

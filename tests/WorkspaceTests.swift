@@ -25,7 +25,7 @@ import FoundationModels
         try await finish(conversation, model, .text(text), sourceLocation: sourceLocation)
     }
 
-    @MainActor @Test(.tags(.fast)) static func petControlsStayExpandedWhileAnyCardShows() async throws {
+    @MainActor @Test static func petControlsStayExpandedWhileAnyCardShows() async throws {
         let puppets = PuppetSessions()
         let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
@@ -60,7 +60,7 @@ import FoundationModels
         #expect(!workspace.keepsPetControlsExpanded, "Without cards the controls follow hover again")
     }
 
-    @MainActor @Test(.tags(.fast)) static func completionKeepsATrayCollapsedDuringTheRun() async throws {
+    @MainActor @Test static func completionKeepsATrayCollapsedDuringTheRun() async throws {
         let puppets = PuppetSessions()
         let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
@@ -148,7 +148,7 @@ import FoundationModels
 
     /// Clicking the pet opens a hidden main window on a new chat, never on a notification's chat;
     /// a window already showing keeps its chat, and Live Voice still takes it to the call.
-    @MainActor @Test(.tags(.fast)) static func petOpensTheMainWindowOnANewChat() async throws {
+    @MainActor @Test static func petOpensTheMainWindowOnANewChat() async throws {
         let puppets = PuppetSessions()
         let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
@@ -206,7 +206,7 @@ import FoundationModels
         workspace.voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
     }
 
-    @MainActor @Test(.tags(.fast)) static func petTrayStepsBetweenCollapsedStackAndList() async throws {
+    @MainActor @Test static func petTrayStepsBetweenCollapsedStackAndList() async throws {
         let puppets = PuppetSessions()
         let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
@@ -268,7 +268,7 @@ import FoundationModels
                 "A list down to one card goes back to the plain card")
     }
 
-    @MainActor @Test(.tags(.fast)) static func singlePetNotificationKeepsOneStepTray() async throws {
+    @MainActor @Test static func singlePetNotificationKeepsOneStepTray() async throws {
         let puppets = PuppetSessions()
         let workspace = WorkspaceStore(harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
@@ -534,7 +534,7 @@ import FoundationModels
         workspace.shutdown()
     }
 
-    @Test(.tags(.fast)) @MainActor static func quickComposerTests() async throws {
+    @Test @MainActor static func quickComposerTests() async throws {
         let puppets = PuppetSessions()
         let ws = WorkspaceStore(harnessFactory: puppets.factory)
         defer { ws.shutdown() }
@@ -960,7 +960,7 @@ import FoundationModels
 
     /// The archive stores steering and tool states as the text the interface showed. It reads back
     /// with the same meaning; an untitled conversation is the one saved with `untitled`.
-    @Test(.tags(.fast)) @MainActor static func archiveWithTextStatesReadsBackUnchanged() async throws {
+    @Test @MainActor static func archiveWithTextStatesReadsBackUnchanged() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-text-state-archive-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

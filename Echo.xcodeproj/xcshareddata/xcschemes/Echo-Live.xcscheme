@@ -20,6 +20,20 @@
                ReferencedContainer = "container:Echo.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "8159C655A6D1F584D0AD6A3F"
+               BuildableName = "EchoSpeechHost.app"
+               BlueprintName = "EchoSpeechHost"
+               ReferencedContainer = "container:Echo.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -29,11 +43,8 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:TestPlans/EchoLive.xctestplan"
+            reference = "container:TestPlans/EchoLiveTests.xctestplan"
             default = "YES">
-         </TestPlanReference>
-         <TestPlanReference
-            reference = "container:TestPlans/EchoSoak.xctestplan">
          </TestPlanReference>
       </TestPlans>
    </TestAction>

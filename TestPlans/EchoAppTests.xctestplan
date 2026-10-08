@@ -3,7 +3,7 @@
   "configurations": [
     {
       "id": "67aedf9d-ae48-4afb-a6e5-810e6bc2543a",
-      "name": "Offline",
+      "name": "Default",
       "options": {}
     }
   ],
@@ -24,38 +24,6 @@
     {
       "target": {
         "containerPath": "container:Echo.xcodeproj",
-        "identifier": "E110000000000000000000AA",
-        "name": "EchoChatTests"
-      },
-      "parallelizable": false
-    },
-    {
-      "target": {
-        "containerPath": "container:Echo.xcodeproj",
-        "identifier": "E113000000000000000000AA",
-        "name": "EchoVoiceTests"
-      },
-      "parallelizable": false
-    },
-    {
-      "target": {
-        "containerPath": "container:Echo.xcodeproj",
-        "identifier": "E114000000000000000000AA",
-        "name": "EchoWorkspaceTests"
-      },
-      "parallelizable": false
-    },
-    {
-      "target": {
-        "containerPath": "container:Echo.xcodeproj",
-        "identifier": "E115000000000000000000AA",
-        "name": "EchoViewTests"
-      },
-      "parallelizable": false
-    },
-    {
-      "target": {
-        "containerPath": "container:Echo.xcodeproj",
         "identifier": "622BCBC3AA8DF672AAC38174",
         "name": "EchoAppIntegrationTests"
       },
@@ -72,8 +40,8 @@
     {
       "target": {
         "containerPath": "container:Echo.xcodeproj",
-        "identifier": "E112000000000000000000AA",
-        "name": "EchoIntegrationTests"
+        "identifier": "18AB32E222622174A43F9273",
+        "name": "EchoPerformanceTests"
       },
       "parallelizable": false
     }

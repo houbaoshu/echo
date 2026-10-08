@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import Testing
 
-@MainActor @Suite(.serialized, .tags(.fast)) enum PresentationRules {
+@MainActor @Suite(.serialized) enum PresentationRules {
     @Test static func testPetSurfacePresentationAndLayout() throws {
         typealias Surface = PetSurfacePresentation
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())

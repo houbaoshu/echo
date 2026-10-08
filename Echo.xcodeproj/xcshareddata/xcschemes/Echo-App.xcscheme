@@ -29,7 +29,7 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:TestPlans/EchoOffline.xctestplan"
+            reference = "container:TestPlans/EchoAppTests.xctestplan"
             default = "YES">
          </TestPlanReference>
       </TestPlans>

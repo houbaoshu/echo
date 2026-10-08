@@ -32,7 +32,6 @@
 		2BA7D416B8B284177C6B0063 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		2D34581B87695B5017C83A31 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		33BB6A82233EFF9DFDC2428A /* tests/native/AgentVoiceIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73026C88846F78AF31164388 /* tests/native/AgentVoiceIntegrationTests.swift */; };
-		358886434FBDEBBF0F4829AF /* tests/support/FastTestTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */; };
 		3B42CB39447CC127369519D4 /* tests/AgentHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A943A0226E44527A68563F2 /* tests/AgentHarnessTests.swift */; };
 		3CA742A1246B0327459C4C3C /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		409C6E725EC1FA882D622090 /* tests/native/HistoryIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 217FBCD630BAAD4A12C88F95 /* tests/native/HistoryIntegrationTests.swift */; };
@@ -70,13 +69,11 @@
 		B704670FAF0415C2098489CE /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
 		B9DDF01A179493CDC0297D15 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		BC0769A420E4834B8D65FD1E /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
-		C5ACF86EC02CDEB0FD37A70E /* tests/support/FastTestTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */; };
 		C622A7EBBE746BA108EA86AA /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
 		C7A1D0E2F3B4C5D6E7F80912 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */; };
 		C7A1D0E2F3B4C5D6E7F80914 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */; };
 		D0D95B5D5B964B6609913AA4 /* tests/support/VoiceFakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89D5CB17C33E07630F4519C6 /* tests/support/VoiceFakes.swift */; };
 		D4D51A52463450D85F5130CA /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
-		D72D412AE960DFE8DB06BCC3 /* tests/support/FastTestTag.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */; };
 		DDBEF3D5359192AC5896BA28 /* tests/AgentModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 474D9F2D95791491A7B3D4E6 /* tests/AgentModelTests.swift */; };
 		E00000000000000000000030 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		E00000000000000000000031 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
@@ -259,7 +256,6 @@
 		B628CE43BFCAC712B3D75BF1 /* tests/fixtures/speech/mixed.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = tests/fixtures/speech/mixed.wav; sourceTree = "<group>"; };
 		BDB246AE9C0537E3D5EAD79A /* tests/tools/FixtureServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/tools/FixtureServer.swift; sourceTree = "<group>"; };
 		C038B52ADC4A870F1268E696 /* EchoDeviceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoDeviceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/FastTestTag.swift; sourceTree = "<group>"; };
 		C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = Localizable.xcstrings; path = assets/Localizable.xcstrings; sourceTree = "<group>"; };
 		C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = InfoPlist.xcstrings; path = assets/InfoPlist.xcstrings; sourceTree = "<group>"; };
 		CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/ProjectBrowser/ProjectPathAccess.swift; sourceTree = "<group>"; };
@@ -566,7 +562,6 @@
 				20E8498B36C974B322A0269D /* tests/support/SessionFixture.swift */,
 				89D5CB17C33E07630F4519C6 /* tests/support/VoiceFakes.swift */,
 				6BF4D83C4FDB9149833754EA /* tests/support/AgentVoiceFixture.swift */,
-				C2F9514D5D67A08DAB8E67DE /* tests/support/FastTestTag.swift */,
 				655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */,
 				E11600000000000000000F02 /* tests/support/CargoTestRun.swift */,
 				E11600000000000000000F03 /* tests/support/EchoRustTests-Info.plist */,
@@ -1205,7 +1200,6 @@
 				830373170115C92C8D7D60E3 /* tests/support/EchoTestResources.swift in Sources */,
 				9593AF60BDC2B03A67992826 /* tests/support/VoiceFakes.swift in Sources */,
 				294ED11A4A5B711A39E812CB /* tests/support/AgentVoiceFixture.swift in Sources */,
-				358886434FBDEBBF0F4829AF /* tests/support/FastTestTag.swift in Sources */,
 			);
 		};
 		E114000000000000000000A1 /* Sources */ = {
@@ -1219,7 +1213,6 @@
 				E11400000000000000000B01 /* WorkspaceVoiceCommandTests.swift in Sources */,
 				E11400000000000000000B02 /* ProjectFileBrowserTests.swift in Sources */,
 				99C4C78ABC6C2DE4D996106D /* tests/support/EchoTestResources.swift in Sources */,
-				D72D412AE960DFE8DB06BCC3 /* tests/support/FastTestTag.swift in Sources */,
 			);
 		};
 		E115000000000000000000A1 /* Sources */ = {
@@ -1229,7 +1222,6 @@
 				E11500000000000000000B00 /* ConversationUITests.swift in Sources */,
 				EE2B5A483F67D04C0F2A9F6A /* tests/support/EchoTestResources.swift in Sources */,
 				95F085AA10CDF3FF04E568AF /* tests/native/PresentationRules.swift in Sources */,
-				C5ACF86EC02CDEB0FD37A70E /* tests/support/FastTestTag.swift in Sources */,
 			);
 		};
 		E120000000000000000000A1 /* Sources */ = {

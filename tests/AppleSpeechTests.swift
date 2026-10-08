@@ -21,7 +21,7 @@ import Speech
 }
 
 extension EchoVoiceScenarios {
-@Suite(.serialized, .tags(.fast)) enum AppleSpeechTests {
+@Suite(.serialized) enum AppleSpeechTests {
     @Test @MainActor static func capabilityAndCancellation() async throws {
         let engine = TestAppleSpeechEngine()
         for (capability, available, status, expected) in [

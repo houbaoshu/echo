@@ -6,7 +6,7 @@ import Testing
 
 /// The local chat model driven through `TaskStore`, with a fake backend that streams like Core AI:
 /// text events without entry IDs, then usage.
-@MainActor @Suite(.serialized, .tags(.fast)) struct LocalChatTests {
+@MainActor @Suite(.serialized) struct LocalChatTests {
     typealias Step = @Sendable (_ request: LanguageModelExecutorGenerationRequest, _ channel: LanguageModelExecutorGenerationChannel, _ index: Int) async throws -> Void
 
     final class FakeBackend: LocalChatBackend {

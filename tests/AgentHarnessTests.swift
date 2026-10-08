@@ -6,7 +6,7 @@ import Testing
 
 /// The native Agent engine driven through `TaskStore`, the surface the UI and Live Voice use,
 /// with an in-process scripted model: deterministic and without sockets or the Rust core.
-@MainActor @Suite(.serialized, .tags(.fast)) struct AgentHarnessTests {
+@MainActor @Suite(.serialized) struct AgentHarnessTests {
     static func wait(_ label: String, _ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while !condition() {
@@ -550,7 +550,7 @@ import Testing
 }
 
 /// `list_files` and `read_file`: mini-agent-rs semantics, confined to the project.
-@Suite(.tags(.fast)) struct AgentReadToolTests {
+@Suite struct AgentReadToolTests {
     @Test func listAndReadStayInsideTheProject() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("echo-tools-\(UUID())").resolvingSymlinksInPath()
@@ -608,7 +608,7 @@ import Testing
 }
 
 /// Native sidecars: saved apart from the manifest, restored from the file, blocked when it is not there.
-@MainActor @Suite(.serialized, .tags(.fast)) struct NativePersistenceTests {
+@MainActor @Suite(.serialized) struct NativePersistenceTests {
     @Test func nativeHistorySavesAndRestores() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("echo-native-persistence-\(UUID())")
@@ -671,7 +671,7 @@ import Testing
 }
 
 /// bash on the native engine, with a fake runner in place of the Rust core.
-@MainActor @Suite(.serialized, .tags(.fast)) struct NativeBashTests {
+@MainActor @Suite(.serialized) struct NativeBashTests {
     typealias Chat = AgentHarnessTests.Chat
     static func wait(_ label: String, _ condition: () -> Bool) async throws { try await AgentHarnessTests.wait(label, condition) }
     static func canonical(_ url: URL) -> String { ExecutionService.canonicalPath(url.path)! }

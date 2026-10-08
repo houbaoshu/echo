@@ -14,7 +14,7 @@ extension VoiceTests {
     /// Speech while the Agent works steers the same run; a folder request and a project queue keep
     /// voice input open; mute closes only input; Stop pauses submission until cleanup; Continue
     /// appends nothing; ending the call leaves the Agent running.
-    @Test(.tags(.fast)) @MainActor static func agentVoiceTests() async throws {
+    @Test @MainActor static func agentVoiceTests() async throws {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
@@ -81,7 +81,7 @@ extension VoiceTests {
 
     /// A finished utterance stops being a pending partial whatever becomes of it, including when
     /// the conversation refuses it (its save failed) or cannot take input at all.
-    @Test(.tags(.fast)) @MainActor static func agentRefusedFinalTests() async throws {
+    @Test @MainActor static func agentRefusedFinalTests() async throws {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
@@ -109,7 +109,7 @@ extension VoiceTests {
               "an unsubmittable final becomes neither a message nor a leftover partial: \(f.voice.subtitle)")
     }
 
-    @Test(.tags(.fast)) @MainActor static func agentVoiceRecoveryTests() async throws {
+    @Test @MainActor static func agentVoiceRecoveryTests() async throws {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
@@ -153,7 +153,7 @@ extension VoiceTests {
     /// withdraws text that turns into a tool call, and never reaches speech before the final reply.
     /// (Stream snapshots trail the model by two chunks, so each check sends past the text it
     /// expects and waits for it.)
-    @Test(.tags(.fast)) @MainActor static func agentReplyStreamTests() async throws {
+    @Test @MainActor static func agentReplyStreamTests() async throws {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
@@ -202,7 +202,7 @@ extension VoiceTests {
 
     /// The muted bubble follows what speech has actually played: subtitles time each character,
     /// playback frames say how far the audio got, and the text is shown on that same timeline.
-    @Test(.tags(.fast)) @MainActor static func agentSpokenReplyTests() async throws {
+    @Test @MainActor static func agentSpokenReplyTests() async throws {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
@@ -280,7 +280,7 @@ extension VoiceTests {
     }
 
     /// While Live Voice runs its conversation is in progress; ending the session makes it unseen.
-    @Test(.tags(.fast)) @MainActor static func agentVoiceUnseenTests() async throws {
+    @Test @MainActor static func agentVoiceUnseenTests() async throws {
         _ = NSApplication.shared
         for viewed in [false, true] {
             let f = AgentVoiceFixture()
@@ -328,7 +328,7 @@ extension VoiceTests {
         #expect(f.workspace.unseenCompletedCount == 0, "an empty Live Voice session creates no unseen item")
     }
 
-    @Test(.tags(.fast)) @MainActor static func agentFinalAudioTests() async throws {
+    @Test @MainActor static func agentFinalAudioTests() async throws {
         _ = NSApplication.shared
         for finalFirst in [false, true] {
             let f = AgentVoiceFixture()
@@ -389,7 +389,7 @@ extension VoiceTests {
         #expect(f.userTexts.count == 2 && f.store.isGenerating, "the preserved utterance can start the next round")
     }
 
-    @Test(.tags(.fast)) @MainActor static func agentVoiceStartupAndFailureTests() async throws {
+    @Test @MainActor static func agentVoiceStartupAndFailureTests() async throws {
         _ = NSApplication.shared
         do {
             let f = AgentVoiceFixture()
@@ -448,7 +448,7 @@ extension VoiceTests {
     /// The Live Voice contract on the native engine, with the real harness and a scripted model:
     /// speech while the Agent works steers the same run, only the final reply is spoken and
     /// exactly once, Stop pauses submission until cleanup, and Continue appends nothing.
-    @Test(.tags(.fast)) @MainActor static func nativeAgentVoiceTests() async throws {
+    @Test @MainActor static func nativeAgentVoiceTests() async throws {
         _ = NSApplication.shared
         let gate = ScriptGate(), stopGate = ScriptGate()
         let model = ScriptedAgentModel { request, emit, index in

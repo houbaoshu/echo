@@ -29,17 +29,17 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:TestPlans/EchoFast.xctestplan"
+            reference = "container:TestPlans/EchoTests.xctestplan"
             default = "YES">
          </TestPlanReference>
          <TestPlanReference
-            reference = "container:TestPlans/EchoOffline.xctestplan">
+            reference = "container:TestPlans/EchoAppTests.xctestplan">
          </TestPlanReference>
          <TestPlanReference
             reference = "container:TestPlans/EchoSanitizers.xctestplan">
          </TestPlanReference>
          <TestPlanReference
-            reference = "container:TestPlans/EchoPerformance.xctestplan">
+            reference = "container:TestPlans/EchoLiveTests.xctestplan">
          </TestPlanReference>
       </TestPlans>
    </TestAction>

@@ -5,7 +5,7 @@ import Testing
 
 /// Echo's Responses and Chat Completions executors against a URLProtocol stub: what goes on
 /// the wire, how provider streams become transcript entries, and which errors reach the user.
-@Suite(.serialized, .tags(.fast)) struct AgentModelTests {
+@Suite(.serialized) struct AgentModelTests {
     // MARK: Stub
 
     struct Reply: Sendable {
