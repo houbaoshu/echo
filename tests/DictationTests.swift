@@ -20,7 +20,7 @@ import Foundation
 extension EchoVoiceScenarios {
 @Suite(.serialized, .tags(.fast)) enum DictationTests {
     @Test @MainActor static func recordFinishCancelAndPreview() async throws {
-        let audio = FakeAudio(), recognizer = DictationRecognizer(), source = FakeSource()
+        let audio = FakeAudio(), recognizer = DictationRecognizer(), (store, puppet) = VoiceTests.agentStore()
         var prepareFailure: SettingsError? = SettingsError("Apple 本地语音识别当前不可用")
         var prepares = 0
         let dictation = DictationController(audio: audio, recognizer: {
@@ -28,7 +28,6 @@ extension EchoVoiceScenarios {
             if let prepareFailure { throw prepareFailure }
             return recognizer
         }, finalizationTimeout: .milliseconds(40), permission: { true })
-        let store = TaskStore(source: source)
         let call = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() },
             synthesizer: { FakeSynthesizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: call)
@@ -65,7 +64,8 @@ extension EchoVoiceScenarios {
         recognizer.emit("确定 结尾", final: true); recognizer.finish()
         await VoiceTests.tick()
         #expect(store.mainDraft == "编辑后的草稿\n确定 结尾" && dictation.state == .idle)
-        #expect(source.histories.isEmpty && audio.played.isEmpty, "STT never calls model or TTS")
+        // Agent model requests start asynchronously; the message list shows a send at once.
+        #expect(puppet.requests.isEmpty && store.messages.isEmpty && audio.played.isEmpty, "STT never calls model or TTS")
         recognizer.emit("迟到", final: true)
         #expect(store.mainDraft == "编辑后的草稿\n确定 结尾")
         dictation.start(conversation: conversation); await VoiceTests.tick()
@@ -136,7 +136,9 @@ extension EchoVoiceScenarios {
         #expect(dictation.state == .failed && !audio.capturing && store.mainDraft.hasSuffix("\n恢复失败前")
                      && dictation.error == DictationController.message(for: .recoveryFailed)
                      && dictation.error?.contains("通话") == false, "A failed recovery keeps recognized text")
-        _ = store.send("commit conversation"); store.stopTask()
+        // An Agent turn stops asynchronously; start recording once it has, as before.
+        _ = store.send("commit conversation"); try await puppet.waitForRequests(1); store.stopTask()
+        await VoiceTests.waitUntil { store.task?.status == .stopped }
         dictation.start(conversation: conversation); await VoiceTests.tick()
         let draft = store.mainDraft
         recognizer.emit("删除应丢弃")
@@ -154,7 +156,7 @@ extension EchoVoiceScenarios {
     /// While VoiceAudio recovers from a device change nothing can arrive; the first-packet
     /// timeout waits it out and gives the recovered microphone a full timeout, as the call's does.
     @Test @MainActor static func deviceRecoveryTests() async throws {
-        let store = TaskStore(source: FakeSource()), conversation = WorkspaceConversation(store: store)
+        let store = TaskStore(source: idleAgent()), conversation = WorkspaceConversation(store: store)
         defer { store.shutdown() }
         let timeout = Duration.milliseconds(100)
         func makeDictation() -> (FakeAudio, DictationRecognizer, DictationController) {
@@ -222,7 +224,7 @@ extension EchoVoiceScenarios {
         }
         let url = EchoTestResources.resource("fixtures/apple-dictation-pause-20260914.json")
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
-        let engine = TestAppleSpeechEngine(), store = TaskStore(source: FakeSource())
+        let engine = TestAppleSpeechEngine(), store = TaskStore(source: idleAgent())
         let dictation = DictationController(audio: FakeAudio(), recognizer: {
             try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         }, permission: { true })
@@ -271,7 +273,7 @@ extension EchoVoiceScenarios {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600,
                 "Transcript diagnostics are private to the current user")
-        let store = TaskStore(source: FakeSource())
+        let store = TaskStore(source: idleAgent())
         store.mainDraft = "已有草稿"
         var ordinaryDictation = true
         let trace = DictationTrace(logger: logger, recordingID: UUID(), conversationID: UUID(), store: store,
@@ -297,13 +299,12 @@ extension EchoVoiceScenarios {
     }
 
     @Test @MainActor static func localTests() async throws {
-        let audio = FakeAudio(), engine = TestAppleSpeechEngine(), source = FakeSource()
+        let audio = FakeAudio(), engine = TestAppleSpeechEngine(), (store, puppet) = VoiceTests.agentStore()
         var prepares = 0
         let dictation = DictationController(audio: audio, recognizer: {
             prepares += 1
             return try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         }, finalizationTimeout: .milliseconds(40), permission: { true })
-        let store = TaskStore(source: source)
         let voice = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         let settings = SettingsStore(secrets: FakeSecrets())
@@ -330,7 +331,8 @@ extension EchoVoiceScenarios {
         #expect(dictation.state == .idle && store.mainDraft == "编辑后的草稿\n本地最终文本")
         engine.emit("重复最终文本", final: true); await VoiceTests.tick()
         #expect(store.mainDraft == "编辑后的草稿\n本地最终文本")
-        #expect(source.histories.isEmpty && audio.played.isEmpty, "Local STT never sends, calls a model or plays TTS")
+        #expect(puppet.requests.isEmpty && store.messages.isEmpty && audio.played.isEmpty,
+                "Local STT never sends, calls a model or plays TTS")
 
         // Reproduce clicking the mic to finish after a visible English hypothesis.
         dictation.start(conversation: conversation); await VoiceTests.tick()
@@ -437,7 +439,7 @@ extension EchoVoiceScenarios {
             return delayedRecognizer
         }, permission: { true })
         let delayedVoice = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() }, permission: { true })
-        let delayedWorkspace = WorkspaceStore(initialStore: TaskStore(source: FakeSource()), dictation: delayed, voice: delayedVoice)
+        let delayedWorkspace = WorkspaceStore(initialStore: TaskStore(source: idleAgent()), dictation: delayed, voice: delayedVoice)
         let emptySettings = SettingsStore(secrets: FakeSecrets())
         delayed.attach(workspace: delayedWorkspace)
         delayedVoice.attach(workspace: delayedWorkspace, settings: emptySettings)

@@ -139,14 +139,6 @@ actor PendingModelTester: ConnectionTesting {
     }
     func cancel() { cancelled = true }
 }
-@MainActor final class FakeSource: TaskSource {
-    var callback: (@MainActor (TaskEvent) -> Void)?
-    var histories: [[ConversationMessage]] = []
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
-        histories.append(messages); callback = receive
-    }
-    func cancel() {}
-}
 /// Microphone permission the test answers, which holds a call in its starting phase meanwhile.
 @MainActor final class HeldPermission {
     private var pending: CheckedContinuation<Bool, Never>?
