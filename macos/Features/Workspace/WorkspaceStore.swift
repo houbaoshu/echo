@@ -290,7 +290,7 @@ struct WorkspaceSnapshot: Codable {
     @ObservationIgnored var onRevealVoice: ((UUID) -> Void)?
     @ObservationIgnored var onOpenPetActivity: (() -> Void)?
     private let emptyActivity = TaskStore()
-    private let sourceFactory: () -> (any TaskSource)?
+    private let sourceFactory: (() -> AgentHarness)?
     private let persistence: WorkspacePersistence?
     @ObservationIgnored private var lifecycleObservations: [UUID: AnyCancellable] = [:]
     @ObservationIgnored private var saveWork: DispatchWorkItem?
@@ -309,11 +309,23 @@ struct WorkspaceSnapshot: Codable {
     private var pendingRecency: [UUID: Date] = [:]
     private let directoryScheduler = AgentDirectoryScheduler()
 
-    init(persistence: WorkspacePersistence? = nil,
-         initialStore: TaskStore? = nil,
-         dictation: DictationController = DictationController(),
-         voice: VoiceSessionController = VoiceSessionController(),
-         sourceFactory: @escaping () -> (any TaskSource)? = { nil }) {
+    /// A saved workspace always has the Agent engine: a conversation without it would save its
+    /// native history away.
+    convenience init(persistence: WorkspacePersistence,
+                     dictation: DictationController = DictationController(),
+                     voice: VoiceSessionController = VoiceSessionController(),
+                     sourceFactory: @escaping () -> AgentHarness) {
+        self.init(persistence: persistence, initialStore: nil, dictation: dictation, voice: voice, sourceFactory: sourceFactory)
+    }
+    /// A workspace that is never saved. Without `sourceFactory` its conversations cannot send.
+    convenience init(initialStore: TaskStore? = nil,
+                     dictation: DictationController = DictationController(),
+                     voice: VoiceSessionController = VoiceSessionController(),
+                     sourceFactory: (() -> AgentHarness)? = nil) {
+        self.init(persistence: nil, initialStore: initialStore, dictation: dictation, voice: voice, sourceFactory: sourceFactory)
+    }
+    private init(persistence: WorkspacePersistence?, initialStore: TaskStore?, dictation: DictationController,
+                 voice: VoiceSessionController, sourceFactory: (() -> AgentHarness)?) {
         self.dictation = dictation; self.voice = voice
         self.persistence = persistence
         self.sourceFactory = sourceFactory
@@ -409,21 +421,14 @@ struct WorkspaceSnapshot: Codable {
     // desktop activity are navigation state, never an implicit command destination.
     /// Only native history opens. An Agent workspace blocks a conversation whose messages are in
     /// the manifest but which has no native history, leaving what it saved as it is until it is
-    /// deleted. A native conversation in a workspace without the Agent engine stays blocked too:
-    /// another source would fork it.
+    /// deleted.
     private func restoredStore(_ saved: WorkspaceSnapshot.Conversation,
                                persistence: WorkspacePersistence) -> TaskStore {
         var restored = persistence.restoreSession(saved)
-        let source = sourceFactory()
-        let agent = source is AgentHarness
-        if restored.native != nil, !agent {
-            restored = saved.state
-            restored.agentStored = true
-            restored.loadError = String(localized: "此会话由 Foundation Models Agent 创建，当前无法打开，已禁止执行。")
-        } else if agent, restored.native == nil, restored.loadError == nil, !restored.messages.isEmpty {
+        if restored.native == nil, restored.loadError == nil, !restored.messages.isEmpty {
             restored.loadError = WorkspacePersistence.unreadableHistory
         }
-        return TaskStore(snapshot: restored, source: source)
+        return TaskStore(snapshot: restored, source: sourceFactory?())
     }
     @discardableResult func send(_ text: String, conversationID: UUID) -> Bool {
         guard !shuttingDown, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -584,15 +589,15 @@ struct WorkspaceSnapshot: Codable {
                 if self.voice.conversationID == id { self.voiceCompletion = viewed ? nil : id }
                 target.store.recordCompletion(unseen: !viewed && self.voice.conversationID != id)
                 if viewed { self.removePetActivity(id) }
-                if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
+                self.fileBrowser.refresh(projectID: target.projectID)
             case .reply(_, .failed):
                 target.store.recordCompletion(unseen: !self.isViewing(id))
                 if self.isViewing(id) { self.removePetActivity(id) }
-                if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
+                self.fileBrowser.refresh(projectID: target.projectID)
             case .stopped:
                 target.store.recordCompletion(unseen: !self.isViewing(id))
                 if self.isViewing(id) { self.removePetActivity(id) }
-                if target.store.usesAgent { self.fileBrowser.refresh(projectID: target.projectID) }
+                self.fileBrowser.refresh(projectID: target.projectID)
             default: break
             }
         }
@@ -691,7 +696,7 @@ struct WorkspaceSnapshot: Codable {
         byRecency(drafts.filter { $0.id != excluding && $0.projectID == projectID && canAssociateProject(conversationID: $0.id) }).first
     }
     private func makeDraft(projectID: UUID?) -> WorkspaceConversation {
-        let conversation = WorkspaceConversation(projectID: projectID, title: "新对话", store: TaskStore(source: sourceFactory()))
+        let conversation = WorkspaceConversation(projectID: projectID, title: "新对话", store: TaskStore(source: sourceFactory?()))
         drafts.append(conversation); bind(conversation)
         return conversation
     }

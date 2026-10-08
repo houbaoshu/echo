@@ -594,7 +594,7 @@ struct ConversationView: View {
                 // Live Voice narrates its own turn, so while it owns the chat the row
                 // keeps only what the voice cannot say: why a task stopped, and how to
                 // continue it.
-                if store.usesAgent, let task = store.task, task.status != .completed,
+                if let task = store.task, task.status != .completed,
                    !(isVoiceOwner && (task.status == .running || task.status == .stopping)) {
                     HStack {
                         if store.isGenerating { ProgressView().controlSize(.small) }

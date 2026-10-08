@@ -6,9 +6,9 @@ import Foundation
     let audio = FakeAudio()
     /// Answers the model requests of the fixture's own conversation.
     let puppet = PuppetModel()
-    let source: any TaskSource
+    let source: AgentHarness
     /// Other conversations get an Agent whose requests are never answered.
-    var sourceFactory: () -> (any TaskSource)? = { AgentHarness(resolveModel: { PuppetModel().factory }) }
+    var sourceFactory: () -> AgentHarness = { AgentHarness(resolveModel: { PuppetModel().factory }) }
     var recognizers: [FakeRecognizer] = []
     var synths: [FakeSynthesizer] = []
     var finishDrain: CheckedContinuation<Void, Never>?
@@ -23,7 +23,7 @@ import Foundation
     lazy var workspace = WorkspaceStore(initialStore: store, voice: voice, sourceFactory: { [unowned self] in sourceFactory() })
     lazy var conversation = workspace.selected!
     lazy var settings = SettingsStore(secrets: FakeSecrets())
-    init(source: (any TaskSource)? = nil) {
+    init(source: AgentHarness? = nil) {
         let puppet = puppet
         self.source = source ?? AgentHarness(resolveModel: { puppet.factory })
     }

@@ -86,8 +86,6 @@ enum VoiceCaptureWatchdog {
     @ObservationIgnored private var recognitionID = UUID()
     @ObservationIgnored private var turnID = UUID()
     @ObservationIgnored private var runID: UUID?
-    // Legacy text-source runs already underway, or accepted while starting, remain text-only.
-    @ObservationIgnored private var textOnlyRunID: UUID?
     @ObservationIgnored private var submitting = false
     @ObservationIgnored private var tracker = VoiceUtteranceTracker()
     @ObservationIgnored private var delta = VoiceTextDelta()
@@ -103,8 +101,6 @@ enum VoiceCaptureWatchdog {
     @ObservationIgnored private var taskObservation: ObservationHandle?
     @ObservationIgnored private var handledFinalRunID: UUID?
     @ObservationIgnored private var submissionHadAudio = false
-    // The plain TaskSource adapter has no steering API. Production sessions use the Agent.
-    private var usesAgent: Bool { store?.usesAgent == true }
     @ObservationIgnored private var dictationObservation: ObservationHandle?
     @ObservationIgnored private var startup: Task<Void, Never>?
     @ObservationIgnored private var captureWatchdog: Task<Void, Never>?
@@ -210,25 +206,22 @@ enum VoiceCaptureWatchdog {
             snapshot = VoiceSessionSnapshot(session: .starting(.init(sessionID: call, conversationID: conversation.id)))
         }
         spoken = nil
-        textOnlyRunID = !usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
-        runID = usesAgent && conversation.store.isGenerating ? conversation.store.task?.runID : nil
+        runID = conversation.store.isGenerating ? conversation.store.task?.runID : nil
         handledFinalRunID = nil
         delta = VoiceTextDelta()
         playedAudioForCurrentRun = false
         receivedCapturePacket = false
         cancelRecovery()
         observation = conversation.store.lifecycle.sink { [weak self] event in self?.handle(event) }
-        if usesAgent {
-            let store = conversation.store
-            taskObservation = observeChanges({ store.task }, initial: true) { [weak self] task in
-                guard let self else { return }
-                self.updateSnapshot { $0.agentActivity = task?.status == .running || task?.status == .stopping ? task?.summary : nil }
-                if task?.status == .stopping {
-                    self.cancelRecovery()
-                    self.stopRecognition(reason: .stopping)
-                    self.interruptReply(preserveRun: true)
-                    self.updateSnapshot { $0.subtitle = "" }
-                }
+        let store = conversation.store
+        taskObservation = observeChanges({ store.task }, initial: true) { [weak self] task in
+            guard let self else { return }
+            self.updateSnapshot { $0.agentActivity = task?.status == .running || task?.status == .stopping ? task?.summary : nil }
+            if task?.status == .stopping {
+                self.cancelRecovery()
+                self.stopRecognition(reason: .stopping)
+                self.interruptReply(preserveRun: true)
+                self.updateSnapshot { $0.subtitle = "" }
             }
         }
         startup = Task { [weak self] in
@@ -251,10 +244,7 @@ enum VoiceCaptureWatchdog {
                 VoiceDiagnostics.shared.mark("audio.start 完成")
                 guard self.sessionID == call, !Task.isCancelled else { return }
                 self.updateSnapshot { $0.session = .active(.init(sessionID: call, conversationID: conversation.id)) }
-                if self.textOnlyRunID != nil {
-                    self.updateSnapshot { $0.recognition = .off(.currentReply) }
-                    self.audio.resetCapture(epoch: self.inputEpoch, paused: true)
-                } else if self.store?.task?.status == .stopping {
+                if self.store?.task?.status == .stopping {
                     self.updateSnapshot { $0.recognition = .off(.stopping) }
                     self.audio.resetCapture(epoch: self.inputEpoch, paused: true)
                 } else { self.beginRecognition() }
@@ -397,23 +387,16 @@ enum VoiceCaptureWatchdog {
         if !update.committed.isEmpty {
             let text = update.committed.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
-            if usesAgent {
-                // The utterance is over either way, so these words stop standing in for a
-                // message: an accepted one has become that message, and a refused one either
-                // left its own behind — `TaskStore.sendAgent` appends before it can fail —
-                // or is accounted for by the notice the chat is already showing. Keeping
-                // them would show the same sentence twice, or show one that was never sent.
-                updateSnapshot { $0.subtitle = pendingSubtitle }
-                guard store?.canSubmit == true else { return }
-                // Keep this ASR stream and its utterance IDs across follow-ups;
-                // late/repeated finals must not become duplicate user messages.
-                if store?.send(text) == true { bargeInEchoGuard = nil }
-                return
-            }
-            stopRecognition(reason: .currentReply)
-            updateSnapshot { $0.subtitle = "" }
-            store?.stopTask()
-            _ = store?.send(text)
+            // The utterance is over either way, so these words stop standing in for a
+            // message: an accepted one has become that message, and a refused one either
+            // left its own behind — `TaskStore.sendAgent` appends before it can fail —
+            // or is accounted for by the notice the chat is already showing. Keeping
+            // them would show the same sentence twice, or show one that was never sent.
+            updateSnapshot { $0.subtitle = pendingSubtitle }
+            guard store?.canSubmit == true else { return }
+            // Keep this ASR stream and its utterance IDs across follow-ups;
+            // late/repeated finals must not become duplicate user messages.
+            if store?.send(text) == true { bargeInEchoGuard = nil }
         }
     }
 
@@ -466,13 +449,12 @@ enum VoiceCaptureWatchdog {
 
     private func confirmBargeIn() {
         // Invalidate TTS/playback callbacks while retaining Agent task ownership
-        // and the fresh recognizer. Only the legacy source requires stopTask.
+        // and the fresh recognizer.
         let echoGuard = bargeInEchoGuard
-        interruptReply(preserveRun: usesAgent)
+        interruptReply(preserveRun: true)
         bargeInEchoGuard = echoGuard // Keep guarding partial revisions through the first final.
         playedAudioForCurrentRun = false
-        if !usesAgent { store?.stopTask() }
-        VoiceDiagnostics.shared.record("插话", "PASS", usesAgent ? "语音已确认，停止播报并等待补充定稿" : "静止输出后的语音已确认，停止当前回复")
+        VoiceDiagnostics.shared.record("插话", "PASS", "语音已确认，停止播报并等待补充定稿")
     }
 
     private func cancelBargeIn(resumePlayback: Bool = false) {
@@ -484,53 +466,6 @@ enum VoiceCaptureWatchdog {
     }
     private func handle(_ event: TaskLifecycleEvent) {
         guard isActive else { return }
-        if usesAgent { handleAgent(event); return }
-        switch event {
-        case .started(let id):
-            if case .starting = snapshot.session {
-                textOnlyRunID = id
-                return
-            }
-            cancelRecovery()
-            interruptReply(); runID = id; delta = VoiceTextDelta()
-            playedAudioForCurrentRun = false
-            stopRecognition(reason: .currentReply)
-            updateSnapshot { $0.subtitle = "" }
-        case .reply(let id, let reply):
-            if textOnlyRunID == id {
-                switch reply {
-                case .progress: break
-                case .completed:
-                    textOnlyRunID = nil
-                    scheduleListeningRecovery(runID: nil, playedAudio: false)
-                case .failed(let message): end(error: SettingsError(message), reason: .replyFailed)
-                }
-                return
-            }
-            guard runID == id else { return }
-            switch reply {
-            case .progress(let text): feed(text)
-            case .completed(let text):
-                feed(text); textInput?.finish()
-                if synthesizer == nil && synthesisTask == nil {
-                    scheduleListeningRecovery(runID: id, playedAudio: false)
-                }
-            case .failed(let message): end(error: SettingsError(message), reason: .replyFailed)
-            }
-        case .stopped(let id):
-            if textOnlyRunID == id {
-                textOnlyRunID = nil
-                scheduleListeningRecovery(runID: nil, playedAudio: false)
-            }
-            if runID == id {
-                let hadPlayedAudio = playedAudioForCurrentRun
-                interruptReply()
-                scheduleListeningRecovery(runID: nil, playedAudio: hadPlayedAudio)
-            }
-        case .retired: end(reason: .retired)
-        }
-    }
-    private func handleAgent(_ event: TaskLifecycleEvent) {
         switch event {
         case .started(let id):
             interruptReply(); runID = id; handledFinalRunID = nil
@@ -539,7 +474,6 @@ enum VoiceCaptureWatchdog {
         case .reply(let id, let reply):
             guard runID == id else { return }
             switch reply {
-            case .progress: break // Assistant explanations and tool output never enter TTS.
             case .completed:
                 // Still starting: activation speaks it once audio is up, from the store's state.
                 if case .starting = snapshot.session { return }
@@ -567,7 +501,7 @@ enum VoiceCaptureWatchdog {
         feed(message.content); textInput?.finish()
     }
     private func resumeAgentListening() {
-        guard usesAgent, case .active = snapshot.session, !submitting,
+        guard case .active = snapshot.session, !submitting,
               store?.task?.status != .stopping, snapshot.replyAudio == .none,
               synthesisTask == nil, recoveryTask == nil, recognizer == nil else { return }
         if isMuted { updateSnapshot { $0.recognition = .off(.muted) } }
@@ -651,8 +585,8 @@ enum VoiceCaptureWatchdog {
     }
     private func scheduleListeningRecovery(runID: UUID?, playedAudio: Bool) {
         cancelRecovery()
-        guard isActive, case .active = snapshot.session, !submitting, textOnlyRunID == nil else { return }
-        guard (usesAgent ? store?.task?.status != .stopping : store?.isGenerating != true),
+        guard isActive, case .active = snapshot.session, !submitting else { return }
+        guard store?.task?.status != .stopping,
               snapshot.replyAudio == .none, synthesisTask == nil else { return }
         if snapshot.bargeIn != .off {
             stopRecognition(reason: .currentReply)
@@ -671,7 +605,7 @@ enum VoiceCaptureWatchdog {
                 guard let self else { return }
                 guard self.sessionID == call, self.recoveryID == token, !Task.isCancelled else { return }
                 guard case .active = self.snapshot.session, !self.submitting else { return }
-                guard (self.usesAgent ? self.store?.task?.status != .stopping : self.store?.isGenerating != true),
+                guard self.store?.task?.status != .stopping,
                       self.snapshot.replyAudio == .none, self.synthesisTask == nil else { return }
                 self.recoveryTask = nil
                 if self.isMuted {
@@ -701,9 +635,9 @@ enum VoiceCaptureWatchdog {
                 cancelBargeIn(resumePlayback: true)
             } else if hadRecognition { stopRecognition(reason: .muted) }
         } else {
-            if usesAgent && store?.task?.status == .stopping {
+            if store?.task?.status == .stopping {
                 updateSnapshot { $0.recognition = .off(.stopping) }
-            } else if (!usesAgent && store?.isGenerating == true) || snapshot.replyAudio.runID != nil || synthesisTask != nil || textOnlyRunID != nil {
+            } else if snapshot.replyAudio.runID != nil || synthesisTask != nil {
                 updateSnapshot { $0.recognition = .off(.currentReply) }
                 armBargeIn()
             } else if recoveryTask != nil {
@@ -737,23 +671,19 @@ enum VoiceCaptureWatchdog {
         guard canSubmit else { return }
         submitting = true
         submissionHadAudio = snapshot.replyAudio.runID != nil && playedAudioForCurrentRun
-        if !usesAgent { cancelRecovery() }
         stopRecognition(reason: .currentReply)
         updateSnapshot { $0.subtitle = "" }
-        interruptReply(preserveRun: usesAgent)
-        if !usesAgent { store?.stopTask() }
+        interruptReply(preserveRun: true)
     }
     func finishSubmission() {
         submitting = false
-        if usesAgent {
-            if submissionHadAudio { scheduleListeningRecovery(runID: runID, playedAudio: true) }
-            else if recoveryTask != nil { updateSnapshot { $0.recognition = .off(.recovery) } }
-            else { resumeAgentListening() }
-        }
+        if submissionHadAudio { scheduleListeningRecovery(runID: runID, playedAudio: true) }
+        else if recoveryTask != nil { updateSnapshot { $0.recognition = .off(.recovery) } }
+        else { resumeAgentListening() }
         submissionHadAudio = false
     }
     func stopReply() {
-        if usesAgent && store?.task?.status == .stopping { return }
+        if store?.task?.status == .stopping { return }
         guard canSubmit, store?.isGenerating == true || snapshot.replyAudio.runID != nil || !subtitle.isEmpty || recoveryTask != nil else { return }
         let hadPlayedAudio = playedAudioForCurrentRun
         cancelRecovery()
@@ -781,11 +711,10 @@ enum VoiceCaptureWatchdog {
         sessionID = UUID(); observation = nil; taskObservation = nil
         startup?.cancel(); startup = nil; captureTask?.cancel(); captureTask = nil
         stopRecognition(reason: .ending); interruptReply()
-        if !usesAgent { store?.stopTask() }
         audio.stop()
         inputEpoch += 1; audio.resetCapture(epoch: inputEpoch, paused: true)
         store = nil; key = ""
-        textOnlyRunID = nil; handledFinalRunID = nil; submitting = false; submissionHadAudio = false
+        handledFinalRunID = nil; submitting = false; submissionHadAudio = false
         spoken = nil
         let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0.message) } ?? snapshot.error
         if let owner, endingAnimationDuration > .zero {

@@ -40,9 +40,9 @@ import Testing
         do { server = try LoopbackModelServer() }
         catch { try? FileManager.default.removeItem(at: root); throw error }
     }
-    func source() -> any TaskSource { AgentFixture.source(baseURL: server.baseURL) { [unowned self] in self.protocolName } }
+    func source() -> AgentHarness { AgentFixture.source(baseURL: server.baseURL) { [unowned self] in self.protocolName } }
     /// A source that reads the model configuration from saved settings.
-    func settingsSource(_ settings: SettingsStore) -> any TaskSource { AgentHarness(settings: settings) }
+    func settingsSource(_ settings: SettingsStore) -> AgentHarness { AgentHarness(settings: settings) }
     func close() async throws {
         workspace.shutdown()
         defer { try? FileManager.default.removeItem(at: root) }

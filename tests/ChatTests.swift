@@ -31,7 +31,6 @@ import Testing
             case .started: events.append("started")
             case .reply(_, .completed(let text)): events.append("completed:\(text)")
             case .reply(_, .failed(let error)): events.append("failed:\(error)")
-            case .reply(_, .progress): events.append("progress")
             case .stopped: events.append("stopped")
             case .retired: events.append("retired")
             }

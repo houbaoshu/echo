@@ -46,7 +46,7 @@ struct ComposerPresentation {
         stopEnabled = store.task?.status != .stopping
         microphoneEnabled = !voice.isActive && !voice.testing && !dictation.isActive
         if case .active = voice.snapshot.session { muteEnabled = ownsVoice } else { muteEnabled = false }
-        canSend = !recording && !empty && store.canSubmit && (store.usesAgent || !store.isGenerating)
+        canSend = !recording && !empty && store.canSubmit
             && (!ownsVoice || voice.canSubmit)
         if recording {
             mode = dictation.state == .finalizing ? .dictationFinalizing : dictation.captureReady ? .dictationRecording : .dictationPreparing

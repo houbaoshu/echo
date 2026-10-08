@@ -3,7 +3,7 @@ import Combine
 import Observation
 
 enum TaskStatus: String, Codable { case running, stopping, stopped, completed, interrupted, failed }
-enum TaskEvent { case progress(String), completed(String), failed(String) }
+enum TaskEvent { case completed(String), failed(String) }
 enum TaskLifecycleEvent {
     case started(UUID)
     case reply(UUID, TaskEvent)
@@ -68,14 +68,6 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
-enum ConversationContext {
-    static func messages(_ messages: [ConversationMessage]) -> [ConversationMessage] {
-        messages.filter {
-            $0.role == .user || (($0.status == .completed || $0.status == .stopped)
-                && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-    }
-}
 struct ActivityTask: Codable, Equatable {
     let id: UUID
     var runID: UUID
@@ -102,7 +94,7 @@ struct ActivityTask: Codable, Equatable {
     /// Operations up to here are final or withdrawn; late stream snapshots for them are ignored.
     @ObservationIgnored private var settledThrough: UInt64 = 0
 
-    /// `text` is everything received so far for the operation, like `TaskEvent.progress`.
+    /// `text` is everything received so far for the operation, not a delta.
     func receive(operationID: UInt64, text next: String, toolCall: Bool) {
         guard operationID > settledThrough else { return }
         if toolCall { withdraw(operationID); return }
@@ -138,11 +130,6 @@ struct ActivityTask: Codable, Equatable {
     func abandon() {
         if let operationID { withdraw(operationID) }
     }
-}
-
-@MainActor protocol TaskSource: AnyObject {
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void)
-    func cancel()
 }
 
 struct AgentToolRecord: Identifiable, Codable, Equatable {
@@ -235,13 +222,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @ObservationIgnored var cancelDirectoryWait: (() -> Void)?
     @ObservationIgnored var releaseDirectory: (() -> Void)?
     var agentLoadError: String?
-    var usesAgent: Bool { harness != nil }
-    /// The Agent engine, when this conversation uses it.
-    private var harness: AgentHarness? { source as? AgentHarness }
-    private let source: (any TaskSource)?
+    /// The Agent engine; nil only for a conversation that cannot send.
+    private var harness: AgentHarness? { source }
+    private let source: AgentHarness?
     private var retired = false
     @ObservationIgnored private var responseMessageID: UUID?
-    @ObservationIgnored private var activeRequestMessages: [ConversationMessage] = []
     @ObservationIgnored var onUserAction: (() -> Void)?
     @ObservationIgnored var onVisibilityChange: ((Bool) -> Void)?
 
@@ -264,11 +249,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var snapshot: Snapshot {
         Snapshot(task: task, messages: messages, mainDraft: mainDraft, followUpDraft: followUpDraft,
                  activityDismissed: activityDismissed, activitiesCollapsed: activitiesCollapsed,
-                 tools: usesAgent ? tools : nil, agentStored: agentStored, loadError: agentLoadError,
+                 tools: tools, agentStored: agentStored, loadError: agentLoadError,
                  // A blocked conversation has no history of its own to save.
                  native: agentLoadError == nil ? harness?.persistentState : nil)
     }
-    convenience init(snapshot: Snapshot, source: (any TaskSource)?) {
+    convenience init(snapshot: Snapshot, source: AgentHarness?) {
         self.init(source: source)
         task = snapshot.task
         if task?.status == .running || task?.status == .stopping {
@@ -279,7 +264,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         messages = snapshot.messages
         tools = snapshot.tools ?? []; agentLoadError = snapshot.loadError
         agentStored = snapshot.agentStored
-        if usesAgent, task?.status == .completed { task?.summary = String(localized: "已完成") }
+        if harness != nil, task?.status == .completed { task?.summary = String(localized: "已完成") }
         // The engine rebuilds messages and tools from its transcript, closing calls left without a result.
         harness?.restore(snapshot.native)
         for index in tools.indices where tools[index].result == nil { tools[index].state = .unknown }
@@ -313,7 +298,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         activitiesCollapsed = snapshot.activitiesCollapsed
     }
 
-    init(source: (any TaskSource)? = nil) {
+    init(source: AgentHarness? = nil) {
         self.source = source
         harness?.host = self
     }
@@ -321,12 +306,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var isActivityVisible: Bool { activityCount > 0 && !activitiesCollapsed }
 
     var canRetry: Bool {
-        if let harness {
-            return !retired && agentLoadError == nil && [.failed, .stopped, .interrupted].contains(task?.status) && harness.continuable
-        }
-        guard !retired, [.failed, .stopped, .interrupted].contains(task?.status),
-              messages.contains(where: { $0.role == .user }), let last = messages.last else { return false }
-        return last.role == .assistant && [.failed, .stopped, .interrupted].contains(last.status)
+        guard let harness else { return false }
+        return !retired && agentLoadError == nil && [.failed, .stopped, .interrupted].contains(task?.status) && harness.continuable
     }
     /// A short, single-line step for the pet card and voice status.
     nonisolated static func toolSummary(_ command: String) -> String {
@@ -336,37 +317,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         return preview.isEmpty ? String(localized: "正在运行命令") : String(localized: "正在运行命令 · \(preview)")
     }
     var isGenerating: Bool { task?.status == .running || task?.status == .stopping }
-    var canSubmit: Bool { !retired && task?.status != .stopping && agentLoadError == nil }
-    var requestMessages: [ConversationMessage] { ConversationContext.messages(messages) }
+    var canSubmit: Bool { harness != nil && !retired && task?.status != .stopping && agentLoadError == nil }
     var responseMessage: ConversationMessage? { messages.first { $0.id == responseMessageID } }
-    private func updateResponse(_ content: String? = nil, status: ConversationMessage.Status, error: String? = nil) {
-        guard let id = responseMessageID, let index = messages.firstIndex(where: { $0.id == id }) else { return }
-        if let content { messages[index].content = content }
-        messages[index].status = status; messages[index].errorMessage = error
-    }
-
-    func receive(_ event: TaskEvent, runID: UUID) {
-        guard !retired, task?.runID == runID, isGenerating else { return }
-        switch event {
-        case .progress(let text):
-            cardReply = text; cardProgress = String(text.suffix(260))
-            task?.summary = String(text.suffix(180))
-            updateResponse(text, status: .streaming)
-        case .completed(let text):
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                receive(.failed(String(localized: "模型未返回文本回复，请重试。")), runID: runID); return
-            }
-            cardReply = text
-            task?.summary = String(text.prefix(180)); task?.status = .completed
-            updateResponse(text, status: .completed)
-            source?.cancel()
-        case .failed(let error):
-            task?.summary = error; task?.status = .failed
-            updateResponse(status: .failed, error: error)
-            source?.cancel()
-        }
-        lifecycle.send(.reply(runID, event))
-    }
 
     func toggleFollowUp() { isFollowUpExpanded.toggle() }
     func sendFollowUp() {
@@ -379,63 +331,17 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     @discardableResult func send(_ draft: String) -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if usesAgent { return sendAgent(text) }
-        guard !retired, !isGenerating, !text.isEmpty else { return false }
-        source?.cancel()
-        if task == nil {
-            task = ActivityTask(id: UUID(), runID: UUID(), title: String(text.prefix(80)),
-                                summary: "", status: .running)
-        }
-        task?.runID = UUID()
-        task?.status = .running
-        cardReply = ""; cardProgress = ""
-        task?.summary = String(localized: "正在回复…")
-        responseMessageID = nil
-        messages.append(.init(role: .user, content: text))
-        activeRequestMessages = requestMessages
-        let response = ConversationMessage(role: .assistant, content: "", status: .pending)
-        responseMessageID = response.id; messages.append(response)
-        activityDismissed = false
-        // Sending while collapsed does not unexpectedly reopen the tray.
-        onUserAction?()
-        lifecycle.send(.started(task!.runID))
-        beginSource()
-        return true
+        return sendAgent(text)
     }
     @discardableResult func retry() -> Bool {
         guard !retired, canRetry else { return false }
-        if harness != nil { return beginNative(text: nil) }
-        source?.cancel()
-        cardReply = ""; cardProgress = ""
-        task?.runID = UUID(); task?.status = .running; task?.summary = String(localized: "正在等待模型回复…")
-        responseMessageID = messages.last?.id
-        updateResponse("", status: .pending)
-        activeRequestMessages = requestMessages
-        activityDismissed = false
-        onUserAction?(); lifecycle.send(.started(task!.runID)); beginSource()
-        return true
-    }
-    private func beginSource() {
-        guard let runID = task?.runID else { return }
-        guard let source else {
-            receive(.failed(String(localized: "模型尚未配置，请打开设置并保存默认模型。")), runID: runID)
-            return
-        }
-        source.start(messages: activeRequestMessages) { [weak self] event in self?.receive(event, runID: runID) }
+        return beginNative(text: nil)
     }
     func stopTask() {
-        guard isGenerating, let runID = task?.runID else { return }
-        if let harness {
-            guard task?.status != .stopping else { return }
-            task?.status = .stopping; task?.summary = String(localized: "正在停止…")
-            needsDirectory = false; waitingForProject = false
-            cancelDirectoryWait?(); harness.stop(); return
-        }
-        // Close the event gate before cancellation, including synchronous callbacks.
-        task?.status = .stopped; task?.summary = String(localized: "已停止 · 可继续跟进")
-        updateResponse(status: .stopped)
-        source?.cancel()
-        lifecycle.send(.stopped(runID))
+        guard isGenerating, task?.status != .stopping, let harness else { return }
+        task?.status = .stopping; task?.summary = String(localized: "正在停止…")
+        needsDirectory = false; waitingForProject = false
+        cancelDirectoryWait?(); harness.stop()
     }
     // Project convention: dismissing a surface never cancels its task source.
     func closeActivity() { activityDismissed = true; isFollowUpExpanded = false; markSeen() }
@@ -454,11 +360,9 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     func hideMainWindow() { isMainWindowVisible = false; onVisibilityChange?(false) }
     func shutdown() {
         retired = true
-        if isGenerating { task?.status = .interrupted; updateResponse(status: .interrupted) }
+        if isGenerating { task?.status = .interrupted }
         lifecycle.send(.retired)
-        if let harness {
-            harness.close(afterCleanup: releaseDirectory ?? {})
-        } else { source?.cancel() }
+        harness?.close(afterCleanup: releaseDirectory ?? {})
         onUserAction = nil; onVisibilityChange = nil
     }
 

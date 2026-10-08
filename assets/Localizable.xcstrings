@@ -240,16 +240,6 @@
         }
       }
     },
-    "Agent 需要统一会话入口。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The agent can only run from a chat."
-          }
-        }
-      }
-    },
     "Apple 本地识别收到无效的麦克风音频。" : {
       "localizations" : {
         "en" : {
@@ -1307,16 +1297,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Stopped · Resumable"
-          }
-        }
-      }
-    },
-    "已停止 · 可继续跟进" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Stopped · Follow up to continue"
           }
         }
       }
@@ -2475,16 +2455,6 @@
         }
       }
     },
-    "模型尚未配置，请打开设置并保存默认模型。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No model is set up. Choose a default model in Settings."
-          }
-        }
-      }
-    },
     "模型改写了已播报的文本，语音通话已结束；完整回复保留在会话中。" : {
       "localizations" : {
         "en" : {
@@ -2501,16 +2471,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Model Provider"
-          }
-        }
-      }
-    },
-    "模型未返回文本回复，请重试。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The model didn’t return any text. Try again."
           }
         }
       }
@@ -2705,16 +2665,6 @@
         }
       }
     },
-    "正在等待模型回复…" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for model…"
-          }
-        }
-      }
-    },
     "正在结束" : {
       "localizations" : {
         "en" : {
@@ -2851,16 +2801,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Speech recognition is restricted on this Mac."
-          }
-        }
-      }
-    },
-    "此会话由 Foundation Models Agent 创建，当前无法打开，已禁止执行。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This chat was created by the Foundation Models agent and can’t be opened, so it can’t run."
           }
         }
       }

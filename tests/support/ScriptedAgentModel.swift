@@ -285,7 +285,7 @@ final class PuppetModel: Sendable {
 @MainActor final class PuppetSessions {
     private(set) var models: [PuppetModel] = []
     var last: PuppetModel? { models.last }
-    var factory: () -> (any TaskSource)? {
+    var factory: () -> AgentHarness {
         { [self] in
             let model = PuppetModel()
             models.append(model)

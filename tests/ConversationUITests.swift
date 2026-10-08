@@ -2225,7 +2225,7 @@ private struct ComposerHeightHost: View {
             mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false)
         let finishedTask = TaskStore(snapshot: archive, source: idleAgent())
         defer { finishedTask.shutdown() }
-        XCTAssertTrue(finishedTask.usesAgent && finishedTask.task?.summary == "已完成", "The stored task still records its outcome")
+        XCTAssertTrue(finishedTask.task?.summary == "已完成", "The stored task still records its outcome")
         let agentDone = try await texts(of: finishedTask)
         XCTAssertTrue(!agentDone.contains { $0.contains("已完成") }, "A completed Agent task shows no status row: \(agentDone)")
 
@@ -2374,7 +2374,7 @@ private struct ComposerHeightHost: View {
             defer { window.orderOut(nil) }
             return accessibilityText(in: view)
         }
-        XCTAssertTrue(store.usesAgent && store.send("看看目录"))
+        XCTAssertTrue(store.send("看看目录"))
         try await eventually("folder requested") { store.needsDirectory }
         let waiting = try await texts()
         XCTAssertTrue(waiting.contains { $0.contains("我先看看目录。") }, "Text beside the call stays in the chat: \(waiting)")
@@ -2414,7 +2414,6 @@ private struct ComposerHeightHost: View {
             view.layoutSubtreeIfNeeded()
             return accessibilityText(in: view)
         }
-        XCTAssertTrue(store.usesAgent, "The transcript under test is an Agent session")
         store.send("讲讲今天的天气")
         try await puppet.waitForRequests(1)
         let asked = try await texts()
@@ -2475,7 +2474,6 @@ private struct ComposerHeightHost: View {
         defer { workspace.shutdown(); voice.shutdown(); dictation.shutdown() }
         let conversation = workspace.selected!
         let store = conversation.store
-        XCTAssertTrue(store.usesAgent, "The chat under test is an Agent session")
 
         let view = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice,
             dictation: dictation, startDictation: {}, startVoice: {}, conversationID: conversation.id,

@@ -113,7 +113,7 @@ enum AgentInstructions {
     }
 }
 
-@MainActor final class AgentHarness: TaskSource {
+@MainActor final class AgentHarness {
     /// Builds the model for one `respond`. Every executor must call `budget.spend()` before a
     /// request and record finished entries in `ledger`; `EchoLanguageModel` does both.
     typealias ModelFactory = @Sendable (GenerationLedger, GenerationBudget) -> any LanguageModel
@@ -206,13 +206,6 @@ enum AgentInstructions {
         }
         return saved
     }
-
-    // MARK: TaskSource
-
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
-        receive(.failed(String(localized: "Agent 需要统一会话入口。")))
-    }
-    func cancel() { stop() }
 
     // MARK: Commands from the conversation
 

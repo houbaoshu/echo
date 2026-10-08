@@ -49,7 +49,6 @@ import Testing
                     // Voice reads the reply when it hears the completion.
                     self.events.append("completed:\(text)|ready=\(self.store.responseMessage?.content == text)")
                 case .reply(_, .failed(let error)): self.events.append("failed:\(error)")
-                case .reply(_, .progress): self.events.append("progress")
                 case .stopped: self.events.append("stopped")
                 case .retired: self.events.append("retired")
                 }
@@ -667,38 +666,6 @@ import Testing
         #expect(!fm.fileExists(atPath: orphan.path) && fm.fileExists(atPath: native.path))
         store.deleteConversation(chat.id)
         #expect(!fm.fileExists(atPath: native.path))
-        store.shutdown()
-    }
-
-    /// A workspace without the native engine keeps a native conversation blocked: saving neither
-    /// replaces its sidecar nor copies the conversation into the manifest.
-    @Test func aWorkspaceWithoutTheNativeEngineLeavesNativeConversationsAlone() async throws {
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("echo-native-blocked-\(UUID())")
-        defer { try? fm.removeItem(at: root) }
-        let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
-        let model = ScriptedAgentModel { _, emit, _ in try await emit.text("native reply") }
-        func native() -> WorkspaceStore {
-            WorkspaceStore(persistence: persistence, sourceFactory: { AgentHarness(resolveModel: { model.factory }) })
-        }
-        var store = native()
-        let chat = try #require(store.selected)
-        #expect(store.send("secret question", conversationID: chat.id))
-        try await AgentHarnessTests.wait("reply") { !chat.store.isGenerating }
-        store.flush(); store.shutdown()
-        let sidecar = try Data(contentsOf: persistence.sessionURL(chat.id))
-        let expected = chat.store.messages
-
-        store = WorkspaceStore(persistence: persistence, sourceFactory: { nil })
-        let blocked = try #require(store.conversation(id: chat.id)).store
-        #expect(blocked.agentLoadError != nil && !blocked.canSubmit && !store.send("no", conversationID: chat.id))
-        store.flush(); store.shutdown()
-        #expect(try Data(contentsOf: persistence.sessionURL(chat.id)) == sidecar, "The native sidecar is untouched")
-        #expect(!(try String(contentsOf: persistence.url, encoding: .utf8)).contains("native reply"), "The manifest holds no history")
-
-        store = native()
-        let reopened = try #require(store.conversation(id: chat.id)).store
-        #expect(reopened.agentLoadError == nil && reopened.messages == expected)
         store.shutdown()
     }
 }
