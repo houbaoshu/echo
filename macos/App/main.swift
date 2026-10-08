@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let settings = SettingsStore(url: root.appendingPathComponent("settings.json"),
                         localModels: LocalModelLocation(models: root.appendingPathComponent("Models", isDirectory: true)),
                         secrets: TestBootstrap.Secrets())
+                    // Chats answer from TestBootstrap.OfflineModel and never read this model; Live Voice
+                    // starts only with a saved one. Ollama needs no key.
                     if settings.draft.model.isEmpty {
                         settings.selectProvider(.ollama)
                         settings.draft.model = "offline-fixture"
@@ -41,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let dictation = DictationController(audio: TestBootstrap.Audio(),
                         recognizer: { TestBootstrap.Recognizer() }, permission: { true })
                     let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("workspace.json")),
-                        dictation: dictation, voice: voice, sourceFactory: { TestBootstrap.Source() })
+                        dictation: dictation, voice: voice, sourceFactory: { AgentHarness(resolveModel: { TestBootstrap.OfflineModel.factory }) })
                     try TestBootstrap.seed(workspace: workspace, root: root)
                     let planets = PlanetStore(settings: settings, root: Bundle.main.resourceURL?.appendingPathComponent("planets"),
                         importedRoot: root.appendingPathComponent("planets"), voice: voice)

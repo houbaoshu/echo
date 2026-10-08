@@ -196,6 +196,7 @@ final class PuppetModel: Sendable {
     }
     private final class Queue: Sendable {
         let waiting = Mutex<[(id: UUID, continuation: CheckedContinuation<Answer, any Error>)]>([])
+        let cancelled = Mutex(0)
         func next() async throws -> Answer {
             let id = UUID()
             return try await withTaskCancellationHandler {
@@ -218,6 +219,7 @@ final class PuppetModel: Sendable {
     init() {
         let queue = queue
         model = ScriptedAgentModel { _, emit, index in
+            defer { if Task.isCancelled { queue.cancelled.withLock { $0 += 1 } } }
             switch try await queue.next() {
             case .text(let text): try await emit.text(text)
             case .call(let name, let arguments): await emit.call(name, arguments, id: "call-\(index)")
@@ -236,6 +238,9 @@ final class PuppetModel: Sendable {
     var factory: AgentHarness.ModelFactory { model.factory }
     var requests: [LanguageModelExecutorGenerationRequest] { model.requests }
     var waiting: Int { queue.waiting.withLock { $0.count } }
+    /// Requests cancelled before they ended, as Stop cancels them: waiting for an answer or
+    /// writing one.
+    var cancelledCount: Int { queue.cancelled.withLock { $0 } }
 
     /// Waits until a request is waiting, then answers the oldest one.
     @MainActor func answer(_ answer: Answer, timeout: Duration = .seconds(5)) async throws {
@@ -256,6 +261,12 @@ final class PuppetModel: Sendable {
             try await Task.sleep(for: .milliseconds(2))
         }
     }
+}
+
+/// A native Agent session whose model never answers: stores that only need to be Agent sessions.
+@MainActor func idleAgent() -> AgentHarness {
+    let puppet = PuppetModel()
+    return AgentHarness(resolveModel: { puppet.factory })
 }
 
 /// Live output of one puppet generation.

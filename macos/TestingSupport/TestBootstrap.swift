@@ -1,5 +1,6 @@
 #if DEBUG
 import AppKit
+import FoundationModels
 
 /// Compiled only for Debug.
 /// Validate every input before creating stores or consulting user credentials.
@@ -36,16 +37,9 @@ import AppKit
 
     static func seed(workspace: WorkspaceStore, root: URL) throws {
         guard let fixture = ProcessInfo.processInfo.environment["ECHO_UI_FIXTURE"] else { return }
-        guard ["projects", "sidebar", "pet-card", "pet-stack"].contains(fixture) else { throw SettingsError("Unknown UI fixture") }
+        guard ["projects", "sidebar"].contains(fixture) else { throw SettingsError("Unknown UI fixture") }
         let marker = root.appendingPathComponent("fixture.seeded")
         guard !FileManager.default.fileExists(atPath: marker.path) else { return }
-        if fixture.hasPrefix("pet-") {
-            // Quick chats from the pet; their offline replies leave notification cards on it.
-            let texts = ["整理会议纪要", "检查构建日志", "翻译这段说明"]
-            for text in fixture == "pet-stack" ? texts : [texts[0]] { workspace.sendQuickMessage(text) }
-            try Data().write(to: marker)
-            return
-        }
         for index in 0..<(fixture == "projects" ? 24 : 1) {
             let project = root.appendingPathComponent(String(format: "Project %02d", index))
             try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -66,34 +60,59 @@ import AppKit
         try Data().write(to: marker)
     }
 
-    final class Source: TaskSource {
-        private var task: Task<Void, Never>?
-        private var attempts = 0
-        func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
-            attempts += 1
-            let attempt = attempts
-            let text = messages.last(where: { $0.role == .user })?.content ?? ""
-            task = Task { @MainActor in
-                do {
-                    if text.contains("fail-once"), attempt == 1 {
-                        receive(.failed("离线测试故障")); return
-                    }
-                    for chunk in ["Offline", "Offline reply", "Offline reply: \(text)"] {
-                        receive(.progress(chunk))
-                        try await Task.sleep(for: .milliseconds(text.contains("slow") ? 2000 : 350))
-                    }
-                    try Task.checkCancellation()
-                    let reply: String
-                    switch text {
-                    case "查询当前模型": reply = "我是 Echo 助手。当前会话使用离线测试回复，用于验证桌宠卡片的结构和交互。"
-                    case "回应中文问候": reply = "你好！有什么我可以帮你做的吗？"
-                    default: reply = "Offline reply: \(text)"
-                    }
-                    receive(.completed(reply))
-                } catch {}
-            }
+    /// The UI test mode's model, for the Agent engine. It replies "Offline reply: <the last user
+    /// message>" in three streamed chunks 350 ms apart. When the message contains "slow" the reply
+    /// takes about 6 s instead, in seven shorter chunks, so a test can stop, follow up or move the
+    /// pointer while it is written: a chunk reaches the screen two chunks late, and short chunks
+    /// keep part of the reply on screen for about 4 s of the 6. Stop cancels the waits as it
+    /// cancels a real request.
+    struct OfflineModel: LanguageModel {
+        typealias Executor = OfflineExecutor
+        static let factory: AgentHarness.ModelFactory = { OfflineModel(ledger: $0, budget: $1) }
+        let ledger: GenerationLedger
+        let budget: GenerationBudget
+        var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.toolCalling]) }
+        var executorConfiguration: OfflineExecutor.Configuration { .init(ledger: ledger, budget: budget) }
+    }
+    struct OfflineExecutor: LanguageModelExecutor {
+        typealias Model = OfflineModel
+        struct Configuration: Hashable, Sendable {
+            let ledger: GenerationLedger
+            let budget: GenerationBudget
         }
-        func cancel() { task?.cancel(); task = nil }
+        let configuration: Configuration
+        init(configuration: Configuration) { self.configuration = configuration }
+
+        nonisolated(nonsending) func respond(
+            to request: LanguageModelExecutorGenerationRequest,
+            model: OfflineModel,
+            streamingInto channel: LanguageModelExecutorGenerationChannel
+        ) async throws {
+            try configuration.budget.spend()
+            // A continue prompt has no text of its own: the reply answers the message it continues.
+            let text = request.transcript.reversed().lazy.compactMap { entry -> String? in
+                guard case .prompt(let prompt) = entry, !AgentPromptMarker.isContinue(prompt) else { return nil }
+                return AgentHarness.text(prompt.segments)
+            }.first ?? ""
+            let chunks: [String], gap: Duration
+            if text.contains("slow") {
+                // The message after "Offline reply:" in up to four parts of equal length, the last one shorter.
+                let tail = Array(" \(text)"), size = (tail.count + 3) / 4
+                chunks = ["Offline", " reply", ":"] + stride(from: 0, to: tail.count, by: size).map {
+                    String(tail[$0..<min($0 + size, tail.count)])
+                }
+                gap = .milliseconds(6000 / chunks.count)
+            } else {
+                chunks = ["Offline", " reply", ": \(text)"]
+                gap = .milliseconds(350)
+            }
+            let entryID = "offline-" + UUID().uuidString
+            for chunk in chunks {
+                await channel.send(.response(entryID: entryID, action: .appendText(chunk, tokenCount: 1)))
+                try await Task.sleep(for: gap)
+            }
+            configuration.ledger.markComplete([entryID], reply: .init(id: entryID, text: "Offline reply: \(text)"))
+        }
     }
 
     final class Audio: VoiceAudioHandling {

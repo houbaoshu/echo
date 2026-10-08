@@ -47,6 +47,16 @@ import XCTest
         XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed, description)
     }
 
+    /// Checks `condition` every 50 ms, for a state that lasts too briefly for `wait`, which checks
+    /// about once a second.
+    @MainActor private func poll(_ description: @autoclosure () -> String, timeout: TimeInterval, _ condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            guard Date() < deadline else { XCTFail(description()); return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+    }
+
     /// `element` is still there a second later: whatever collapses it has had time to run.
     @MainActor private func staysOpen(_ element: XCUIElement, _ description: String) {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !element.exists }, object: nil)
@@ -60,7 +70,19 @@ import XCTest
             editor.click(); editor.typeText("slow message")
             app.typeKey(.return, modifierFlags: [])
             XCTAssertTrue(app.buttons["conversation.stop"].waitForExistence(timeout: 3))
-            XCTAssertTrue(app.staticTexts["Offline"].waitForExistence(timeout: 3))
+            // The reply being written shows part of the reply while the whole reply is not on screen.
+            // A chunk reaches the screen two chunks late, so part of the reply shows from about 2 s
+            // until the reply completes at about 6 s: poll closely and stop at once.
+            let reply = "Offline reply: slow message"
+            let streamed = app.descendants(matching: .any).matching(identifier: "conversation.stream")
+            @MainActor func streamedTexts() -> [String] {
+                streamed.allElementsBoundByIndex.flatMap { element in
+                    ([element] + element.staticTexts.allElementsBoundByIndex).compactMap { $0.value as? String }
+                }
+            }
+            poll("Part of the reply streams in before the whole reply: \(streamedTexts())", timeout: 10) {
+                streamedTexts().contains { !$0.isEmpty && $0 != reply && reply.hasPrefix($0) } && !app.staticTexts[reply].exists
+            }
             app.typeKey(".", modifierFlags: .command)
             XCTAssertTrue(app.buttons["conversation.resume"].waitForExistence(timeout: 3))
             app.buttons["conversation.resume"].click()

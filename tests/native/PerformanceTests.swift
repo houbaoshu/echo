@@ -9,7 +9,7 @@ final class PerformanceTests: XCTestCase {
         let options = XCTMeasureOptions()
         options.iterationCount = 10
         measure(metrics: [XCTClockMetric(), XCTCPUMetric(), XCTMemoryMetric()], options: options) {
-            let store = TaskStore(source: TestBootstrap.Source())
+            let store = TaskStore(source: AgentHarness(resolveModel: { TestBootstrap.OfflineModel.factory }))
             let conversation = WorkspaceConversation(store: store)
             let voice = VoiceSessionController(audio: TestBootstrap.Audio(),
                 recognizer: { TestBootstrap.Recognizer() }, synthesizer: { TestBootstrap.Synthesizer() },

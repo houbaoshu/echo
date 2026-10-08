@@ -29,12 +29,6 @@ import Synchronization
     func cancel() {}
 }
 
-/// A native Agent session whose model never answers: stores that only need to be Agent sessions.
-@MainActor private func idleAgent() -> AgentHarness {
-    let puppet = PuppetModel()
-    return AgentHarness(resolveModel: { puppet.factory })
-}
-
 /// Runs a condition check until it holds, failing the test after five seconds.
 @MainActor private func eventually(_ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(5)
