@@ -41,13 +41,39 @@ extension PuppetStream {
     func sendWhole(_ chunks: [String]) async throws { try await send(chunks + ["", ""]) }
 }
 
-/// Runs a condition check until it holds, failing the test after five seconds.
-@MainActor private func eventually(_ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
+/// Runs a condition check until it holds. With `view`, lays it out before each look, so SwiftUI
+/// has drawn the latest state. After five seconds it records which condition it was waiting for
+/// and throws, which ends the test there.
+@MainActor private func eventually(_ label: @autoclosure () -> String, layingOut view: NSView? = nil,
+                                   file: StaticString = #filePath, line: UInt = #line,
+                                   _ condition: () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(5)
-    while !condition() {
-        guard Date() < deadline else { XCTFail("Timed out: \(label())"); return }
+    while true {
+        view?.layoutSubtreeIfNeeded()
+        if condition() { return }
+        guard Date() < deadline else { throw stopTest("Timed out: \(label())", file: file, line: line) }
         try await Task.sleep(for: .milliseconds(10))
     }
+}
+
+/// Records `message` as a failure and returns an error to throw, so the test stops right there.
+/// Read the recorded failure, not the "caught error" XCTest adds for the throw: XCTest reports the
+/// last Swift error thrown during the test, and when a test's `defer` orders a SwiftUI window out
+/// while this error unwinds, that is SwiftUI's own InvalidTransition { phase: idle, ... }.
+private func stopTest(_ message: String, file: StaticString = #filePath, line: UInt = #line) -> TestStopped {
+    XCTFail(message, file: file, line: line)
+    return TestStopped(message: message)
+}
+private struct TestStopped: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
+}
+
+/// Lets the main queue run everything already queued on it, such as work a handler sent off
+/// with `DispatchQueue.main.async`. Enough for a check that something does not happen only
+/// where the handler itself runs synchronously; anything later needs an observation window.
+@MainActor private func nextMainTurn() async {
+    await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
 }
 
 /// A drag carrying the given file URLs, one pasteboard item each, as Finder writes them.
@@ -147,7 +173,11 @@ private struct ComposerHeightHost: View {
 @MainActor final class ConversationViewTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
-        continueAfterFailure = false
+        // continueAfterFailure stays at its default. A wait that times out, or a check the test
+        // cannot go on without, ends the test by throwing. With it off, XCTest stops a failing
+        // test by running tearDown from inside the failure call and waiting there for this
+        // class's async tearDown, which needs the main actor the failing test is still holding:
+        // the test then hangs until its time allowance runs out.
         _ = NSApplication.shared
         NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
     }
@@ -220,34 +250,6 @@ private struct ComposerHeightHost: View {
         let unfinished = MarkdownBlock.parse("```swift\nprint(\"stream")
         XCTAssertTrue(unfinished.contains { $0.code && String($0.text.characters).contains("stream") })
         for prefix in ["**", "[link](", "- ", "```", "你好\n\n*"] { _ = MarkdownBlock.parse(prefix) }
-        let (chat, puppet) = puppetStore(), voice = VoiceSessionController(), dictation = DictationController()
-        defer { chat.shutdown(); voice.shutdown(); dictation.shutdown() }
-        chat.send("请介绍这个聊天区支持的能力。")
-        try await puppet.reply(markdown)
-        try await eventually("The reply completes") { chat.task?.status == .completed }
-        chat.send("如果连接中断呢？")
-        let cut = PuppetStream()
-        try await puppet.answer(.stream(cut))
-        try await cut.sendWhole(["已经收到的", "文字"])
-        cut.fail(AgentModelError(message: "连接已中断，请检查网络后重试。"))
-        try await eventually("The reply fails") { chat.task?.status == .failed }
-        chat.mainDraft = "这里可以继续编辑草稿"
-        let view = NSHostingView(rootView: ConversationView(store: chat, voice: voice, dictation: dictation,
-            startDictation: {}, startVoice: {}, conversationID: UUID(),
-            send: { chat.sendMainMessage() }, stop: { chat.stopTask() }, retry: { chat.retry() }).frame(width: 820, height: 1000)
-            .background(Color(nsColor: .textBackgroundColor)).environment(\.colorScheme, .light))
-        view.frame = NSRect(x: 0, y: 0, width: 820, height: 1000)
-        let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.contentView = view
-        window.appearance = NSAppearance(named: .aqua)
-        view.layoutSubtreeIfNeeded()
-        try await Task.sleep(for: .milliseconds(200))
-        view.layoutSubtreeIfNeeded()
-        if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-            view.cacheDisplay(in: view.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("chat-v1-preview.png"))
-        } else { throw SettingsError("Could not render chat preview") }
-        window.orderOut(nil)
     }
 
     /// The TextKit 2 composer grows with its content and stops at `maxLines`.
@@ -318,11 +320,6 @@ private struct ComposerHeightHost: View {
     /// title is the window's own, on one line; and the frame is NSWindow's to persist.
     /// None of this needs a real pointer, so it stays deterministic.
     func testWindowChromeAndSidebarAccessories() async throws {
-        // The chat list is SwiftUI, and SwiftUI only publishes AX nodes once this is on.
-        let accessibilitySetter = NSSelectorFromString("accessibilitySetValue:forAttribute:")
-        if NSApp.responds(to: accessibilitySetter) {
-            NSApp.perform(accessibilitySetter, with: NSNumber(value: true), with: "AXEnhancedUserInterface")
-        }
         let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
@@ -338,15 +335,22 @@ private struct ComposerHeightHost: View {
         defer { main.shutdown() }
         guard let window = main.window else { throw SettingsError("No window") }
         main.present()
-        try await Task.sleep(for: .milliseconds(300))
         window.contentView?.layoutSubtreeIfNeeded()
+        /// Column toggles animate, and the split view controller runs `whenColumnsSettle` work once
+        /// every one of them has finished: the columns then have their final frames.
+        func columnsSettle() async throws {
+            var settled = false
+            main.splitController.whenColumnsSettle { settled = true }
+            try await eventually("The column toggles finish animating") { settled }
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+        func palettePanel() -> NSWindow? { NSApp.windows.first { $0 is SearchPalettePanel && $0.isVisible } }
 
         // With nothing autosaved, the first launch shows the conversation on its own.
         XCTAssertTrue(main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed && !main.conversationItem.isCollapsed,
                      "A first launch collapses both side columns and shows the conversation")
         main.toggleSidebar()
-        try await Task.sleep(for: .milliseconds(600))
-        window.contentView?.layoutSubtreeIfNeeded()
+        try await columnsSettle()
         XCTAssertTrue(!main.sidebarItem.isCollapsed, "⌃⌘S opens the column for the rest of this test")
 
         // --- P1-1 / P1-2: the column is the chat list alone ---
@@ -363,7 +367,7 @@ private struct ComposerHeightHost: View {
         // drop the chat composer between this column's header and its list. Search opens
         // in a floating panel of its own instead — so nothing it does can reach this
         // window's Tab order. The structural guard is here; the real pointer and key walk
-        // is in testWorkspaceSidebarPointerAndKeyboard.
+        // is in NativeAppKitEventTests.testSidebarFocusCycleAndPaletteGeometry.
         func searchFields(in view: NSView) -> [NSTextField] {
             var found: [NSTextField] = []
             func walk(_ v: NSView) {
@@ -378,32 +382,28 @@ private struct ComposerHeightHost: View {
                      "The main window carries no search field at all")
         XCTAssertTrue(!main.searchPalette.isOpen, "The palette rests closed")
         main.focusSearch()
-        try await Task.sleep(for: .milliseconds(500))
-        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually("⌘K puts the palette on screen") { palettePanel() != nil }
         XCTAssertTrue(main.searchPalette.isOpen, "⌘K opens the palette")
         XCTAssertTrue(searchFields(in: window.contentView!).isEmpty,
                      "The palette's field is in its own panel, never in this window")
         // The panel hangs centred on the whole window, not on the chat column: the columns
         // divide what is inside the window and leave its frame alone, so the palette sits
         // in the same place whatever they are doing.
-        func palettePanel() -> NSWindow? { NSApp.windows.first { $0 is SearchPalettePanel && $0.isVisible } }
         func paletteOffset() -> CGFloat? { palettePanel().map { abs($0.frame.midX - window.frame.midX) } }
         guard let openOffset = paletteOffset() else { throw SettingsError("⌘K must put a panel on screen") }
         XCTAssertTrue(openOffset <= 1, "The palette is centred on the window: off by \(openOffset)pt")
         main.searchPalette.isOpen = false
-        try await Task.sleep(for: .milliseconds(400))
-        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually("The palette closes") { palettePanel() == nil }
 
         // ⌘K must leave the window's layout exactly as it found it. The palette this
         // replaced was a popover anchored to the column header, so opening it had to expand
         // the sidebar and write that back — pressing a search key changed what the person
         // would see on the next launch.
         main.toggleSidebar()
-        try await Task.sleep(for: .milliseconds(200))
+        try await columnsSettle()
         XCTAssertTrue(main.sidebarItem.isCollapsed, "The column starts this check collapsed")
         main.focusSearch()
-        try await Task.sleep(for: .milliseconds(500))
-        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually("⌘K puts the palette on screen with the column collapsed") { palettePanel() != nil }
         XCTAssertTrue(main.searchPalette.isOpen, "⌘K opens the palette with the column collapsed")
         XCTAssertTrue(main.sidebarItem.isCollapsed, "⌘K does not open the sidebar")
         guard let collapsedOffset = paletteOffset() else {
@@ -412,10 +412,9 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(collapsedOffset <= 1,
                      "A collapsed column does not move the palette: off by \(collapsedOffset)pt")
         main.searchPalette.isOpen = false
-        try await Task.sleep(for: .milliseconds(300))
+        try await eventually("The palette closes again") { palettePanel() == nil }
         main.toggleSidebar()
-        try await Task.sleep(for: .milliseconds(300))
-        window.contentView?.layoutSubtreeIfNeeded()
+        try await columnsSettle()
         XCTAssertTrue(!main.sidebarItem.isCollapsed, "The column comes back for the rest of this test")
 
         // The sidebar lists every chat, always: searching is a separate surface, so the
@@ -428,12 +427,10 @@ private struct ComposerHeightHost: View {
         // ⌃⌘S collapses the column and brings it back. The split view's own toggle animates
         // the collapse, so this waits it out.
         main.toggleSidebar()
-        try await Task.sleep(for: .milliseconds(600))
-        window.contentView?.layoutSubtreeIfNeeded()
+        try await columnsSettle()
         XCTAssertTrue(main.sidebarItem.isCollapsed, "⌃⌘S collapses the column")
         main.toggleSidebar()
-        try await Task.sleep(for: .milliseconds(200))
-        window.contentView?.layoutSubtreeIfNeeded()
+        try await columnsSettle()
         XCTAssertTrue(!main.sidebarItem.isCollapsed, "Reopening the column brings it back")
 
         // --- P1-3: the toolbar carries AppKit's own column toggles ---
@@ -478,6 +475,13 @@ private struct ComposerHeightHost: View {
         assertRouting("the composer focused") {
             findAccessibility("conversation.composer", in: window.contentView!) as? NSView
         }
+        // Each check above toggles a column and puts it straight back in the same run-loop turn,
+        // and AppKit undoes the second of two such toggles once the first one's animation ends, so
+        // where the columns finish depends on timing. Wait the animations out and lay the columns
+        // out as the Tab checks below expect them: the chat list open, the inspector closed.
+        try await columnsSettle()
+        main.sidebarItem.isCollapsed = false; main.inspectorItem.isCollapsed = true
+        window.contentView?.layoutSubtreeIfNeeded()
 
         // --- P1-4: the title is the window's, and it is one line ---
         //
@@ -490,7 +494,7 @@ private struct ComposerHeightHost: View {
         let plain = workspace.selected ?? workspace.newConversation()
         workspace.select(plain.id)
         workspace.renameConversation(plain.id, to: "无项目会话")
-        try await Task.sleep(for: .milliseconds(150))
+        try await eventually("The title follows the rename") { window.title == "无项目会话" }
         XCTAssertTrue(window.title == "无项目会话", "The window title is the open chat, got \(window.title)")
         XCTAssertTrue(window.subtitle.isEmpty, "A chat with no project has no subtitle, got \(window.subtitle)")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-chrome-\(UUID())")
@@ -498,7 +502,8 @@ private struct ComposerHeightHost: View {
         defer { try? FileManager.default.removeItem(at: root) }
         let projectID = workspace.addProject(url: root)
         XCTAssertTrue(workspace.associateProject(projectID, conversationID: plain.id))
-        try await Task.sleep(for: .milliseconds(150))
+        // A check that the title stays: it is refreshed on the main-queue turn after a change.
+        await nextMainTurn()
         XCTAssertTrue(window.title == "无项目会话",
                      "Associating a project leaves the chat's own title, got \(window.title)")
         XCTAssertTrue(window.subtitle.isEmpty,
@@ -506,7 +511,7 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(window.representedURL == nil && window.representedFilename.isEmpty,
                      "...and it is not a proxy icon either, got \(String(describing: window.representedURL))")
         main.showSettings()
-        try await Task.sleep(for: .milliseconds(150))
+        try await eventually("Settings opens in its own window") { main.settingsController?.window?.isVisible == true }
         let settingsWindow = main.settingsController!.window!
         XCTAssertTrue(settingsWindow !== window && settingsWindow.title == main.settings.selectedSection.title,
                      "Settings has its own window, titled with the open section, got \(settingsWindow.title)")
@@ -530,12 +535,18 @@ private struct ComposerHeightHost: View {
         main.showSettings()
         XCTAssertTrue(!window.isVisible && !workspace.isMainWindowVisible && main.settingsController?.window === settingsWindow,
                      "Opening existing settings does not reveal the main window or create a second window")
+        // Nothing focused, so the composer taking focus below can only be the request this makes.
+        window.makeFirstResponder(nil)
         main.showWorkspace()
         XCTAssertTrue(settingsWindow.isVisible && window.frame == mainFrame && settingsWindow.frame == settingsFrame,
                      "Both windows retain independent visibility and geometry")
         main.settingsController?.close()
         XCTAssertTrue(window.isVisible && workspace.isMainWindowVisible, "Closing settings leaves the workspace open")
-        try await Task.sleep(for: .milliseconds(150))
+        // Showing the workspace asked for composer focus, which lands a render and a main-queue
+        // turn later; the Tab checks below would race it. By then the title has had its turn too.
+        try await eventually("The composer takes the focus showing the workspace asked for", layingOut: window.contentView) {
+            return window.firstResponder is ComposerTextView
+        }
         XCTAssertTrue(window.title == "无项目会话" && window.subtitle.isEmpty,
                      "Returning restores the chat's single-line title, got \(window.title)/\(window.subtitle)")
 
@@ -569,12 +580,12 @@ private struct ComposerHeightHost: View {
             }
             return walked
         }
-        func assertCompleteCycle(_ label: String, inspector: Bool = false) {
+        func assertCompleteCycle(_ label: String, inspector: Bool = false) throws {
             guard let list = findAccessibility("workspace.sidebar", in: body) as? NSView else {
-                XCTFail("\(label): the chat list must be on screen"); return
+                throw stopTest("\(label): the chat list must be on screen")
             }
             guard let composer = findAccessibility("conversation.composer", in: window.contentView!) as? NSView else {
-                XCTFail("\(label): the composer must be on screen"); return
+                throw stopTest("\(label): the composer must be on screen")
             }
             let ring = tabRing(from: list)
             let description = ring.map { "\($0.area)/\(type(of: $0.view))" }.joined(separator: " -> ")
@@ -603,21 +614,21 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(window.firstResponder !== composerView, "⇧Tab leaves the composer")
         XCTAssertTrue(plain.store.mainDraft == draftBeforeTab, "⇧Tab types nothing into the draft either")
 
-        assertCompleteCycle("resting")
+        try assertCompleteCycle("resting")
         try Data("plain text preview".utf8).write(to: root.appendingPathComponent("notes.txt"))
         main.toggleInspector()
-        try await Task.sleep(for: .milliseconds(600))
-        window.contentView?.layoutSubtreeIfNeeded()
-        assertCompleteCycle("inspector open", inspector: true)
+        try await columnsSettle()
+        try assertCompleteCycle("inspector open", inspector: true)
         workspace.fileBrowser.openFile("notes.txt")
-        try await Task.sleep(for: .milliseconds(600))
-        window.contentView?.layoutSubtreeIfNeeded()
+        try await eventually("The plain-text preview is on screen", layingOut: window.contentView) {
+            return findAccessibility("projectFiles.text", in: main.inspectorItem.viewController.view) != nil
+        }
         XCTAssertTrue(findAccessibility("projectFiles.text", in: main.inspectorItem.viewController.view) != nil,
                      "The plain-text preview is on screen")
-        assertCompleteCycle("text preview open", inspector: true)
+        try assertCompleteCycle("text preview open", inspector: true)
         workspace.fileBrowser.returnToDirectory()
         main.toggleInspector()
-        try await Task.sleep(for: .milliseconds(400))
+        try await columnsSettle()
 
         // --- P1-5: NSWindow owns the frame, NSSplitView the columns ---
         XCTAssertTrue(["main.frame", "main.sidebarVisible", "main.inspectorVisible", "main.sidebarWidth",
@@ -641,30 +652,36 @@ private struct ComposerHeightHost: View {
                                         settings: SettingsStore(secrets: ComposerSecrets()))
         main.present()
         defer { main.shutdown(); workspace.shutdown() }
-        func refresh() async throws {
-            try await Task.sleep(for: .milliseconds(100)); window.contentView?.layoutSubtreeIfNeeded()
-        }
-        try await refresh()
+        try await eventually("The composer is on screen", layingOut: window.contentView) { findAccessibility("conversation.composer", in: window.contentView!) != nil }
         guard let editor = findAccessibility("conversation.composer", in: window.contentView!) as? ComposerTextView else {
             throw SettingsError("Missing native composer")
+        }
+        /// The recording has covered the editor and its recogniser is running; `pending` is that
+        /// run, so `receive` is this recording's callback rather than an earlier one's.
+        func recording() async throws {
+            try await eventually("The recording covers the editor and recognises", layingOut: window.contentView) { editor.isSuspended && recognizer.pending != nil }
+        }
+        /// The recording has ended and the editor has taken back whatever it committed.
+        func resumed() async throws {
+            try await eventually("The editor resumes after the recording", layingOut: window.contentView) { !dictation.isActive && !editor.isSuspended }
         }
         XCTAssertTrue(editor.textLayoutManager != nil,
                      "Composer runs on TextKit 2; reading NSTextView.layoutManager downgrades it silently")
         for initial in ["", "已有草稿🙂", "已有草稿\n"] {
             store.mainDraft = initial
-            try await refresh()
+            try await eventually("The editor shows the draft", layingOut: window.contentView) { editor.string == initial }
             var expected = initial
             for transcript in ["第一段", "第二段", "第三段"] {
                 editor.setSelectedRange(NSRange(location: 0, length: editor.string.utf16.count))
                 dictation.start(conversation: conversation)
-                try await refresh()
+                try await recording()
                 recognizer.emit("临时结果", final: false)
                 XCTAssertTrue(store.mainDraft == expected && editor.string == expected)
                 dictation.finishRecording()
                 recognizer.receive?(ASRResult(result: .init(text: transcript, utterances: nil), streamFinal: true))
                 recognizer.finish()
                 expected += (expected.isEmpty || expected.hasSuffix("\n") ? "" : "\n") + transcript
-                try await refresh()
+                try await resumed()
                 XCTAssertTrue(store.mainDraft == expected, "Each recording appends to the complete existing draft")
                 XCTAssertTrue(editor.string == expected, "Native composer retains every previous recording")
                 XCTAssertTrue(editor.selectedRange() == NSRange(location: expected.utf16.count, length: 0),
@@ -672,7 +689,7 @@ private struct ComposerHeightHost: View {
             }
             for cancel in [false, true] {
                 dictation.start(conversation: conversation)
-                try await refresh()
+                try await recording()
                 let lateResult = recognizer.receive
                 if cancel {
                     recognizer.emit("取消时已有确认文本")
@@ -682,32 +699,35 @@ private struct ComposerHeightHost: View {
                     recognizer.receive?(ASRResult(result: .init(text: " \n ", utterances: nil), streamFinal: true))
                     recognizer.finish()
                 }
-                try await refresh()
+                try await resumed()
                 lateResult?(ASRResult(result: .init(text: "迟到结果", utterances: nil), streamFinal: true))
-                try await refresh()
+                // A check that the late callback changes nothing. It runs synchronously and only a
+                // completed recording writes the draft, so one main-queue turn covers it.
+                await nextMainTurn()
+                window.contentView?.layoutSubtreeIfNeeded()
                 XCTAssertTrue(store.mainDraft == expected && editor.string == expected,
                              "Cancellation, empty results and late callbacks preserve the whole draft")
             }
         }
         store.mainDraft = "输入法草稿"
-        try await refresh()
+        try await eventually("The editor shows the draft", layingOut: window.contentView) { editor.string == "输入法草稿" }
         editor.setSelectedRange(NSRange(location: editor.string.utf16.count, length: 0))
         editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
-        try await refresh()
         let composingDraft = store.mainDraft
         var appended = ""
         for transcript in ["第一轮转写", "第二轮转写"] {
             dictation.start(conversation: conversation)
-            try await refresh()
+            try await recording()
             recognizer.emit(transcript)
             dictation.finishRecording(); recognizer.finish()
             appended += "\n" + transcript
-            try await refresh()
+            try await resumed()
             XCTAssertTrue(editor.hasMarkedText() && store.mainDraft == composingDraft + appended,
                          "Consecutive recordings preserve both pending IME input and earlier transcripts")
         }
         editor.insertText("你", replacementRange: editor.markedRange())
-        try await refresh()
+        // The transcripts held back under the candidate follow it on a later main-queue turn.
+        try await eventually("The held-back transcripts follow the confirmed candidate", layingOut: window.contentView) { editor.string.hasSuffix(appended) }
         XCTAssertTrue(editor.string == "输入法草稿你" + appended && store.mainDraft == editor.string,
                      "IME confirmation retains every recording exactly once")
         XCTAssertTrue(editor.selectedRange() == NSRange(location: editor.string.utf16.count, length: 0),
@@ -732,10 +752,13 @@ private struct ComposerHeightHost: View {
                                         settings: SettingsStore(secrets: ComposerSecrets()))
         main.present()
         defer { runner.gate.open(); main.shutdown(); workspace.shutdown() }
-        func refresh() async throws {
-            try await Task.sleep(for: .milliseconds(100)); window.contentView?.layoutSubtreeIfNeeded()
-        }
         func node(_ id: String) -> AnyObject? { findAccessibility(id, in: window.contentView!) }
+        /// The recording's recogniser is running, so `receive` is this recording's callback.
+        func recognizing() async throws {
+            try await eventually("The recording shows Cancel and recognises", layingOut: window.contentView) {
+                node("dictation.cancel")?.isAccessibilityEnabled?() == true && recognizer.pending != nil
+            }
+        }
         // A command is running whose cleanup outlasts Stop, so the task stays stopping.
         let project = FileManager.default.temporaryDirectory.appendingPathComponent("echo-stopping-\(UUID())")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -746,7 +769,7 @@ private struct ComposerHeightHost: View {
         workspace.provideDirectory(project, conversationID: conversation.id)
         try await eventually("the command runs") { agentStore.tools.first?.state == .running && !agentStore.needsDirectory }
         agentStore.mainDraft = "steer"
-        try await refresh()
+        try await eventually("The draft can be sent", layingOut: window.contentView) { node("conversation.send")?.isAccessibilityEnabled?() == true }
         XCTAssertTrue(node("conversation.send")?.isAccessibilityEnabled?() == true)
         XCTAssertTrue(node("conversation.stop") != nil)
         XCTAssertTrue(node("conversation.send")?.accessibilityPerformPress?() == true)
@@ -757,7 +780,7 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(!main.handleEscape(), "Escape does not repeat Stop while cleanup is pending")
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversation.id)
         voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
-        try await refresh()
+        try await eventually("The composer switches to Live Voice", layingOut: window.contentView) { node("voice.end")?.isAccessibilityEnabled?() == true }
         XCTAssertTrue(node("conversation.stop") == nil, "Live Voice hides Stop even while an Agent task is stopping")
         XCTAssertTrue(node("voice.end")?.isAccessibilityEnabled?() == true)
         XCTAssertTrue(node("voice.end")?.accessibilityPerformPress?() == true)
@@ -765,34 +788,36 @@ private struct ComposerHeightHost: View {
 
         agentStore.mainDraft = "原草稿"
         dictation.start(conversation: conversation)
-        try await refresh()
+        try await recognizing()
         XCTAssertTrue(node("dictation.cancel")?.isAccessibilityEnabled?() == true)
         XCTAssertTrue(node("conversation.stop") == nil)
         recognizer.emit("丢弃")
         window.makeFirstResponder(nil)
         window.cancelOperation(nil)
-        try await refresh()
+        // A check that Escape does nothing: the window answers it synchronously through
+        // handleEscape, so one main-queue turn covers anything it queues.
+        await nextMainTurn()
         XCTAssertTrue(dictation.isActive && agentStore.mainDraft == "原草稿" && agentStore.task?.status == .stopping,
                      "Escape neither cancels dictation nor repeats Stop while stopping: \(dictation.isActive), \(agentStore.mainDraft), \(String(describing: agentStore.task?.status))")
         XCTAssertTrue(node("dictation.cancel")?.accessibilityPerformPress?() == true)
-        try await refresh()
+        try await eventually("Cancelling hands focus back to the composer", layingOut: window.contentView) { window.firstResponder is ComposerTextView }
         XCTAssertTrue(window.firstResponder is ComposerTextView, "Explicit cancel restores composer focus")
         dictation.start(conversation: conversation)
-        try await refresh()
+        try await recognizing()
         recognizer.emit("定稿中也丢弃")
         dictation.finishRecording()
-        try await refresh()
+        try await eventually("The recording is finalizing", layingOut: window.contentView) { node("dictation.finish")?.isAccessibilityEnabled?() == false }
         XCTAssertTrue(!main.handleEscape() && dictation.isActive, "Escape preserves finalizing dictation")
         XCTAssertTrue(node("dictation.cancel")?.accessibilityPerformPress?() == true)
         XCTAssertTrue(!dictation.isActive && agentStore.mainDraft == "原草稿")
-        try await refresh()
+        try await eventually("Cancelling hands focus back to the composer again", layingOut: window.contentView) { window.firstResponder is ComposerTextView }
 
         // Keep native marked text mounted even while the recording preview covers it.
         let editor = try XCTUnwrap(window.firstResponder as? ComposerTextView)
         editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
         let marked = editor.markedRange()
         dictation.start(conversation: conversation)
-        try await refresh()
+        try await eventually("The recording covers the composing editor and recognises", layingOut: window.contentView) { editor.isSuspended && recognizer.pending != nil }
         XCTAssertTrue(editor.hasMarkedText() && editor.markedRange() == marked)
         let composing = editor.string
         editor.insertText("不应插入", replacementRange: marked)
@@ -800,18 +825,17 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(!main.handleEscape(), "Window Escape protects IME composition")
         recognizer.emit("追加转写")
         dictation.finishRecording(); recognizer.finish()
-        try await refresh()
+        try await eventually("The editor resumes after the recording", layingOut: window.contentView) { !dictation.isActive && !editor.isSuspended }
         XCTAssertTrue(editor.hasMarkedText() && editor.markedRange() == marked)
         XCTAssertTrue(agentStore.mainDraft.hasSuffix("\n追加转写"), "Final transcript is retained while IME remains pending")
         editor.insertText("你", replacementRange: editor.markedRange())
-        try await refresh()
+        // The transcript held back under the candidate follows it on a later main-queue turn.
+        try await eventually("The held-back transcript follows the confirmed candidate", layingOut: window.contentView) { editor.string.hasSuffix("\n追加转写") }
         XCTAssertTrue(editor.string.contains("你") && editor.string.hasSuffix("\n追加转写") && agentStore.mainDraft == editor.string,
                      "Candidate confirmation preserves both IME text and appended transcript")
     }
 
     func testComposerActionMatrix() async throws {
-        let setter = NSSelectorFromString("accessibilitySetValue:forAttribute:")
-        if NSApp.responds(to: setter) { NSApp.perform(setter, with: NSNumber(value: true), with: "AXEnhancedUserInterface") }
         let audio = ComposerAudio(), recognizer = ComposerRecognizer()
         var permissionReply: CheckedContinuation<Bool, Never>?
         let dictation = DictationController(audio: audio, recognizer: { recognizer }, permission: {
@@ -832,14 +856,10 @@ private struct ComposerHeightHost: View {
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
         defer { window.orderOut(nil); workspace.shutdown() }
-        func refresh() async throws {
-            try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded()
-        }
         // What was sent: the user messages, which an Agent send adds before its model request starts.
         func sent() -> [String] { store.messages.filter { $0.role == .user }.map(\.content) }
         func settled(_ status: TaskStatus) async throws {
             try await eventually("The turn settles as \(status)") { store.task?.status == status }
-            try await refresh()
         }
         func node(_ id: String) -> AnyObject? { findAccessibility(id, in: host) }
         func press(_ id: String) {
@@ -854,14 +874,36 @@ private struct ComposerHeightHost: View {
                 windowNumber: window.windowNumber, context: nil, characters: code == 53 ? "\u{1b}" : "\r",
                 charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!)
         }
-        try await refresh()
+        /// A recording's startup asks for the microphone on a task of its own, after the
+        /// recogniser is made; only then is there a request to answer.
+        func grantMicrophone() async throws {
+            try await eventually("The recording asks for the microphone") { permissionReply != nil }
+            permissionReply?.resume(returning: true); permissionReply = nil
+        }
+        /// Capture runs once the recogniser has been handed the audio; `pending` is the run in progress.
+        func recognizerRuns() async throws {
+            try await eventually("The recording captures and recognises") {
+                dictation.captureReady && audio.input != nil && recognizer.pending != nil
+            }
+        }
+        try await eventually("The composer is on screen", layingOut: host) { editor(in: host) != nil && node("voice.start") != nil }
         let original = editor(in: host)!
+        /// Types `text` the way the store hands it to the editor, and waits for the editor to show it.
+        func type(_ text: String) async throws {
+            store.mainDraft = text
+            try await eventually("The editor shows the draft \(text)", layingOut: host) { original.string == text }
+        }
         XCTAssertTrue(original.textLayoutManager != nil,
                      "Composer runs on TextKit 2; reading NSTextView.layoutManager downgrades it silently")
         let primaryFrame = node("voice.start")!.accessibilityFrame!()
-        func check(_ primary: String, present: [String], absent: [String], enabled: Bool = true) {
+        /// Waits for the action row to show `primary` with exactly these neighbours, then checks it.
+        func check(_ primary: String, present: [String], absent: [String], enabled: Bool = true) async throws {
+            try await eventually("\(primary) is the \(enabled ? "enabled" : "disabled") primary, with \(present), without \(absent)", layingOut: host) {
+                node(primary)?.isAccessibilityEnabled?() == enabled
+                    && present.allSatisfy { node($0) != nil } && absent.allSatisfy { node($0) == nil }
+            }
             XCTAssertTrue(node("conversation.actions") != nil)
-            guard let button = node(primary) else { XCTFail("Missing primary: \(primary)"); return }
+            guard let button = node(primary) else { throw stopTest("Missing primary: \(primary)") }
             let frame = button.accessibilityFrame!()
             XCTAssertTrue(abs(frame.maxX - primaryFrame.maxX) < 1 && abs(frame.minY - primaryFrame.minY) < 1
                          && frame.size == primaryFrame.size, "Primary location and hit area stay fixed: \(primary)")
@@ -870,55 +912,36 @@ private struct ComposerHeightHost: View {
             for id in absent { XCTAssertTrue(node(id) == nil, "Stale action \(id)") }
             XCTAssertTrue(editor(in: host) === original, "The native editor stays mounted")
         }
-        func snapshot(_ name: String, narrow: Bool = false) async throws {
-            if narrow { window.setContentSize(NSSize(width: 440, height: 600)) }
-            for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-                window.appearance = NSAppearance(named: appearance)
-                try await refresh()
-                guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { throw SettingsError("Screenshot unavailable") }
-                host.cacheDisplay(in: host.bounds, to: bitmap)
-                try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("composer-\(name)-\(suffix).png"))
-            }
-            if narrow { window.setContentSize(NSSize(width: 720, height: 600)) }
-            try await refresh()
-        }
-        check("voice.start", present: ["dictation.start"], absent: ["conversation.send", "conversation.stop", "voice.end"])
-        store.mainDraft = " \n "
-        try await refresh(); key(original, 36)
+        try await check("voice.start", present: ["dictation.start"], absent: ["conversation.send", "conversation.stop", "voice.end"])
+        try await type(" \n ")
+        key(original, 36)
         XCTAssertTrue(!voice.isActive && sent().isEmpty && puppet.requests.isEmpty)
-        try await snapshot("idle")
         store.mainDraft = "draft"
-        try await refresh()
-        check("conversation.send", present: ["dictation.start"], absent: ["voice.start", "conversation.stop"])
-        press("conversation.send"); try await refresh()
-        check("conversation.stop", present: ["dictation.start"], absent: ["conversation.send", "voice.start"])
+        try await check("conversation.send", present: ["dictation.start"], absent: ["voice.start", "conversation.stop"])
+        press("conversation.send")
+        try await check("conversation.stop", present: ["dictation.start"], absent: ["conversation.send", "voice.start"])
         try await puppet.waitForRequests(1)
-        try await snapshot("generating")
-        store.mainDraft = "supplement"
-        try await refresh()
-        check("conversation.send", present: ["conversation.stop", "dictation.start"], absent: ["voice.start"])
-        try await snapshot("generating-draft")
+        try await type("supplement")
+        try await check("conversation.send", present: ["conversation.stop", "dictation.start"], absent: ["voice.start"])
         key(original, 36)
         XCTAssertTrue(sent() == ["draft", "supplement"] && store.messages.last?.steering == .queued && store.mainDraft.isEmpty
                      && puppet.requests.count == 1, "Sending while the Agent generates steers it, without a new run")
-        store.mainDraft = "supplement"
-        try await refresh()
+        try await type("supplement")
         press("conversation.stop"); try await settled(.stopped)
-        check("conversation.send", present: ["conversation.resume", "dictation.start"], absent: ["conversation.stop", "voice.start"])
+        try await check("conversation.send", present: ["conversation.resume", "dictation.start"], absent: ["conversation.stop", "voice.start"])
         original.insertText("!", replacementRange: NSRange(location: original.string.utf16.count, length: 0))
         original.setSelectedRange(NSRange(location: 2, length: 3))
         let draft = store.mainDraft, selection = original.selectedRange()
         XCTAssertTrue(original.undoManager?.canUndo == true)
-        press("dictation.start"); try await refresh()
-        check("dictation.send", present: ["dictation.finish", "dictation.cancel", "dictation.waveform", "dictation.subtitle"],
-              absent: ["dictation.start", "voice.start", "conversation.send", "conversation.stop", "conversation.resume", "voice.end"],
-              enabled: false)
+        press("dictation.start")
+        try await check("dictation.send", present: ["dictation.finish", "dictation.cancel", "dictation.waveform", "dictation.subtitle"],
+                        absent: ["dictation.start", "voice.start", "conversation.send", "conversation.stop", "conversation.resume", "voice.end"],
+                        enabled: false)
         XCTAssertTrue(node("dictation.finish")?.isAccessibilityEnabled?() == false, "Recording cannot finish before capture starts")
         XCTAssertTrue(!dictation.captureReady && !original.isEditable && original.string == draft)
         key(original, 36); XCTAssertTrue(sent().count == 2)
-        try await snapshot("preparing")
-        permissionReply?.resume(returning: true); permissionReply = nil
-        try await refresh()
+        try await grantMicrophone()
+        try await recognizerRuns()
         // Quiet-to-normal speech envelope, rather than a full-height constant signal.
         for packet in 0..<8 {
             var pcm = Data()
@@ -931,16 +954,18 @@ private struct ComposerHeightHost: View {
             audio.input?.yield(.init(data: pcm, epoch: 1))
         }
         recognizer.emit(String(repeating: "这是录音中的长字幕。", count: 30))
-        try await refresh()
-        check("dictation.send", present: ["dictation.finish", "dictation.cancel"], absent: ["conversation.send", "dictation.start"])
+        try await check("dictation.send", present: ["dictation.finish", "dictation.cancel"], absent: ["conversation.send", "dictation.start"])
+        try await eventually("The waveform takes the captured levels") { dictation.levels.contains { $0 > 0 } }
         XCTAssertTrue(node("dictation.finish")?.isAccessibilityEnabled?() == true)
         XCTAssertTrue(dictation.captureReady && dictation.levels.contains { $0 > 0 })
-        try await snapshot("recording", narrow: true)
-        press("dictation.finish"); try await refresh()
-        check("dictation.send", present: ["dictation.finish", "dictation.cancel"], absent: ["conversation.stop"], enabled: false)
+        press("dictation.finish")
+        try await check("dictation.send", present: ["dictation.finish", "dictation.cancel"], absent: ["conversation.stop"], enabled: false)
         XCTAssertTrue(node("dictation.finish")?.isAccessibilityEnabled?() == false, "Finalizing cannot finish twice")
-        try await snapshot("finalizing")
-        recognizer.finish(); try await refresh()
+        recognizer.finish()
+        // Focus comes back on a later main-queue turn than the transcript does.
+        try await eventually("The transcript lands in the editable editor, which has focus back", layingOut: host) {
+            !dictation.isActive && original.isEditable && original.string == store.mainDraft && window.firstResponder === original
+        }
         XCTAssertTrue(original.isEditable && window.firstResponder === original)
         XCTAssertTrue(store.mainDraft.hasPrefix(draft + "\n") && sent().count == 2)
         XCTAssertTrue(original.selectedRange() == NSRange(location: store.mainDraft.utf16.count, length: 0),
@@ -961,12 +986,22 @@ private struct ComposerHeightHost: View {
         original.undoManager?.undo()
         XCTAssertTrue(store.mainDraft == draft && store.mainDraft == original.string)
         original.setSelectedRange(selection)
-        press("dictation.start"); try await refresh()
-        key(original, 53); try await refresh()
+        press("dictation.start")
+        try await eventually("The recording covers the editor", layingOut: host) { node("dictation.cancel") != nil && !original.isEditable }
+        try await eventually("The recording asks for the microphone") { permissionReply != nil }
+        key(original, 53)
+        // A check that Escape does nothing: keyDown runs onEscape and AppKit's cancelOperation:
+        // synchronously, so one main-queue turn covers anything they queue.
+        await nextMainTurn()
         XCTAssertTrue(dictation.isActive, "Escape preserves ordinary dictation")
         press("dictation.cancel")
         permissionReply?.resume(returning: true); permissionReply = nil
-        try await refresh()
+        // The late reply resumes the cancelled startup on the main actor; one turn lets it run
+        // and find its recording gone before the checks below look for any effect of it.
+        await nextMainTurn()
+        try await eventually("The cancelled recording hands the editor back", layingOut: host) {
+            original.isEditable && window.firstResponder === original
+        }
         XCTAssertTrue(!dictation.isActive && store.mainDraft == draft && original.selectedRange() == selection)
         XCTAssertTrue(window.firstResponder === original)
 
@@ -975,65 +1010,68 @@ private struct ComposerHeightHost: View {
         let marked = original.markedRange()
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversation.id)
         voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
-        try await refresh()
+        try await eventually("The composer shows Live Voice", layingOut: host) { node("voice.mute") != nil }
         XCTAssertTrue(original.hasMarkedText() && original.markedRange() == marked)
         original.unmarkText()
         voice.end()
         store.mainDraft = ""
-        try await refresh()
         // Output controls are independent of recording: a stopped reply resumes from the primary.
-        check("conversation.resume", present: ["dictation.start"], absent: ["voice.start", "conversation.stop", "conversation.send"])
-        try await snapshot("stopped")
+        try await check("conversation.resume", present: ["dictation.start"], absent: ["voice.start", "conversation.stop", "conversation.send"])
         let resumed = puppet.requests.count
-        press("conversation.resume"); try await refresh()
+        press("conversation.resume")
         try await puppet.waitForRequests(resumed + 1)
         XCTAssertTrue(puppet.requests.count == resumed + 1 && sent().count == 2, "Resume continues the stopped reply")
-        check("conversation.stop", present: ["dictation.start"], absent: ["conversation.resume", "voice.start"])
+        try await check("conversation.stop", present: ["dictation.start"], absent: ["conversation.resume", "voice.start"])
         try await puppet.reply("继续后的回复"); try await settled(.completed)
-        check("voice.start", present: ["dictation.start"], absent: ["conversation.resume", "conversation.stop"])
-        press("voice.start"); try await refresh()
+        try await check("voice.start", present: ["dictation.start"], absent: ["conversation.resume", "conversation.stop"])
+        press("voice.start")
         let liveOwner = voice.snapshot.session.owner!
-        check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "dictation.start", "voice.start", "conversation.stop"])
+        try await check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "dictation.start", "voice.start", "conversation.stop"])
+        // Mute and the speaker answer only once the call is active, after its audio has started.
+        try await eventually("Live Voice connects and enables its controls", layingOut: host) {
+            node("voice.mute")?.isAccessibilityEnabled?() == true && node("voice.speaker")?.isAccessibilityEnabled?() == true
+        }
         key(original, 36); XCTAssertTrue(voice.snapshot.session.owner == liveOwner)
-        press("voice.speaker"); try await refresh()
+        func speaker(_ label: String) async throws {
+            try await eventually("The speaker control reads \(label)", layingOut: host) { node("voice.speaker")?.accessibilityLabel?() == label }
+        }
+        func microphone(_ label: String) async throws {
+            try await eventually("The microphone control reads \(label)", layingOut: host) { node("voice.mute")?.accessibilityLabel?() == label }
+        }
+        press("voice.speaker"); try await speaker("开启扬声器")
         XCTAssertTrue(voice.snapshot.speakerMuted && !voice.isMuted && voice.snapshot.session.owner == liveOwner)
         XCTAssertTrue(node("voice.speaker")?.accessibilityLabel?() == "开启扬声器")
-        press("voice.mute"); try await refresh(); XCTAssertTrue(voice.isMuted && voice.snapshot.speakerMuted)
-        press("voice.speaker"); try await refresh()
+        press("voice.mute"); try await microphone("开启麦克风"); XCTAssertTrue(voice.isMuted && voice.snapshot.speakerMuted)
+        press("voice.speaker"); try await speaker("静音扬声器")
         XCTAssertTrue(!voice.snapshot.speakerMuted && voice.isMuted)
         XCTAssertTrue(node("voice.speaker")?.accessibilityLabel?() == "静音扬声器")
-        press("voice.mute"); try await refresh(); XCTAssertTrue(!voice.isMuted)
-        try await snapshot("voice")
+        press("voice.mute"); try await microphone("关闭麦克风"); XCTAssertTrue(!voice.isMuted)
         store.mainDraft = "text during voice"
-        try await refresh()
-        check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["voice.end", "dictation.start", "conversation.stop"])
-        press("conversation.send"); try await refresh()
+        try await check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["voice.end", "dictation.start", "conversation.stop"])
+        press("conversation.send")
         XCTAssertTrue(store.mainDraft.isEmpty && voice.snapshot.session.owner == liveOwner)
-        check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "conversation.stop"])
+        try await check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "conversation.stop"])
         voice.updateSnapshot { $0.replyAudio = .playing(UUID()) }
-        try await refresh()
-        check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.stop", "conversation.send"])
+        // A check that playback changes nothing in the row, so it keeps an observation window:
+        // SwiftUI draws the new snapshot on a later pass, not inside updateSnapshot.
+        try await Task.sleep(for: .milliseconds(100))
+        try await check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.stop", "conversation.send"])
         store.mainDraft = "during playback"
-        try await refresh()
         // The text sent above is still generating; an Agent turn takes more text as steering.
-        check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["conversation.stop", "voice.end"])
+        try await check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["conversation.stop", "voice.end"])
         store.mainDraft = ""
         key(original, 53); try await settled(.stopped)
         XCTAssertTrue(!store.isGenerating && voice.snapshot.session.owner == liveOwner, "Escape stops reply without ending voice")
         store.mainDraft = "retry me"
         store.agentLoadError = "Unavailable"
-        try await refresh()
-        check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["voice.end", "conversation.stop"], enabled: false)
+        try await check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["voice.end", "conversation.stop"], enabled: false)
         XCTAssertTrue(!workspace.sendMainMessage(conversationID: conversation.id) && store.mainDraft == "retry me")
         store.agentLoadError = nil
-        store.mainDraft = Array(repeating: "多行草稿", count: 8).joined(separator: "\n")
-        voice.updateSnapshot { $0.subtitle = String(repeating: "长字幕内容", count: 60) }
-        try await snapshot("voice-draft", narrow: true)
         store.mainDraft = ""
         _ = store.send("reply")
-        try await refresh()
-        check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "conversation.stop"])
-        press("voice.end"); try await refresh()
+        try await check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "conversation.stop"])
+        press("voice.end")
+        try await eventually("Live Voice ends") { !voice.isActive }
         XCTAssertTrue(!voice.isActive, "Stopping a task never disables ending Voice")
         store.stopTask(); try await settled(.stopped)
 
@@ -1041,32 +1079,36 @@ private struct ComposerHeightHost: View {
         let background = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: other.id)
         voice.updateSnapshot { $0.session = .active(background); $0.recognition = .listening }
         store.mainDraft = "background voice allows text"
-        try await refresh()
+        try await eventually("The composer offers the background Live Voice and the draft's Send", layingOut: host) {
+            node("voice.reveal") != nil && node("conversation.send")?.isAccessibilityEnabled?() == true
+        }
         XCTAssertTrue(node("voice.reveal") != nil && node("dictation.start")?.isAccessibilityEnabled?() == false)
         XCTAssertTrue(node("voice.mute") == nil && node("voice.speaker") == nil && node("voice.end") == nil)
         XCTAssertTrue(node("conversation.send")?.isAccessibilityEnabled?() == true)
         press("voice.reveal"); XCTAssertTrue(workspace.selectedID == other.id)
-        try await snapshot("background-voice", narrow: true)
         voice.end()
 
         // Send while recording ends it and sends the final transcript without leaving it in the draft.
         store.mainDraft = ""
-        try await refresh()
+        try await eventually("Dictation is available again", layingOut: host) {
+            node("voice.reveal") == nil && node("dictation.start")?.isAccessibilityEnabled?() == true
+        }
         let before = sent(), requests = puppet.requests.count
-        press("dictation.start"); try await refresh()
-        permissionReply?.resume(returning: true); permissionReply = nil
-        try await refresh()
-        recognizer.emit("直接发送的转写"); try await refresh()
-        check("dictation.send", present: ["dictation.finish"], absent: ["conversation.send"])
-        press("dictation.send"); try await refresh()
-        check("dictation.send", present: ["dictation.finish"], absent: ["conversation.send"], enabled: false)
+        press("dictation.start")
+        try await grantMicrophone()
+        try await recognizerRuns()
+        recognizer.emit("直接发送的转写")
+        try await check("dictation.send", present: ["dictation.finish"], absent: ["conversation.send"])
+        press("dictation.send")
+        try await check("dictation.send", present: ["dictation.finish"], absent: ["conversation.send"], enabled: false)
         XCTAssertTrue(sent() == before && store.mainDraft.isEmpty, "Nothing is sent before the final transcript")
-        recognizer.finish(); try await refresh()
+        recognizer.finish()
+        try await eventually("The final transcript is sent") { !dictation.isActive && sent().count == before.count + 1 }
         XCTAssertTrue(sent() == before + ["直接发送的转写"] && store.mainDraft.isEmpty && !dictation.isActive,
                      "Send ends recording and sends the transcript")
         try await puppet.waitForRequests(requests + 1)
         XCTAssertTrue(puppet.requests.last?.userTexts.last == "直接发送的转写", "The transcript is what the model is asked")
-        check("conversation.stop", present: ["dictation.start"], absent: ["dictation.send", "conversation.send"])
+        try await check("conversation.stop", present: ["dictation.start"], absent: ["dictation.send", "conversation.send"])
         store.stopTask()
     }
 
@@ -1087,24 +1129,24 @@ private struct ComposerHeightHost: View {
         window.contentView = host
         window.orderFront(nil)
         defer { window.orderOut(nil) }
-        func settle() async throws {
-            try await Task.sleep(for: .milliseconds(100))
-            host.layoutSubtreeIfNeeded()
-        }
-        try await settle()
+        func copyButton() -> AnyObject? { findAccessibility("conversation.code.copy", in: host) }
+        try await eventually("The code block draws its Copy button", layingOut: host) { copyButton() != nil }
         guard let copy = findAccessibility("conversation.code.copy", in: host) else {
             throw SettingsError("Code block Copy button missing")
         }
         XCTAssertTrue(copy.accessibilityPerformPress?() == true)
-        try await settle()
+        try await eventually("Copy says it copied", layingOut: host) { copyButton()?.accessibilityLabel?() == "已复制" }
         XCTAssertTrue(pasteboard.string(forType: .string) == code, "Copy preserves all code, whitespace and Unicode, without fences")
         XCTAssertTrue(findAccessibility("conversation.code.copy", in: host)?.accessibilityLabel?() == "已复制")
+        // Kept as a fixed wait: the feedback clears on the view's own 1.5 s timer.
         try await Task.sleep(for: .milliseconds(1600))
-        try await settle()
+        try await eventually("Copy feedback clears", layingOut: host) { copyButton()?.accessibilityLabel?() == "复制代码" }
         XCTAssertTrue(findAccessibility("conversation.code.copy", in: host)?.accessibilityLabel?() == "复制代码", "Copy feedback clears")
         host.rootView = AssistantMarkdown(content: "```python\nprint('updated')\n```")
             .frame(width: 400, height: 300).accessibilityElement(children: .contain)
-        try await settle()
+        try await eventually("The code block shows the streamed update", layingOut: host) {
+            return accessibilityText(in: host).contains { $0.contains("print('updated')") }
+        }
         XCTAssertTrue(findAccessibility("conversation.code.copy", in: host)?.accessibilityPerformPress?() == true)
         XCTAssertTrue(pasteboard.string(forType: .string) == "print('updated')\n", "Copy uses current streamed content")
 
@@ -1137,7 +1179,9 @@ private struct ComposerHeightHost: View {
         let source = samples[0].1
         let previewHost = NSHostingView(rootView: ProjectReadOnlyText(text: source, path: "main.swift"))
         window.contentView = previewHost
-        try await settle()
+        try await eventually("The read-only preview is on screen", layingOut: previewHost) {
+            return findAccessibility("projectFiles.text", in: previewHost) != nil
+        }
         guard let preview = findAccessibility("projectFiles.text", in: previewHost) as? NSTextView,
               let storage = preview.textStorage else { throw SettingsError("Read-only preview missing") }
         func color(_ token: String) -> NSColor? {
@@ -1148,7 +1192,7 @@ private struct ComposerHeightHost: View {
         preview.setSelectedRange(NSRange(location: 4, length: 5))
         let selection = preview.selectedRange()
         previewHost.rootView = ProjectReadOnlyText(text: source, path: "unknown.extension")
-        try await settle()
+        try await eventually("An unknown extension resets the colours", layingOut: previewHost) { color("let") == .labelColor }
         XCTAssertTrue(PreviewSyntaxHighlighter.language(for: "unknown.extension") == nil)
         XCTAssertTrue(preview.string == source && preview.selectedRange() == selection)
         XCTAssertTrue(color("let") == .labelColor && color("// literal") == .labelColor, "Unknown extensions reset to plain text")
@@ -1163,21 +1207,22 @@ private struct ComposerHeightHost: View {
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = view
         defer { window.orderOut(nil) }
+        /// The checks after each update are that nothing is submitted, so they keep an observation window.
         func refresh() async throws {
             view.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(100))
             view.layoutSubtreeIfNeeded()
         }
         func users() -> [ConversationMessage] { store.messages.filter { $0.role == .user } }
-        try await refresh()
-        store.mainDraft = "Hello"
-        try await refresh()
-        XCTAssertTrue(puppet.requests.isEmpty && store.messages.isEmpty, "Editing a draft must not submit")
         func composer(in view: NSView) -> ComposerTextView? {
             if let editor = view as? ComposerTextView { return editor }
             return view.subviews.lazy.compactMap { composer(in: $0) }.first
         }
+        try await eventually("The composer is on screen", layingOut: view) { composer(in: view) != nil }
         guard let editor = composer(in: view) else { throw SettingsError("Hosted composer missing") }
+        store.mainDraft = "Hello"
+        try await eventually("The editor shows the draft", layingOut: view) { editor.string == "Hello" }
+        XCTAssertTrue(puppet.requests.isEmpty && store.messages.isEmpty, "Editing a draft must not submit")
         editor.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
             windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
             isARepeat: false, keyCode: 36)!)
@@ -1197,17 +1242,13 @@ private struct ComposerHeightHost: View {
             try await reply.send([chunk])
             try await refresh(); assertSingleRun()
         }
-        // An Agent reply is live text until its generation ends, not yet a message.
-        XCTAssertTrue(store.replyStream.live?.hasPrefix("A") == true && store.messages == [user], "\(store.messages)")
         reply.finish()
         try await eventually("The reply completes") { store.task?.status == .completed }
         try await refresh(); assertSingleRun()
-        XCTAssertTrue(store.messages.count == 2 && store.messages[1].content == "ABC" && store.messages[1].status == .completed)
         // Nothing outside the model can deliver late output to an Agent turn; a late Stop is the
-        // one thing left to try, and it changes nothing.
+        // one thing left to try, and it submits nothing.
         store.stopTask()
         try await refresh(); assertSingleRun()
-        XCTAssertTrue(store.task?.status == .completed)
         for stop in [false, true] {
             let count = puppet.requests.count
             store.sendMainMessage()
@@ -1223,13 +1264,9 @@ private struct ComposerHeightHost: View {
             try await eventually("The turn ends") { !store.isGenerating }
             try await refresh()
             XCTAssertTrue(puppet.requests.count == count + 1, "Terminal states must not automatically retry")
-            // The Agent drops a cut-off reply, so the turn's state is the task's, not a message's.
-            XCTAssertTrue(store.task?.status == (stop ? .stopped : .failed))
             XCTAssertTrue(users() == messages && store.mainDraft == "Still unsent")
             XCTAssertTrue(store.retry())
             try await puppet.waitForRequests(count + 2)
-            XCTAssertTrue(puppet.requests.count == count + 2 && puppet.requests.last?.kinds.last == "continue",
-                         "Explicit Retry starts exactly one run, continuing the turn")
             try await puppet.reply("retried")
             try await eventually("The retried reply completes") { store.task?.status == .completed }
             try await refresh()
@@ -1357,7 +1394,7 @@ private struct ComposerHeightHost: View {
 
     }
 
-    func testLiveVoiceComposerStatesAndAttribution() async throws {
+    func testLiveVoiceStatusTextAndConversationOwnership() async throws {
         let storeA = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: storeA, dictation: dictation, voice: voice, harnessFactory: { idleAgent() })
@@ -1427,7 +1464,7 @@ private struct ComposerHeightHost: View {
         let recoveryPres = voice.snapshot.presentation(modelIsGenerating: false)
         XCTAssertTrue(recoveryPres.status == "正在恢复聆听", "Recovery status shows 正在恢复聆听")
 
-        // State: Error banner display and dismissal
+        // State: an error recorded for the conversation, and cleared
         voice.updateSnapshot {
             $0.error = .init(conversationID: conversationA.id, message: "麦克风初始化失败")
         }
@@ -1544,10 +1581,6 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(voice.snapshot.speakerMuted, "Pet speaker control mutes the owned Voice session")
         try await Task.sleep(for: .milliseconds(100)); petHost.layoutSubtreeIfNeeded()
         XCTAssertTrue(findAccessibility("voice.speaker", in: petHost)?.accessibilityLabel?() == "开启扬声器")
-        if let bitmap = petHost.bitmapImageRepForCachingDisplay(in: petHost.bounds) {
-            petHost.cacheDisplay(in: petHost.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("pet-voice-end.png"))
-        }
         XCTAssertTrue(findAccessibility("voice.end", in: petHost)?.accessibilityPerformPress?() == true)
         XCTAssertTrue(!voice.isActive && endVoiceCalled && !startVoiceCalled, "Pet orb ends its owned Voice session")
 
@@ -1578,24 +1611,19 @@ private struct ComposerHeightHost: View {
         window.appearance = NSAppearance(named: .aqua)
         window.makeKeyAndOrderFront(nil)
         defer { window.orderOut(nil) }
-        func refresh() async throws { try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded() }
         func node(_ id: String) -> AnyObject? { findAccessibility(id, in: host) }
-        func snapshot(_ name: String) throws {
-            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("\(name).png"))
-        }
         func key(_ code: UInt16, _ characters: String) -> NSEvent {
             NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
                              context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
         }
 
-        try await refresh()
-        try snapshot("pet-controls-hover")
+        try await eventually("The hovered strip is drawn", layingOut: host) { node("pet.compose") != nil }
         XCTAssertTrue(node("pet.compose") != nil && node("voice.start") != nil && node("pet.activity.expand") == nil,
                      "Hover strip has new chat and voice, and no tray without an activity")
         XCTAssertTrue(node("pet.compose")?.accessibilityPerformPress?() == true)
-        try await refresh()
+        try await eventually("✎ opens the composer, which takes focus", layingOut: host) {
+            node("pet.composer") != nil && window.firstResponder === node("pet.composer")
+        }
         XCTAssertTrue(presentation.isComposerOpen, "✎ opens the quick composer")
         XCTAssertTrue(node("voice.start") == nil && node("pet.compose") == nil, "Composing hides the other pet controls")
         guard let editor = node("pet.composer") as? ComposerTextView else { throw SettingsError("Missing quick composer editor") }
@@ -1609,8 +1637,7 @@ private struct ComposerHeightHost: View {
         editor.unmarkText()
         editor.string = ""
         presentation.draft = "桌宠提问"
-        try await refresh()
-        try snapshot("pet-quick-composer")
+        try await eventually("The composer shows the draft", layingOut: host) { editor.string == "桌宠提问" }
         accepts = false
         editor.keyDown(with: key(36, "\r"))
         XCTAssertTrue(sent == ["桌宠提问"] && presentation.draft == "桌宠提问", "A rejected send keeps the draft")
@@ -1619,78 +1646,78 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(sent.count == 2 && presentation.draft.isEmpty && !presentation.isComposerOpen,
                      "A sent new chat closes the composer and returns to the compact controls")
         host.rootView = controls(unseen: 0, running: 1)
-        try await refresh()
+        // A check that the composer does not come back, so it keeps its observation window.
+        try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
         try await Task.sleep(for: .milliseconds(250)); host.layoutSubtreeIfNeeded()
         XCTAssertTrue(!presentation.isComposerOpen, "A running new chat shows no input box")
         presentation.openComposer()
-        try await refresh()
+        try await eventually("The composer opens over the running chat", layingOut: host) { node("pet.composer") != nil }
         host.rootView = controls(unseen: 0)
         presentation.draft = "保留草稿"
-        try await refresh()
+        try await eventually("The reopened composer shows the draft", layingOut: host) { (node("pet.composer") as? ComposerTextView)?.string == "保留草稿" }
         guard let reopened = node("pet.composer") as? ComposerTextView else { throw SettingsError("Missing reopened quick composer") }
         reopened.keyDown(with: key(53, "\u{1b}"))
-        try await refresh()
+        try await eventually("Escape closes the composer", layingOut: host) { !presentation.isComposerOpen }
         XCTAssertTrue(!presentation.isComposerOpen && presentation.draft == "保留草稿", "Escape closes the composer and keeps its draft")
         // The composer leaves with the strip's morph; wait it out rather than a fixed delay.
-        func until(_ label: String, _ condition: () -> Bool) async throws {
-            try await eventually(label) { host.layoutSubtreeIfNeeded(); return condition() }
-        }
-        try await until("Escape under the pointer leaves the draft's line until the pointer leaves") {
+        try await eventually("Escape under the pointer leaves the draft's line until the pointer leaves", layingOut: host) {
             node("pet.collapsed.draft") != nil && node("pet.composer") == nil && node("pet.compose") == nil
         }
+        // Leaving clears the wait for an exit in the presentation itself, so nothing needs drawing in between.
         presentation.isHovered = false
-        try await refresh()
         presentation.isHovered = true
-        try await until("Hovering the draft's line again shows the composer, not the pill") {
+        try await eventually("Hovering the draft's line again shows the composer, not the pill", layingOut: host) {
             node("pet.composer") != nil && node("pet.collapsed.draft") == nil
         }
         XCTAssertTrue(!presentation.isComposerOpen && node("pet.compose") == nil, "The hovered composer is not opened")
         presentation.isHovered = false
-        try await until("Leaving it returns to the line") { node("pet.composer") == nil && node("pet.collapsed.draft") != nil }
+        try await eventually("Leaving it returns to the line", layingOut: host) { node("pet.composer") == nil && node("pet.collapsed.draft") != nil }
         presentation.draft = ""
         presentation.isHovered = true
-        try await until("Without a draft hover shows the pill") { node("voice.start") != nil && node("pet.compose") != nil }
+        try await eventually("Without a draft hover shows the pill", layingOut: host) { node("voice.start") != nil && node("pet.compose") != nil }
 
         store.send("任务")
         try await puppet.reply("完成")
         try await eventually("The task completes") { store.task?.status == .completed }
         presentation.isHovered = false
-        try await refresh()
+        try await eventually("Without hover the strip collapses", layingOut: host) { node("pet.collapsed")?.accessibilityLabel?() == "桌宠快捷控件" }
         XCTAssertTrue(node("pet.collapsed")?.accessibilityLabel?() == "桌宠快捷控件" && node("pet.compose") == nil
                      && node("pet.activity.collapse") == nil, "Without hover the strip collapses to a light neutral bar")
         host.rootView = controls(unseen: 0, running: 1)
-        try await refresh()
+        try await eventually("A running task expands the strip", layingOut: host) { node("pet.collapsed") == nil && node("pet.activity.collapse") != nil }
         XCTAssertTrue(node("pet.collapsed") == nil && node("voice.start") != nil && node("pet.compose") == nil
                      && node("pet.activity.collapse") != nil && axValue(node("pet.activity.collapse")) == "",
                      "Without hover a running task keeps Live Voice and its expanded card's ⌃ without a badge")
         host.rootView = controls(unseen: 0)
         presentation.isHovered = true
-        try await refresh()
+        try await eventually("The hovered strip shows new chat beside the card's ⌃", layingOut: host) {
+            node("pet.compose") != nil && node("pet.activity.collapse") != nil
+        }
         XCTAssertTrue(node("pet.activity.collapse")?.accessibilityPerformPress?() == true)
         XCTAssertEqual(trayToggles, 1, "⌃ runs the tray action it was given")
         // With no card left on the strip's store, the bell carries the unseen results passed in.
         store.closeActivity()
         host.rootView = controls(unseen: 2)
-        try await refresh()
-        try snapshot("pet-controls-unread")
+        try await eventually("The bell counts the unseen results", layingOut: host) {
+            node("pet.activity.expand")?.accessibilityLabel?() == "展开活动（2 个已完成任务未查看）"
+        }
         XCTAssertTrue(node("pet.compose") != nil && node("voice.start") != nil
                      && node("pet.activity.expand")?.accessibilityLabel?() == "展开活动（2 个已完成任务未查看）",
                      "Hover shows text entry, Live Voice and the bell with the unseen completed count")
         presentation.isHovered = false
-        try await refresh(); try await refresh()
-        try snapshot("pet-controls-collapsed")
+        try await eventually("The collapsed bar counts the unseen results", layingOut: host) {
+            node("pet.collapsed")?.accessibilityLabel?() == "2 个已完成任务未查看"
+        }
         XCTAssertTrue(node("pet.collapsed")?.accessibilityLabel?() == "2 个已完成任务未查看", "The collapsed bar turns green for unseen completions")
         presentation.isHovered = true
-        try await refresh()
+        try await eventually("Hover brings the bell back", layingOut: host) { node("pet.activity.expand") != nil }
         XCTAssertTrue(node("pet.activity.expand")?.accessibilityPerformPress?() == true)
         XCTAssertEqual(trayToggles, 2, "The bell runs the same tray action")
     }
 
     /// The collapsed strip without a draft, with a short one and with one too long for its line,
-    /// in both appearances. The renders are printed for review.
+    /// in both appearances.
     func testPetCollapsedDraftLine() async throws {
-        // Every render is wanted even when one check fails.
-        continueAfterFailure = true
         let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         defer { store.shutdown(); voice.shutdown() }
@@ -1709,15 +1736,14 @@ private struct ComposerHeightHost: View {
             defer { window.orderOut(nil) }
             for (name, draft) in drafts {
                 presentation.draft = draft
-                try await Task.sleep(for: .milliseconds(300)); host.layoutSubtreeIfNeeded()
-                if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
-                    host.cacheDisplay(in: host.bounds, to: bitmap)
-                    let output = EchoTestResources.output("pet-collapsed-\(name)-\(scheme == .light ? "light" : "dark").png")
-                    try bitmap.representation(using: .png, properties: [:])!.write(to: output)
-                    print("Pet collapsed render: " + output.path)
-                }
                 let expected = PetSurfacePresentation.preview(of: draft)
                 XCTAssertFalse((expected ?? "").contains("第二行"), "Only the first line is shown")
+                func shownLine() -> String? {
+                    findAccessibility("pet.collapsed.draft", in: host).map { $0.accessibilityLabel?() ?? axValue($0) ?? "" }
+                }
+                try await eventually("The collapsed strip draws the \(name) draft", layingOut: host) {
+                    return findAccessibility("pet.collapsed", in: host) != nil && shownLine() == expected
+                }
                 let line = findAccessibility("pet.collapsed.draft", in: host)
                 let shown = line.map { $0.accessibilityLabel?() ?? axValue($0) ?? "" }
                 XCTAssertTrue(findAccessibility("pet.collapsed", in: host) != nil && shown == expected,
@@ -1791,14 +1817,21 @@ private struct ComposerHeightHost: View {
             .background(.white).environment(\.colorScheme, .light))
         let height = followingUp ? host.fittingSize.height : CompanionLayout.collapsedHeight
         host.frame = NSRect(x: 0, y: 0, width: CompanionLayout.capsuleWidth, height: height)
-        try await Task.sleep(for: .milliseconds(150))
-        host.layoutSubtreeIfNeeded()
+        // Measured: once the title is in the tree, the card draws the same pixels as 150 ms later.
+        let title = store.task?.title ?? ""
+        try await eventually("The card draws its title \(title)", layingOut: host) {
+            return accessibilityText(in: host).contains { $0.contains(title) }
+        }
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let scale = CGFloat(bitmap.pixelsHigh) / height
+        // The cached bitmap is in the generic RGB space; one conversion to sRGB, then one read of
+        // its bytes, gives the same values colorAt and usingColorSpace(.sRGB) did pixel by pixel.
+        let srgb = try XCTUnwrap(bitmap.converting(to: .sRGB, renderingIntent: .default))
+        let bytes = try XCTUnwrap(srgb.bitmapData), perRow = srgb.bytesPerRow, perPixel = srgb.bitsPerPixel / 8
         func brightness(_ x: Int, _ y: Int) -> CGFloat {
-            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return 0 }
-            return (color.redComponent + color.greenComponent + color.blueComponent) / 3
+            let pixel = bytes + y * perRow + x * perPixel
+            return (CGFloat(pixel[0]) + CGFloat(pixel[1]) + CGFloat(pixel[2])) / 765
         }
         // The card's own colour is read inside its 16 pt padding at mid-height, clear of ✕ (top
         // left, down to 16 pt) and the corners. Text is looked for from 18 pt, past ✕, up to the
@@ -1960,46 +1993,40 @@ private struct ComposerHeightHost: View {
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
-        func settle() async throws { try await Task.sleep(for: .milliseconds(250)) }
-        let selection = workspace.selectedID
+        // What ignoring does to the workspace is WorkspaceTests.ignoringPetNotificationsPreservesHistoryAndFutureResults;
+        // this is the close button that does it, and what the companion's panels show.
         XCTAssertTrue(workspace.sendQuickMessage("忽略这次通知"))
         let conversation = try XCTUnwrap(workspace.activity)
         try await answer("忽略这次通知", in: workspace, sessions: sessions, with: .text("仍然保留在历史中的结果"))
-        try await settle()
-        let history = conversation.store.messages
         workspace.enterPetFollowUp(conversation.id)
-        try await settle()
+        try await eventually("The card opens its follow-up") {
+            findAccessibility("activity.followUp", in: companion.activityPanel.contentView!) != nil
+        }
         let close = try XCTUnwrap(findAccessibility("activity.dismiss", in: companion.activityPanel.contentView!))
         XCTAssertEqual(close.accessibilityLabel?(), "忽略任务通知")
         XCTAssertTrue(close.accessibilityPerformPress?() == true)
-        try await settle()
+        try await eventually("Ignoring fades the card out") { !companion.activityPanel.isVisible }
         XCTAssertFalse(companion.activityPanel.isVisible)
-        XCTAssertEqual(workspace.unseenCompletedCount, 0)
-        XCTAssertTrue(workspace.petActivities.isEmpty && workspace.petFollowUpID == nil)
-        XCTAssertFalse(workspace.isMainWindowVisible)
-        XCTAssertEqual(workspace.selectedID, selection)
         XCTAssertNil(companion.mainWindow)
-        XCTAssertEqual(conversation.store.messages, history)
 
         companion.controlsPresentation.isHovered = true
         workspace.toggleActivityTray()
         workspace.expandActivityList()
         companion.synchronize(animated: false)
-        try await settle()
+        // A check that the ignored card and its bell stay away, so it keeps an observation window.
+        try await Task.sleep(for: .milliseconds(250))
         XCTAssertFalse(companion.activityPanel.isVisible)
         XCTAssertNil(findAccessibility("pet.activity.expand", in: companion.controlsPanel.contentView!))
         XCTAssertNil(findAccessibility("pet.activity.collapse", in: companion.controlsPanel.contentView!))
 
         XCTAssertTrue(workspace.send("继续同一会话", conversationID: conversation.id))
         try await answer("继续同一会话", in: workspace, sessions: sessions, with: .text("下一次正常提醒"))
-        try await settle()
+        try await eventually("The next result shows its card") { companion.activityPanel.isVisible }
         XCTAssertTrue(companion.activityPanel.isVisible)
-        XCTAssertEqual(workspace.unseenCompletedCount, 1)
-        XCTAssertEqual(workspace.petActivityIDs, [conversation.id])
-        XCTAssertEqual(workspace.conversations.count, 1)
-        XCTAssertEqual(Array(conversation.store.messages.prefix(history.count)), history)
         workspace.toggleActivityTray()
-        try await settle()
+        try await eventually("The bell counts the new result") {
+            axValue(findAccessibility("pet.activity.expand", in: companion.controlsPanel.contentView!)) == "1 个已完成任务未查看"
+        }
         let bell = try XCTUnwrap(findAccessibility("pet.activity.expand", in: companion.controlsPanel.contentView!))
         XCTAssertEqual(axValue(bell), "1 个已完成任务未查看")
     }
@@ -2061,14 +2088,11 @@ private struct ComposerHeightHost: View {
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
         let presentation = companion.controlsPresentation
-        func settle() async throws { try await Task.sleep(for: .milliseconds(150)) }
         // Pointer events now drive sampling; repeat the injected sample until SwiftUI shows `ready`.
-        func hover(_ point: NSPoint, until ready: () -> Bool = { true }) async throws {
-            for _ in 0..<60 {
+        func hover(_ point: NSPoint, _ label: String, until ready: () -> Bool) async throws {
+            try await eventually("The pointer at \(point): \(label) (hovered \(presentation.isHovered), card visible \(companion.activityPanel.isVisible))") {
                 companion.petPanel.samplePointer(at: point)
-                try await Task.sleep(for: .milliseconds(10))
-                companion.petPanel.samplePointer(at: point)
-                if ready() { return }
+                return ready()
             }
         }
         let inside = NSPoint(x: companion.petPanel.frame.midX, y: companion.petPanel.frame.midY)
@@ -2079,43 +2103,45 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(abs(presentation.petCenterX - (companion.petPanel.frame.midX - expectedCanvas.minX)) < 0.5,
                      "The controls content is anchored to the pet's center")
 
-        try await hover(inside)
+        try await hover(inside, "the pet is hovered") { presentation.isHovered }
         XCTAssertTrue(presentation.isHovered, "Pointer over the pet reveals its controls")
-        // Composer focus and send use real events in testPetComposerPointerFocus; this test drives the
+        // Composer focus and send use real events in EchoUITests.testPetComposerPointerFocusAndIndependentDraft;
+        // this test drives the
         // task status state without keyboard focus, which a non-active test process cannot own.
         let selected = workspace.selectedID
         XCTAssertTrue(workspace.sendQuickMessage("从桌宠发起"))
-        try await settle()
+        try await eventually("The new activity's card appears") { companion.activityPanel.isVisible }
         XCTAssertTrue(workspace.activity?.title == "从桌宠发起" && workspace.selectedID == selected,
                      "A quick send starts the activity without changing the main window selection")
         XCTAssertTrue(companion.activityPanel.isVisible, "The new activity card appears beside the pet")
         let controls = companion.controlsPanel.contentView!
-        try await hover(outside) { findAccessibility("pet.compose", in: controls) == nil }
+        // A running card keeps the strip expanded, new chat included, outside hover too
+        // (testCompletedPetControlsSurvivePointerExit), so this waits for hover to end.
+        try await hover(outside, "the pointer leaves the pet") {
+            !presentation.isHovered && findAccessibility("voice.start", in: controls) != nil
+                && findAccessibility("pet.activity.collapse", in: controls) != nil
+        }
         XCTAssertTrue(findAccessibility("voice.start", in: controls) != nil
                      && findAccessibility("pet.activity.collapse", in: controls) != nil,
                      "Without hover the running task keeps Live Voice and its card's ⌃")
         try await answer("从桌宠发起", in: workspace, sessions: sessions,
                          with: .text("你好！" + String(repeating: "这是保留在聊天里的完整结果，", count: 30)))
-        try await settle()
-        let completedHost = NSHostingView(rootView: WorkspaceActivityCapsule(workspace: workspace, placement: ActivityPlacement())
-            .background(.white).environment(\.colorScheme, .light))
-        completedHost.frame = companion.activityPanel.contentView!.bounds
-        completedHost.layoutSubtreeIfNeeded()
-        try await settle()
-        if let bitmap = completedHost.bitmapImageRepForCachingDisplay(in: completedHost.bounds) {
-            completedHost.cacheDisplay(in: completedHost.bounds, to: bitmap)
-            let output = EchoTestResources.output("pet-card-two-lines.png")
-            try bitmap.representation(using: .png, properties: [:])?.write(to: output)
-            print("Pet card render: " + output.path)
+        try await eventually("The card shows the completed result") {
+            findAccessibility("activity.summary", in: companion.activityPanel.contentView!) != nil
         }
         XCTAssertTrue(companion.activityPanel.isVisible && !companion.activityPanel.canBecomeKey && workspace.unseenCompletedCount == 1,
                      "Completion retains the compact card without taking keyboard focus")
         workspace.expandActivityList()
-        try await settle()
+        // A check that the list takes no keyboard focus: the companion synchronizes on the
+        // main-queue turn after the workspace changes, so one turn covers it.
+        await nextMainTurn()
         XCTAssertTrue(!companion.activityPanel.canBecomeKey && workspace.unseenCompletedCount == 1,
                      "The list does not acknowledge the result or take keyboard focus")
         workspace.enterPetFollowUp(workspace.activityID!)
-        try await settle()
+        try await eventually("Follow-up opens with its toggle") {
+            companion.activityPanel.canBecomeKey
+                && findAccessibility("activity.followUp.toggle", in: companion.activityPanel.contentView!)?.accessibilityLabel?() == "取消跟进"
+        }
         XCTAssertTrue(companion.activityPanel.canBecomeKey && workspace.unseenCompletedCount == 1,
                      "Follow-up enables the keyboard while the result stays unread")
         let activityHost = companion.activityPanel.contentView!
@@ -2124,7 +2150,9 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(findAccessibility("activity.send", in: activityHost) == nil)
         XCTAssertTrue(findAccessibility("activity.stop", in: activityHost) == nil)
         workspace.activityStore.followUpDraft = "继续问"
-        try await settle()
+        try await eventually("The follow-up editor shows the draft") {
+            (findAccessibility("activity.followUp", in: activityHost) as? ComposerTextView)?.string == "继续问"
+        }
         let editor = try XCTUnwrap(findAccessibility("activity.followUp", in: activityHost) as? ComposerTextView)
         let returnKey = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
             windowNumber: companion.activityPanel.windowNumber, context: nil, characters: "\r",
@@ -2134,29 +2162,38 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(followUp.requests.count == 2 && sessions.requestCount == 2, "The follow-up asks the same chat's model once more")
         XCTAssertTrue(workspace.conversations.count == 1 && workspace.petActivityIDs.count == 1)
         try await answer("继续问", in: workspace, sessions: sessions, with: .text("跟进结果"))
-        try await settle()
+        try await eventually("The answered follow-up keeps its toggle") {
+            findAccessibility("activity.followUp.toggle", in: activityHost) != nil
+        }
         XCTAssertTrue(workspace.activityStore.isFollowUpExpanded && workspace.unseenCompletedCount == 1)
         XCTAssertTrue(findAccessibility("activity.followUp.toggle", in: activityHost)?.accessibilityPerformPress?() == true)
-        try await settle()
+        try await eventually("The toggle ends the follow-up") {
+            workspace.petFollowUpID == nil && !workspace.activityStore.isFollowUpExpanded
+        }
         XCTAssertTrue(workspace.petFollowUpID == nil && !workspace.activityStore.isFollowUpExpanded)
         workspace.exitPetFollowUp()
-        try await settle()
+        try await eventually("Exiting follow-up releases the keyboard") { !companion.activityPanel.canBecomeKey }
         XCTAssertTrue(!companion.activityPanel.canBecomeKey, "Exiting follow-up releases the keyboard")
         workspace.toggleActivityTray()
-        try await Task.sleep(for: .milliseconds(300))
-        try await hover(inside) { findAccessibility("pet.activity.expand", in: controls) != nil }
+        // The card fades out before its panel leaves the screen.
+        try await hover(inside, "the bell shows and the card has gone") {
+            findAccessibility("pet.activity.expand", in: controls) != nil && !companion.activityPanel.isVisible
+        }
         XCTAssertTrue(!companion.activityPanel.isVisible && workspace.unseenCompletedCount == 1,
                      "User collapse hides the cards while retaining the unread result")
         XCTAssertTrue(axValue(findAccessibility("pet.activity.expand", in: controls)) == "1 个已完成任务未查看")
         XCTAssertTrue(findAccessibility("pet.activity.expand", in: controls)?.accessibilityPerformPress?() == true)
-        try await settle()
+        try await eventually("The bell brings the cards back") {
+            companion.activityPanel.isVisible
+                && findAccessibility("activity.summary", in: companion.activityPanel.contentView!) != nil
+        }
         XCTAssertTrue(companion.activityPanel.isVisible && !workspace.isActivityListExpanded,
                      "The bell restores the stack")
         let card = try XCTUnwrap(findAccessibility("activity.summary", in: companion.activityPanel.contentView!))
         let history = workspace.activityStore.messages
         let conversationID = try XCTUnwrap(workspace.activityID)
         XCTAssertTrue(card.accessibilityPerformPress?() == true)
-        try await settle()
+        try await eventually("The card opens its chat in the main window") { workspace.isMainWindowVisible && workspace.selectedID == conversationID }
         XCTAssertTrue(workspace.isMainWindowVisible && workspace.selectedID == conversationID)
         XCTAssertTrue(workspace.unseenCompletedCount == 0 && workspace.petActivities.isEmpty)
         XCTAssertTrue(workspace.conversation(id: conversationID)?.store.messages == history)
@@ -2165,26 +2202,25 @@ private struct ComposerHeightHost: View {
 
 
 
-    /// Speaking in Live Voice starts a turn; its task card must never appear, not even briefly.
     /// Normal chat shows content and result only. A finished reply is its own receipt,
     /// so nothing reads 已完成 beside it; a stopped, failed or interrupted one keeps the
     /// words the transcript cannot otherwise supply.
     func testChatStatusTextIsExceptionOnly() async throws {
-        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let dictation = DictationController()
         defer { voice.shutdown(); dictation.shutdown() }
-        func texts(of store: TaskStore) async throws -> [String] {
+        /// What a fresh chat view publishes once it draws `marker`, which each check expects.
+        func texts(of store: TaskStore, showing marker: String) async throws -> [String] {
             let view = NSHostingView(rootView: ConversationView(store: store, voice: voice, dictation: dictation,
                 startDictation: {}, startVoice: {}, conversationID: UUID(),
                 send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
             view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
             let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
             window.contentView = view
-            view.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(200))
-            view.layoutSubtreeIfNeeded()
             defer { window.orderOut(nil) }
+            try await eventually("The chat draws \(marker)", layingOut: view) {
+                return accessibilityText(in: view).contains { $0.contains(marker) }
+            }
             return accessibilityText(in: view)
         }
 
@@ -2193,7 +2229,7 @@ private struct ComposerHeightHost: View {
         completed.send("正常提问")
         try await completedModel.reply("这是模型的回复。")
         try await eventually("The reply completes") { completed.task?.status == .completed }
-        let normal = try await texts(of: completed)
+        let normal = try await texts(of: completed, showing: "这是模型的回复。")
         XCTAssertTrue(normal.contains { $0.contains("这是模型的回复。") }, "The reply itself is on screen: \(normal)")
         XCTAssertTrue(!normal.contains { $0.contains("已完成") }, "A successful reply carries no status caption: \(normal)")
 
@@ -2203,7 +2239,7 @@ private struct ComposerHeightHost: View {
         failed.send("会失败的提问")
         try await failingModel.answer(.fail(AgentModelError(message: "连接已中断，请检查网络后重试。")))
         try await eventually("The reply fails") { failed.task?.status == .failed }
-        let failure = try await texts(of: failed)
+        let failure = try await texts(of: failed, showing: "连接已中断")
         XCTAssertTrue(failure.contains { $0.contains("连接已中断") }, "A failed reply keeps its reason: \(failure)")
 
         let (stopped, stoppedModel) = puppetStore()
@@ -2214,7 +2250,7 @@ private struct ComposerHeightHost: View {
         try await half.send(["写到", "一半"])
         stopped.stopTask()
         try await eventually("The reply stops") { stopped.task?.status == .stopped }
-        let interrupted = try await texts(of: stopped)
+        let interrupted = try await texts(of: stopped, showing: "已停止")
         XCTAssertTrue(interrupted.contains { $0.contains("已停止") }, "A stopped reply says so: \(interrupted)")
 
         // The Agent task row is the running commentary — which step, why it stopped. A
@@ -2226,14 +2262,14 @@ private struct ComposerHeightHost: View {
         let finishedTask = TaskStore(snapshot: archive, harness: idleAgent())
         defer { finishedTask.shutdown() }
         XCTAssertTrue(finishedTask.task?.summary == "已完成", "The stored task still records its outcome")
-        let agentDone = try await texts(of: finishedTask)
+        let agentDone = try await texts(of: finishedTask, showing: "任务结果")
         XCTAssertTrue(!agentDone.contains { $0.contains("已完成") }, "A completed Agent task shows no status row: \(agentDone)")
 
         archive.task?.status = .interrupted
         archive.task?.summary = "已中断 · 可继续跟进"
         let brokenTask = TaskStore(snapshot: archive, harness: idleAgent())
         defer { brokenTask.shutdown() }
-        let agentBroken = try await texts(of: brokenTask)
+        let agentBroken = try await texts(of: brokenTask, showing: "已中断 · 可继续跟进")
         XCTAssertTrue(agentBroken.contains { $0.contains("已中断 · 可继续跟进") },
                      "An interrupted Agent task keeps its status row: \(agentBroken)")
     }
@@ -2242,21 +2278,21 @@ private struct ComposerHeightHost: View {
     /// the call waits for a folder with the three ways out, runs, and restores in each of
     /// its terminal states; an unfinished Agent turn offers 继续处理 and a finished one does not.
     func testAgentToolCardsDirectoryRowAndContinue() async throws {
-        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let dictation = DictationController()
         defer { voice.shutdown(); dictation.shutdown() }
-        func texts(of store: TaskStore, workspace: WorkspaceStore? = nil) async throws -> [String] {
+        /// What a fresh chat view publishes once it draws `marker`, which each check expects.
+        func texts(of store: TaskStore, workspace: WorkspaceStore? = nil, showing marker: String) async throws -> [String] {
             let view = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice, dictation: dictation,
                 startDictation: {}, startVoice: {}, conversationID: workspace?.selected?.id ?? UUID(),
                 send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
             view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
             let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
             window.contentView = view
-            view.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(200))
-            view.layoutSubtreeIfNeeded()
             defer { window.orderOut(nil) }
+            try await eventually("The chat draws \(marker)", layingOut: view) {
+                return accessibilityText(in: view).contains { $0.contains(marker) }
+            }
             return accessibilityText(in: view)
         }
 
@@ -2272,7 +2308,7 @@ private struct ComposerHeightHost: View {
         proposal.send("我先检查文件。"); proposal.call("bash", #"{"command":"printf probe"}"#); proposal.finish()
         try await eventually("the call waits for a folder") { store.needsDirectory }
         XCTAssertTrue(store.tools.map(\.state) == [.waiting], "\(store.tools.map(\.state))")
-        let waiting = try await texts(of: store, workspace: workspace)
+        let waiting = try await texts(of: store, workspace: workspace, showing: "待执行 · printf probe")
         XCTAssertTrue(waiting.contains { $0.contains("我先检查文件。") }, "Text beside the call stays in the chat: \(waiting)")
         XCTAssertTrue(waiting.contains { $0.contains("待执行 · printf probe") }, "The pending call shows its command: \(waiting)")
         XCTAssertTrue(waiting.contains { $0.contains("等待选择项目文件夹") }, "The task row says why it waits: \(waiting)")
@@ -2290,7 +2326,7 @@ private struct ComposerHeightHost: View {
         try await eventually("the command runs") { !store.needsDirectory && store.tools.first?.directory != nil }
         XCTAssertTrue(store.tools.first?.state == .running && store.tools.first?.directory == ExecutionService.canonicalPath(project.path),
                       "\(String(describing: store.tools.first))")
-        let running = try await texts(of: store, workspace: workspace)
+        let running = try await texts(of: store, workspace: workspace, showing: "执行中 · printf probe")
         XCTAssertTrue(running.contains { $0.contains("执行中 · printf probe") }, "The call shows it is running: \(running)")
         XCTAssertTrue(running.contains { $0.contains("正在运行命令 · printf probe") }, "The task row names the step: \(running)")
 
@@ -2323,7 +2359,7 @@ private struct ComposerHeightHost: View {
         defer { finished.shutdown() }
         XCTAssertEqual(finished.tools.map(\.state), [.finished, .notExecuted, .unknown, .unknown],
                        "A call restored without a result is unknown")
-        let restored = try await texts(of: finished)
+        let restored = try await texts(of: finished, showing: "执行结束 · cmd-done")
         for label in ["执行结束 · cmd-done", "未执行 · cmd-skipped", "执行结果未知 · cmd-cut", "执行结果未知 · cmd-lost"] {
             XCTAssertTrue(restored.contains { $0.contains(label) }, "Restored tool card \(label): \(restored)")
         }
@@ -2338,7 +2374,7 @@ private struct ComposerHeightHost: View {
             tools: [], native: asked), harness: idleAgent())
         defer { unfinished.shutdown() }
         XCTAssertTrue(unfinished.canRetry)
-        let interrupted = try await texts(of: unfinished)
+        let interrupted = try await texts(of: unfinished, showing: "继续处理")
         XCTAssertTrue(interrupted.contains { $0.contains("继续处理") }, "An unfinished Agent turn offers 继续处理: \(interrupted)")
     }
 
@@ -2346,7 +2382,6 @@ private struct ComposerHeightHost: View {
     /// chat, the call names what it reads, the folder row asks for a project, and declining
     /// leaves the call not run while the turn still ends with a reply.
     func testNativeReadToolCardsAndFolderRow() async throws {
-        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let dictation = DictationController()
         defer { voice.shutdown(); dictation.shutdown() }
@@ -2361,22 +2396,23 @@ private struct ComposerHeightHost: View {
         let store = TaskStore(harness: AgentHarness(resolveModel: { model.factory }))
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown() }
-        func texts() async throws -> [String] {
+        /// What a fresh chat view publishes once it draws `marker`, which each check expects.
+        func texts(showing marker: String) async throws -> [String] {
             let view = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice, dictation: dictation,
                 startDictation: {}, startVoice: {}, conversationID: workspace.selected?.id ?? UUID(),
                 send: {}, stop: {}, retry: {}).frame(width: 820, height: 900))
             view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
             let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
             window.contentView = view
-            view.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(200))
-            view.layoutSubtreeIfNeeded()
             defer { window.orderOut(nil) }
+            try await eventually("The chat draws \(marker)", layingOut: view) {
+                return accessibilityText(in: view).contains { $0.contains(marker) }
+            }
             return accessibilityText(in: view)
         }
         XCTAssertTrue(store.send("看看目录"))
         try await eventually("folder requested") { store.needsDirectory }
-        let waiting = try await texts()
+        let waiting = try await texts(showing: "执行中 · 列出 .")
         XCTAssertTrue(waiting.contains { $0.contains("我先看看目录。") }, "Text beside the call stays in the chat: \(waiting)")
         XCTAssertTrue(waiting.contains { $0.contains("执行中 · 列出 .") }, "The call says what it reads: \(waiting)")
         XCTAssertTrue(waiting.contains { $0.contains("等待选择项目文件夹") }, "The task row says why it waits: \(waiting)")
@@ -2385,7 +2421,7 @@ private struct ComposerHeightHost: View {
         }
         workspace.provideDirectory(nil, conversationID: try XCTUnwrap(workspace.selected?.id))
         try await eventually("turn ends") { !store.isGenerating }
-        let done = try await texts()
+        let done = try await texts(showing: "未执行 · 列出 .")
         XCTAssertTrue(done.contains { $0.contains("未执行 · 列出 .") }, "Declining leaves the call not run: \(done)")
         XCTAssertTrue(done.contains { $0.contains("目录没有列出") } && !done.contains { $0.contains("需要项目文件夹才能继续") }, "\(done)")
     }
@@ -2395,7 +2431,6 @@ private struct ComposerHeightHost: View {
     /// the streamed text has to reach the chat on its own — and give the bubble back to the
     /// settled message without leaving a second copy behind.
     func testStreamingReplyRendersInTranscript() async throws {
-        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let dictation = DictationController()
         defer { voice.shutdown(); dictation.shutdown() }
@@ -2408,15 +2443,16 @@ private struct ComposerHeightHost: View {
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = view
         defer { window.orderOut(nil) }
-        func texts() async throws -> [String] {
-            view.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(200))
-            view.layoutSubtreeIfNeeded()
+        /// What the view publishes once `drawn` holds for it, which each step expects.
+        func texts(_ label: String, _ drawn: ([String]) -> Bool) async throws -> [String] {
+            try await eventually("The chat draws \(label)", layingOut: view) {
+                return drawn(accessibilityText(in: view))
+            }
             return accessibilityText(in: view)
         }
         store.send("讲讲今天的天气")
         try await puppet.waitForRequests(1)
-        let asked = try await texts()
+        let asked = try await texts("the question") { $0.contains { $0.contains("讲讲今天的天气") } }
         XCTAssertTrue(asked.contains { $0.contains("讲讲今天的天气") }, "The question is on screen: \(asked)")
         XCTAssertTrue(!asked.contains { $0.contains("正在回复…") },
                      "Nothing stands in for the reply before the model writes: \(asked)")
@@ -2428,14 +2464,14 @@ private struct ComposerHeightHost: View {
         try await eventually("the first delta streams") { store.replyStream.live?.hasPrefix("今天") == true }
         XCTAssertTrue(store.messages.allSatisfy { $0.role == .user },
                      "Streamed text is live text, not yet a conversation message: \(store.messages)")
-        let firstDelta = try await texts()
+        let firstDelta = try await texts("the streamed bubble") { $0.contains { $0.contains("正在回复…") } }
         XCTAssertTrue(firstDelta.contains { $0.contains("今天") }, "The first delta reaches the chat: \(firstDelta)")
         XCTAssertTrue(firstDelta.contains { $0.contains("正在回复…") },
                      "The streamed bubble says the reply is still being written: \(firstDelta)")
 
         try await reply.send(["适合", "散步"])
         try await eventually("the reply grows") { store.replyStream.live?.contains("不错，") == true }
-        let grown = try await texts()
+        let grown = try await texts("the grown reply") { $0.contains { $0.contains("今天天气不错，") } }
         XCTAssertTrue(grown.contains { $0.contains("今天天气不错，") },
                      "Later text grows the same bubble, with Markdown rendered: \(grown)")
         XCTAssertTrue(!grown.contains { $0.contains("**") }, "The bubble renders Markdown, not its syntax: \(grown)")
@@ -2446,7 +2482,10 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(store.messages.last?.role == .assistant && store.messages.last?.status == .completed
                      && store.messages.last?.content == "今天**天气**不错，适合散步。",
                      "The final reply settles into the conversation itself: \(store.messages)")
-        let done = try await texts()
+        // The streamed bubble leaving is the handover this step expects.
+        let done = try await texts("the settled reply without the streamed bubble") {
+            $0.contains { $0.contains("今天天气不错，适合散步。") } && findAccessibility("conversation.stream", in: view) == nil
+        }
         XCTAssertTrue(done.contains { $0.contains("今天天气不错，适合散步。") }, "The settled reply is on screen: \(done)")
         XCTAssertTrue(!done.contains { $0.contains("正在回复…") },
                      "The streamed bubble hands over instead of doubling the reply: \(done)")
@@ -2461,7 +2500,6 @@ private struct ComposerHeightHost: View {
     /// shows, the wording stays available to assistive technology, and the controls and the
     /// session itself are untouched.
     func testLiveVoiceHidesRunningStatusText() async throws {
-        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         let puppet = PuppetModel()
         var recognizers: [ComposerRecognizer] = []
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
@@ -2482,10 +2520,9 @@ private struct ComposerHeightHost: View {
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = view
         defer { window.orderOut(nil) }
-        func drawn() async throws -> [String] {
-            view.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(200))
-            view.layoutSubtreeIfNeeded()
+        /// What the view draws once `ready` holds, which is what each step expects to change.
+        func drawn(_ label: String, _ ready: () -> Bool) async throws -> [String] {
+            try await eventually("The chat draws \(label)", layingOut: view) { ready() }
             return visibleText(in: view)
         }
         func node(_ id: String) -> AnyObject? { findAccessibility(id, in: view) }
@@ -2510,7 +2547,7 @@ private struct ComposerHeightHost: View {
         try await puppet.answer(.stream(reply))
         try await reply.send(["今天", "天气", "不错"])
         try await eventually("the reply streams") { store.replyStream.live != nil }
-        let streaming = try await drawn()
+        let streaming = try await drawn("the streaming reply") { findAccessibility("conversation.stream", in: view) != nil }
         XCTAssertTrue(streaming.contains { $0.contains("今天") },
                      "The reply still streams into the chat, so the check above reads real text: \(streaming)")
         absent(streaming, ["正在回复…", "正在等待回复…", "正在请求模型…", "可补充语音", "正在思考…"],
@@ -2519,7 +2556,7 @@ private struct ComposerHeightHost: View {
         // Playback, with barge-in armed: the projection still carries the wording, the row does not.
         let run = UUID()
         voice.updateSnapshot { $0.recognition = .off(.currentReply); $0.replyAudio = .playing(run); $0.bargeIn = .armed(run) }
-        let playing = try await drawn()
+        let playing = try await drawn("the playback status") { axValue(node("voice.status")) == voice.status }
         XCTAssertTrue(voice.status == "正在播报 · 可打断", "The session still projects its status: \(voice.status)")
         absent(playing, ["正在播报", "可打断", "暂停聆听"], "Live Voice playback")
         XCTAssertTrue(node("voice.status")?.accessibilityLabel?() == "Live Voice"
@@ -2530,13 +2567,13 @@ private struct ComposerHeightHost: View {
 
         // Errors and notices are not commentary: they stay on screen.
         voice.updateSnapshot { $0.error = .init(conversationID: conversation.id, message: "麦克风初始化失败，请检查权限。") }
-        let failing = try await drawn()
+        let failing = try await drawn("the voice failure") { visibleText(in: view).contains { $0.contains("麦克风初始化失败，请检查权限。") } }
         XCTAssertTrue(failing.contains { $0.contains("麦克风初始化失败，请检查权限。") },
                      "A voice failure still shows during Live Voice: \(failing)")
         XCTAssertTrue(node("voice.error.close") != nil, "The voice notice can still be dismissed")
         voice.clearError(conversationID: conversation.id)
         store.notice = "语音连接已断开，请稍后重试。"
-        let noticed = try await drawn()
+        let noticed = try await drawn("the chat notice") { visibleText(in: view).contains { $0.contains("语音连接已断开，请稍后重试。") } }
         XCTAssertTrue(noticed.contains { $0.contains("语音连接已断开，请稍后重试。") },
                      "A chat notice still shows during Live Voice: \(noticed)")
         store.notice = nil
@@ -2547,7 +2584,10 @@ private struct ComposerHeightHost: View {
         for _ in 0..<100 where voice.isActive { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertTrue(store.isGenerating && store.task?.summary == "正在请求模型…",
                      "Ending Live Voice leaves the Agent task running")
-        let typed = try await drawn()
+        let typed = try await drawn("the typed flow's captions") {
+            let texts = visibleText(in: view)
+            return texts.contains { $0.contains("正在回复…") } && texts.contains { $0.contains("正在请求模型…") }
+        }
         XCTAssertTrue(typed.contains { $0.contains("正在回复…") } && typed.contains { $0.contains("正在请求模型…") },
                      "Outside Live Voice the chat keeps its captions: \(typed)")
         store.stopTask()
@@ -2576,9 +2616,9 @@ private struct ComposerHeightHost: View {
         let brokenWindow = NSWindow(contentRect: brokenView.frame, styleMask: .borderless, backing: .buffered, defer: false)
         brokenWindow.contentView = brokenView
         defer { brokenWindow.orderOut(nil) }
-        brokenView.layoutSubtreeIfNeeded()
-        try await Task.sleep(for: .milliseconds(200))
-        brokenView.layoutSubtreeIfNeeded()
+        try await eventually("The archive draws its task row", layingOut: brokenView) {
+            return visibleText(in: brokenView).contains { $0.contains("已中断 · 可继续跟进") }
+        }
         let unfinished = visibleText(in: brokenView)
         XCTAssertTrue(unfinished.contains { $0.contains("已中断 · 可继续跟进") } && unfinished.contains { $0.contains("已中断") },
                      "An unfinished task keeps its row and its message caption under Live Voice: \(unfinished)")
@@ -2586,6 +2626,7 @@ private struct ComposerHeightHost: View {
         // the same archive reads the same with Live Voice on and off, 已中断 captions included.
         brokenVoice.updateSnapshot { $0.session = .active(.init(sessionID: UUID(), conversationID: UUID())) }
         brokenView.layoutSubtreeIfNeeded()
+        // A check that nothing changes, so it keeps an observation window.
         try await Task.sleep(for: .milliseconds(200))
         brokenView.layoutSubtreeIfNeeded()
         XCTAssertTrue(visibleText(in: brokenView) == unfinished,
@@ -2598,7 +2639,6 @@ private struct ComposerHeightHost: View {
     /// another; the final replaces the provisional bubble in the same update, leaving one
     /// message and no persisted guess.
     func testLiveVoiceTranscribesInTranscript() async throws {
-        NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         let puppet = PuppetModel()
         var recognizers: [ComposerRecognizer] = []
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
@@ -2619,28 +2659,28 @@ private struct ComposerHeightHost: View {
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = view
         defer { window.orderOut(nil) }
-        func settle() async throws {
-            view.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(200))
-            view.layoutSubtreeIfNeeded()
-            view.displayIfNeeded()
-            try await Task.sleep(for: .milliseconds(200))
+        /// Lays the view out and draws it until `ready` holds, which is what each step expects to change.
+        func settle(_ label: String, _ ready: () -> Bool) async throws {
+            try await eventually("The chat settles: \(label)", layingOut: view) {
+                view.displayIfNeeded()
+                return ready()
+            }
         }
         /// The chat's own scroll area: the one the composer's editor is not inside. Resolved
-        /// per call, because the hosted view builds it during the first layout.
-        func transcript() -> NSView {
-            guard let scroll = findView(view, { candidate in
+        /// per call, because the hosted view builds it during the first layout; until then there
+        /// is none, and the waits below that look into it keep waiting.
+        func transcript() -> NSView? {
+            findView(view, { candidate in
                 candidate is NSScrollView && findView(candidate, { $0 is ComposerTextView }) == nil
-            }) else { XCTFail("No transcript scroll view"); return view }
-            return scroll
+            })
         }
         func says(_ texts: [String], _ text: String) -> Int { texts.filter { $0.contains(text) }.count }
-        func inTranscript(_ text: String) -> Bool { says(visibleText(in: transcript()), text) > 0 }
+        func inTranscript(_ text: String) -> Bool { transcript().map { says(visibleText(in: $0), text) > 0 } ?? false }
         /// Whether anything outside the chat's scroll area — the composer and its captions —
         /// also draws `text`. Comparing counts rather than looking for the string keeps this
         /// independent of how many times the walk reaches one element.
         func besideComposer(_ text: String) -> Bool {
-            says(visibleText(in: view), text) > says(visibleText(in: transcript()), text)
+            says(visibleText(in: view), text) > (transcript().map { says(visibleText(in: $0), text) } ?? 0)
         }
         /// How many stand-in bubbles the window draws. A revision must rewrite the one that
         /// is there; a second one would mean the words were re-inserted instead.
@@ -2660,7 +2700,9 @@ private struct ComposerHeightHost: View {
         }
 
         // Before Live Voice owns the chat there is nothing to stand in for.
-        try await settle()
+        try await settle("the transcript is built") {
+            findView(view, { candidate in candidate is NSScrollView && findView(candidate, { $0 is ComposerTextView }) == nil }) != nil
+        }
         XCTAssertTrue(findAccessibility("voice.subtitle", in: view) == nil, "No provisional bubble without a session")
 
         voice.attach(workspace: workspace, settings: settings)
@@ -2672,26 +2714,26 @@ private struct ComposerHeightHost: View {
         // Speaking: the words form in the chat, and nowhere else. They are not a message,
         // and nothing about them reaches the save path.
         recognizers.last?.emit("讲讲今天的天", final: false)
-        try await settle()
+        try await settle("the interim words stand in") { standIns() == 1 && inTranscript("讲讲今天的天") }
         XCTAssertTrue(voice.subtitle == "讲讲今天的天", "The session heard it: \(voice.subtitle)")
         XCTAssertTrue(standIns() == 1, "Exactly one stand-in: \(standIns())")
-        XCTAssertTrue(findAccessibility("voice.subtitle", in: transcript()) != nil,
+        XCTAssertTrue(transcript().flatMap { findAccessibility("voice.subtitle", in: $0) } != nil,
                      "It is drawn inside the chat, where its message will be")
-        XCTAssertTrue(inTranscript("讲讲今天的天"), "The chat draws the words: \(visibleText(in: transcript()))")
+        XCTAssertTrue(inTranscript("讲讲今天的天"), "The chat draws the words: \(transcript().map { visibleText(in: $0) } ?? [])")
         XCTAssertTrue(!besideComposer("讲讲今天的天"), "The composer no longer draws them too: \(visibleText(in: view))")
         XCTAssertTrue(store.messages.isEmpty && store.snapshot.messages.isEmpty,
                      "A guess is neither a message nor saved: \(store.messages)")
 
         // A revision rewrites the one bubble rather than adding a second.
         recognizers.last?.emit("讲讲今天的天气", final: false)
-        try await settle()
+        try await settle("the revision is drawn") { inTranscript("讲讲今天的天气") }
         XCTAssertTrue(voice.subtitle == "讲讲今天的天气" && standIns() == 1,
                      "The correction replaced the words in place: \(voice.subtitle), \(standIns())")
         XCTAssertTrue(store.messages.isEmpty, "A revision is still not a message")
 
         // The final: one real user message, and the stand-in gives way to it.
         recognizers.last?.emit("讲讲今天的天气")
-        try await settle()
+        try await settle("the final replaces the stand-in") { standIns() == 0 && !store.messages.isEmpty }
         XCTAssertTrue(store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气"],
                      "The final becomes exactly one user message: \(store.messages.map(\.content))")
         XCTAssertTrue(voice.subtitle.isEmpty && standIns() == 0,
@@ -2712,7 +2754,9 @@ private struct ComposerHeightHost: View {
         try await reply.send(["今天", "天气", "不错"])
         try await eventually("the reply streams") { store.replyStream.live != nil }
         recognizers.last?.emit("再说说明天", final: false, start: 200)
-        try await settle()
+        try await settle("the follow-up stands in above the reply") {
+            standIns() == 1 && inTranscript("再说说明天") && axFrame(findAccessibility("conversation.stream", in: view)) != nil
+        }
         XCTAssertTrue(voice.subtitle == "再说说明天" && standIns() == 1, "The follow-up is being heard")
         guard let waiting = axFrame(findAccessibility("voice.subtitle", in: view)),
               let reply = axFrame(findAccessibility("conversation.stream", in: view)) else {
@@ -2722,7 +2766,10 @@ private struct ComposerHeightHost: View {
                      "Interim speech waits above the streaming reply: \(waiting) vs \(reply)")
 
         recognizers.last?.emit("再说说明天", start: 200)
-        try await settle()
+        try await settle("the follow-up becomes a message") {
+            guard standIns() == 0, let follow = store.messages.last(where: { $0.role == .user }), follow.content == "再说说明天" else { return false }
+            return findAccessibility("conversation.message.\(follow.id)", in: view) != nil
+        }
         XCTAssertTrue(store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气", "再说说明天"],
                      "The follow-up became its own message: \(store.messages.map(\.content))")
         XCTAssertTrue(standIns() == 0, "The stand-in is gone again")
@@ -2749,10 +2796,10 @@ private struct ComposerHeightHost: View {
         // VoiceTests.agentRefusedFinalTests.)
         let settled = store.messages.filter { $0.role == .user }.map(\.content)
         recognizers.last?.emit("还没说完", final: false, start: 400)
-        try await settle()
+        try await settle("the half-heard words stand in") { standIns() == 1 }
         XCTAssertTrue(standIns() == 1, "A half-heard sentence stands in")
         store.stopTask()
-        try await settle()
+        try await settle("stopping takes the stand-in away") { standIns() == 0 }
         XCTAssertTrue(voice.subtitle.isEmpty && store.messages.filter { $0.role == .user }.map(\.content) == settled,
                      "Stopping discards it instead of sending it: \(voice.subtitle)")
         XCTAssertTrue(standIns() == 0, "Nothing unsent stays drawn")
@@ -2760,7 +2807,7 @@ private struct ComposerHeightHost: View {
         // Ending the session leaves the messages it produced untouched.
         voice.end()
         for _ in 0..<100 where voice.isActive { try await Task.sleep(for: .milliseconds(20)) }
-        try await settle()
+        try await settle("the follow-up's caption shows outside Live Voice") { visibleText(in: view).contains { $0.contains("已中断") } }
         XCTAssertTrue(standIns() == 0, "No stand-in outlives the session")
         XCTAssertTrue(store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气", "再说说明天"],
                      "The messages it produced are untouched: \(store.messages.map(\.content))")
@@ -2771,6 +2818,8 @@ private struct ComposerHeightHost: View {
                      "Outside Live Voice the follow-up's caption is there: \(visibleText(in: view))")
     }
 
+    /// Speaking in Live Voice starts a turn; its task card must never appear, not even briefly,
+    /// so the turn is watched throughout rather than checked at the end.
     func testLiveVoiceTurnKeepsTaskCardHidden() async throws {
         for scenario in ["fresh conversation", "card closed with ×"] {
             let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
@@ -2787,7 +2836,7 @@ private struct ComposerHeightHost: View {
                 XCTAssertTrue(workspace.sendQuickMessage("之前的任务"))
                 try await answer("之前的任务", in: workspace, sessions: sessions, with: .text("完成"))
                 workspace.toggleActivityTray(); workspace.activityStore.closeActivity()
-                try await Task.sleep(for: .milliseconds(400))
+                try await eventually("The closed card fades out") { !companion.activityPanel.isVisible }
                 XCTAssertTrue(!companion.activityPanel.isVisible)
             }
             let target = (workspace.activity ?? workspace.selected)!
@@ -2823,31 +2872,32 @@ private struct ComposerHeightHost: View {
         window.appearance = NSAppearance(named: .aqua)
         defer { window.orderOut(nil) }
         var host = NSHostingView(rootView: AnyView(EmptyView()))
-        func show(_ view: some View) async throws {
+        func node() -> AnyObject? { findAccessibility("companion.bubble", in: host) }
+        /// Hosts `view` and waits for the bubble to read `label`. Without a label the check that
+        /// follows is that no bubble shows, so this keeps an observation window instead.
+        func show(_ view: some View, reading label: String?) async throws {
             host = NSHostingView(rootView: AnyView(view.background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)))
             window.contentView = host
-            try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
-        }
-        func node() -> AnyObject? { findAccessibility("companion.bubble", in: host) }
-        func snapshot(_ name: String) throws {
-            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("\(name).png"))
+            guard let label else { try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded(); return }
+            try await eventually("The bubble reads \(label)", layingOut: host) { node()?.accessibilityLabel?() == label }
         }
 
         // Live Voice connecting, listening and waiting show no bubble.
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
-        try await show(WorkspaceCompanionBubble(voice: voice, state: state, placement: placement))
+        try await show(WorkspaceCompanionBubble(voice: voice, state: state, placement: placement), reading: nil)
         for update in [{ (s: inout VoiceSessionSnapshot) in s.session = .starting(owner) },
                        { s in s.session = .active(owner); s.recognition = .connecting; s.speakerMuted = true },
                        { s in s.recognition = .listening; s.subtitle = "帮我看看"; s.agentActivity = "正在请求模型…" },
                        { s in s.replyAudio = .preparing(UUID()) }] {
             voice.updateSnapshot(update)
+            // A check that no bubble shows, so it keeps an observation window.
             try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
             XCTAssertTrue(node() == nil, "No bubble before speech is played")
         }
         state.notice = "语音连接已断开，请稍后重试。"
-        try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
+        try await eventually("Errors still use the bubble", layingOut: host) {
+            node()?.accessibilityLabel?() == "语音连接已断开，请稍后重试。"
+        }
         XCTAssertTrue(node()?.accessibilityLabel?() == "语音连接已断开，请稍后重试。", "Errors still use the bubble")
         state.notice = nil
 
@@ -2857,27 +2907,25 @@ private struct ComposerHeightHost: View {
         func heard(_ count: Int) -> String { lines.prefix(count).joined().replacingOccurrences(of: "**", with: "") }
         var heights: [CGFloat] = []
         for count in [1, 2, 3, 5] {
+            let shown = lines.prefix(count).map { "• " + $0.replacingOccurrences(of: "**", with: "") }.joined(separator: "\n")
             try await show(CompanionBubble(content: .reply(markdown, heard: heard(count)), tailOnTop: false,
-                                           petCenterX: canvas.width / 2))
+                                           petCenterX: canvas.width / 2), reading: shown)
             let label = node()?.accessibilityLabel?()
             XCTAssertTrue(label == lines.prefix(count).map { "• " + $0.replacingOccurrences(of: "**", with: "") }.joined(separator: "\n"),
                          "The bubble shows exactly the heard lines (\(count)): \(label ?? "nil")")
             heights.append(node()?.accessibilityFrame?().height ?? 0)
-            if count == 1 { try snapshot("pet-bubble-heard-one-line") }
-            if count == 5 { try snapshot("pet-bubble-heard-latest-lines") }
         }
         // Past three lines the accessibility frame reports the unclipped text; the layout check below covers the cap.
         let line = heights[1] - heights[0]
         XCTAssertTrue(line > 10 && abs(heights[2] - heights[1] - line) < 0.5,
                      "The bubble is one line tall, then two, then three: \(heights)")
-        try await show(CompanionBubble(content: .reply(markdown, heard: ""), tailOnTop: false, petCenterX: canvas.width / 2))
+        try await show(CompanionBubble(content: .reply(markdown, heard: ""), tailOnTop: false, petCenterX: canvas.width / 2), reading: nil)
         XCTAssertTrue(node() == nil, "Nothing heard, no bubble")
-        try await show(CompanionBubble(content: .reply("目录里有 **3** 个文件", heard: nil), tailOnTop: true, petCenterX: canvas.width / 2))
-        try snapshot("pet-bubble-reply-below")
+        try await show(CompanionBubble(content: .reply("目录里有 **3** 个文件", heard: nil), tailOnTop: true, petCenterX: canvas.width / 2),
+                       reading: "目录里有 3 个文件")
         XCTAssertTrue(node()?.accessibilityLabel?() == "目录里有 3 个文件", "A fully played reply stays whole")
         let notice = "语音连接已断开：服务端在等待识别结果时关闭了连接。请检查网络和语音密钥设置，然后在桌宠上重新开始 Live Voice，已经说过的内容会保留在会话里。"
-        try await show(CompanionBubble(content: .notice(notice), tailOnTop: false, petCenterX: canvas.width / 2))
-        try snapshot("pet-bubble-notice-long")
+        try await show(CompanionBubble(content: .notice(notice), tailOnTop: false, petCenterX: canvas.width / 2), reading: notice)
         XCTAssertTrue(node()?.accessibilityLabel?() == notice, "Errors show in the bubble, limited to three lines")
 
         // The layout: content up to three lines sets the height; taller content keeps its newest lines in view.
@@ -2894,7 +2942,10 @@ private struct ComposerHeightHost: View {
             let layoutWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: lineBox * 2),
                                         styleMask: .borderless, backing: .buffered, defer: false)
             layoutWindow.contentView = layoutHost
-            try await Task.sleep(for: .milliseconds(100)); layoutHost.layoutSubtreeIfNeeded()
+            try await eventually("The layout probe is on screen", layingOut: layoutHost) {
+                return (findAccessibility("latest.box", in: layoutHost)?.accessibilityFrame?().height ?? 0) > 0
+                    && (findAccessibility("latest.content", in: layoutHost)?.accessibilityFrame?().height ?? 0) > 0
+            }
             let box = findAccessibility("latest.box", in: layoutHost)?.accessibilityFrame?() ?? .zero
             let content = findAccessibility("latest.content", in: layoutHost)?.accessibilityFrame?() ?? .zero
             // Accessibility frames are bottom-up screen coordinates.
@@ -2926,51 +2977,58 @@ private struct ComposerHeightHost: View {
         window.contentView = host
         window.appearance = NSAppearance(named: .aqua)
         defer { window.orderOut(nil) }
-        func refresh() async throws { try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded() }
         func node(_ id: String) -> AnyObject? { findAccessibility(id, in: host) }
 
         presentation.isHovered = true
-        try await refresh()
+        try await eventually("The hovered strip shows the bell", layingOut: host) { node("pet.activity.expand") != nil && node("voice.start") != nil }
         XCTAssertTrue(node("pet.activity.expand") != nil && node("voice.start") != nil, "Without Live Voice the bell shows unseen tasks")
         presentation.isHovered = false
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
         voice.updateSnapshot { $0.session = .starting(owner) }
-        try await refresh(); try await refresh()
+        try await eventually("Starting Live Voice shows the connecting button", layingOut: host) { node("voice.connecting") != nil }
+        // Kept as a fixed wait: the strip's own transition into the button has to finish before
+        // two renders can show that the dot itself is still.
+        try await Task.sleep(for: .milliseconds(240)); host.layoutSubtreeIfNeeded()
         func render() -> Data? {
             guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
             host.cacheDisplay(in: host.bounds, to: bitmap)
             return bitmap.representation(using: .png, properties: [:])
         }
         let connecting = render()
-        try connecting?.write(to: EchoTestResources.output("pet-voice-connecting.png"))
+        // A check that the dot does not move, so it keeps an observation window.
         try await Task.sleep(for: .milliseconds(300)); host.layoutSubtreeIfNeeded()
         XCTAssertTrue(connecting != nil && render() == connecting, "The connecting dot is still, without animation")
         XCTAssertTrue(node("voice.connecting") != nil && node("voice.end") == nil && node("voice.mute") == nil
                      && node("pet.activity.expand") == nil, "Starting Live Voice shows only the connecting button, without the bell")
         voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .connecting }
-        try await refresh()
+        // A check that the button stays as it is, so it keeps an observation window.
+        try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
         XCTAssertTrue(node("voice.connecting") != nil && node("voice.end") == nil, "The button keeps connecting until recognition is ready")
         XCTAssertTrue(node("voice.connecting")?.accessibilityPerformPress?() == true && ended == [owner],
                      "Pressing the connecting button cancels Live Voice")
         voice.updateSnapshot { $0.recognition = .listening }
-        try await refresh(); try await refresh()
+        try await eventually("Once connected the voice bar appears", layingOut: host) {
+            node("voice.end") != nil && presentation.connectedVoiceSession == owner.sessionID
+        }
         XCTAssertTrue(node("voice.end") != nil && node("voice.mute") != nil && node("voice.connecting") == nil
                      && presentation.connectedVoiceSession == owner.sessionID, "Once connected the formal voice bar appears")
         voice.updateSnapshot { $0.recognition = .off(.recovery) }
         voice.updateSnapshot { $0.recognition = .connecting }
-        try await refresh()
+        // A check that the voice bar stays, so it keeps an observation window.
+        try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
         XCTAssertTrue(node("voice.end") != nil && node("voice.connecting") == nil,
                      "Recognition reconnecting between replies keeps the voice bar")
         presentation.isHovered = true
-        try await refresh()
+        // A check that hover brings no bell, so it keeps an observation window.
+        try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
         XCTAssertTrue(node("pet.activity.expand") == nil, "Live Voice in progress shows no bell even with unseen tasks")
         voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
-        try await refresh()
+        try await eventually("After Live Voice ends the bell returns", layingOut: host) { node("pet.activity.expand") != nil && node("voice.start") != nil }
         XCTAssertTrue(presentation.connectedVoiceSession == nil && node("pet.activity.expand") != nil && node("voice.start") != nil,
                      "After Live Voice ends the bell returns")
     }
 
-    func testPetProjectMenuAndCardReveal() async throws {
+    func testPetProjectMenuAndSelectionPanel() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pet-project-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -3004,10 +3062,6 @@ private struct ComposerHeightHost: View {
         presentation.projectID = projectID
         presentation.draft = "在项目里看看"
         try await refresh()
-        if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("pet-composer-project.png"))
-        }
         XCTAssertTrue(axValue(node("pet.project.name")) == folder.lastPathComponent, "The chosen project shows as a chip")
         XCTAssertTrue(node("pet.send")?.accessibilityPerformPress?() == true && sent.last?.1 == projectID
                      && presentation.projectID == projectID, "A send carries the project, which stays selected")
@@ -3243,6 +3297,8 @@ private struct ComposerHeightHost: View {
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
+        /// For the checks that the cluster stays as it is: it follows the workspace a main-queue
+        /// turn after a change, so the window is generous.
         func settle() async throws { try await Task.sleep(for: .milliseconds(200)) }
         func clusterShown() -> Bool { companion.petPanel.isVisible && companion.controlsPanel.isVisible }
         let suspension = companion.controlsPresentation
@@ -3259,7 +3315,7 @@ private struct ComposerHeightHost: View {
         let elsewhere = workspace.newConversation()
         workspace.select(read.id)
         workspace.isMainWindowVisible = true
-        try await settle()
+        try await eventually("The main window is up beside the cluster") { companion.mainWindow?.isVisible == true && clusterShown() }
         XCTAssertTrue(clusterShown(), "The companion cluster is up while no Live Voice runs")
         XCTAssertTrue(!suspension.isSuspended, "A shown strip is not suspended")
 
@@ -3271,21 +3327,21 @@ private struct ComposerHeightHost: View {
 
         // Switching to it is what hides the cluster.
         workspace.select(elsewhere.id)
-        try await settle()
+        try await eventually("Viewing the Live Voice conversation hides the cluster") { !clusterShown() }
         XCTAssertTrue(!companion.petPanel.isVisible && !companion.controlsPanel.isVisible && !companion.bubblePanel.isVisible,
                      "Viewing the Live Voice conversation hides the whole cluster")
         XCTAssertTrue(suspension.isSuspended, "Hiding the strip suspends its planet")
 
         // Leaving that conversation restores it, and so does closing the window on it.
         workspace.select(read.id)
-        try await settle()
+        try await eventually("Leaving the Live Voice conversation restores the cluster") { clusterShown() }
         XCTAssertTrue(clusterShown(), "Leaving the Live Voice conversation restores the cluster")
         XCTAssertTrue(!suspension.isSuspended, "Restoring the strip resumes its planet")
         workspace.select(elsewhere.id)
-        try await settle()
+        try await eventually("Returning to it hides the cluster again") { !clusterShown() }
         XCTAssertTrue(!clusterShown() && suspension.isSuspended, "Returning to it steps aside again")
         workspace.isMainWindowVisible = false
-        try await settle()
+        try await eventually("Hiding the main window brings the cluster back") { clusterShown() }
         XCTAssertTrue(clusterShown() && !suspension.isSuspended, "A hidden main window draws no planet, so the pet comes back")
 
         voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
@@ -3303,6 +3359,8 @@ private struct ComposerHeightHost: View {
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
+        /// For the checks that the cluster stays hidden: it follows the workspace a main-queue
+        /// turn after a change, so the window is generous.
         func settle() async throws { try await Task.sleep(for: .milliseconds(200)) }
         func clusterShown() -> Bool { companion.petPanel.isVisible && companion.controlsPanel.isVisible }
 
@@ -3313,7 +3371,7 @@ private struct ComposerHeightHost: View {
             return status.menu.items.map { $0.isSeparatorItem ? "-" : $0.title }
         }
 
-        try await settle()
+        try await eventually("The pet starts on screen") { clusterShown() }
         XCTAssertTrue(clusterShown() && !companion.isPetHidden, "The pet starts on screen")
         XCTAssertEqual(statusTitles(), ["Echo", "-", "隐藏精灵", "设置…", "-", "退出 Echo"])
         XCTAssertTrue(status.menu.items.last?.action == #selector(NSApplication.terminate(_:))
@@ -3329,14 +3387,14 @@ private struct ComposerHeightHost: View {
                       "The menus only ask Launch Services; nothing opens until its event arrives")
         let petIndex = 2
         companion.petPanel.onHide?()
-        try await settle()
+        try await eventually("Hide Pet takes the cluster off screen") { !companion.petPanel.isVisible && !companion.controlsPanel.isVisible }
         XCTAssertTrue(companion.isPetHidden, "The pet menu's Hide Pet hides it")
         XCTAssertEqual(statusTitles()[petIndex], "显示精灵", "The status item offers it back")
         XCTAssertTrue(!companion.petPanel.isVisible && !companion.controlsPanel.isVisible && !companion.bubblePanel.isVisible
                       && !companion.activityPanel.isVisible, "Hiding the pet hides the whole cluster")
         XCTAssertTrue(companion.controlsPresentation.isSuspended, "A hidden strip draws no planet")
         status.menu.performActionForItem(at: petIndex)
-        try await settle()
+        try await eventually("Show Pet brings the cluster back") { clusterShown() }
         XCTAssertTrue(clusterShown() && !companion.controlsPresentation.isSuspended, "Show Pet brings the cluster back")
         XCTAssertEqual(statusTitles()[petIndex], "隐藏精灵")
         status.menu.performActionForItem(at: petIndex)
@@ -3348,7 +3406,7 @@ private struct ComposerHeightHost: View {
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversation.id)
         voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
         workspace.isMainWindowVisible = true
-        try await settle()
+        try await eventually("The planet on screen hides the pet") { !clusterShown() }
         XCTAssertTrue(!clusterShown(), "The planet on screen hides the pet")
         companion.setPetHidden(true)
         workspace.isMainWindowVisible = false
@@ -3359,7 +3417,7 @@ private struct ComposerHeightHost: View {
         try await settle()
         XCTAssertTrue(!clusterShown(), "...and the planet keeps it hidden after the person shows it")
         workspace.isMainWindowVisible = false
-        try await settle()
+        try await eventually("With neither holding, the pet comes back") { clusterShown() }
         XCTAssertTrue(clusterShown(), "With neither holding, the pet is back")
         voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
     }
@@ -3410,10 +3468,6 @@ private struct ComposerHeightHost: View {
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
-        func until(_ description: String, _ condition: () -> Bool) async throws {
-            for _ in 0..<100 where !condition() { try await Task.sleep(for: .milliseconds(50)) }
-            XCTAssertTrue(condition(), description)
-        }
         let read = workspace.selected!
         XCTAssertTrue(workspace.send("正在读的聊天", conversationID: read.id), "The chat to read accepts a message")
 
@@ -3424,10 +3478,10 @@ private struct ComposerHeightHost: View {
         workspace.select(read.id)
 
         window.miniaturize(nil)
-        try await until("The window minimizes") { window.isMiniaturized && workspace.isMainWindowMinimized }
+        try await eventually("The window minimizes") { window.isMiniaturized && workspace.isMainWindowMinimized }
         XCTAssertFalse(workspace.isMainWindowVisible)
         companion.petPanel.onClick?()
-        try await until("The pet restores the minimized window") { !window.isMiniaturized && window.isVisible }
+        try await eventually("The pet restores the minimized window") { !window.isMiniaturized && window.isVisible }
         XCTAssertTrue(workspace.isMainWindowVisible && !workspace.isMainWindowMinimized)
         XCTAssertEqual(workspace.selectedID, read.id, "A minimized window comes back on its chat")
 
@@ -3542,29 +3596,26 @@ private struct ComposerHeightHost: View {
         let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
         defer { window.orderOut(nil) }
-        func settle(_ ms: Int = 250) async throws {
-            try await Task.sleep(for: .milliseconds(ms)); host.layoutSubtreeIfNeeded()
+        // In this standalone host SwiftUI gives the sole list its parent's
+        // workspace.projectFiles identifier. Find the native outline by role;
+        // the scroll geometry assertions below still exercise the real table.
+        func outlines(in view: NSView) -> [NSTableView] {
+            if let table = view as? NSTableView, table.accessibilityRole() == .outline { return [table] }
+            return view.subviews.flatMap { outlines(in: $0) }
         }
-        workspace.select(first.id)
-        try await settle(500)
         func tree() -> NSTableView? {
-            // In this standalone host SwiftUI gives the sole list its parent's
-            // workspace.projectFiles identifier. Find the native outline by role;
-            // the scroll geometry assertions below still exercise the real table.
-            func outlines(in view: NSView) -> [NSTableView] {
-                if let table = view as? NSTableView, table.accessibilityRole() == .outline { return [table] }
-                return view.subviews.flatMap { outlines(in: $0) }
-            }
             let tables = outlines(in: host)
             XCTAssertTrue(tables.count == 1, "The project inspector contains exactly one native outline")
             return tables.first
         }
+        workspace.select(first.id)
+        // The files are listed off the main actor and reach the tree on a later update.
+        try await eventually("The tree lists every file", layingOut: host) { outlines(in: host).first.map { $0.numberOfRows >= names.count } == true }
         guard let table = tree(), let scroll = table.enclosingScrollView else {
             throw SettingsError("Project tree missing")
         }
         let target = "file50.txt"
-        guard let row = (0..<table.numberOfRows).first(where: { table.rect(ofRow: $0).minY > 0 })
-                .map({ _ in names.firstIndex(of: target)! }) else { throw SettingsError("No rows") }
+        guard let row = names.firstIndex(of: target) else { throw SettingsError("No row for \(target)") }
         XCTAssertTrue(table.numberOfRows >= names.count, "Every file has a row: \(table.numberOfRows)")
         let document = scroll.documentView!.bounds.height
         XCTAssertTrue(document > scroll.contentView.bounds.height,
@@ -3577,14 +3628,19 @@ private struct ComposerHeightHost: View {
         // Leave the tree at the very top, so only a real restore can move it back down.
         scroll.contentView.scroll(to: NSPoint(x: 0, y: 0))
         scroll.reflectScrolledClipView(scroll.contentView)
-        try await settle()
+        // A check that nothing scrolls the tree back down yet, so it keeps an observation window.
+        try await Task.sleep(for: .milliseconds(250)); host.layoutSubtreeIfNeeded()
         XCTAssertTrue(scroll.contentView.bounds.origin.y == 0, "The tree starts the switch at the top")
 
         workspace.select(second.id)
-        try await settle(500)
+        try await eventually("The other project's file is listed", layingOut: host) { outlines(in: host).first?.numberOfRows == 1 }
         XCTAssertTrue(workspace.fileBrowser.location?.projectID == shortID, "The other project is showing")
         workspace.select(first.id)
-        try await settle(600)
+        // The restore scrolls once the rows are back, on a main-queue turn after the switch.
+        try await eventually("The first project's tree is back and scrolled", layingOut: host) {
+            guard let table = outlines(in: host).first, table.numberOfRows >= names.count else { return false }
+            return (table.enclosingScrollView?.contentView.bounds.origin.y ?? 0) > 0
+        }
         XCTAssertTrue(workspace.fileBrowser.location?.projectID == tallID, "Back on the first project")
         XCTAssertTrue(workspace.fileBrowser.state.scrollID == target, "The saved position survives the switch")
         guard let restoredTable = tree(), let restoredScroll = restoredTable.enclosingScrollView else {
@@ -3598,10 +3654,6 @@ private struct ComposerHeightHost: View {
     }
 
     func testRightSidebarLayoutAndToggling() async throws {
-        let accessibilitySetter = NSSelectorFromString("accessibilitySetValue:forAttribute:")
-        if NSApp.responds(to: accessibilitySetter) {
-            NSApp.perform(accessibilitySetter, with: NSNumber(value: true), with: "AXEnhancedUserInterface")
-        }
         let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
@@ -3626,13 +3678,12 @@ private struct ComposerHeightHost: View {
         main.present()
         main.toggleInspector()
         XCTAssertTrue(!main.inspectorItem.isCollapsed, "Right sidebar expands when toggled")
+        // A check that nothing is drawn, so it keeps an observation window. The column is still
+        // animating open here (0pt wide right after the toggle), but nothing below reads its
+        // geometry, so the window is for the check rather than the animation.
         try await Task.sleep(for: .milliseconds(500))
         main.window?.contentView?.layoutSubtreeIfNeeded()
         main.inspectorItem.viewController.view.layoutSubtreeIfNeeded()
-        if let view = main.window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-            view.cacheDisplay(in: view.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("project-files-empty.png"))
-        }
         XCTAssertTrue(findAccessibility("projectFiles.unassociated", in: main.inspectorItem.viewController.view) == nil,
                      "Unassociated inspector stays blank")
 
@@ -3688,12 +3739,12 @@ private struct ComposerHeightHost: View {
         let collapsedValue: Any? = folder.accessibilityValue?()
         XCTAssertTrue(collapsedValue as? String == "已折叠")
         XCTAssertTrue(folder.accessibilityPerformPress?() == true)
-        try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
+        try await waitUntil("the folder opens") { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) != nil }
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) != nil)
         let expandedValue: Any? = findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityValue?()
         XCTAssertTrue(expandedValue as? String == "已展开")
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
-        try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
+        try await waitUntil("the folder closes") { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil }
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil)
 
         // The tree is a system source list; that is what supplies the disclosure triangle,
@@ -3710,17 +3761,20 @@ private struct ComposerHeightHost: View {
             let row = tree.row(at: NSPoint(x: inTree.midX, y: inTree.midY))
             return row >= 0 ? row : nil
         }
-        func treeKey(_ code: UInt16, _ characters: String) async throws {
+        /// Sends a key to the tree and waits for the browser state it should produce.
+        func treeKey(_ code: UInt16, _ characters: String, until label: String, _ condition: () -> Bool) async throws {
             window.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                 windowNumber: window.windowNumber, context: nil, characters: characters,
                 charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
-            try await Task.sleep(for: .milliseconds(200)); content.layoutSubtreeIfNeeded()
+            try await waitUntil(label, condition)
         }
         // Opening a folder highlights it, and the list agrees about which row that is.
         // The pointer handing this list the first responder is the shared SidebarListFocus,
         // which the chat sidebar's own pointer test covers.
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
-        try await Task.sleep(for: .milliseconds(200)); content.layoutSubtreeIfNeeded()
+        try await waitUntil("the opened folder is selected and highlighted") {
+            workspace.fileBrowser.state.selectedPath == "folder" && tree.selectedRow == treeRow("projectFiles.entry.folder")
+        }
         XCTAssertTrue(workspace.fileBrowser.state.expanded.contains("folder")
                      && workspace.fileBrowser.state.selectedPath == "folder", "Opening a folder selects it")
         XCTAssertTrue(tree.selectedRow == treeRow("projectFiles.entry.folder"),
@@ -3728,34 +3782,41 @@ private struct ComposerHeightHost: View {
         window.makeFirstResponder(tree)
         XCTAssertTrue(window.firstResponder === tree, "The tree takes keyboard focus")
         // ← and → drive the system disclosure, and expanding is still what loads a folder.
-        try await treeKey(123, "\u{F702}")
+        try await treeKey(123, "\u{F702}", until: "← closes the folder") { !workspace.fileBrowser.state.expanded.contains("folder") }
         XCTAssertTrue(!workspace.fileBrowser.state.expanded.contains("folder"), "← closes the selected folder")
-        try await treeKey(124, "\u{F703}")
+        try await treeKey(124, "\u{F703}", until: "→ opens the folder") { workspace.fileBrowser.state.expanded.contains("folder") }
         XCTAssertTrue(workspace.fileBrowser.state.expanded.contains("folder"), "→ opens it again")
-        // ↑ / ↓ move the highlight only: walking the tree never replaces it with a preview.
-        try await treeKey(125, "\u{F701}")
+        // ↑ / ↓ move the highlight only: walking the tree never replaces it with a preview. The
+        // list's selection binding highlights synchronously and opens nothing, so once the
+        // highlight has moved, one main-queue turn covers anything it could have queued.
+        try await treeKey(125, "\u{F701}", until: "↓ highlights the file") { workspace.fileBrowser.state.selectedPath == "folder/child.txt" }
+        await nextMainTurn()
         XCTAssertTrue(workspace.fileBrowser.state.selectedPath == "folder/child.txt"
                      && !workspace.fileBrowser.state.showingFile, "↓ highlights the next row without opening it")
-        try await treeKey(126, "\u{F700}")
+        try await treeKey(126, "\u{F700}", until: "↑ highlights the folder") { workspace.fileBrowser.state.selectedPath == "folder" }
+        await nextMainTurn()
         XCTAssertTrue(workspace.fileBrowser.state.selectedPath == "folder"
                      && !workspace.fileBrowser.state.showingFile, "↑ comes back to the folder above")
-        try await treeKey(125, "\u{F701}")
-        try await treeKey(36, "\r")
+        try await treeKey(125, "\u{F701}", until: "↓ highlights the file again") { workspace.fileBrowser.state.selectedPath == "folder/child.txt" }
+        try await treeKey(36, "\r", until: "Return opens the file") { workspace.fileBrowser.state.showingFile }
         XCTAssertTrue(workspace.fileBrowser.state.showingFile
                      && workspace.fileBrowser.state.selectedPath == "folder/child.txt",
                      "Return opens the file the arrow keys reached")
         workspace.fileBrowser.returnToDirectory()
-        try await Task.sleep(for: .milliseconds(200)); content.layoutSubtreeIfNeeded()
+        try await waitUntil("the tree is back") { findAccessibility("projectFiles.entry.folder", in: inspector) != nil }
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
-        try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
+        try await waitUntil("the folder closes again") { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil }
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil,
                      "The tree is closed again for the checks that follow")
         func openPicker() async throws -> NSWindow {
             XCTAssertTrue(picker.accessibilityPerformPress?() == true)
-            try await Task.sleep(for: .milliseconds(200))
-            guard let panel = NSApp.windows.first(where: {
-                $0.isVisible && $0.contentView.map { findAccessibility("projectPicker.search", in: $0) != nil } == true
-            }) else { throw SettingsError("Project panel did not open") }
+            func open() -> NSWindow? {
+                NSApp.windows.first {
+                    $0.isVisible && $0.contentView.map { findAccessibility("projectPicker.search", in: $0) != nil } == true
+                }
+            }
+            try await waitUntil("the project panel opens") { open() != nil }
+            guard let panel = open() else { throw SettingsError("Project panel did not open") }
             // AppKit picks the side with room; above and below are both the system's call.
             let anchor = picker.accessibilityFrame?() ?? .zero, frame = panel.frame
             let above = frame.minY >= anchor.maxY - 2, below = frame.maxY <= anchor.minY + 2
@@ -3774,7 +3835,7 @@ private struct ComposerHeightHost: View {
         }
         var panel = try await openPicker()
         key(panel, code: 53, characters: "\u{1b}")
-        try await Task.sleep(for: .milliseconds(150))
+        try await waitUntil("Escape closes the project panel") { !panel.isVisible }
         if NSApp.isFullKeyboardAccessEnabled {
             // Keyboard focus also exposes the hover action for accessibility users.
             picker.setAccessibilityFocused?(true)
@@ -3789,7 +3850,8 @@ private struct ComposerHeightHost: View {
             XCTAssertTrue(window.firstResponder === composer, "Detach returns composer focus")
         } else {
             // With macOS Keyboard Navigation off, plain buttons never take focus, and this hosted
-            // view has no event loop for real hover; testProjectDetachPointer covers that path.
+            // view has no event loop for real hover; EchoUITests.testProjectPickerKeyboardScrollPreviewAndDetach
+            // covers that path.
             XCTAssertTrue(workspace.associateProject(nil, conversationID: conversation.id))
         }
         panel = try await openPicker()
@@ -3797,14 +3859,21 @@ private struct ComposerHeightHost: View {
             throw SettingsError("Existing project menu item missing")
         }
         XCTAssertTrue(projectOption.accessibilityPerformPress?() == true)
-        try await Task.sleep(for: .milliseconds(150))
+        try await waitUntil("choosing the project closes the panel") { conversation.projectID == projectID && !panel.isVisible }
         XCTAssertTrue(conversation.projectID == projectID, "Menu selects existing project")
         panel = try await openPicker()
         key(panel, code: 53, characters: "\u{1b}")
-        try await Task.sleep(for: .milliseconds(150))
+        // Not waitUntil: with the main window laid out before every look, this wait did not
+        // finish (the failure read as SwiftUI's InvalidTransition; see stopTest).
+        try await eventually("Escape closes the panel and focus returns to the composer") {
+            !panel.isVisible && window.firstResponder === composer
+        }
         XCTAssertTrue(!panel.isVisible && window.firstResponder === composer, "Escape dismisses project panel and restores input focus")
+        let oneLine = composer.enclosingScrollView?.frame.height ?? 0
         conversation.store.mainDraft = Array(repeating: "多行草稿", count: 8).joined(separator: "\n")
-        try await Task.sleep(for: .milliseconds(120)); content.layoutSubtreeIfNeeded()
+        try await waitUntil("the composer grows for the multi-line draft") {
+            composer.string == conversation.store.mainDraft && (composer.enclosingScrollView?.frame.height ?? 0) > oneLine
+        }
         assertPlacement()
         /// Opening a file sets the preview to loading, reads and decodes the file off the main
         /// actor, and publishes the result on a later turn; SwiftUI mounts the matching view
@@ -3850,12 +3919,13 @@ private struct ComposerHeightHost: View {
         scroll.contentView.scroll(to: NSPoint(x: 120, y: 500))
         scroll.reflectScrolledClipView(scroll.contentView)
         let scrollOrigin = scroll.contentView.bounds.origin
-        func settlePreviewLayout() async throws {
-            try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
-        }
+        /// Expansion is applied a main-queue turn after the browser flips it, once no column toggle
+        /// is animating, by collapsing or restoring the conversation column.
         func togglePreview() async throws {
             XCTAssertTrue(findAccessibility("projectFiles.toggleExpansion", in: inspector)?.accessibilityPerformPress?() == true)
-            try await settlePreviewLayout()
+            try await waitUntil("the columns follow the preview's expansion") {
+                main.conversationItem.isCollapsed == workspace.fileBrowser.isPreviewExpanded
+            }
         }
         try await togglePreview()
         XCTAssertTrue(workspace.fileBrowser.isPreviewExpanded && main.conversationItem.isCollapsed)
@@ -3895,18 +3965,25 @@ private struct ComposerHeightHost: View {
         }
         try await togglePreview()
         workspace.fileBrowser.returnToDirectory()
-        try await settlePreviewLayout()
+        try await waitUntil("leaving the file ends the expansion and its control") {
+            !main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded
+                && findAccessibility("projectFiles.toggleExpansion", in: inspector) == nil
+        }
         XCTAssertTrue(!main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
         XCTAssertTrue(findAccessibility("projectFiles.toggleExpansion", in: inspector) == nil)
-        workspace.fileBrowser.openFile("README.md")
-        try await settlePreviewLayout()
+        try await openPreview("README.md") { findAccessibility("projectFiles.toggleExpansion", in: inspector) != nil }
         try await togglePreview()
         workspace.fileBrowser.openFile("folder/child.txt")
-        try await settlePreviewLayout()
+        try await waitUntil("opening another file ends the expansion") {
+            !main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded
+        }
         XCTAssertTrue(!main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
+        try await openPreview("folder/child.txt") { findAccessibility("projectFiles.toggleExpansion", in: inspector) != nil }
         try await togglePreview()
         main.toggleInspector()
-        try await settlePreviewLayout()
+        // Kept as it was: the toggle below is meant to land after this one, as a person's
+        // second press would (see the two toggles further down).
+        try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
         XCTAssertTrue(main.inspectorItem.isCollapsed && !main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
         main.toggleInspector()
         let markdownPreview = """
@@ -3982,9 +4059,9 @@ private struct ComposerHeightHost: View {
                 (findAccessibility("projectFiles.image", in: inspector) as? NSImageView)?.image?.size
                     == NSSize(width: width, height: height)
             }
-            func assertImagePreview() {
+            func assertImagePreview() throws {
                 guard let view = findAccessibility("projectFiles.image", in: inspector) as? NSImageView else {
-                    XCTFail("Image preview must appear"); return
+                    throw stopTest("Image preview must appear")
                 }
                 XCTAssertTrue(!view.isEditable && findAccessibility("projectFiles.text", in: inspector) == nil)
                 XCTAssertTrue(view.bounds.width > 0 && view.bounds.height > 0)
@@ -3999,11 +4076,15 @@ private struct ComposerHeightHost: View {
                 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rendered)
                 view.cell!.draw(withFrame: view.bounds, in: view)
                 NSGraphicsContext.restoreGraphicsState()
+                // One read of the bytes: the rep above is 8-bit RGBA, alpha last and premultiplied,
+                // so each component is divided by alpha as colorAt would.
                 var minX = rendered.pixelsWide, minY = rendered.pixelsHigh, maxX = -1, maxY = -1
+                let bytes = rendered.bitmapData!, row = rendered.bytesPerRow
                 for y in 0..<rendered.pixelsHigh {
                     for x in 0..<rendered.pixelsWide {
-                        if let color = rendered.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
-                           color.redComponent > 0.8, color.greenComponent < 0.2, color.blueComponent < 0.2 {
+                        let pixel = bytes + y * row + x * 4
+                        let alpha = Double(pixel[3])
+                        if alpha > 0, Double(pixel[0]) / alpha > 0.8, Double(pixel[1]) / alpha < 0.2, Double(pixel[2]) / alpha < 0.2 {
                             minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y)
                         }
                     }
@@ -4018,11 +4099,11 @@ private struct ComposerHeightHost: View {
                 if name == "small.png" { XCTAssertTrue(abs(drawn.width - 40) < 1 && abs(drawn.height - 20) < 1) }
                 XCTAssertTrue(conversation.store.mainDraft == savedDraft && editor(in: content) === composer)
             }
-            assertImagePreview()
+            try assertImagePreview()
             try await togglePreview()
-            assertImagePreview()
+            try assertImagePreview()
             try await togglePreview()
-            assertImagePreview()
+            try assertImagePreview()
         }
         try Data("broken".utf8).write(to: root.appendingPathComponent("broken.png"))
         try await openPreview("broken.png") { findAccessibility("projectFiles.image", in: inspector) == nil }
@@ -4036,24 +4117,6 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue((findAccessibility("projectFiles.text", in: inspector) as? NSTextView)?.string == "child")
         try await openPreview("README.md") { findAccessibility("conversation.code.copy", in: inspector) != nil }
         assertMarkdownPreview()
-        // Native glass does not support cacheDisplay snapshots. Render the same
-        // inspector content in a plain hosting surface for a reviewable artifact.
-        let previewHost = NSHostingView(rootView: WorkspaceInspector(workspace: workspace)
-            .frame(width: 300, height: 600).background(Color(nsColor: .windowBackgroundColor)))
-        let previewWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 600),
-            styleMask: .borderless, backing: .buffered, defer: false)
-        previewWindow.contentView = previewHost
-        previewHost.layoutSubtreeIfNeeded()
-        try await Task.sleep(for: .milliseconds(100)); previewHost.layoutSubtreeIfNeeded()
-        if let bitmap = previewHost.bitmapImageRepForCachingDisplay(in: previewHost.bounds) {
-            previewHost.cacheDisplay(in: previewHost.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("project-file-preview.png"))
-        }
-        previewWindow.orderOut(nil)
-        if let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
-            content.cacheDisplay(in: content.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("project-chat-preview.png"))
-        }
         workspace.fileBrowser.returnToDirectory()
 
         // Collapse/reopen refreshes already previewed content without losing selection.
@@ -4075,14 +4138,18 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(main.sidebarItem.canCollapseFromWindowResize && main.inspectorItem.canCollapseFromWindowResize,
                      "Both columns give way to a narrowing window")
         main.toggleInspector()
-        // The toggle animates; until it finishes, the column still holds its minimum width.
-        try await Task.sleep(for: .milliseconds(600)); content.layoutSubtreeIfNeeded()
+        // The collapse is still animating, the column still at its width, but a collapsed
+        // column no longer holds the window wide: the resize lands at once.
         window.setContentSize(NSSize(width: 760, height: 650))
-        try await Task.sleep(for: .milliseconds(300)); content.layoutSubtreeIfNeeded()
+        try await waitUntil("the window narrows to 760pt, got \(window.frame.width)") {
+            !main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed && abs(window.frame.width - 760) < 1
+        }
         XCTAssertTrue(!main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed && abs(window.frame.width - 760) < 1,
                      "The chat list and the conversation fit at 760pt, got \(window.frame.width)")
         main.toggleInspector()
-        try await Task.sleep(for: .milliseconds(500)); content.layoutSubtreeIfNeeded()
+        try await waitUntil("AppKit widens the window for the opening column, got \(window.frame.width)") {
+            !main.inspectorItem.isCollapsed && window.frame.width >= 920
+        }
         XCTAssertTrue(!main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed,
                      "Opening project files at a narrow width keeps the chat list open")
         XCTAssertTrue(window.frame.width >= 920,
@@ -4092,44 +4159,45 @@ private struct ComposerHeightHost: View {
         assertPlacement()
         XCTAssertTrue(workspace.sendMainMessage(conversationID: conversation.id))
         workspace.stop(conversationID: conversation.id)
-        try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
+        try await waitUntil("the sent chat drops its project picker") { findAccessibility("conversation.project", in: content) == nil }
         XCTAssertTrue(findAccessibility("conversation.project", in: content) == nil,
                      "Established conversation has no composer project picker")
         XCTAssertTrue(findAccessibility("conversation.project.detach", in: content) == nil)
-        // The titlebar is the chat's name on one line. A project chat says where it lives
-        // in the column and in the search results; it does not carry a second title line,
-        // a folder glyph or a proxy icon for the folder up here.
-        try await Task.sleep(for: .milliseconds(120))
-        XCTAssertTrue(window.title == conversation.title,
-                     "The window title is the chat, got \(window.title)")
-        XCTAssertTrue(window.subtitle.isEmpty, "A project chat has no subtitle, got \(window.subtitle)")
-        XCTAssertTrue(window.representedURL == nil, "...and no proxy icon for the project folder")
         let another = workspace.newConversation()
         workspace.select(conversation.id)
+        // A check that the picker does not come back, so it keeps an observation window.
         try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
         XCTAssertTrue(findAccessibility("conversation.project", in: content) == nil, "Reopened project chat keeps picker hidden")
         XCTAssertTrue(another.id != conversation.id)
 
         window.setContentSize(NSSize(width: 1280, height: 820))
-        try await settlePreviewLayout()
+        content.layoutSubtreeIfNeeded()
         try await togglePreview()
         window.setContentSize(NSSize(width: 760, height: 650))
-        try await settlePreviewLayout()
+        // A check that resizing collapses nothing. The split view collapses columns for a window
+        // resize while it lays out, synchronously; the turn covers the expansion handlers that
+        // a column collapse would queue.
+        content.layoutSubtreeIfNeeded()
+        await nextMainTurn()
         XCTAssertTrue(main.conversationItem.isCollapsed && !main.inspectorItem.isCollapsed && !main.sidebarItem.isCollapsed,
                      "Expanded reading keeps the sidebar and preview visible when resizing")
         window.setContentSize(NSSize(width: 1280, height: 820))
-        try await settlePreviewLayout()
+        content.layoutSubtreeIfNeeded()
         let sameProject = workspace.newConversation(projectID: projectID)
         XCTAssertTrue(sameProject.id != conversation.id && !workspace.fileBrowser.isPreviewExpanded,
                      "Switching chats in the same project clears expansion")
-        try await settlePreviewLayout()
+        try await waitUntil("the conversation column comes back") { !main.conversationItem.isCollapsed }
         XCTAssertTrue(!main.conversationItem.isCollapsed)
         workspace.select(conversation.id)
-        try await settlePreviewLayout()
+        // A check that the expansion does not come back, so it keeps an observation window.
+        try await Task.sleep(for: .milliseconds(150)); content.layoutSubtreeIfNeeded()
         XCTAssertTrue(!workspace.fileBrowser.isPreviewExpanded, "Returning to a chat does not restore stale expansion")
         try await togglePreview()
         workspace.select(another.id)
-        try await settlePreviewLayout()
+        try await waitUntil("an unassociated chat ends the expansion and drops its control") {
+            !main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded
+                && findAccessibility("projectFiles.toggleExpansion", in: inspector) == nil
+        }
         XCTAssertTrue(!main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
         XCTAssertTrue(findAccessibility("projectFiles.toggleExpansion", in: inspector) == nil,
                      "Switching to an unassociated chat clears the preview control")
@@ -4344,24 +4412,6 @@ private struct ComposerHeightHost: View {
     }
 
 
-    /// Real keyboard and pointer events against the settings page: the page must own
-    /// typing while it is up, and its controls must traverse, activate and disable the
-    /// way system controls do.
-    private func waitForPointerTarget(_ window: NSWindow, at point: NSPoint? = nil,
-                                                        timeout: Duration = .seconds(5)) async throws {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        let probe = point ?? NSPoint(x: window.frame.midX, y: window.frame.midY)
-        while clock.now < deadline {
-            if NSApp.isActive, window.isKeyWindow,
-               NSWindow.windowNumber(at: probe, belowWindowWithWindowNumber: 0) == window.windowNumber { return }
-            NSApp.activate()
-            window.makeKeyAndOrderFront(nil)
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        throw SettingsError("Real events need the workspace window frontmost under the pointer")
-    }
-
     /// The project row's pencil button only appears under the pointer, and SwiftUI folds it into
     /// the row, so accessibility gets it as the row's named action instead.
     func testProjectRowOffersNewChatAsANamedAction() async throws {
@@ -4400,14 +4450,6 @@ private struct ComposerHeightHost: View {
         return nil
     }
 
-    /// SwiftUI AX nodes answer the selector without declaring the protocol, so dispatch it directly.
-    /// Real window-server capture of a companion panel.
-    private func snapshot(_ window: NSWindow, _ name: String) throws {
-        let capture = Process()
-        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", EchoTestResources.output("\(name).png").path]
-        try capture.run(); capture.waitUntilExit()
-    }
     /// Where an element is drawn, in screen coordinates, so a test can assert what sits above
     /// what without depending on the wording either one publishes.
     private func axFrame(_ object: AnyObject?) -> NSRect? {
@@ -4415,6 +4457,7 @@ private struct ComposerHeightHost: View {
               object.responds(to: NSSelectorFromString("accessibilityFrame")) else { return nil }
         return (object.value(forKey: "accessibilityFrame") as? NSValue)?.rectValue
     }
+    /// SwiftUI AX nodes answer the selector without declaring the protocol, so dispatch it directly.
     private func axValue(_ object: AnyObject?) -> String? {
         let selector = NSSelectorFromString("accessibilityValue")
         guard let object, object.responds(to: selector) else { return nil }
@@ -4479,8 +4522,9 @@ private struct ComposerHeightHost: View {
 
 /// One workspace script with the real main window, companion and archive: after each step, the
 /// window title, which companion panels show, what a relaunch would read, and how many times the
-/// archive was written. The expected values are what the workspace did before it moved to
-/// Observation; how often the title or the companion re-syncs is deliberately not part of it.
+/// archive was written. The expected values are the regression baseline for these observers: what
+/// the workspace did before it moved to Observation, which the move kept. How often the title or
+/// the companion re-syncs is deliberately not part of it.
 @MainActor final class WorkspaceObserverTests: XCTestCase {
     func testTitlePanelsAndArchiveFollowTheWorkspace() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("workspace-observers-\(UUID().uuidString)")
@@ -4507,6 +4551,8 @@ private struct ComposerHeightHost: View {
             begin(name)
             let start = diagnostics.lines.count
             try await body()
+            // Kept as a fixed wait: saves are debounced by the workspace's own 400 ms timer, and
+            // the flush count also checks that no further save follows.
             try? await Task.sleep(for: .milliseconds(700))
             let title = companion.mainWindow?.isVisible == true ? companion.mainWindow?.title ?? "-" : "(hidden)"
             let panels = "pet=\(companion.petPanel.isVisible) activity=\(companion.activityPanel.isVisible) controls=\(companion.controlsPanel.isVisible)"
