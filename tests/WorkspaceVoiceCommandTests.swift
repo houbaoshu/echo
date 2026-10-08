@@ -116,10 +116,10 @@ import Foundation
         try await initial.send(["full", "…"]); try await bReply.send(["B partial", "…", "…"]); await tick()
         check(synths.isEmpty, "Text of A's and B's runs never enters TTS while it is written")
         initial.finish()
-        try await wait("A's final reply is spoken") { synths.count == 1 }
+        try await wait("A's final reply is spoken") { synths.count == 1 && !synths[0].chunks.isEmpty }
         let aFinal = try #require(a.store.responseMessage?.content)
-        check(aFinal.hasPrefix("initial partial") && synths[0].chunks == [aFinal],
-              "The run Voice joined is spoken once, from its final reply")
+        #expect(aFinal.hasPrefix("initial partial"), "The run Voice joined is spoken once, from its final reply")
+        #expect(synths[0].chunks == [aFinal], "The run Voice joined is spoken once, from its final reply")
         try await wait("listening resumes") { voice.snapshot.recognition == .listening && recognizers.count == 2 }
         let oldASR = recognizers[1]
         oldASR.emit("unconfirmed", final: false)

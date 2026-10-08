@@ -115,8 +115,10 @@ extension VoiceTests {
         defer { f.shutdown() }
         await f.start(); f.holdPlayback(); f.speak("第一次问题")
         try await f.puppet.reply("第一次回答")
-        try await waitForAgentVoice("first reply") { f.store.task?.status == .completed && f.synths.count == 1 }
-        check(f.workspace.send("第二次问题", conversationID: f.conversation.id), "text can interrupt completed audio")
+        try await waitForAgentVoice("first reply") {
+            f.store.task?.status == .completed && f.synths.count == 1 && f.audio.played.count == 1
+        }
+        #expect(f.workspace.send("第二次问题", conversationID: f.conversation.id), "text can interrupt completed audio")
         let run = try #require(f.store.task?.runID)
         check(f.voice.snapshot.recognition == .off(.recovery) && f.audio.capturePaused,
               "text interruption keeps acoustic tail protection during the next Agent request")
@@ -134,9 +136,9 @@ extension VoiceTests {
         // The request that was running when the follow-up arrived answers first; that text is not the reply.
         try await f.puppet.reply("先说第二次")
         try await f.puppet.reply("新的最终回答")
-        try await waitForAgentVoice("rejoined final") { f.synths.count == 2 }
-        check(f.voice.error == nil && f.synths[1].chunks == ["新的最终回答"],
-              "rejoining a running Agent resets old TTS text and speaks the new final")
+        try await waitForAgentVoice("rejoined final") { f.synths.count == 2 && !f.synths[1].chunks.isEmpty }
+        #expect(f.voice.error == nil, "rejoining a running Agent resets old TTS text and speaks the new final")
+        #expect(f.synths[1].chunks == ["新的最终回答"], "rejoining a running Agent resets old TTS text and speaks the new final")
         f.releasePlayback()
         await waitUntil { f.voice.snapshot.recognition == .listening }
         f.recognizers.last?.callback?(.init(result: .init(text: "下一句仍在讲话", utterances: [
@@ -166,9 +168,10 @@ extension VoiceTests {
         try await waitForAgentVoice("the first delta shows") { stream.live?.hasPrefix("今天") == true }
         check(f.synths.isEmpty, "streaming text never starts speech")
         first.send("散步。"); first.finish()
-        try await waitForAgentVoice("final reply") { f.synths.count == 1 }
-        check(stream.text == "今天**天气**不错，适合散步。" && stream.live == nil
-              && f.synths[0].chunks == ["今天**天气**不错，适合散步。"], "speech receives only the final reply")
+        try await waitForAgentVoice("final reply") { f.synths.count == 1 && !f.synths[0].chunks.isEmpty }
+        #expect(stream.text == "今天**天气**不错，适合散步。", "speech receives only the final reply")
+        #expect(stream.live == nil, "speech receives only the final reply")
+        #expect(f.synths[0].chunks == ["今天**天气**不错，适合散步。"], "speech receives only the final reply")
         check(f.store.messages.last?.content == "今天**天气**不错，适合散步。",
               "the settled reply is the conversation's own message, so nothing streams beside it")
         f.releasePlayback(); await tick()
@@ -216,8 +219,9 @@ extension VoiceTests {
         check(bubble() == .none && !shown(), "requesting the model shows no bubble")
         f.audio.playbackFrames = 4800
         try await f.puppet.reply(reply)
-        try await waitForAgentVoice("reply synthesized") { f.synths.count == 1 }
-        check(f.voice.spoken == nil && !shown(), "audio that starts before its subtitles shows nothing yet")
+        try await waitForAgentVoice("reply synthesized") { f.synths.count == 1 && f.audio.played.count == 1 }
+        #expect(f.voice.spoken == nil, "audio that starts before its subtitles shows nothing yet")
+        #expect(!shown(), "audio that starts before its subtitles shows nothing yet")
         let synth = f.synths[0]
         synth.subtitle([("##", 0), ("天", 0.1), ("气。", 0.3), ("今", 0.9), ("天", 1.1), ("天", 1.3), ("气", 1.5), ("很", 1.7), ("好，", 1.9)])
         check(shown() && f.voice.spoken?.source == reply, "the first subtitle makes the bubble take its place")
@@ -243,8 +247,8 @@ extension VoiceTests {
         try await f.puppet.waitForRequests(2)
         check(bubble() == .reply(reply, heard: nil), "the next request keeps the previous reply")
         try await f.puppet.reply("好的，下午见。")
-        try await waitForAgentVoice("second reply synthesized") { f.synths.count == 2 }
-        check(bubble() == .reply(reply, heard: nil), "new audio without subtitles keeps the previous reply")
+        try await waitForAgentVoice("second reply synthesized") { f.synths.count == 2 && f.audio.played.count == 2 }
+        #expect(bubble() == .reply(reply, heard: nil), "new audio without subtitles keeps the previous reply")
         f.synths[1].subtitle([("好", 0), ("的，", 0.2), ("下", 0.6), ("午", 0.8), ("见。", 1.0)])
         f.audio.playbackFrames += 7200
         check(bubble() == .reply("好的，下午见。", heard: "好的，"), "the next reply's first subtitle replaces the previous one")
@@ -267,8 +271,8 @@ extension VoiceTests {
         }
         f.speak("第三个问题", start: 800)
         try await f.puppet.reply("没有字幕的回复。")
-        try await waitForAgentVoice("third reply synthesized") { f.synths.count == 3 }
-        check(bubble() == .reply("好的，下午见。", heard: "好的，"), "until playback finishes the previous reply stays")
+        try await waitForAgentVoice("third reply synthesized") { f.synths.count == 3 && f.audio.played.count == 3 }
+        #expect(bubble() == .reply("好的，下午见。", heard: "好的，"), "until playback finishes the previous reply stays")
         f.releasePlayback(); await tick()
         check(bubble() == .reply("没有字幕的回复。", heard: nil) && shown(), "a reply without subtitles appears whole after playback")
         f.voice.end(); await tick()
@@ -340,9 +344,9 @@ extension VoiceTests {
             }
             defer { subscription.cancel() }
             try await f.puppet.reply("今天的天气非常晴朗，适合出门散步。")
-            try await waitForAgentVoice("final reply") { f.synths.count == 1 }
-            check(f.synths[0].chunks == ["今天的天气非常晴朗，适合出门散步。"] && f.voice.snapshot.replyAudio == .draining(run),
-                  "only the final reply is spoken as one synthesis input")
+            try await waitForAgentVoice("final reply") { f.synths.count == 1 && f.finishDrain != nil }
+            #expect(f.synths[0].chunks == ["今天的天气非常晴朗，适合出门散步。"], "only the final reply is spoken as one synthesis input")
+            #expect(f.voice.snapshot.replyAudio == .draining(run), "only the final reply is spoken as one synthesis input")
             let finalMessage = try #require(f.store.responseMessage)
             check(finalMessage.role == .assistant && f.store.messages.filter { $0.role == .assistant }.count == 1
                   && completions == [finalMessage.content] && f.store.task?.summary == "已完成",
