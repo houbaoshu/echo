@@ -166,6 +166,14 @@ extension LanguageModelExecutorGenerationRequest {
         }
     }
     var toolOutputs: [String] { transcript.toolOutputs }
+    /// Text of the model's earlier replies the request carries, in order.
+    var replies: [String] {
+        transcript.compactMap { entry in
+            guard case .response(let response) = entry else { return nil }
+            let text = AgentHarness.text(response.segments)
+            return text.isEmpty ? nil : text
+        }
+    }
     var feedback: [String] {
         transcript.compactMap { entry in
             guard case .prompt(let prompt) = entry, prompt.metadata[AgentPromptKey.feedback] != nil else { return nil }
@@ -229,8 +237,11 @@ final class PuppetModel: Sendable {
                     switch event {
                     case .text(let text): try await emit.text([text], entryID: stream.entryID)
                     case .call(let name, let arguments): await emit.call(name, arguments, id: "call-\(index)")
+                    case .fail(let error): throw error
                     }
                 }
+                // A cancelled stream ends the loop quietly; a real model request throws instead.
+                try Task.checkCancellation()
             }
         }
     }
@@ -269,9 +280,34 @@ final class PuppetModel: Sendable {
     return AgentHarness(resolveModel: { puppet.factory })
 }
 
+/// Native Agent sessions for a workspace's conversations, each answered by its own puppet model,
+/// in the order the workspace made them.
+@MainActor final class PuppetSessions {
+    private(set) var models: [PuppetModel] = []
+    var last: PuppetModel? { models.last }
+    var factory: () -> (any TaskSource)? {
+        { [self] in
+            let model = PuppetModel()
+            models.append(model)
+            return AgentHarness(resolveModel: { model.factory })
+        }
+    }
+    /// Model requests across every conversation.
+    var requestCount: Int { models.reduce(0) { $0 + $1.requests.count } }
+    /// The model of the conversation whose latest request ends with the user message `text`.
+    func model(asked text: String, timeout: Duration = .seconds(5)) async throws -> PuppetModel {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while true {
+            if let model = models.first(where: { $0.requests.last?.userTexts.last == text }) { return model }
+            guard ContinuousClock.now < deadline else { throw SettingsError("No model request for \(text)") }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+    }
+}
+
 /// Live output of one puppet generation.
 final class PuppetStream: Sendable {
-    enum Event: Sendable { case text(String), call(name: String, arguments: String) }
+    enum Event: Sendable { case text(String), call(name: String, arguments: String), fail(AgentModelError) }
     let entryID = "reply-" + UUID().uuidString
     let events: AsyncStream<Event>
     private let continuation: AsyncStream<Event>.Continuation
@@ -283,5 +319,7 @@ final class PuppetStream: Sendable {
         for chunk in chunks { send(chunk); try await Task.sleep(for: gap) }
     }
     func call(_ name: String, _ arguments: String) { continuation.yield(.call(name: name, arguments: arguments)) }
+    /// Ends the generation with a model error, after what it already streamed.
+    func fail(_ error: AgentModelError) { continuation.yield(.fail(error)) }
     func finish() { continuation.finish() }
 }

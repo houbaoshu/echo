@@ -88,6 +88,7 @@
 		E11000000000000000000B07 /* VoiceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F07 /* VoiceDiagnostics.swift */; };
 		E11000000000000000000B08 /* ChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F08 /* ChatTests.swift */; };
 		E11000000000000000000B0A /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11000000000000000000F0A /* SettingsTests.swift */; };
+		E11000000000000000000B0C /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
 		E11200000000000000000B00 /* AgentSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11200000000000000000F00 /* AgentSessionTests.swift */; };
 		E11300000000000000000B00 /* VoiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F00 /* VoiceTests.swift */; };
 		E11300000000000000000B01 /* VoiceBargeInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11300000000000000000F01 /* VoiceBargeInTests.swift */; };
@@ -1172,6 +1173,7 @@
 				E11000000000000000000B07 /* VoiceDiagnostics.swift in Sources */,
 				E11000000000000000000B08 /* ChatTests.swift in Sources */,
 				E11000000000000000000B0A /* SettingsTests.swift in Sources */,
+				E11000000000000000000B0C /* tests/support/ScriptedAgentModel.swift in Sources */,
 				75548D3C52D3DD19C3BD3ECB /* tests/support/NativeMemorySecrets.swift in Sources */,
 			);
 		};

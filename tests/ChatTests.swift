@@ -1,86 +1,98 @@
+import Combine
 import Foundation
 import Testing
 
-@MainActor final class ChatSource: TaskSource {
-    var histories: [[ConversationMessage]] = []
-    var callbacks: [@MainActor (TaskEvent) -> Void] = []
-    var cancels = 0
-    var onCancel: (() -> Void)?
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
-        histories.append(messages); callbacks.append(receive)
+/// A conversation's own commands on the native Agent engine, with a puppet model. The turn itself
+/// (context, streaming, Stop, steering, failures) is AgentHarnessTests'.
+@MainActor @Suite(.serialized) struct ChatTests {
+    static func wait(_ label: String, _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !condition() {
+            try #require(ContinuousClock.now < deadline, "Timed out: \(label)")
+            try await Task.sleep(for: .milliseconds(5))
+        }
     }
-    func cancel() { cancels += 1; onCancel?() }
-}
+    static func chat() -> (TaskStore, PuppetModel) {
+        let puppet = PuppetModel()
+        return (TaskStore(source: AgentHarness(resolveModel: { puppet.factory })), puppet)
+    }
+    /// Reopens a conversation from what it saved, through the archive's JSON.
+    static func reopen(_ snapshot: TaskStore.Snapshot) throws -> (TaskStore, PuppetModel) {
+        let archived = try JSONDecoder().decode(TaskStore.Snapshot.self, from: JSONEncoder().encode(snapshot))
+        let puppet = PuppetModel()
+        return (TaskStore(snapshot: archived, source: AgentHarness(resolveModel: { puppet.factory })), puppet)
+    }
 
-@Suite(.serialized) struct ChatTests {
-    @Test @MainActor static func sendStopRetryAndRestore() async throws {
-        let source = ChatSource()
-        let chat = TaskStore(source: source)
-        defer { chat.shutdown() }
+    @Test static func sendStopRetryAndShutdown() async throws {
+        let (chat, puppet) = Self.chat()
+        var events: [String] = []
+        let observation = chat.lifecycle.sink { event in
+            switch event {
+            case .started: events.append("started")
+            case .reply(_, .completed(let text)): events.append("completed:\(text)")
+            case .reply(_, .failed(let error)): events.append("failed:\(error)")
+            case .reply(_, .progress): events.append("progress")
+            case .stopped: events.append("stopped")
+            case .retired: events.append("retired")
+            }
+        }
+        defer { observation.cancel() }
         #expect(!chat.send(" \n "), "Whitespace must not submit")
+        #expect(chat.messages.isEmpty && chat.task == nil)
         #expect(chat.send("Hello"))
-        #expect(chat.messages.count == 2, "Sending must immediately create a user and assistant placeholder")
-        #expect(source.histories[0].count == 1, "Placeholder must not enter context")
-        #expect(!chat.send("duplicate"), "Sending during generation must be rejected")
-        try #require(chat.messages.count == 2)
-        let placeholder = chat.messages[1]
-        #expect(placeholder.status == .pending && placeholder.content.isEmpty)
-        #expect(chat.messages[0].status == .completed)
-        chat.mainDraft = "keep draft"; chat.sendMainMessage()
-        #expect(chat.mainDraft == "keep draft")
-        let original = source.callbacks[0]
+        try await puppet.waitForRequests(1)
+        #expect(!chat.retry(), "A running turn has nothing to continue")
         chat.hideMainWindow(); chat.closeActivity()
-        #expect(chat.isGenerating, "Hiding surfaces must not cancel generation")
-        original(.progress("A")); original(.progress("AB"))
-        #expect(chat.messages[1].content == "AB" && chat.messages[1].status == .streaming)
-        source.onCancel = { original(.completed("late cancel callback")) }
+        #expect(chat.isGenerating && puppet.cancelledCount == 0, "Hiding surfaces must not cancel generation")
+
+        let cutOff = PuppetStream()
+        try await puppet.answer(.stream(cutOff))
+        try await cutOff.send(["A", "B", "C", "D"])
+        try await Self.wait("the reply streams") { chat.replyStream.live?.hasPrefix("AB") == true }
         chat.stopTask()
-        #expect(chat.messages[1].content == "AB" && chat.messages[1].status == .stopped)
-        let cancelCount = source.cancels
-        chat.stopTask(); #expect(source.cancels == cancelCount)
-        original(.failed("late failure")); original(.progress("late text"))
-        #expect(chat.messages[1].content == "AB")
-        chat.retry(); chat.retry()
-        #expect(source.histories.count == 2 && chat.messages.count == 2)
-        #expect(chat.messages[1].id == placeholder.id && chat.messages[1].timestamp == placeholder.timestamp)
-        #expect(chat.messages[1].content.isEmpty && chat.messages[1].status == .pending)
-        #expect(source.histories[0] == source.histories[1], "Retry must freeze the same context")
-        original(.completed("old run"))
-        source.callbacks[1](.progress("new partial")); source.callbacks[1](.failed("offline"))
-        #expect(chat.messages[1].content == "new partial" && chat.messages[1].status == .failed)
-        #expect(chat.messages[1].errorMessage == "offline")
-        chat.retry()
-        #expect(chat.messages[1].errorMessage == nil)
-        source.callbacks[2](.completed("answer"))
-        #expect(chat.messages[1].status == .completed && !chat.canRetry)
-        chat.stopTask(); #expect(chat.messages[1].status == .completed)
+        let stopping = chat.task
+        #expect(stopping?.status == .stopping)
+        chat.mainDraft = "keep draft"; chat.sendMainMessage()
+        #expect(chat.mainDraft == "keep draft", "A send refused during Stop keeps the draft")
+        chat.stopTask()
+        #expect(chat.task == stopping, "A second Stop changes nothing")
+        try await Self.wait("stopped") { !chat.isGenerating }
+        #expect(chat.task?.status == .stopped && puppet.cancelledCount == 1)
+        // Output the cancelled generation still writes reaches nothing.
+        cutOff.send("late text"); cutOff.finish()
+        await Task.yield()
+        #expect(chat.messages.map(\.content) == ["Hello"] && chat.replyStream.live == nil, "The cut-off reply is dropped")
+        #expect(events == ["started", "stopped"], "Stop is announced once")
+
+        #expect(chat.retry() && !chat.retry(), "Continue starts once")
+        try await puppet.waitForRequests(2)
+        #expect(puppet.requests[1].kinds == ["instructions", "prompt", "continue"], "Continue adds no user message")
+        try await puppet.answer(.fail(AgentModelError(message: "offline")))
+        try await Self.wait("failed") { !chat.isGenerating }
+        #expect(chat.task?.status == .failed && chat.task?.summary == "offline" && chat.canRetry)
+        #expect(chat.retry())
+        try await puppet.reply("answer")
+        try await Self.wait("answered") { !chat.isGenerating }
+        #expect(chat.task?.status == .completed && !chat.canRetry && chat.messages.map(\.content) == ["Hello", "answer"])
+        chat.stopTask()
+        #expect(chat.task?.status == .completed, "Stop after the turn ended does nothing")
+
         #expect(chat.send("follow up"))
-        #expect(source.histories[3].map(\.content) == ["Hello", "answer", "follow up"])
-        chat.stopTask(); #expect(chat.messages.last?.status == .stopped)
-        #expect(chat.send("third"))
-        #expect(source.histories[4].map(\.content) == ["Hello", "answer", "follow up", "third"])
-        source.callbacks[4](.failed("before first text"))
-        #expect(chat.messages.last?.status == .failed && chat.messages.last?.content == "")
-        let restored = TaskStore(snapshot: chat.snapshot, source: source)
-        restored.retry()
-        #expect(restored.messages.count == chat.messages.count && restored.messages.last?.status == .pending)
-        let interrupted = TaskStore(snapshot: restored.snapshot, source: source)
-        #expect(interrupted.messages.last?.status == .interrupted && interrupted.canRetry)
-        #expect(interrupted.messages.last?.id == restored.messages.last?.id)
+        try await puppet.waitForRequests(4)
+        #expect(puppet.requests[3].userTexts == ["Hello", "follow up"] && puppet.requests[3].replies == ["answer"])
         let before = chat.messages
-        chat.shutdown(); source.callbacks[4](.completed("retired"))
-        #expect(chat.messages == before && !chat.send("after shutdown"))
-        restored.shutdown(); interrupted.shutdown()
+        chat.shutdown()
+        #expect(chat.task?.status == .interrupted && !chat.send("after shutdown"))
+        try await Self.wait("shutdown cancels the request") { puppet.cancelledCount == 2 }
+        await Task.yield()
+        #expect(chat.messages == before && chat.task?.status == .interrupted, "Nothing reaches a retired conversation")
+        #expect(events.last == "retired" && events.filter { $0.hasPrefix("completed") } == ["completed:answer"])
     }
-    @Test @MainActor static func restoredChatStates() throws {
-        let source = ChatSource()
-        let failing = ChatSource()
-        let seed = TaskStore(source: failing)
-        defer { seed.shutdown() }
-        try #require(seed.send("Hello"))
-        try #require(failing.callbacks.count == 1)
-        failing.callbacks[0](.failed("before first text"))
-        let archiveSource = seed.snapshot
+
+    /// Reopening on the native engine rebuilds the messages from the transcript, which has no reply
+    /// for a turn that ended before one. `TaskStore.init(snapshot:)` then adds a terminal assistant
+    /// message, so the conversation itself shows the outcome and offers Continue.
+    @Test static func restoredChatStates() async throws {
         let decoder = JSONDecoder()
         // A message needs its content, status and time; the earliest builds' `text` form does not read.
         #expect(throws: DecodingError.self) {
@@ -88,60 +100,71 @@ import Testing
         }
         let queuedSteering = try decoder.decode(ConversationMessage.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000005","role":"user","content":"follow up","status":"completed","timestamp":0,"steering":"待处理"}"#.utf8))
         #expect(queuedSteering.steering == .queued, "A queued follow-up keeps its caption")
-        var queuedArchive = archiveSource
-        queuedArchive.messages = [queuedSteering]
-        let reopened = TaskStore(snapshot: queuedArchive, source: nil)
-        #expect(reopened.messages.first?.steering == .interrupted, "A follow-up left queued at quit reopens as interrupted")
-        reopened.shutdown()
-        var archive = archiveSource
-        archive.messages = [seed.messages[0]]
-        let failedBeforeReply = TaskStore(snapshot: archive, source: source)
-        #expect(failedBeforeReply.messages.last?.status == .failed, "A turn that failed before any reply shows its error and Retry in the conversation")
-        failedBeforeReply.retry()
-        #expect(failedBeforeReply.messages.count == 2 && failedBeforeReply.messages.last?.status == .pending, "Retry reuses the placeholder reply")
-        failedBeforeReply.shutdown()
-        let stoppedAtShutdown = failedBeforeReply.messages
-        source.callbacks.last?(.progress("after shutdown"))
-        #expect(failedBeforeReply.messages == stoppedAtShutdown && failedBeforeReply.messages.last?.status == .interrupted)
-    }
-    @Test @MainActor static func missingConfigurationProducesFailure() throws {
-        let store = TaskStore()
-        defer { store.shutdown() }
-        try #require(store.send("missing configuration"))
-        #expect(store.messages.last?.status == .failed)
-    }
-    @Test @MainActor static func stoppedPartialContext() throws {
-        let source = ChatSource(), store = TaskStore(source: ChatSource())
-        defer { store.shutdown() }
-        let candidates: [ConversationMessage] = [
-            .init(role: .user, content: "question"),
-            .init(role: .assistant, content: "complete", status: .completed),
-            .init(role: .assistant, content: "partial", status: .stopped),
-            .init(role: .assistant, content: " \n ", status: .stopped),
-            .init(role: .assistant, content: "", status: .completed),
-            .init(role: .assistant, content: "failed", status: .failed),
-            .init(role: .assistant, content: "interrupted", status: .interrupted),
-            .init(role: .assistant, content: "streaming", status: .streaming),
-            .init(role: .assistant, content: "", status: .pending)
-        ]
-        #expect(ConversationContext.messages(candidates).map(\.content) == ["question", "complete", "partial"])
-        store.send("first")
-        store.receive(.progress("stopped partial"), runID: store.task!.runID)
-        store.stopTask()
-        let archived = try JSONDecoder().decode(TaskStore.Snapshot.self, from: JSONEncoder().encode(store.snapshot))
-        let restored = TaskStore(snapshot: archived, source: source)
-        defer { restored.shutdown() }
-        #expect(restored.messages.last?.status == .stopped)
-        #expect(restored.requestMessages.map(\.content) == ["first", "stopped partial"])
-        restored.send("second")
-        #expect(source.histories.last?.map(\.content) == ["first", "stopped partial", "second"])
-        source.callbacks.last?(.progress("retry target")); restored.stopTask()
-        let target = restored.messages.last!
-        #expect(restored.retry())
-        #expect(restored.messages.last?.id == target.id && restored.messages.count == 4)
-        #expect(source.histories.last?.map(\.content) == ["first", "stopped partial", "second"],
-                     "Retry excludes its own stopped partial but keeps earlier stopped replies")
-        print("PASS: stopped partial context, original-position Retry and archive round trip")
-    }
 
+        // Failed before any reply.
+        let (failing, failingModel) = Self.chat()
+        try #require(failing.send("Hello"))
+        try await failingModel.answer(.fail(AgentModelError(message: "before first text")))
+        try await Self.wait("failed") { !failing.isGenerating }
+        #expect(failing.task?.status == .failed && failing.messages.map(\.role) == [.user],
+                "While open, the failure is the turn's summary; no message stands for the reply")
+        let (failed, failedModel) = try Self.reopen(failing.snapshot)
+        let placeholder = try #require(failed.messages.last)
+        #expect(failed.messages.map(\.content) == ["Hello", ""] && placeholder.role == .assistant && placeholder.status == .failed
+                && placeholder.errorMessage == "before first text" && placeholder.timestamp == Date(timeIntervalSince1970: 0),
+                "A turn that failed before any reply shows its error and Retry in the conversation")
+        #expect(failed.responseMessage == placeholder && failed.canRetry)
+        #expect(failed.retry())
+        try await failedModel.waitForRequests(1)
+        #expect(failedModel.requests[0].kinds == ["instructions", "prompt", "continue"] && failedModel.requests[0].userTexts == ["Hello"])
+        try await failedModel.reply("answer")
+        try await Self.wait("continued") { !failed.isGenerating }
+        #expect(failed.messages.map(\.content) == ["Hello", "answer"] && !failed.messages.contains { $0.id == placeholder.id },
+                "Continue replaces the placeholder with the reply")
+        failed.shutdown(); failing.shutdown()
+
+        // Stopped before any reply.
+        let (stopping, stoppingModel) = Self.chat()
+        try #require(stopping.send("Hello"))
+        try await stoppingModel.waitForRequests(1)
+        stopping.stopTask()
+        try await Self.wait("stopped") { !stopping.isGenerating }
+        let (stopped, stoppedModel) = try Self.reopen(stopping.snapshot)
+        #expect(stopped.messages.map(\.content) == ["Hello", ""] && stopped.messages.last?.role == .assistant
+                && stopped.messages.last?.status == .stopped && stopped.messages.last?.errorMessage == nil && stopped.canRetry)
+        stopping.shutdown()
+
+        // Saved while the turn ran, as at a quit or crash.
+        let (running, runningModel) = Self.chat()
+        try #require(running.send("Hello"))
+        try await runningModel.waitForRequests(1)
+        let (interrupted, _) = try Self.reopen(running.snapshot)
+        #expect(interrupted.task?.status == .interrupted && interrupted.messages.map(\.content) == ["Hello", ""]
+                && interrupted.messages.last?.status == .interrupted && interrupted.canRetry)
+        interrupted.shutdown()
+        // A follow-up still queued for the running turn reopens as interrupted.
+        #expect(running.send("follow up") && running.messages.last?.steering == .queued)
+        let (reopened, _) = try Self.reopen(running.snapshot)
+        #expect(reopened.messages.first { $0.content == "follow up" }?.steering == .interrupted,
+                "A follow-up left queued at quit reopens as interrupted")
+        reopened.shutdown(); running.shutdown()
+
+        // A completed turn has its reply, and reopens with nothing added.
+        let (completing, completingModel) = Self.chat()
+        try #require(completing.send("Hello"))
+        try await completingModel.reply("answer")
+        try await Self.wait("answered") { !completing.isGenerating }
+        let (completed, _) = try Self.reopen(completing.snapshot)
+        #expect(completed.messages == completing.messages && completed.messages.map(\.content) == ["Hello", "answer"])
+        completed.shutdown(); completing.shutdown()
+
+        // Shutting down during Continue: the turn reads as interrupted and nothing reaches it after.
+        #expect(stopped.retry())
+        try await stoppedModel.waitForRequests(1)
+        stopped.shutdown()
+        let atShutdown = stopped.messages
+        try await Self.wait("shutdown cancels the request") { stoppedModel.cancelledCount == 1 }
+        await Task.yield()
+        #expect(stopped.messages == atShutdown && stopped.messages.map(\.content) == ["Hello"] && stopped.task?.status == .interrupted)
+    }
 }

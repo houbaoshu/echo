@@ -1,38 +1,47 @@
 import Testing
 import Foundation
+import FoundationModels
 
-@MainActor private final class WorkspaceTestSource: TaskSource {
-    var requests = 0
-    var cancellations = 0
-    var lastRequest: [ConversationMessage] = []
-    var receive: (@MainActor (TaskEvent) -> Void)?
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
-        requests += 1; lastRequest = messages; self.receive = receive
-    }
-    func cancel() { cancellations += 1 }
-}
-
+/// The workspace with native Agent conversations, each answered by its own puppet model
+/// (`PuppetSessions`): a turn ends when the test answers its model request.
 @Suite(.serialized) struct WorkspaceTests {
-    @MainActor @Test(.tags(.fast)) static func petControlsStayExpandedWhileAnyCardShows() throws {
-        var sources: [WorkspaceTestSource] = []
-        let workspace = WorkspaceStore(sourceFactory: {
-            let source = WorkspaceTestSource()
-            sources.append(source)
-            return source
-        })
+    @MainActor static func wait(_ label: String, sourceLocation: SourceLocation = #_sourceLocation,
+                                _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !condition() {
+            try #require(ContinuousClock.now < deadline, "Timed out: \(label)", sourceLocation: sourceLocation)
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+    /// Answers the conversation's waiting model request and waits for its turn to end.
+    @MainActor static func finish(_ conversation: WorkspaceConversation, _ model: PuppetModel?, _ answer: PuppetModel.Answer,
+                                  sourceLocation: SourceLocation = #_sourceLocation) async throws {
+        let model = try #require(model, sourceLocation: sourceLocation)
+        try await model.answer(answer)
+        try await wait("turn ends", sourceLocation: sourceLocation) { !conversation.store.isGenerating }
+    }
+    @MainActor static func reply(_ conversation: WorkspaceConversation, _ model: PuppetModel?, _ text: String,
+                                 sourceLocation: SourceLocation = #_sourceLocation) async throws {
+        try await finish(conversation, model, .text(text), sourceLocation: sourceLocation)
+    }
+
+    @MainActor @Test(.tags(.fast)) static func petControlsStayExpandedWhileAnyCardShows() async throws {
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(!workspace.keepsPetControlsExpanded, "Without cards the controls follow hover")
         #expect(workspace.sendQuickMessage("first"))
         let first = try #require(workspace.activity)
-        let firstSource = try #require(sources.last)
+        let firstModel = try #require(puppets.last)
         #expect(workspace.keepsPetControlsExpanded, "A running card keeps the controls")
-        for (event, state) in [(TaskEvent.completed("done"), "completed"), (.failed("failure"), "failed")] {
-            firstSource.receive?(event)
-            #expect(workspace.keepsPetControlsExpanded, "A \(state) card keeps the controls")
+        for (answer, state) in [(PuppetModel.Answer.text("done"), TaskStatus.completed), (.fail(AgentModelError(message: "failure")), .failed)] {
+            try await finish(first, firstModel, answer)
+            #expect(first.store.task?.status == state && workspace.keepsPetControlsExpanded, "A \(state) card keeps the controls")
             #expect(workspace.send("again", conversationID: first.id))
         }
         first.store.stopTask()
-        #expect(workspace.keepsPetControlsExpanded, "A stopped card keeps the controls")
+        try await wait("stopped") { !first.store.isGenerating }
+        #expect(first.store.task?.status == .stopped && workspace.keepsPetControlsExpanded, "A stopped card keeps the controls")
 
         workspace.toggleActivityTray()
         #expect(workspace.petTrayLevel == .collapsed && !workspace.keepsPetControlsExpanded, "The bell follows hover")
@@ -51,39 +60,36 @@ import Foundation
         #expect(!workspace.keepsPetControlsExpanded, "Without cards the controls follow hover again")
     }
 
-    @MainActor @Test(.tags(.fast)) static func completionKeepsATrayCollapsedDuringTheRun() throws {
-        let source = WorkspaceTestSource()
-        let workspace = WorkspaceStore(sourceFactory: { source })
+    @MainActor @Test(.tags(.fast)) static func completionKeepsATrayCollapsedDuringTheRun() async throws {
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(workspace.sendQuickMessage("background"))
         let chat = try #require(workspace.activity)
+        let model = try #require(puppets.last)
         workspace.toggleActivityTray()
         #expect(workspace.petTrayLevel == .collapsed && chat.store.isGenerating)
-        source.receive?(.completed("result after collapsing"))
+        try await reply(chat, model, "result after collapsing")
         #expect(workspace.petTrayLevel == .collapsed && !workspace.keepsPetControlsExpanded
                 && workspace.unseenCompletedCount == 1,
                 "Completion leaves a tray collapsed during the run collapsed, with the bell counting the result")
         workspace.toggleActivityTray()
         workspace.openPetActivity(conversationID: chat.id)
         #expect(workspace.send("viewed result", conversationID: chat.id))
-        source.receive?(.completed("already viewed"))
+        try await reply(chat, model, "already viewed")
         #expect(!workspace.keepsPetControlsExpanded && workspace.petActivities.isEmpty)
     }
 
-    @MainActor @Test static func petCardsStayUnreadUntilOpened() throws {
-        var sources: [WorkspaceTestSource] = []
-        let workspace = WorkspaceStore(sourceFactory: {
-            let source = WorkspaceTestSource()
-            sources.append(source)
-            return source
-        })
+    @MainActor @Test static func petCardsStayUnreadUntilOpened() async throws {
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(workspace.sendQuickMessage("第一张卡片"))
         let first = try #require(workspace.activity)
-        let firstSource = try #require(sources.last)
+        let firstModel = try #require(puppets.last)
         let taskID = first.store.task?.id
-        let reply = "简短结果 " + String(repeating: "完整历史内容", count: 100)
-        firstSource.receive?(.completed(reply))
+        let result = "简短结果 " + String(repeating: "完整历史内容", count: 100)
+        try await reply(first, firstModel, result)
         #expect(workspace.isPetActivityVisible && !first.store.activitiesCollapsed)
         #expect(first.store.cardSummary.hasPrefix("简短结果"))
         #expect(workspace.unseenCompletedCount == 1)
@@ -98,9 +104,10 @@ import Foundation
         #expect(workspace.sendFollowUp(conversationID: first.id))
         #expect(first.store.followUpDraft.isEmpty && first.store.task?.id == taskID)
         #expect(workspace.conversations.count == 1 && workspace.petActivityIDs == [first.id])
-        #expect(firstSource.lastRequest.first?.content == "第一张卡片")
-        #expect(firstSource.lastRequest.contains { $0.role == .assistant && $0.content == reply })
-        firstSource.receive?(.completed("跟进结果"))
+        try await firstModel.waitForRequests(2)
+        #expect(firstModel.requests[1].userTexts == ["第一张卡片", "继续原会话"])
+        #expect(firstModel.requests[1].replies == [result])
+        try await reply(first, firstModel, "跟进结果")
         #expect(first.store.isFollowUpExpanded && workspace.isPetActivityVisible)
         #expect(workspace.unseenCompletedCount == 1)
         workspace.toggleActivityTray()
@@ -111,7 +118,7 @@ import Foundation
 
         #expect(workspace.sendQuickMessage("第二张卡片"))
         let second = try #require(workspace.activity)
-        sources.last?.receive?(.completed("第二个结果"))
+        try await reply(second, puppets.last, "第二个结果")
         workspace.expandActivityList()
         #expect(workspace.petTrayLevel == .list && workspace.visiblePetActivities.count == 2
                 && workspace.unseenCompletedCount == 2)
@@ -128,34 +135,30 @@ import Foundation
         #expect(workspace.send("运行时收起", conversationID: first.id))
         workspace.toggleActivityTray()
         #expect(first.store.isGenerating)
-        firstSource.receive?(.completed("收起后的结果"))
+        try await reply(first, firstModel, "收起后的结果")
         #expect(!workspace.isPetActivityVisible && workspace.unseenCompletedCount == 1)
         workspace.toggleActivityTray()
         #expect(workspace.isPetActivityVisible)
         #expect(workspace.send("运行时打开", conversationID: first.id))
         workspace.openPetActivity(conversationID: first.id)
         #expect(first.store.isGenerating && workspace.petActivities.isEmpty)
-        firstSource.receive?(.completed("聊天里的结果"))
+        try await reply(first, firstModel, "聊天里的结果")
         #expect(workspace.petActivities.isEmpty && workspace.unseenCompletedCount == 0)
     }
 
     /// Clicking the pet opens a hidden main window on a new chat, never on a notification's chat;
     /// a window already showing keeps its chat, and Live Voice still takes it to the call.
-    @MainActor @Test(.tags(.fast)) static func petOpensTheMainWindowOnANewChat() throws {
-        var sources: [WorkspaceTestSource] = []
-        let workspace = WorkspaceStore(sourceFactory: {
-            let source = WorkspaceTestSource()
-            sources.append(source)
-            return source
-        })
+    @MainActor @Test(.tags(.fast)) static func petOpensTheMainWindowOnANewChat() async throws {
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
         defer { workspace.shutdown() }
         let blank = try #require(workspace.selected)
         #expect(workspace.sendQuickMessage("第一张卡片"))
         let first = try #require(workspace.activity)
-        sources.last?.receive?(.completed("第一个结果"))
+        try await reply(first, puppets.last, "第一个结果")
         #expect(workspace.sendQuickMessage("第二张卡片"))
         let second = try #require(workspace.activity)
-        sources.last?.receive?(.completed("第二个结果"))
+        try await reply(second, puppets.last, "第二个结果")
         #expect(workspace.unseenCompletedCount == 2 && workspace.activityID == second.id)
 
         let focusRequests = workspace.composerFocusRequest
@@ -203,22 +206,18 @@ import Foundation
         workspace.voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
     }
 
-    @MainActor @Test(.tags(.fast)) static func petTrayStepsBetweenCollapsedStackAndList() throws {
-        var sources: [WorkspaceTestSource] = []
-        let workspace = WorkspaceStore(sourceFactory: {
-            let source = WorkspaceTestSource()
-            sources.append(source)
-            return source
-        })
+    @MainActor @Test(.tags(.fast)) static func petTrayStepsBetweenCollapsedStackAndList() async throws {
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
         defer { workspace.shutdown() }
-        func notify(_ text: String) throws -> WorkspaceConversation {
+        func notify(_ text: String) async throws -> WorkspaceConversation {
             #expect(workspace.sendQuickMessage(text))
             let conversation = try #require(workspace.activity)
-            sources.last?.receive?(.completed(text + "的结果"))
+            try await reply(conversation, puppets.last, text + "的结果")
             return conversation
         }
-        let first = try notify("第一条")
-        let second = try notify("第二条")
+        let first = try await notify("第一条")
+        let second = try await notify("第二条")
         #expect(workspace.petTrayLevel == .stack, "A new notification arrives as the stack")
 
         workspace.toggleActivityTray()
@@ -249,13 +248,13 @@ import Foundation
         #expect(workspace.petTrayLevel == .stack && workspace.petFollowUpID == nil && !first.store.isFollowUpExpanded)
 
         workspace.toggleActivityTray()
-        let third = try notify("第三条")
+        let third = try await notify("第三条")
         #expect(workspace.petTrayLevel == .stack && workspace.visiblePetActivities.map(\.id) == [third.id],
                 "A notification to a collapsed tray pops up again, with the folded cards left folded")
         workspace.toggleActivityTray(); workspace.toggleActivityTray()
         workspace.expandActivityList()
         #expect(workspace.petTrayLevel == .list && workspace.visiblePetActivities.count == 3)
-        let fourth = try notify("第四条")
+        let fourth = try await notify("第四条")
         #expect(workspace.petTrayLevel == .list, "An open list stays open for a new notification")
         #expect(workspace.visiblePetActivities.map(\.id) == [fourth.id, third.id, second.id, first.id],
                 "The new notification goes on top")
@@ -269,13 +268,13 @@ import Foundation
                 "A list down to one card goes back to the plain card")
     }
 
-    @MainActor @Test(.tags(.fast)) static func singlePetNotificationKeepsOneStepTray() throws {
-        let source = WorkspaceTestSource()
-        let workspace = WorkspaceStore(sourceFactory: { source })
+    @MainActor @Test(.tags(.fast)) static func singlePetNotificationKeepsOneStepTray() async throws {
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(workspace.sendQuickMessage("唯一的通知"))
         let only = try #require(workspace.activity)
-        source.receive?(.completed("结果"))
+        try await reply(only, puppets.last, "结果")
         workspace.expandActivityList()
         #expect(workspace.petTrayLevel == .stack && !workspace.isActivityListExpanded, "One card has no list")
         workspace.toggleActivityTray()
@@ -288,26 +287,21 @@ import Foundation
     }
 
     @MainActor @Test static func ignoringPetNotificationsPreservesHistoryAndFutureResults() async throws {
-        var sources: [WorkspaceTestSource] = []
-        let workspace = WorkspaceStore(sourceFactory: {
-            let source = WorkspaceTestSource()
-            sources.append(source)
-            return source
-        })
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: puppets.factory)
         defer { workspace.shutdown() }
         let selection = workspace.selectedID
         var opens = 0
         workspace.onOpenPetActivity = { opens += 1 }
         #expect(workspace.sendQuickMessage("第一条通知"))
         let first = try #require(workspace.activity)
-        let firstSource = try #require(sources.last)
-        firstSource.receive?(.completed("第一条结果"))
+        let firstModel = try #require(puppets.last)
+        try await reply(first, firstModel, "第一条结果")
         let firstHistory = first.store.messages
         let taskID = first.store.task?.id
         #expect(workspace.sendQuickMessage("第二条通知"))
         let second = try #require(workspace.activity)
-        let secondSource = try #require(sources.last)
-        secondSource.receive?(.completed("第二条结果"))
+        try await reply(second, puppets.last, "第二条结果")
         let secondHistory = second.store.messages
         #expect(workspace.unseenCompletedCount == 2)
 
@@ -331,7 +325,8 @@ import Foundation
             #expect(workspace.petActivities.map(\.id) == [second.id])
             #expect(workspace.unseenCompletedCount == 1)
         }
-        firstSource.receive?(.completed("重复的旧结果"))
+        // A finished turn leaves no model request a result could still come back for.
+        #expect(firstModel.waiting == 0 && !first.store.isGenerating)
         workspace.dismissPetActivity(conversationID: first.id)
         #expect(first.store.messages == firstHistory && workspace.unseenCompletedCount == 1)
         workspace.dismissPetActivity(conversationID: second.id)
@@ -344,20 +339,21 @@ import Foundation
 
         #expect(workspace.send("同一会话的新任务", conversationID: first.id))
         #expect(first.store.task?.id == taskID && workspace.petActivityIDs == [first.id])
-        firstSource.receive?(.completed("新的提醒"))
+        try await reply(first, firstModel, "新的提醒")
         #expect(workspace.isPetActivityVisible && workspace.unseenCompletedCount == 1)
         #expect(first.store.messages.prefix(firstHistory.count).elementsEqual(firstHistory))
         #expect(workspace.conversations.count == 2 && opens == 0)
 
         #expect(workspace.send("运行中忽略", conversationID: first.id))
-        let cancellations = firstSource.cancellations
+        try await firstModel.waitForRequests(3)
+        let cancellations = firstModel.cancelledCount
         workspace.dismissPetActivity(conversationID: first.id)
-        #expect(first.store.isGenerating && firstSource.cancellations == cancellations)
-        firstSource.receive?(.completed("忽略后的完成结果"))
+        #expect(first.store.isGenerating && firstModel.cancelledCount == cancellations)
+        try await reply(first, firstModel, "忽略后的完成结果")
         workspace.toggleActivityTray()
         #expect(workspace.petActivities.isEmpty && workspace.unseenCompletedCount == 0)
         #expect(workspace.send("再产生新结果", conversationID: first.id))
-        firstSource.receive?(.completed("仍然可以提醒"))
+        try await reply(first, firstModel, "仍然可以提醒")
         #expect(workspace.isPetActivityVisible && workspace.unseenCompletedCount == 1)
     }
 
@@ -368,9 +364,12 @@ import Foundation
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-workspace-tests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
         let persistence = WorkspacePersistence(url: directory.appendingPathComponent("workspace.json"))
-        let source = WorkspaceTestSource()
-        var workspace = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        let puppets = PuppetSessions()
+        var workspace = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
         var draft = workspace.selected!
+        let draftModel = try #require(puppets.last)
+        // Reopening reads the native histories, as the app does.
+        func reopen() -> WorkspaceStore { WorkspaceStore(persistence: persistence, sourceFactory: { idleAgent() }) }
         check(workspace.conversations.isEmpty, "Startup opens a composer without a sidebar conversation")
         check(workspace.activityID == nil && workspace.activityStore.task == nil, "First launch has no active conversation or task")
         check(!workspace.isMainWindowVisible && !workspace.activityStore.isActivityVisible && !workspace.voice.isActive,
@@ -380,27 +379,30 @@ import Foundation
         check(workspace.composerFocusRequest > initialFocus, "Repeated new conversation requests input focus")
         draft.store.mainDraft = " \n "
         draft.store.sendMainMessage()
-        check(workspace.conversations.isEmpty && source.requests == 0, "Whitespace cannot create or send a conversation")
+        check(workspace.conversations.isEmpty && draft.store.messages.isEmpty && draft.store.task == nil,
+              "Whitespace cannot create or send a conversation")
         draft.store.mainDraft = "尚未发送的内容"
         workspace.flush()
-        let restored = WorkspaceStore(persistence: persistence)
+        let restored = reopen()
         check(restored.conversations.isEmpty && restored.selected?.store.mainDraft == "尚未发送的内容", "Draft survives reload without entering recent chats")
         restored.shutdown()
         draft.store.mainDraft = "第一条消息"
         draft.store.sendMainMessage()
         check(workspace.conversations.count == 1 && workspace.selectedID == draft.id, "First send promotes the same draft exactly once")
-        check(draft.title == "第一条消息" && source.requests == 1, "First send names the conversation and sends once")
+        try await draftModel.waitForRequests(1)
+        check(draft.title == "第一条消息" && puppets.requestCount == 1, "First send names the conversation and sends once")
         check(workspace.snapshot.drafts?.isEmpty == true, "Promoted draft leaves the draft collection")
-        source.receive?(.completed("第一条回复"))
+        try await reply(draft, draftModel, "第一条回复")
         workspace.flush()
-        let completedReload = WorkspaceStore(persistence: persistence)
+        let completedReload = reopen()
         check(completedReload.activityID == nil && completedReload.selected?.store.task == nil,
               "A completed historical task is not restored as the current session")
         check(completedReload.conversations.first?.store.messages == draft.store.messages,
               "Completed historical messages survive restart unchanged")
         completedReload.shutdown()
         draft.store.send("第二条消息")
-        check(workspace.conversations.count == 1 && source.requests == 2, "Follow-up does not create another conversation")
+        try await draftModel.waitForRequests(2)
+        check(workspace.conversations.count == 1 && puppets.requestCount == 2, "Follow-up does not create another conversation")
 
         var second = workspace.newConversation()
         second.store.send("另一条聊天")
@@ -412,7 +414,7 @@ import Foundation
         }
         workspace.shutdown()
         try persistence.save(seeded)
-        workspace = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        workspace = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
         check(workspace.selectedID != seeded.selectedID && workspace.selected?.store.messages.isEmpty == true,
               "Restart selects an unsent composer instead of the last historical conversation")
         check(workspace.activityID == nil && workspace.activity == nil && workspace.activityStore.task == nil,
@@ -439,11 +441,13 @@ import Foundation
         draft.store.send("正在当前聊天内发送")
         let sentAt = workspace.snapshot.conversations.first { $0.id == draft.id }!.lastUsed
         workspace.flush()
-        let activeReload = WorkspaceStore(persistence: persistence)
+        let activeReload = reopen()
         check(activeReload.recentConversations.first?.id == draft.id, "Saving an active chat persists real interaction recency for reopening")
         activeReload.shutdown()
-        source.receive?(.progress("回复片段"))
-        source.receive?(.completed("完整回复"))
+        let streamed = PuppetStream()
+        try await puppets.model(asked: "正在当前聊天内发送").answer(.stream(streamed))
+        try await streamed.send(["回复片段", "完整回复"]); streamed.finish()
+        try await wait("the reply ends") { !draft.store.isGenerating }
         check(workspace.recentConversations.map(\.id) == order, "Sending and streaming preserve the active chat's position")
         workspace.select(second.id)
         check(workspace.recentConversations.map(\.id) == order, "Leaving after sending never reorders this app session")
@@ -462,6 +466,8 @@ import Foundation
         check(workspace.snapshot.conversations.first { $0.id == second.id }!.lastUsed == secondSentAt, "Window changes do not refresh saved recency")
         workspace.select(draft.id)
         second.store.stopTask()
+        // A Stop settles before anything new can be sent.
+        try await wait("second stops") { !second.store.isGenerating }
         second.store.send("后台跟进")
         let backgroundSentAt = workspace.snapshot.conversations.first { $0.id == second.id }!.lastUsed
         workspace.select(second.id)
@@ -470,13 +476,14 @@ import Foundation
         check(workspace.recentConversations.map(\.id) == order, "Background follow-up never reorders this session")
         draft.store.send("准备重试的请求")
         draft.store.stopTask()
-        draft.store.retry()
+        try await wait("the draft stops") { !draft.store.isGenerating }
+        check(draft.store.retry(), "The stopped request continues")
         let retryAt = workspace.snapshot.conversations.first { $0.id == draft.id }!.lastUsed
         check(workspace.recentConversations.map(\.id) == order, "Retry keeps the current order")
         workspace.select(third.id)
         check(workspace.recentConversations.map(\.id) == order, "Leaving after retry preserves this session order")
         workspace.flush()
-        let sortedReload = WorkspaceStore(persistence: persistence)
+        let sortedReload = reopen()
         let restartedOrder = [draft.id, second.id, third.id]
         check(sortedReload.recentConversations.map(\.id) == restartedOrder, "Only a fresh app session applies interaction recency")
         check(sortedReload.filteredConversations(projectID: nil).map(\.id) == restartedOrder, "Grouped chats use the same restart order")
@@ -486,7 +493,7 @@ import Foundation
         sortedReload.isMainWindowVisible = true
         sortedReload.isMainWindowVisible = false
         sortedReload.shutdown()
-        let viewedReload = WorkspaceStore(persistence: persistence)
+        let viewedReload = reopen()
         check(viewedReload.recentConversations.map(\.id) == restartedOrder, "Browsing alone does not change order even after another restart")
         viewedReload.shutdown()
 
@@ -500,12 +507,12 @@ import Foundation
         check(workspace.filteredConversations(projectID: projectID).map(\.id) == [projectDraft.id], "First send adds the chat to its project")
         check(workspace.recentConversations.filter { $0.id != projectDraft.id }.map(\.id) == order, "Adding a new conversation preserves the relative order of existing chats")
         workspace.flush()
-        let reloaded = WorkspaceStore(persistence: persistence)
+        let reloaded = reopen()
         check(reloaded.selectedID != projectDraft.id && reloaded.conversations.count == 4, "Committed conversations survive without restoring selection")
         check(reloaded.conversations.first { $0.id == projectDraft.id }?.store.messages.first?.content == "项目草稿", "Committed message survives reload")
         reloaded.shutdown()
 
-        let fresh = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        let fresh = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
         let freshDraft = fresh.selected!
         let historyIDs = fresh.conversations.map(\.id)
         let historicalMessages = fresh.conversations.map { $0.store.messages }
@@ -515,7 +522,8 @@ import Foundation
         freshDraft.store.send("重启后的新消息")
         check(fresh.activityID == freshDraft.id && fresh.activityStore.isActivityVisible,
               "The first real message activates the new session and its activity")
-        check(source.lastRequest.map(\.content) == ["重启后的新消息"],
+        let freshModel = try await puppets.model(asked: "重启后的新消息")
+        check(freshModel.requests.last?.userTexts == ["重启后的新消息"] && freshModel.requests.last?.kinds == ["instructions", "prompt"],
               "The first request after restart contains no historical conversation context")
         check(fresh.conversations.filter { historyIDs.contains($0.id) }.map { $0.store.messages } == historicalMessages,
               "Starting a new session leaves historical messages unchanged")
@@ -529,12 +537,12 @@ import Foundation
         workspace.shutdown()
     }
 
-    @Test(.tags(.fast)) @MainActor static func quickComposerTests() {
+    @Test(.tags(.fast)) @MainActor static func quickComposerTests() async throws {
         func check(_ condition: @autoclosure () -> Bool, _ message: String, sourceLocation: SourceLocation = #_sourceLocation) {
             #expect(condition(), "\(message)", sourceLocation: sourceLocation)
         }
-        var sources: [WorkspaceTestSource] = []
-        let ws = WorkspaceStore(sourceFactory: { let source = WorkspaceTestSource(); sources.append(source); return source })
+        let puppets = PuppetSessions()
+        let ws = WorkspaceStore(sourceFactory: puppets.factory)
         defer { ws.shutdown() }
         let mainDraft = ws.selected!
         mainDraft.store.mainDraft = "主窗口里的草稿"
@@ -550,20 +558,33 @@ import Foundation
               "The quick conversation is named after its first message")
         check(ws.snapshot.drafts?.map(\.id) == [mainDraft.id], "The quick conversation does not stay in drafts")
 
-        let quickSource = sources.last!
-        quickSource.receive?(.progress("第一段，正在读取内容"))
-        check(quick.store.cardSummary.contains("读取内容"), "Progress reaches the compact card")
-        quick.store.harnessStream(operation: 1, text: "流式新增内容", toolCall: false, final: false)
-        check(quick.store.cardSummary == "流式新增内容", "Native streaming updates the card")
-        quick.store.harnessStatus("正在读取文件 · README")
-        check(quick.store.cardSummary.contains("README"), "Tool progress replaces the earlier stream")
-        let longReply = String(repeating: "开头内容", count: 100) + "最后的新内容"
-        quick.store.harnessStream(operation: 2, text: longReply, toolCall: false, final: false)
-        check(quick.store.cardSummary.hasSuffix("最后的新内容"), "Long streams retain the latest text")
-        quickSource.receive?(.completed("最终回复，已经整理好结果"))
+        let quickModel = try #require(puppets.last)
+        // Every card text, as it changes. Stream snapshots trail the model by up to two chunks, so
+        // each stream sends past the text it waits for.
+        var cards: [String] = []
+        let watch = observeChanges({ quick.store.cardSummary }, initial: true) { cards.append($0) }
+        let opening = PuppetStream()
+        try await quickModel.answer(.stream(opening))
+        try await opening.send(["第一段，", "正在读取内容", "……", "……"])
+        try await wait("the stream reaches the card") { quick.store.cardSummary.contains("读取内容") }
+        check(quick.store.cardSummary.hasPrefix("第一段，正在读取内容"), "Streamed text reaches the compact card")
+        opening.call("read_file", #"{"path":"README"}"#); opening.finish()
+        try await wait("the tool asks for a folder") { quick.store.needsDirectory }
+        let streamedAt = cards.lastIndex { $0.hasPrefix("第一段，") }
+        check(streamedAt.map { cards[$0...].contains("正在读取文件 · README") } == true, "Tool progress replaces the earlier stream: \(cards)")
+        quick.store.provideDirectory(nil)
+        let long = PuppetStream()
+        try await quickModel.answer(.stream(long))
+        try await long.send([String(repeating: "开头内容", count: 100), "最后的新内容", "……", "……"])
+        try await wait("the long reply reaches the card") { quick.store.cardSummary.contains("最后的新内容") }
+        check(quick.store.cardSummary.count <= 260, "Long streams retain the latest text")
+        long.finish()
+        try await wait("the turn ends") { !quick.store.isGenerating }
+        watch.cancel()
         check(ws.isPetActivityVisible && !quick.store.isFollowUpExpanded && ws.unseenCompletedCount == 1,
               "A completed result remains visible and unread without a composer")
-        check(quick.store.cardSummary.contains("最终回复"), "The result replaces progress")
+        let finalReply = String(repeating: "开头内容", count: 100) + "最后的新内容…………"
+        check(quick.store.cardSummary == finalReply, "The whole result replaces the streamed tail: \(quick.store.cardSummary.suffix(20))")
         ws.expandActivityList()
         check(!ws.isActivityListExpanded && ws.unseenCompletedCount == 1 && ws.petFollowUpID == nil,
               "A single card has no list to open")
@@ -577,18 +598,19 @@ import Foundation
             check(ws.sendFollowUp(conversationID: quick.id), "Follow-up is accepted")
             check(ws.petActivities.count == 1 && ws.petFollowUpID == quick.id && quick.store.isFollowUpExpanded,
                   "Consecutive follow-ups keep the same entry and editor")
-            check(quickSource.lastRequest.last?.content == message, "Follow-up targets the original conversation")
-            quickSource.receive?(.completed("新回复：" + message))
+            try await wait("the follow-up reaches the model") { quickModel.requests.last?.userTexts.last == message }
+            check(quickModel.requests.last?.userTexts.first == "桌宠里的问题", "Follow-up targets the original conversation")
+            try await reply(quick, quickModel, "新回复：" + message)
             check(quick.store.cardSummary.contains(message) && ws.unseenCompletedCount == 1,
                   "The visible follow-up updates the same unread result")
         }
         ws.exitPetFollowUp()
         check(!quick.store.isFollowUpExpanded && ws.petFollowUpID == nil, "Exit returns to compact cards")
         check(ws.sendQuickMessage("另一个桌宠任务"), "A second quick chat starts")
-        let other = ws.activity!, otherSource = sources.last!
-        otherSource.receive?(.completed("另一个回复"))
+        let other = ws.activity!, otherModel = puppets.last
+        try await reply(other, otherModel, "另一个回复")
         quick.store.send("后台更新")
-        quickSource.receive?(.completed("后台的新结果"))
+        try await reply(quick, quickModel, "后台的新结果")
         check(ws.petActivities.count == 2 && ws.unseenCompletedCount == 2, "The bell counts conversations, including updated results")
         ws.expandActivityList()
         check(ws.unseenCompletedCount == 2, "The expanded list does not consume unread results")
@@ -596,12 +618,21 @@ import Foundation
         check(ws.unseenCompletedCount == 2, "Following up does not acknowledge either conversation")
         ws.exitPetFollowUp()
         quick.store.send("失败的任务")
-        quickSource.receive?(.progress("已有的部分内容"))
-        quickSource.receive?(.failed("连接失败"))
-        check(quick.store.cardSummary.contains("部分内容") && quick.store.task?.status == .failed,
-              "Failure keeps partial content and its status")
+        let failing = PuppetStream()
+        try await quickModel.answer(.stream(failing))
+        try await failing.send(["已有的", "部分内容", "……", "……"])
+        try await wait("the partial reaches the card") { quick.store.cardSummary.contains("部分内容") }
+        failing.fail(AgentModelError(message: "连接失败"))
+        try await wait("the turn fails") { !quick.store.isGenerating }
+        check(quick.store.cardSummary.contains("部分内容") && quick.store.task?.status == .failed
+              && quick.store.task?.summary == "连接失败", "Failure keeps partial content and its status")
         quick.store.send("停止的任务")
-        quickSource.receive?(.progress("停止前的内容")); quick.store.stopTask()
+        let stopping = PuppetStream()
+        try await quickModel.answer(.stream(stopping))
+        try await stopping.send(["停止前", "的内容", "……", "……"])
+        try await wait("the partial reaches the card") { quick.store.cardSummary.contains("停止前") }
+        quick.store.stopTask()
+        try await wait("the turn stops") { !quick.store.isGenerating }
         check(quick.store.cardSummary.contains("停止前") && quick.store.task?.status == .stopped,
               "Stop keeps partial content")
         ws.select(quick.id); ws.isMainWindowVisible = true
@@ -609,12 +640,12 @@ import Foundation
               "Viewing a terminal result removes its pet entry, preserving history")
         quick.store.send("主窗口里的任务")
         check(ws.petActivityIDs.contains(quick.id) && ws.isPetActivityVisible, "Main-window work appears on the pet while running")
-        quickSource.receive?(.completed("主窗口可见的新结果"))
+        try await reply(quick, quickModel, "主窗口可见的新结果")
         check(!ws.petActivityIDs.contains(quick.id) && ws.unseenCompletedCount == 1,
               "A viewed completion removes its entry while the other conversation stays unread")
         ws.isMainWindowVisible = false
         other.store.send("后台再更新")
-        otherSource.receive?(.completed("后台结果"))
+        try await reply(other, otherModel, "后台结果")
         check(ws.unseenCompletedCount == 1, "An unseen background result stays available")
 
         // The + menu's project goes with the quick conversation; an unknown project is dropped.
@@ -637,11 +668,12 @@ import Foundation
         try FileManager.default.createDirectory(at: root.appendingPathComponent("B"), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
-        let source = WorkspaceTestSource()
-        let ws = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        let puppets = PuppetSessions()
+        let ws = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
         defer { ws.shutdown() }
         let a = ws.addProject(url: root.appendingPathComponent("A")), b = ws.addProject(url: root.appendingPathComponent("B"))
         let first = ws.selected!
+        let firstModel = try #require(puppets.last)
         first.store.mainDraft = "first draft"
         #expect(ws.associateProject(a, conversationID: first.id))
         #expect(first.store.mainDraft == "first draft" && ws.project(for: first.id)?.id == a)
@@ -653,7 +685,7 @@ import Foundation
         let tiedDate = Date(timeIntervalSince1970: 100)
         first.lastUsed = tiedDate; second.lastUsed = tiedDate
         ws.flush()
-        let collisionReload = WorkspaceStore(persistence: persistence)
+        let collisionReload = WorkspaceStore(persistence: persistence, sourceFactory: { idleAgent() })
         let expectedID = [first.id, second.id].sorted { $0.uuidString < $1.uuidString }.first!
         #expect(collisionReload.newConversation(projectID: a).id == expectedID, "Equal recency uses stable UUID order after restart")
         #expect(collisionReload.conversation(id: first.id)?.store.mainDraft == "first draft"
@@ -670,11 +702,12 @@ import Foundation
         ws.select(first.id)
         #expect(ws.sendMainMessage(conversationID: first.id))
         #expect(!ws.associateProject(b, conversationID: first.id))
-        source.receive?(.failed("offline"))
-        #expect(!ws.canAssociateProject(conversationID: first.id))
+        try await finish(first, firstModel, .fail(AgentModelError(message: "offline")))
+        #expect(first.store.task?.status == .failed && !ws.canAssociateProject(conversationID: first.id))
         #expect(!ws.associateFolder(root, conversationID: first.id))
         #expect(first.projectID == a && ws.projects.count == 2)
         #expect(ws.retry(conversationID: first.id)); ws.stop(conversationID: first.id)
+        try await wait("stopped") { !first.store.isGenerating }
         #expect(!ws.associateProject(nil, conversationID: first.id), "Stop does not unlock project")
         #expect(ws.associateProject(nil, conversationID: second.id))
         #expect(second.store.mainDraft == "second draft")
@@ -685,7 +718,7 @@ import Foundation
         #expect(ws.associateFolder(root.appendingPathComponent("B/../A"), conversationID: second.id))
         #expect(second.projectID == a && ws.projects.count == 3, "Folder paths are deduplicated")
         ws.flush()
-        let reload = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        let reload = WorkspaceStore(persistence: persistence, sourceFactory: { idleAgent() })
         #expect(reload.conversation(id: first.id)?.projectID == a && !reload.canAssociateProject(conversationID: first.id))
         #expect(reload.newConversation(projectID: a).id == second.id)
         #expect(reload.selected?.store.mainDraft == "second draft")
@@ -698,10 +731,18 @@ import Foundation
         #expect(first.projectID == nil && second.projectID == nil && ws.fileBrowser.location == nil)
         #expect(!ws.canAssociateProject(conversationID: first.id), "Removing project retains history lock")
 
-        // Tool-only archives remain fixed even if no messages were retained.
+        // A history of tool calls alone remains fixed even if no messages were retained.
+        var toolsOnly = try JSONDecoder().decode(NativeAgentState.self, from: Data(AgentHarnessTests.savedState.utf8))
+        toolsOnly.entries = toolsOnly.entries.filter {
+            switch $0 {
+            case .toolCalls, .toolOutput: true
+            default: false
+            }
+        }
         var snapshot = second.store.snapshot
-        snapshot.tools = [.init(callID: "tool", entryID: 1, turnID: 1, command: "pwd", result: "done", state: .finished)]
-        let toolStore = TaskStore(snapshot: snapshot, source: source)
+        snapshot.native = toolsOnly
+        let toolStore = TaskStore(snapshot: snapshot, source: idleAgent())
+        #expect(toolStore.messages.isEmpty && toolStore.tools.count == 1 && toolStore.tools[0].state == .finished)
         let toolWorkspace = WorkspaceStore(initialStore: toolStore)
         #expect(!toolWorkspace.canAssociateProject(conversationID: toolWorkspace.selectedID!))
         toolWorkspace.shutdown()
@@ -711,15 +752,16 @@ import Foundation
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-session-cleanup-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let persistence = WorkspacePersistence(url: root.appendingPathComponent("workspace.json"))
-        let source = WorkspaceTestSource()
-        let ws = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        // The app's launches all read native histories.
+        func launch() -> WorkspaceStore { WorkspaceStore(persistence: persistence, sourceFactory: { idleAgent() }) }
+        let ws = launch()
         let kept = ws.selected!
         kept.store.send("保留的会话")
         let deleted = ws.newConversation()
         deleted.store.send("将被删除的会话")
         ws.flush()
-        try persistence.saveSession(kept.store.snapshot, id: kept.id)
-        try persistence.saveSession(deleted.store.snapshot, id: deleted.id)
+        #expect([kept.id, deleted.id].allSatisfy { FileManager.default.fileExists(atPath: persistence.sessionURL($0).path) },
+                "Sending saved each conversation's history sidecar")
         ws.deleteConversation(deleted.id)
         #expect(!FileManager.default.fileExists(atPath: persistence.sessionURL(deleted.id).path),
                      "Deleting a conversation removes its history sidecar")
@@ -733,7 +775,7 @@ import Foundation
         let unsaved = ws.newConversation()
         unsaved.store.send("保存失败时删除")
         ws.flush()
-        try persistence.saveSession(unsaved.store.snapshot, id: unsaved.id)
+        #expect(FileManager.default.fileExists(atPath: persistence.sessionURL(unsaved.id).path))
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
         ws.deleteConversation(unsaved.id)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
@@ -747,7 +789,7 @@ import Foundation
         try persistence.saveSession(kept.store.snapshot, id: orphan)
         let unrelated = persistence.sessionsDirectory.appendingPathComponent("notes.json")
         try Data("{}".utf8).write(to: unrelated)
-        WorkspaceStore(persistence: persistence).shutdown()
+        launch().shutdown()
         #expect(!FileManager.default.fileExists(atPath: persistence.sessionURL(orphan).path),
                      "A clean launch prunes sidecars left by earlier deletions")
         #expect(FileManager.default.fileExists(atPath: persistence.sessionURL(kept.id).path)
@@ -756,7 +798,7 @@ import Foundation
 
         try persistence.saveSession(kept.store.snapshot, id: orphan)
         try Data("not json".utf8).write(to: persistence.url)
-        WorkspaceStore(persistence: persistence).shutdown()
+        launch().shutdown()
         #expect(FileManager.default.fileExists(atPath: persistence.sessionURL(orphan).path),
                      "A recovered or unreadable manifest never prunes sidecars")
 
@@ -767,10 +809,10 @@ import Foundation
         try persistence.saveSession(kept.store.snapshot, id: unreferenced)
         try FileManager.default.removeItem(at: persistence.backupURL)
         try Data(#"{"version":2,"conversations":[{"id":"\#(archived.uuidString)"}]}"#.utf8).write(to: persistence.url)
-        let blank = WorkspaceStore(persistence: persistence)
+        let blank = launch()
         #expect(blank.persistenceNotice?.contains("空白工作区") == true)
         blank.shutdown()
-        for _ in 0..<2 { WorkspaceStore(persistence: persistence).shutdown() }
+        for _ in 0..<2 { launch().shutdown() }
         #expect(FileManager.default.fileExists(atPath: persistence.sessionURL(archived).path),
                      "Later clean launches keep sidecars referenced by a preserved archive")
         #expect(!FileManager.default.fileExists(atPath: persistence.sessionURL(unreferenced).path),
@@ -784,49 +826,55 @@ import Foundation
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-stream-save-tests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
         let persistence = WorkspacePersistence(url: directory.appendingPathComponent("workspace.json"))
-        let source = WorkspaceTestSource()
-        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
         defer { workspace.shutdown() }
         let conversation = workspace.selected!
+        let model = try #require(puppets.last)
         conversation.store.mainDraft = "streaming request"
         try await Task.sleep(for: .milliseconds(600))
         check(persistence.load().0?.drafts?.first?.state.mainDraft == "streaming request",
               "A short draft edit still saves promptly after the debounce interval")
         check(workspace.sendMainMessage(conversationID: conversation.id), "Streaming request is accepted")
+        let stream = PuppetStream()
+        try await model.answer(.stream(stream))
+        func saved() -> WorkspaceSnapshot.Conversation? { persistence.load().0?.conversations.first { $0.id == conversation.id } }
 
-        var text = ""
-        var previousSavedText = ""
+        // A reply being written is not the conversation's yet, so streaming alone saves nothing.
+        // The follow-up draft is typed meanwhile, each edit well inside the 400 ms debounce.
+        var text = "", typed = 0, previousSavedDraft = -1
         for _ in 0..<2 {
             let deadline = ContinuousClock.now + .milliseconds(2600)
             while ContinuousClock.now < deadline {
-                text += "片段"
-                source.receive?(.progress(text))
-                // Keep updating well inside the normal 400 ms debounce window.
+                text += "片段"; stream.send("片段")
+                typed += 1; conversation.store.followUpDraft = "跟进\(typed)"
                 try await Task.sleep(for: .milliseconds(50))
             }
-            let saved = persistence.load().0?.conversations.first { $0.id == conversation.id }
-            check(saved?.state.messages.first?.content == "streaming request" && saved?.state.mainDraft == "",
-                  "Continuous streaming saves the user message and cleared draft without a manual flush")
-            check(saved?.state.task?.status == .running && saved?.state.messages.last?.status == .streaming,
-                  "A streaming checkpoint reaches disk before the response ends")
-            let savedText = saved?.state.messages.last?.content ?? ""
-            check(savedText.count > previousSavedText.count && text.hasPrefix(savedText),
-                  "Successive save deadlines persist newer partial replies during uninterrupted streaming")
-            previousSavedText = savedText
-            if let saved {
-                let restored = TaskStore(snapshot: saved.state, source: nil)
-                check(restored.task?.status == .interrupted && restored.messages.last?.status == .interrupted
-                      && restored.messages.last?.content == savedText,
-                      "A streaming checkpoint restores as interrupted while preserving the partial reply")
+            check(conversation.store.replyStream.live?.hasPrefix("片段") == true, "The reply is streaming meanwhile")
+            let manifest = saved()
+            check(manifest?.state.mainDraft == "", "Saving keeps the cleared draft without a manual flush")
+            let savedDraft = manifest.flatMap { Int($0.state.followUpDraft.dropFirst(2)) } ?? -1
+            check(savedDraft > previousSavedDraft && savedDraft <= typed,
+                  "Successive save deadlines persist newer edits during uninterrupted streaming: \(savedDraft) after \(previousSavedDraft)")
+            previousSavedDraft = savedDraft
+            let history = manifest.map { persistence.restoreSession($0) }
+            check(history?.task?.status == .running && history?.messages.map(\.content) == ["streaming request"],
+                  "A save while the reply streams holds the request, never the partial reply")
+            if let history {
+                let restored = TaskStore(snapshot: history, source: idleAgent())
+                check(restored.task?.status == .interrupted && restored.messages.map(\.content) == ["streaming request", ""]
+                      && restored.messages.last?.status == .interrupted && restored.canRetry,
+                      "A save made while the reply streamed restores as interrupted, with Continue")
                 restored.shutdown()
             }
         }
-        check(conversation.store.isGenerating && source.requests == 1,
-              "Automatic checkpoints do not stop or restart the model request")
-        source.receive?(.completed(text + "完成"))
+        check(conversation.store.isGenerating && model.requests.count == 1 && model.cancelledCount == 0,
+              "Automatic saves do not stop or restart the model request")
+        stream.send("完成"); stream.finish()
+        try await wait("the reply ends") { !conversation.store.isGenerating }
         try await Task.sleep(for: .milliseconds(600))
-        let finished = persistence.load().0?.conversations.first { $0.id == conversation.id }
-        check(finished?.state.task?.status == .completed && finished?.state.messages.last?.content == text + "完成",
+        let finished = saved().map { persistence.restoreSession($0) }
+        check(finished?.task?.status == .completed && finished?.messages.last?.content == text + "完成",
               "The final response saves promptly after streaming stops")
         check(workspace.persistenceNotice == nil, "Streaming persistence completes without a save error")
     }
@@ -839,11 +887,9 @@ import Foundation
         let folders = ["项目甲", "项目乙", "项目丙"].map { root.appendingPathComponent($0) }
         for folder in folders { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
         let url = root.appendingPathComponent("workspace.json")
-        var sources: [WorkspaceTestSource] = []
+        let puppets = PuppetSessions()
         func open() -> WorkspaceStore {
-            WorkspaceStore(persistence: WorkspacePersistence(url: url), sourceFactory: {
-                let source = WorkspaceTestSource(); sources.append(source); return source
-            })
+            WorkspaceStore(persistence: WorkspacePersistence(url: url), sourceFactory: puppets.factory)
         }
 
         // A chat with a finished reply, a project, and an empty draft: then a fresh launch, so the
@@ -851,12 +897,11 @@ import Foundation
         let first = open()
         let seeded = first.newConversation()
         #expect(first.send("你好", conversationID: seeded.id))
-        sources.last?.receive?(.completed("你好呀"))
+        try await reply(seeded, try await puppets.model(asked: "你好"), "你好呀")
         let projectID = first.addProject(url: folders[0])
         _ = first.newConversation()
         first.shutdown()
 
-        let launched = sources.count
         let workspace = open()
         defer { workspace.shutdown() }
         let chat = try #require(workspace.conversation(id: seeded.id))
@@ -865,10 +910,14 @@ import Foundation
 
         func archive() throws -> WorkspaceSnapshot { try JSONDecoder().decode(WorkspaceSnapshot.self, from: Data(contentsOf: url)) }
         func saved(_ snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot.Conversation? { snapshot.conversations.first { $0.id == chat.id } }
+        /// The conversation's native history: an Agent conversation keeps its messages in its sidecar.
+        func history() -> TaskStore.Snapshot? {
+            try? JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: WorkspacePersistence(url: url).sessionURL(chat.id)))
+        }
         func expectSaved(_ field: String, sourceLocation: SourceLocation = #_sourceLocation,
-                         _ change: () -> Void, _ landed: (WorkspaceSnapshot) -> Bool) async throws {
+                         _ change: () async throws -> Void, _ landed: (WorkspaceSnapshot) -> Bool) async throws {
             #expect(!landed(try archive()), "\(field) is not on disk before it changes", sourceLocation: sourceLocation)
-            change()
+            try await change()
             let deadline = Date().addingTimeInterval(3)
             while !((try? landed(archive())) ?? false) {
                 guard Date() < deadline else {
@@ -908,19 +957,19 @@ import Foundation
         try await expectSaved("a load error", { chat.store.agentLoadError = "记录无法读取" }) { saved($0)?.state.loadError == "记录无法读取" }
         chat.store.agentLoadError = nil
         try await Task.sleep(for: .milliseconds(600))
-        try await expectSaved("a sent message", { #expect(workspace.send("第二个问题", conversationID: chat.id)) }) {
-            saved($0)?.state.messages.contains { $0.content == "第二个问题" } == true
+        try await expectSaved("a sent message", { #expect(workspace.send("第二个问题", conversationID: chat.id)) }) { _ in
+            history()?.messages.contains { $0.content == "第二个问题" } == true
         }
-        let chatSource = try #require(sources[launched...].first { $0.requests > 0 })
-        try await expectSaved("the task's outcome", { chatSource.receive?(.completed("第二个回答")) }) {
-            saved($0)?.state.task?.status == .completed && saved($0)?.state.messages.last?.content == "第二个回答"
+        let chatModel = try await puppets.model(asked: "第二个问题")
+        try await expectSaved("the task's outcome", { try await chatModel.reply("第二个回答") }) {
+            saved($0)?.state.task?.status == .completed && history()?.messages.last?.content == "第二个回答"
         }
         print("Saved-fields archive kept at \(root.path)")
     }
 
     /// The archive stores steering and tool states as the text the interface showed. It reads back
     /// with the same meaning; an untitled conversation is the one saved with `untitled`.
-    @Test(.tags(.fast)) @MainActor static func archiveWithTextStatesReadsBackUnchanged() throws {
+    @Test(.tags(.fast)) @MainActor static func archiveWithTextStatesReadsBackUnchanged() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-text-state-archive-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -952,12 +1001,21 @@ import Foundation
             + conversation(renamed, "新对话", manuallyNamed: true, messages: [message(8, "user"), message(9, "assistant")])
             + "]}"
         try Data(archive.utf8).write(to: persistence.url)
+        // The Agent opens a conversation only from the native history in its sidecar. The two sent
+        // to below get one that holds their messages; the first has none, like an archive from
+        // before the native engine, so it opens read-only with what the manifest kept.
+        for saved in try JSONDecoder().decode(WorkspaceSnapshot.self, from: Data(archive.utf8)).conversations where saved.id != unnamed {
+            var state = saved.state
+            state.native = nativeHistory(state.messages); state.tools = []
+            try persistence.saveSession(state, id: saved.id)
+        }
 
-        let source = WorkspaceTestSource()
-        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: { source })
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(persistence: persistence, sourceFactory: puppets.factory)
         defer { workspace.shutdown() }
         #expect(workspace.persistenceNotice == nil)
         let first = try #require(workspace.conversation(id: unnamed))
+        #expect(first.store.agentLoadError == WorkspacePersistence.unreadableHistory && !first.store.canSubmit)
         // Queued at quit reopens as interrupted; a steering value this build does not know reads as none.
         #expect(first.store.messages.map(\.steering) == [nil, .interrupted, .interrupted, nil, nil])
         #expect(first.store.messages.map(\.content) == ["m1", "m2", "m3", "m4", "m5"])
@@ -971,11 +1029,11 @@ import Foundation
         let third = try #require(workspace.conversation(id: renamed))
         #expect([first, second, third].map(\.title) == ["新会话", "新对话", "新对话"])
         #expect(first.untitled && second.untitled && !third.untitled)
-        #expect(workspace.send("给第一个会话起名", conversationID: unnamed))
-        source.receive?(.completed("好"))
+        #expect(workspace.send("给第二个会话起名", conversationID: draftTitled))
+        try await reply(second, try await puppets.model(asked: "给第二个会话起名"), "好")
         #expect(workspace.send("改名过的会话", conversationID: renamed))
-        source.receive?(.completed("好"))
-        #expect(first.title == "m1" && !first.untitled, "The first user message names an untitled conversation")
+        try await reply(third, try await puppets.model(asked: "改名过的会话"), "好")
+        #expect(second.title == "m6" && !second.untitled, "The first user message names an untitled conversation")
         #expect(third.title == "新对话", "A chosen name stays even when it reads like a default")
 
         // The archive keeps storing the same text for these states.
@@ -988,8 +1046,26 @@ import Foundation
             #expect(tools.contains(stored), "\(stored) in \(tools)")
         }
         let reloaded = try #require(persistence.load().0)
-        #expect(reloaded.conversations.first { $0.id == draftTitled }?.untitled == true)
-        #expect(reloaded.conversations.first { $0.id == unnamed }?.untitled == nil)
+        #expect(reloaded.conversations.first { $0.id == unnamed }?.untitled == true)
+        #expect(reloaded.conversations.first { $0.id == draftTitled }?.untitled == nil)
         #expect(reloaded.conversations.first { $0.id == renamed }?.untitled == nil)
+    }
+
+    /// A completed native turn for each user message, with the replies that follow it.
+    @MainActor static func nativeHistory(_ messages: [ConversationMessage]) -> NativeAgentState {
+        var native = NativeAgentState()
+        for message in messages {
+            let segments: [Transcript.Segment] = [.text(.init(content: message.content))]
+            switch message.role {
+            case .user:
+                native.turns.append(.init(start: native.entries.count, outcome: .completed))
+                native.entries.append(.prompt(Transcript.Prompt(metadata: [AgentPromptKey.message: message.id.uuidString], segments: segments)))
+            case .assistant:
+                let entryID = "reply-\(message.id.uuidString)"
+                native.entries.append(.response(Transcript.Response(id: entryID, assetIDs: [], segments: segments)))
+                native.replies[entryID] = message.id
+            }
+        }
+        return native
     }
 }
