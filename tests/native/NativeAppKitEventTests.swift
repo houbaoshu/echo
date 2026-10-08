@@ -2,7 +2,9 @@ import XCTest
 @testable import Echo
 import AppKit
 import Carbon.HIToolbox
+import FoundationModels
 import SwiftUI
+import Synchronization
 
 @MainActor private final class ComposerSecrets: SecretStore {
     var values: [String: String] = [:]
@@ -14,13 +16,73 @@ import SwiftUI
     func remove(_ account: String) throws { values[account] = nil }
 }
 
-@MainActor private final class PreviewSource: TaskSource {
-    var histories: [[ConversationMessage]] = []
-    var receive: (@MainActor (TaskEvent) -> Void)?
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
-        histories.append(messages); self.receive = receive
+/// The native Agent's model in these tests: a request streams what the test sends it and never
+/// ends on its own, so a turn runs until Stop cancels it. (This target does not build
+/// tests/support, whose puppet models compile against the app's sources.)
+private final class HeldModel: Sendable, Hashable {
+    private let current = Mutex<AsyncStream<String>.Continuation?>(nil)
+    var factory: AgentHarness.ModelFactory { { _, budget in HeldLanguageModel(model: self, budget: budget) } }
+    /// A conversation on the native Agent engine whose model only answers what the test sends.
+    @MainActor static func session() -> AgentHarness {
+        let model = HeldModel()
+        return AgentHarness(resolveModel: { model.factory })
     }
-    func cancel() {}
+    /// Waits until a model request is running, then streams `chunks` into it a gap apart. Stream
+    /// snapshots trail the model by up to two chunks, so two empty chunks follow the text.
+    @MainActor func stream(_ chunks: [String]) async throws {
+        for _ in 0..<250 where current.withLock({ $0 == nil }) { try await Task.sleep(for: .milliseconds(20)) }
+        for chunk in chunks + ["", ""] {
+            current.withLock { _ = $0?.yield(chunk) }
+            try await Task.sleep(for: .milliseconds(40))
+        }
+    }
+    fileprivate func respond(_ channel: LanguageModelExecutorGenerationChannel, budget: GenerationBudget) async throws {
+        try budget.spend()
+        let (chunks, input) = AsyncStream<String>.makeStream()
+        current.withLock { $0 = input }
+        let entryID = "held-" + UUID().uuidString
+        for await chunk in chunks {
+            await channel.send(.response(entryID: entryID, action: .appendText(chunk, tokenCount: 1)))
+        }
+        throw CancellationError()
+    }
+    static func == (lhs: HeldModel, rhs: HeldModel) -> Bool { lhs === rhs }
+    func hash(into hasher: inout Hasher) { hasher.combine(ObjectIdentifier(self)) }
+}
+
+private struct HeldLanguageModel: LanguageModel {
+    typealias Executor = HeldExecutor
+    let model: HeldModel
+    let budget: GenerationBudget
+    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.toolCalling]) }
+    var executorConfiguration: HeldExecutor.Configuration { .init(model: model, budget: budget) }
+}
+
+private struct HeldExecutor: LanguageModelExecutor {
+    typealias Model = HeldLanguageModel
+    struct Configuration: Hashable, Sendable {
+        let model: HeldModel
+        let budget: GenerationBudget
+    }
+    let configuration: Configuration
+    init(configuration: Configuration) { self.configuration = configuration }
+
+    nonisolated(nonsending) func respond(
+        to request: LanguageModelExecutorGenerationRequest,
+        model: HeldLanguageModel,
+        streamingInto channel: LanguageModelExecutorGenerationChannel
+    ) async throws {
+        try await configuration.model.respond(channel, budget: configuration.budget)
+    }
+}
+
+/// Runs a condition check until it holds, failing the test after five seconds.
+@MainActor private func eventually(_ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
+    let deadline = Date().addingTimeInterval(5)
+    while !condition() {
+        guard Date() < deadline else { XCTFail("Timed out: \(label())"); return }
+        try await Task.sleep(for: .milliseconds(10))
+    }
 }
 
 @MainActor private final class ComposerAudio: VoiceAudioHandling {
@@ -219,8 +281,8 @@ import SwiftUI
     }
 
     func testTranscriptTailAnchors() async throws {
-        let source = PreviewSource()
-        let store = TaskStore(source: source)
+        let model = HeldModel()
+        let store = TaskStore(source: AgentHarness(resolveModel: { model.factory }))
         let workspace = WorkspaceStore(initialStore: store)
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
                                         settings: SettingsStore(secrets: ComposerSecrets()))
@@ -229,7 +291,7 @@ import SwiftUI
         let window = main.window!
         defer { main.shutdown(); workspace.shutdown() }
         store.send("滚动验证")
-        source.receive?(.progress("短回复"))
+        try await model.stream(["短回复"])
         main.present()
         func settle() async throws {
             try await Task.sleep(for: .milliseconds(200))
@@ -253,8 +315,8 @@ import SwiftUI
             try bitmap.representation(using: .png, properties: [:])!.write(to: EchoTestResources.output("stage4-short-transcript.png"))
         }
         XCTAssertTrue(abs(scroll.contentView.bounds.minY + scroll.contentInsets.top) < 1, "Short conversations remain top aligned")
-        var reply = (1...70).map { "回复第 \($0) 行" }.joined(separator: "\n\n")
-        source.receive?(.progress(reply))
+        // An Agent reply streams as appended text, shown in the streamed bubble.
+        try await model.stream(["\n\n" + (1...70).map { "回复第 \($0) 行" }.joined(separator: "\n\n")])
         try await settle()
         XCTAssertTrue(document.bounds.height > scroll.contentView.bounds.height + 500, "The long fixture must overflow the transcript")
         assertTail("Streaming growth follows the initial bottom anchor")
@@ -276,14 +338,12 @@ import SwiftUI
         try await gesture(60)
         XCTAssertTrue(gap() > 100, "A phased upward gesture moves away from the tail")
         let offset = scroll.contentView.bounds.minY
-        reply += "\n" + (71...85).map { "追加第 \($0) 行" }.joined(separator: "\n\n")
-        source.receive?(.progress(reply))
+        try await model.stream(["\n" + (71...85).map { "追加第 \($0) 行" }.joined(separator: "\n\n")])
         try await settle()
         XCTAssertTrue(abs(scroll.contentView.bounds.minY - offset) < 3, "Streaming never pulls a user away from history")
         try await gesture(-400)
         assertTail("A gesture can return to the bottom")
-        reply += "\n回到底部后继续回复\n再一行"
-        source.receive?(.progress(reply))
+        try await model.stream(["\n回到底部后继续回复\n再一行"])
         try await settle()
         assertTail("Returning by gesture re-arms following")
         // A click on the chat is not a request to type into it: the transcript takes focus the
@@ -298,7 +358,9 @@ import SwiftUI
             }
         }
         func visibleMessage(_ view: NSView) -> NSPoint? {
-            if view.accessibilityIdentifier().hasPrefix("conversation.message.") {
+            // The reply being streamed is drawn by the same message view, under its own identifier.
+            let id = view.accessibilityIdentifier()
+            if id.hasPrefix("conversation.message.") || id == "conversation.stream" {
                 let center = scroll.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), from: view)
                 if scroll.bounds.insetBy(dx: 0, dy: 40).contains(center) { return center }
             }
@@ -333,8 +395,7 @@ import SwiftUI
         key("\u{f729}", code: 115) // Home
         try await settle()
         XCTAssertTrue(scroll.contentView.bounds.minY < 3, "Home reaches the beginning: offset=\(scroll.contentView.bounds.minY), responder=\(String(describing: window.firstResponder)), key=\(window.isKeyWindow)")
-        reply += "\nHome 后追加"
-        source.receive?(.progress(reply))
+        try await model.stream(["\nHome 后追加"])
         try await settle()
         XCTAssertTrue(scroll.contentView.bounds.minY < 3, "Keyboard navigation disarms following")
         func position() -> CGFloat { scroll.contentView.bounds.minY }
@@ -357,8 +418,7 @@ import SwiftUI
         key("\u{f72b}", code: 119) // End
         try await settle()
         assertTail("End returns to the tail")
-        reply += "\nEnd 后追加"
-        source.receive?(.progress(reply))
+        try await model.stream(["\nEnd 后追加"])
         try await settle()
         assertTail("End re-arms following")
     }
@@ -379,7 +439,7 @@ import SwiftUI
             await withCheckedContinuation { permissionReply = $0 }
         })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(dictation: dictation, voice: voice, sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(dictation: dictation, voice: voice, sourceFactory: { HeldModel.session() })
         dictation.attach(workspace: workspace)
         voice.attach(workspace: workspace, settings: settings)
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(), settings: settings)
@@ -488,8 +548,13 @@ import SwiftUI
         permissionReply?.resume(returning: true); permissionReply = nil
         try await refresh()
         recognizer.emit("追加听写")
+        // An Agent Stop settles once the cancelled model request has ended.
+        func stopped() async throws {
+            try await eventually("The turn stops") { selected.store.task?.status == .stopped }
+        }
         _ = selected.store.send("generate during dictation")
         press("\u{1b}", [])
+        try await stopped()
         XCTAssertTrue(!selected.store.isGenerating && dictation.isActive, "Stop preserves ordinary recording")
         press("d", [.control, .shift])
         XCTAssertTrue(dictation.state == .finalizing)
@@ -525,6 +590,7 @@ import SwiftUI
         panel.orderOut(nil); window.makeKeyAndOrderFront(nil)
         try await refresh()
         press("\u{1b}", [])
+        try await stopped()
         XCTAssertTrue(!selected.store.isGenerating && voice.isActive, "Escape performs Stop and preserves Live Voice")
         XCTAssertTrue(!menu.performKeyEquivalent(with: event("\u{1b}", [])), "Unclaimed Escape retains default behavior")
         XCTAssertTrue(selected.store.send("stop from menu"))
@@ -534,9 +600,11 @@ import SwiftUI
         chat.update()
         XCTAssertTrue(chat.items[2].isEnabled, "Native Stop item validates as enabled")
         XCTAssertTrue(menu.performKeyEquivalent(with: event(".", .command)))
+        try await stopped()
         XCTAssertTrue(!selected.store.isGenerating && voice.isActive, "Command+. uses the native Stop menu and preserves Live Voice")
         XCTAssertTrue(selected.store.send("stop from composer"))
         press(".", .command)
+        try await stopped()
         XCTAssertTrue(!selected.store.isGenerating && voice.isActive, "Command+. reaches Stop with composer focus")
         // End Voice addresses the existing owner even after navigating elsewhere.
         workspace.newConversation()
@@ -574,7 +642,7 @@ import SwiftUI
     func testProjectPickerKeyboardScroll() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("picker-scroll-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
-        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(sourceFactory: { HeldModel.session() })
         defer { workspace.shutdown() }
         for index in 0..<20 {
             let folder = root.appendingPathComponent("project-\(index)")
@@ -628,7 +696,7 @@ import SwiftUI
     func testSearchResultAccessibilityActivation() async throws {
         NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"),
                       with: NSNumber(value: true), with: "AXEnhancedUserInterface")
-        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(sourceFactory: { HeldModel.session() })
         defer { workspace.shutdown() }
         let target = workspace.newConversation()
         target.store.send("无障碍目标会话")
@@ -671,7 +739,7 @@ import SwiftUI
         settings.draft.model = "test-model"; settings.apiKey = "test-key"; settings.save()
         settings.voiceAPIKey = "test-voice"; settings.saveVoice()
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { HeldModel.session() })
         voice.attach(workspace: workspace, settings: settings)
         let pets = PetCatalog(settings: settings, builtinRoot: EchoTestResources.resource("pets"))
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
@@ -943,7 +1011,7 @@ import SwiftUI
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("sidebar-keys-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(sourceFactory: { HeldModel.session() })
         defer { workspace.shutdown() }
         let projectID = workspace.addProject(url: root)
         var ids: [String: UUID] = [:]

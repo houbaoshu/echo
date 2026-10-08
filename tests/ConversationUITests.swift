@@ -20,13 +20,25 @@ import Synchronization
     SettingsStore(localModels: LocalModelLocation(models: EchoTestResources.output("models-\(UUID())")), secrets: ComposerSecrets())
 }
 
-@MainActor private final class PreviewSource: TaskSource {
-    var histories: [[ConversationMessage]] = []
-    var receive: (@MainActor (TaskEvent) -> Void)?
-    func start(messages: [ConversationMessage], receive: @escaping @MainActor (TaskEvent) -> Void) {
-        histories.append(messages); self.receive = receive
+/// A native Agent conversation whose model the test answers.
+@MainActor private func puppetStore() -> (TaskStore, PuppetModel) {
+    let puppet = PuppetModel()
+    return (TaskStore(source: AgentHarness(resolveModel: { puppet.factory })), puppet)
+}
+
+/// Answers the workspace message `text` with `answer` and waits for its turn to end.
+@MainActor private func answer(_ text: String, in workspace: WorkspaceStore, sessions: PuppetSessions,
+                               with answer: PuppetModel.Answer) async throws {
+    try await sessions.model(asked: text).answer(answer)
+    try await eventually("The turn for \(text) ends") {
+        workspace.conversations.contains { $0.store.messages.contains { $0.content == text } && !$0.store.isGenerating }
     }
-    func cancel() {}
+}
+
+extension PuppetStream {
+    /// Streams `chunks` until all of them reach the conversation: snapshots trail the model by
+    /// up to two chunks, so two empty chunks follow the text.
+    func sendWhole(_ chunks: [String]) async throws { try await send(chunks + ["", ""]) }
 }
 
 /// Runs a condition check until it holds, failing the test after five seconds.
@@ -208,14 +220,17 @@ private struct ComposerHeightHost: View {
         let unfinished = MarkdownBlock.parse("```swift\nprint(\"stream")
         XCTAssertTrue(unfinished.contains { $0.code && String($0.text.characters).contains("stream") })
         for prefix in ["**", "[link](", "- ", "```", "你好\n\n*"] { _ = MarkdownBlock.parse(prefix) }
-        let source = PreviewSource(), store = TaskStore(source: PreviewSource())
-        let chat = TaskStore(source: source), voice = VoiceSessionController(), dictation = DictationController()
-        defer { store.shutdown(); chat.shutdown(); voice.shutdown(); dictation.shutdown() }
+        let (chat, puppet) = puppetStore(), voice = VoiceSessionController(), dictation = DictationController()
+        defer { chat.shutdown(); voice.shutdown(); dictation.shutdown() }
         chat.send("请介绍这个聊天区支持的能力。")
-        source.receive?(.completed(markdown))
+        try await puppet.reply(markdown)
+        try await eventually("The reply completes") { chat.task?.status == .completed }
         chat.send("如果连接中断呢？")
-        source.receive?(.progress("已经收到的文字会保留。"))
-        source.receive?(.failed("连接已中断，请检查网络后重试。"))
+        let cut = PuppetStream()
+        try await puppet.answer(.stream(cut))
+        try await cut.sendWhole(["已经收到的", "文字"])
+        cut.fail(AgentModelError(message: "连接已中断，请检查网络后重试。"))
+        try await eventually("The reply fails") { chat.task?.status == .failed }
         chat.mainDraft = "这里可以继续编辑草稿"
         let view = NSHostingView(rootView: ConversationView(store: chat, voice: voice, dictation: dictation,
             startDictation: {}, startVoice: {}, conversationID: UUID(),
@@ -308,7 +323,7 @@ private struct ComposerHeightHost: View {
         if NSApp.responds(to: accessibilitySetter) {
             NSApp.perform(accessibilitySetter, with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         }
-        let store = TaskStore(source: PreviewSource())
+        let store = TaskStore(source: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -614,8 +629,8 @@ private struct ComposerHeightHost: View {
     }
 
     func testConsecutiveDictationAppends() async throws {
-        let source = PreviewSource(), recognizer = ComposerRecognizer()
-        let store = TaskStore(source: source)
+        let recognizer = ComposerRecognizer()
+        let (store, puppet) = puppetStore()
         let dictation = DictationController(audio: ComposerAudio(), recognizer: { recognizer }, permission: { true })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
@@ -700,7 +715,7 @@ private struct ComposerHeightHost: View {
         editor.undoManager?.undo()
         XCTAssertTrue(editor.string == "输入法草稿你" && store.mainDraft == editor.string,
                      "Deferred transcripts undo as their own step, apart from the IME confirmation")
-        XCTAssertTrue(source.histories.isEmpty && !voice.isActive, "Ordinary ASR only edits the draft")
+        XCTAssertTrue(puppet.requests.isEmpty && store.messages.isEmpty && !voice.isActive, "Ordinary ASR only edits the draft")
     }
 
     func testStoppingAndDictationEscape() async throws {
@@ -797,13 +812,13 @@ private struct ComposerHeightHost: View {
     func testComposerActionMatrix() async throws {
         let setter = NSSelectorFromString("accessibilitySetValue:forAttribute:")
         if NSApp.responds(to: setter) { NSApp.perform(setter, with: NSNumber(value: true), with: "AXEnhancedUserInterface") }
-        let audio = ComposerAudio(), recognizer = ComposerRecognizer(), source = PreviewSource()
+        let audio = ComposerAudio(), recognizer = ComposerRecognizer()
         var permissionReply: CheckedContinuation<Bool, Never>?
         let dictation = DictationController(audio: audio, recognizer: { recognizer }, permission: {
             await withCheckedContinuation { permissionReply = $0 }
         })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let store = TaskStore(source: source)
+        let (store, puppet) = puppetStore()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         let conversation = workspace.selected!
         let host = NSHostingView(rootView: ConversationView(store: store, workspace: workspace, voice: voice, dictation: dictation,
@@ -819,6 +834,12 @@ private struct ComposerHeightHost: View {
         defer { window.orderOut(nil); workspace.shutdown() }
         func refresh() async throws {
             try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded()
+        }
+        // What was sent: the user messages, which an Agent send adds before its model request starts.
+        func sent() -> [String] { store.messages.filter { $0.role == .user }.map(\.content) }
+        func settled(_ status: TaskStatus) async throws {
+            try await eventually("The turn settles as \(status)") { store.task?.status == status }
+            try await refresh()
         }
         func node(_ id: String) -> AnyObject? { findAccessibility(id, in: host) }
         func press(_ id: String) {
@@ -864,21 +885,25 @@ private struct ComposerHeightHost: View {
         check("voice.start", present: ["dictation.start"], absent: ["conversation.send", "conversation.stop", "voice.end"])
         store.mainDraft = " \n "
         try await refresh(); key(original, 36)
-        XCTAssertTrue(!voice.isActive && source.histories.isEmpty)
+        XCTAssertTrue(!voice.isActive && sent().isEmpty && puppet.requests.isEmpty)
         try await snapshot("idle")
         store.mainDraft = "draft"
         try await refresh()
         check("conversation.send", present: ["dictation.start"], absent: ["voice.start", "conversation.stop"])
         press("conversation.send"); try await refresh()
         check("conversation.stop", present: ["dictation.start"], absent: ["conversation.send", "voice.start"])
+        try await puppet.waitForRequests(1)
         try await snapshot("generating")
         store.mainDraft = "supplement"
         try await refresh()
-        check("conversation.send", present: ["conversation.stop", "dictation.start"], absent: ["voice.start"], enabled: false)
-        key(original, 36)
-        XCTAssertTrue(source.histories.count == 1 && store.mainDraft == "supplement", "Legacy generation retains unsent text")
+        check("conversation.send", present: ["conversation.stop", "dictation.start"], absent: ["voice.start"])
         try await snapshot("generating-draft")
-        press("conversation.stop"); try await refresh()
+        key(original, 36)
+        XCTAssertTrue(sent() == ["draft", "supplement"] && store.messages.last?.steering == .queued && store.mainDraft.isEmpty
+                     && puppet.requests.count == 1, "Sending while the Agent generates steers it, without a new run")
+        store.mainDraft = "supplement"
+        try await refresh()
+        press("conversation.stop"); try await settled(.stopped)
         check("conversation.send", present: ["conversation.resume", "dictation.start"], absent: ["conversation.stop", "voice.start"])
         original.insertText("!", replacementRange: NSRange(location: original.string.utf16.count, length: 0))
         original.setSelectedRange(NSRange(location: 2, length: 3))
@@ -890,7 +915,7 @@ private struct ComposerHeightHost: View {
               enabled: false)
         XCTAssertTrue(node("dictation.finish")?.isAccessibilityEnabled?() == false, "Recording cannot finish before capture starts")
         XCTAssertTrue(!dictation.captureReady && !original.isEditable && original.string == draft)
-        key(original, 36); XCTAssertTrue(source.histories.count == 1)
+        key(original, 36); XCTAssertTrue(sent().count == 2)
         try await snapshot("preparing")
         permissionReply?.resume(returning: true); permissionReply = nil
         try await refresh()
@@ -917,7 +942,7 @@ private struct ComposerHeightHost: View {
         try await snapshot("finalizing")
         recognizer.finish(); try await refresh()
         XCTAssertTrue(original.isEditable && window.firstResponder === original)
-        XCTAssertTrue(store.mainDraft.hasPrefix(draft + "\n") && source.histories.count == 1)
+        XCTAssertTrue(store.mainDraft.hasPrefix(draft + "\n") && sent().count == 2)
         XCTAssertTrue(original.selectedRange() == NSRange(location: store.mainDraft.utf16.count, length: 0),
                      "A finished recording leaves the caret after the transcript, not at the earlier selection")
         let appended = store.mainDraft
@@ -959,11 +984,12 @@ private struct ComposerHeightHost: View {
         // Output controls are independent of recording: a stopped reply resumes from the primary.
         check("conversation.resume", present: ["dictation.start"], absent: ["voice.start", "conversation.stop", "conversation.send"])
         try await snapshot("stopped")
-        let resumed = source.histories.count
+        let resumed = puppet.requests.count
         press("conversation.resume"); try await refresh()
-        XCTAssertTrue(source.histories.count == resumed + 1, "Resume continues the stopped reply")
+        try await puppet.waitForRequests(resumed + 1)
+        XCTAssertTrue(puppet.requests.count == resumed + 1 && sent().count == 2, "Resume continues the stopped reply")
         check("conversation.stop", present: ["dictation.start"], absent: ["conversation.resume", "voice.start"])
-        source.receive?(.completed("继续后的回复")); try await refresh()
+        try await puppet.reply("继续后的回复"); try await settled(.completed)
         check("voice.start", present: ["dictation.start"], absent: ["conversation.resume", "conversation.stop"])
         press("voice.start"); try await refresh()
         let liveOwner = voice.snapshot.session.owner!
@@ -989,9 +1015,10 @@ private struct ComposerHeightHost: View {
         check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.stop", "conversation.send"])
         store.mainDraft = "during playback"
         try await refresh()
-        check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["conversation.stop", "voice.end"], enabled: false)
+        // The text sent above is still generating; an Agent turn takes more text as steering.
+        check("conversation.send", present: ["voice.mute", "voice.speaker"], absent: ["conversation.stop", "voice.end"])
         store.mainDraft = ""
-        key(original, 53); try await refresh()
+        key(original, 53); try await settled(.stopped)
         XCTAssertTrue(!store.isGenerating && voice.snapshot.session.owner == liveOwner, "Escape stops reply without ending voice")
         store.mainDraft = "retry me"
         store.agentLoadError = "Unavailable"
@@ -1008,7 +1035,7 @@ private struct ComposerHeightHost: View {
         check("voice.end", present: ["voice.mute", "voice.speaker"], absent: ["conversation.send", "conversation.stop"])
         press("voice.end"); try await refresh()
         XCTAssertTrue(!voice.isActive, "Stopping a task never disables ending Voice")
-        store.stopTask()
+        store.stopTask(); try await settled(.stopped)
 
         let other = workspace.newConversation()
         let background = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: other.id)
@@ -1025,7 +1052,7 @@ private struct ComposerHeightHost: View {
         // Send while recording ends it and sends the final transcript without leaving it in the draft.
         store.mainDraft = ""
         try await refresh()
-        let sent = source.histories.count
+        let before = sent(), requests = puppet.requests.count
         press("dictation.start"); try await refresh()
         permissionReply?.resume(returning: true); permissionReply = nil
         try await refresh()
@@ -1033,10 +1060,12 @@ private struct ComposerHeightHost: View {
         check("dictation.send", present: ["dictation.finish"], absent: ["conversation.send"])
         press("dictation.send"); try await refresh()
         check("dictation.send", present: ["dictation.finish"], absent: ["conversation.send"], enabled: false)
-        XCTAssertTrue(source.histories.count == sent && store.mainDraft.isEmpty, "Nothing is sent before the final transcript")
+        XCTAssertTrue(sent() == before && store.mainDraft.isEmpty, "Nothing is sent before the final transcript")
         recognizer.finish(); try await refresh()
-        XCTAssertTrue(source.histories.count == sent + 1 && source.histories.last?.last?.content == "直接发送的转写"
-                     && store.mainDraft.isEmpty && !dictation.isActive, "Send ends recording and sends the transcript")
+        XCTAssertTrue(sent() == before + ["直接发送的转写"] && store.mainDraft.isEmpty && !dictation.isActive,
+                     "Send ends recording and sends the transcript")
+        try await puppet.waitForRequests(requests + 1)
+        XCTAssertTrue(puppet.requests.last?.userTexts.last == "直接发送的转写", "The transcript is what the model is asked")
         check("conversation.stop", present: ["dictation.start"], absent: ["dictation.send", "conversation.send"])
         store.stopTask()
     }
@@ -1126,8 +1155,7 @@ private struct ComposerHeightHost: View {
     }
 
     func testAssistantUpdatesDoNotSubmit() async throws {
-        let source = PreviewSource()
-        let store = TaskStore(source: source), voice = VoiceSessionController(), dictation = DictationController()
+        let (store, puppet) = puppetStore(), voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
         let view = NSHostingView(rootView: WorkspaceConversationView(workspace: workspace, planets: PlanetStore()).frame(width: 820, height: 700))
@@ -1140,10 +1168,11 @@ private struct ComposerHeightHost: View {
             try await Task.sleep(for: .milliseconds(100))
             view.layoutSubtreeIfNeeded()
         }
+        func users() -> [ConversationMessage] { store.messages.filter { $0.role == .user } }
         try await refresh()
         store.mainDraft = "Hello"
         try await refresh()
-        XCTAssertTrue(source.histories.isEmpty, "Editing a draft must not submit")
+        XCTAssertTrue(puppet.requests.isEmpty && store.messages.isEmpty, "Editing a draft must not submit")
         func composer(in view: NSView) -> ComposerTextView? {
             if let editor = view as? ComposerTextView { return editor }
             return view.subviews.lazy.compactMap { composer(in: $0) }.first
@@ -1152,46 +1181,59 @@ private struct ComposerHeightHost: View {
         editor.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
             windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
             isARepeat: false, keyCode: 36)!)
-        let user = store.messages[0], assistantID = store.messages[1].id, runID = store.task!.runID
-        let receive = source.receive!
+        try await puppet.waitForRequests(1)
+        let user = store.messages[0], runID = store.task!.runID
         store.mainDraft = "Unsent draft"
         func assertSingleRun() {
-            XCTAssertTrue(source.histories.count == 1, "Assistant updates must never start another model run")
+            XCTAssertTrue(puppet.requests.count == 1, "Assistant updates must never start another model run")
             XCTAssertTrue(store.task?.runID == runID)
-            XCTAssertTrue(store.messages.count == 2 && store.messages[1].id == assistantID)
-            XCTAssertTrue(store.messages.filter { $0.role == .user } == [user], "Assistant text must not become user input")
+            XCTAssertTrue(users() == [user], "Assistant text must not become user input")
             XCTAssertTrue(store.mainDraft == "Unsent draft", "Updates must not submit the next draft")
         }
         try await refresh(); assertSingleRun()
-        for text in ["A", "AB", "ABC"] {
-            receive(.progress(text))
+        let reply = PuppetStream()
+        try await puppet.answer(.stream(reply))
+        for chunk in ["A", "B", "C"] {
+            try await reply.send([chunk])
             try await refresh(); assertSingleRun()
-            XCTAssertTrue(store.messages[1].content == text && store.messages[1].status == .streaming)
         }
-        receive(.completed("ABC"))
+        // An Agent reply is live text until its generation ends, not yet a message.
+        XCTAssertTrue(store.replyStream.live?.hasPrefix("A") == true && store.messages == [user], "\(store.messages)")
+        reply.finish()
+        try await eventually("The reply completes") { store.task?.status == .completed }
         try await refresh(); assertSingleRun()
-        XCTAssertTrue(store.messages[1].status == .completed)
-        receive(.progress("late text")); receive(.failed("late failure")); store.stopTask()
+        XCTAssertTrue(store.messages.count == 2 && store.messages[1].content == "ABC" && store.messages[1].status == .completed)
+        // Nothing outside the model can deliver late output to an Agent turn; a late Stop is the
+        // one thing left to try, and it changes nothing.
+        store.stopTask()
         try await refresh(); assertSingleRun()
+        XCTAssertTrue(store.task?.status == .completed)
         for stop in [false, true] {
+            let count = puppet.requests.count
             store.sendMainMessage()
-            let count = source.histories.count, messages = store.messages.filter { $0.role == .user }
-            let callback = source.receive!
+            let messages = users()
+            try await puppet.waitForRequests(count + 1)
+            let partial = PuppetStream()
+            try await puppet.answer(.stream(partial))
             store.mainDraft = "Still unsent"
-            callback(.progress("partial"))
+            try await partial.send(["partial"])
             try await refresh()
-            XCTAssertTrue(source.histories.count == count)
-            if stop { store.stopTask() } else { callback(.failed("offline")) }
+            XCTAssertTrue(puppet.requests.count == count + 1)
+            if stop { store.stopTask() } else { partial.fail(AgentModelError(message: "offline")) }
+            try await eventually("The turn ends") { !store.isGenerating }
             try await refresh()
-            XCTAssertTrue(source.histories.count == count, "Terminal states must not automatically retry")
-            XCTAssertTrue(store.messages.last?.status == (stop ? .stopped : .failed))
-            XCTAssertTrue(store.messages.filter { $0.role == .user } == messages && store.mainDraft == "Still unsent")
-            store.retry()
-            XCTAssertTrue(source.histories.count == count + 1, "Explicit Retry starts exactly one run")
-            let retryReply = source.receive!
-            retryReply(.progress("retried")); retryReply(.completed("retried"))
+            XCTAssertTrue(puppet.requests.count == count + 1, "Terminal states must not automatically retry")
+            // The Agent drops a cut-off reply, so the turn's state is the task's, not a message's.
+            XCTAssertTrue(store.task?.status == (stop ? .stopped : .failed))
+            XCTAssertTrue(users() == messages && store.mainDraft == "Still unsent")
+            XCTAssertTrue(store.retry())
+            try await puppet.waitForRequests(count + 2)
+            XCTAssertTrue(puppet.requests.count == count + 2 && puppet.requests.last?.kinds.last == "continue",
+                         "Explicit Retry starts exactly one run, continuing the turn")
+            try await puppet.reply("retried")
+            try await eventually("The retried reply completes") { store.task?.status == .completed }
             try await refresh()
-            XCTAssertTrue(source.histories.count == count + 1 && store.messages.filter { $0.role == .user } == messages)
+            XCTAssertTrue(puppet.requests.count == count + 2 && users() == messages)
             XCTAssertTrue(store.mainDraft == "Still unsent")
         }
     }
@@ -1199,14 +1241,17 @@ private struct ComposerHeightHost: View {
 
 
     func testEscapeAndKeyboardCommands() async throws {
-        let sourceA = PreviewSource(), sourceB = PreviewSource()
-        let storeA = TaskStore(source: sourceA)
+        let (storeA, modelA) = puppetStore()
         let voice = VoiceSessionController(), dictation = DictationController()
-        let workspace = WorkspaceStore(initialStore: storeA, dictation: dictation, voice: voice, sourceFactory: { sourceB })
+        let workspace = WorkspaceStore(initialStore: storeA, dictation: dictation, voice: voice, sourceFactory: { idleAgent() })
         defer { workspace.shutdown(); voice.shutdown() }
         let conversationA = workspace.selected!
         let conversationB = workspace.newConversation()
         workspace.select(conversationA.id)
+        // An Agent Stop settles once the cancelled model request has ended.
+        func stopped() async throws {
+            try await eventually("A's turn stops") { conversationA.store.task?.status == .stopped }
+        }
 
         let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
                                      styleMask: [.titled, .resizable, .fullSizeContentView],
@@ -1227,7 +1272,7 @@ private struct ComposerHeightHost: View {
         editor.keyDown(with: enterEvent)
         XCTAssertTrue(enterSent, "Editor invokes onSend")
         workspace.sendMainMessage(conversationID: conversationA.id)
-        XCTAssertTrue(sourceA.histories.isEmpty, "Whitespace draft does not start request")
+        XCTAssertTrue(conversationA.store.messages.isEmpty && modelA.requests.isEmpty, "Whitespace draft does not start request")
         XCTAssertTrue(conversationA.store.task == nil, "No task created for whitespace")
 
         // Test 2: Shift+Enter and Option+Enter do not trigger onSend
@@ -1264,22 +1309,28 @@ private struct ComposerHeightHost: View {
         // Test 4: Esc when generating stops the reply, but does NOT end Voice
         conversationA.store.mainDraft = "Valid question"
         workspace.sendMainMessage(conversationID: conversationA.id)
-        XCTAssertTrue(sourceA.histories.count == 1, "Question submitted")
+        XCTAssertTrue(conversationA.store.messages.map(\.content) == ["Valid question"], "Question submitted")
+        try await modelA.waitForRequests(1)
         XCTAssertTrue(conversationA.store.isGenerating, "Generating reply")
         let canStopBefore = conversationA.store.isGenerating
         XCTAssertTrue(canStopBefore, "Stoppable reply active")
 
         let stoppedByEsc = main.handleEscape()
         XCTAssertTrue(stoppedByEsc, "Esc handles stoppable reply")
+        XCTAssertTrue(conversationA.store.task?.status == .stopping, "Esc stops the reply")
+        try await stopped()
         XCTAssertTrue(!conversationA.store.isGenerating, "Reply stopped by Esc")
-        XCTAssertTrue(conversationA.store.messages.last?.status == .stopped, "Message is stopped")
+        // An Agent turn stopped before any reply keeps no reply message; the task says it stopped.
+        XCTAssertTrue(conversationA.store.messages.last?.role == .user, "No cut-off reply is kept")
 
         // Test 5: Esc when idle returns false
         XCTAssertTrue(!main.handleEscape(), "Esc when idle is not consumed")
 
         // Test 6: In conversation B, Esc does NOT stop background conversation A
         conversationA.store.send("A new request")
-        sourceA.receive?(.progress("streaming A"))
+        let streamA = PuppetStream()
+        try await modelA.answer(.stream(streamA))
+        try await streamA.send(["streaming A"])
         XCTAssertTrue(conversationA.store.isGenerating, "A is generating in background")
         workspace.select(conversationB.id)
         XCTAssertTrue(workspace.selectedID == conversationB.id, "Viewing conversation B")
@@ -1289,10 +1340,13 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(!escInB, "Esc in B returns false when B is idle")
         XCTAssertTrue(conversationA.store.isGenerating, "A is NOT stopped by Esc in B")
         workspace.stop(conversationID: conversationA.id)
+        try await stopped()
 
         // Test 7: In Settings, Esc closes the page and does NOT stop background conversation A
         conversationA.store.send("Another A request")
-        sourceA.receive?(.progress("streaming A again"))
+        let againA = PuppetStream()
+        try await modelA.answer(.stream(againA))
+        try await againA.send(["streaming A again"])
         XCTAssertTrue(conversationA.store.isGenerating, "A is generating")
         main.showSettings()
         XCTAssertTrue(main.isSettingsVisible, "Settings is visible")
@@ -1304,10 +1358,9 @@ private struct ComposerHeightHost: View {
     }
 
     func testLiveVoiceComposerStatesAndAttribution() async throws {
-        let sourceA = PreviewSource(), sourceB = PreviewSource()
-        let storeA = TaskStore(source: sourceA)
+        let storeA = TaskStore(source: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
-        let workspace = WorkspaceStore(initialStore: storeA, dictation: dictation, voice: voice, sourceFactory: { sourceB })
+        let workspace = WorkspaceStore(initialStore: storeA, dictation: dictation, voice: voice, sourceFactory: { idleAgent() })
         defer { workspace.shutdown(); voice.shutdown() }
         let conversationA = workspace.selected!
         let conversationB = workspace.newConversation()
@@ -1402,8 +1455,7 @@ private struct ComposerHeightHost: View {
     }
 
     func testSettingsAndCompanionVoiceIntegration() async throws {
-        let source = PreviewSource()
-        let store = TaskStore(source: source)
+        let store = TaskStore(source: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() },
             synthesizer: { ComposerSynthesizer() }, permission: { true })
         let dictation = DictationController()
@@ -1504,8 +1556,7 @@ private struct ComposerHeightHost: View {
 
 
     func testPetQuickComposerAndTray() async throws {
-        let source = PreviewSource()
-        let store = TaskStore(source: source)
+        let (store, puppet) = puppetStore()
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         defer { store.shutdown(); voice.shutdown() }
         let presentation = PetControlsPresentation()
@@ -1601,7 +1652,8 @@ private struct ComposerHeightHost: View {
         try await until("Without a draft hover shows the pill") { node("voice.start") != nil && node("pet.compose") != nil }
 
         store.send("任务")
-        source.receive?(.completed("完成"))
+        try await puppet.reply("完成")
+        try await eventually("The task completes") { store.task?.status == .completed }
         presentation.isHovered = false
         try await refresh()
         XCTAssertTrue(node("pet.collapsed")?.accessibilityLabel?() == "桌宠快捷控件" && node("pet.compose") == nil
@@ -1639,7 +1691,7 @@ private struct ComposerHeightHost: View {
     func testPetCollapsedDraftLine() async throws {
         // Every render is wanted even when one check fails.
         continueAfterFailure = true
-        let store = TaskStore(source: PreviewSource())
+        let store = TaskStore(source: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         defer { store.shutdown(); voice.shutdown() }
         let presentation = PetControlsPresentation()
@@ -1678,7 +1730,7 @@ private struct ComposerHeightHost: View {
     /// and leaving closes it again. Clicking into it is covered with real events in EchoUITests.
     func testPetDraftLineHoverPeeksComposer() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
         let companion = CompanionController(petStore: pet, workspace: workspace,
                                             settings: SettingsStore(secrets: ComposerSecrets()), defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -1811,10 +1863,13 @@ private struct ComposerHeightHost: View {
         }
         // A running card has no icon and follows the same rule.
         func runningRows(progress: String) async throws -> [(rows: ClosedRange<CGFloat>, ink: ClosedRange<CGFloat>)] {
-            let source = PreviewSource(), store = TaskStore(source: source)
+            let (store, puppet) = puppetStore()
             defer { store.shutdown() }
             XCTAssertTrue(store.send("翻译这段说明"))
-            source.receive?(.progress(progress))
+            let reply = PuppetStream()
+            try await puppet.answer(.stream(reply))
+            try await reply.sendWhole([progress])
+            try await eventually("The card shows the streamed reply") { store.cardSummary == progress }
             XCTAssertEqual(store.task?.status, .running)
             XCTAssertEqual(store.cardSummary, progress)
             return try await petCardTextRows(store: store)
@@ -1828,12 +1883,12 @@ private struct ComposerHeightHost: View {
     }
 
     func testPetStackPeeksBelowFrontCardInBothPlacements() async throws {
-        let source = PreviewSource()
-        let workspace = WorkspaceStore(sourceFactory: { source })
+        let sessions = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
         defer { workspace.shutdown() }
         for text in ["第一条", "第二条", "第三条"] {
             XCTAssertTrue(workspace.sendQuickMessage(text))
-            source.receive?(.failed(text))
+            try await answer(text, in: workspace, sessions: sessions, with: .fail(AgentModelError(message: text)))
         }
         XCTAssertEqual(workspace.petTrayLevel, .stack)
         // The activity panel's canvas: the stack and the padding around it, on white.
@@ -1868,12 +1923,12 @@ private struct ComposerHeightHost: View {
     }
 
     func testPetStackFrontCardIsAButtonThatExpandsTheList() async throws {
-        let source = PreviewSource()
-        let workspace = WorkspaceStore(sourceFactory: { source })
+        let sessions = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
         defer { workspace.shutdown() }
         for text in ["第一条", "第二条"] {
             XCTAssertTrue(workspace.sendQuickMessage(text))
-            source.receive?(.completed(text + "的结果"))
+            try await answer(text, in: workspace, sessions: sessions, with: .text(text + "的结果"))
         }
         let host = NSHostingView(rootView: WorkspaceActivityCapsule(workspace: workspace, placement: ActivityPlacement()))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CompanionLayout.capsuleWidth + 96, height: 300),
@@ -1900,8 +1955,8 @@ private struct ComposerHeightHost: View {
 
     func testIgnoringPetNotificationThroughCloseButton() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-        let source = PreviewSource()
-        let workspace = WorkspaceStore(sourceFactory: { source })
+        let sessions = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -1909,7 +1964,7 @@ private struct ComposerHeightHost: View {
         let selection = workspace.selectedID
         XCTAssertTrue(workspace.sendQuickMessage("忽略这次通知"))
         let conversation = try XCTUnwrap(workspace.activity)
-        source.receive?(.completed("仍然保留在历史中的结果"))
+        try await answer("忽略这次通知", in: workspace, sessions: sessions, with: .text("仍然保留在历史中的结果"))
         try await settle()
         let history = conversation.store.messages
         workspace.enterPetFollowUp(conversation.id)
@@ -1936,7 +1991,7 @@ private struct ComposerHeightHost: View {
         XCTAssertNil(findAccessibility("pet.activity.collapse", in: companion.controlsPanel.contentView!))
 
         XCTAssertTrue(workspace.send("继续同一会话", conversationID: conversation.id))
-        source.receive?(.completed("下一次正常提醒"))
+        try await answer("继续同一会话", in: workspace, sessions: sessions, with: .text("下一次正常提醒"))
         try await settle()
         XCTAssertTrue(companion.activityPanel.isVisible)
         XCTAssertEqual(workspace.unseenCompletedCount, 1)
@@ -1951,8 +2006,8 @@ private struct ComposerHeightHost: View {
 
     func testCompletedPetControlsSurvivePointerExit() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-        let source = PreviewSource()
-        let workspace = WorkspaceStore(sourceFactory: { source })
+        let sessions = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
         let companion = CompanionController(petStore: pet, workspace: workspace,
                                             settings: SettingsStore(secrets: ComposerSecrets()), defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -1976,7 +2031,7 @@ private struct ComposerHeightHost: View {
             node("voice.start") != nil && node("pet.activity.collapse") != nil && node("pet.compose") != nil
         }
         XCTAssertNil(node("pet.collapsed"), "A running card keeps the controls expanded outside hover")
-        source.receive?(.completed("completed result"))
+        try await answer("completion outside the pet", in: workspace, sessions: sessions, with: .text("completed result"))
         try await pointer(outside) { node("pet.compose") != nil && node("pet.activity.collapse") != nil }
         XCTAssertFalse(presentation.isHovered)
         XCTAssertTrue(companion.activityPanel.isVisible)
@@ -2000,8 +2055,8 @@ private struct ComposerHeightHost: View {
 
     func testCompanionQuickComposerLifecycle() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-        let source = PreviewSource()
-        let workspace = WorkspaceStore(sourceFactory: { source })
+        let sessions = PuppetSessions()
+        let workspace = WorkspaceStore(sourceFactory: sessions.factory)
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -2039,7 +2094,8 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(findAccessibility("voice.start", in: controls) != nil
                      && findAccessibility("pet.activity.collapse", in: controls) != nil,
                      "Without hover the running task keeps Live Voice and its card's ⌃")
-        source.receive?(.completed("你好！" + String(repeating: "这是保留在聊天里的完整结果，", count: 30)))
+        try await answer("从桌宠发起", in: workspace, sessions: sessions,
+                         with: .text("你好！" + String(repeating: "这是保留在聊天里的完整结果，", count: 30)))
         try await settle()
         let completedHost = NSHostingView(rootView: WorkspaceActivityCapsule(workspace: workspace, placement: ActivityPlacement())
             .background(.white).environment(\.colorScheme, .light))
@@ -2074,9 +2130,10 @@ private struct ComposerHeightHost: View {
             windowNumber: companion.activityPanel.windowNumber, context: nil, characters: "\r",
             charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
         editor.keyDown(with: returnKey)
-        XCTAssertTrue(source.histories.count == 2 && source.histories.last?.last?.content == "继续问")
+        let followUp = try await sessions.model(asked: "继续问")
+        XCTAssertTrue(followUp.requests.count == 2 && sessions.requestCount == 2, "The follow-up asks the same chat's model once more")
         XCTAssertTrue(workspace.conversations.count == 1 && workspace.petActivityIDs.count == 1)
-        source.receive?(.completed("跟进结果"))
+        try await answer("继续问", in: workspace, sessions: sessions, with: .text("跟进结果"))
         try await settle()
         XCTAssertTrue(workspace.activityStore.isFollowUpExpanded && workspace.unseenCompletedCount == 1)
         XCTAssertTrue(findAccessibility("activity.followUp.toggle", in: activityHost)?.accessibilityPerformPress?() == true)
@@ -2131,27 +2188,32 @@ private struct ComposerHeightHost: View {
             return accessibilityText(in: view)
         }
 
-        let source = PreviewSource(), completed = TaskStore(source: source)
+        let (completed, completedModel) = puppetStore()
         defer { completed.shutdown() }
         completed.send("正常提问")
-        source.receive?(.completed("这是模型的回复。"))
+        try await completedModel.reply("这是模型的回复。")
+        try await eventually("The reply completes") { completed.task?.status == .completed }
         let normal = try await texts(of: completed)
         XCTAssertTrue(normal.contains { $0.contains("这是模型的回复。") }, "The reply itself is on screen: \(normal)")
         XCTAssertTrue(!normal.contains { $0.contains("已完成") }, "A successful reply carries no status caption: \(normal)")
 
-        let failingSource = PreviewSource(), failed = TaskStore(source: failingSource)
+        // An Agent turn that fails keeps no reply message; its task row carries the reason.
+        let (failed, failingModel) = puppetStore()
         defer { failed.shutdown() }
         failed.send("会失败的提问")
-        failingSource.receive?(.failed("连接已中断，请检查网络后重试。"))
+        try await failingModel.answer(.fail(AgentModelError(message: "连接已中断，请检查网络后重试。")))
+        try await eventually("The reply fails") { failed.task?.status == .failed }
         let failure = try await texts(of: failed)
-        XCTAssertTrue(failure.contains { $0.contains("请求失败") } && failure.contains { $0.contains("连接已中断") },
-                     "A failed reply keeps its status and its reason: \(failure)")
+        XCTAssertTrue(failure.contains { $0.contains("连接已中断") }, "A failed reply keeps its reason: \(failure)")
 
-        let stoppedSource = PreviewSource(), stopped = TaskStore(source: stoppedSource)
+        let (stopped, stoppedModel) = puppetStore()
         defer { stopped.shutdown() }
         stopped.send("会被停止的提问")
-        stoppedSource.receive?(.progress("写到一半"))
+        let half = PuppetStream()
+        try await stoppedModel.answer(.stream(half))
+        try await half.send(["写到", "一半"])
         stopped.stopTask()
+        try await eventually("The reply stops") { stopped.task?.status == .stopped }
         let interrupted = try await texts(of: stopped)
         XCTAssertTrue(interrupted.contains { $0.contains("已停止") }, "A stopped reply says so: \(interrupted)")
 
@@ -2714,18 +2776,18 @@ private struct ComposerHeightHost: View {
     func testLiveVoiceTurnKeepsTaskCardHidden() async throws {
         for scenario in ["fresh conversation", "card closed with ×"] {
             let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-            let source = PreviewSource()
+            let sessions = PuppetSessions()
             var recognizers: [ComposerRecognizer] = []
             let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: {
                 let recognizer = ComposerRecognizer(); recognizers.append(recognizer); return recognizer
             }, synthesizer: { ComposerSynthesizer() }, permission: { true })
-            let workspace = WorkspaceStore(voice: voice, sourceFactory: { source })
+            let workspace = WorkspaceStore(voice: voice, sourceFactory: sessions.factory)
             let settings = SettingsStore(secrets: ComposerSecrets())
             let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
             defer { companion.shutdown() }
             if scenario == "card closed with ×" {
                 XCTAssertTrue(workspace.sendQuickMessage("之前的任务"))
-                source.receive?(.completed("完成"))
+                try await answer("之前的任务", in: workspace, sessions: sessions, with: .text("完成"))
                 workspace.toggleActivityTray(); workspace.activityStore.closeActivity()
                 try await Task.sleep(for: .milliseconds(400))
                 XCTAssertTrue(!companion.activityPanel.isVisible)
@@ -2747,7 +2809,7 @@ private struct ComposerHeightHost: View {
             XCTAssertTrue(target.store.isGenerating && !target.store.isActivityVisible,
                          "The spoken turn starts with its card already folded (\(scenario))")
             try await watch(for: .milliseconds(400))
-            source.receive?(.completed("你好呀"))
+            try await sessions.model(asked: "你好").reply("你好呀")
             try await watch(for: .milliseconds(400))
             XCTAssertTrue(!shown, "The task card never appeared during the Live Voice turn (\(scenario))")
             voice.end()
@@ -2850,7 +2912,7 @@ private struct ComposerHeightHost: View {
     }
 
     func testPetVoiceConnectingAndBell() async throws {
-        let store = TaskStore(source: PreviewSource())
+        let store = TaskStore(source: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         defer { store.shutdown(); voice.shutdown() }
         let presentation = PetControlsPresentation()
@@ -2914,8 +2976,7 @@ private struct ComposerHeightHost: View {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pet-project-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let source = PreviewSource()
-        let store = TaskStore(source: source)
+        let store = TaskStore(source: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: store, dictation: DictationController(), voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -2988,7 +3049,7 @@ private struct ComposerHeightHost: View {
         try Data("notes".utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: root) }
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3040,7 +3101,7 @@ private struct ComposerHeightHost: View {
         for directory in [known] + folders + packages { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
         try Data("notes".utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: root) }
-        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
         defer { workspace.shutdown() }
         let knownID = workspace.addProject(url: known)
         let projectChat = workspace.newConversation(projectID: knownID)
@@ -3089,7 +3150,7 @@ private struct ComposerHeightHost: View {
     func testCompanionBubblePanel() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3131,7 +3192,7 @@ private struct ComposerHeightHost: View {
                 defaults.set(descriptor, forKey: "NSWindow Frame \(CompanionController.petFrameAutosaveName)")
             }
             let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-            return CompanionController(petStore: pet, workspace: WorkspaceStore(sourceFactory: { PreviewSource() }),
+            return CompanionController(petStore: pet, workspace: WorkspaceStore(sourceFactory: { idleAgent() }),
                                        settings: SettingsStore(secrets: ComposerSecrets()), defaults: defaults)
         }
         let main = try XCTUnwrap(NSScreen.main).visibleFrame
@@ -3180,7 +3241,7 @@ private struct ComposerHeightHost: View {
     func testPetHidesOnlyForTheVoiceConversationOnScreen() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3240,7 +3301,7 @@ private struct ComposerHeightHost: View {
     func testPetHidesAndShowsOnRequest() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3310,7 +3371,7 @@ private struct ComposerHeightHost: View {
     func testPetVoiceEntryStartsItsOwnConversation() async throws {
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() },
                                            synthesizer: { ComposerSynthesizer() }, permission: { true })
-        let workspace = WorkspaceStore(voice: voice, sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(voice: voice, sourceFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
         settings.voiceAPIKey = "voice"; settings.saveVoice()
@@ -3347,7 +3408,7 @@ private struct ComposerHeightHost: View {
     /// opens on a new chat.
     func testPetRestoresAMinimizedMainWindowOnItsChat() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
-        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
         defer { companion.shutdown() }
@@ -3380,8 +3441,7 @@ private struct ComposerHeightHost: View {
     }
 
     func testComposerPreservesEditorStateAcrossVoiceUpdates() async throws {
-        let source = PreviewSource()
-        let store = TaskStore(source: source)
+        let store = TaskStore(source: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -3460,7 +3520,7 @@ private struct ComposerHeightHost: View {
     /// The list keeps its identity across a switch, so nothing appears or disappears to hang
     /// the restore on; only the browser's location changes.
     func testProjectTreeScrollRestoration() async throws {
-        let store = TaskStore(source: PreviewSource())
+        let store = TaskStore(source: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -3544,7 +3604,7 @@ private struct ComposerHeightHost: View {
         if NSApp.responds(to: accessibilitySetter) {
             NSApp.perform(accessibilitySetter, with: NSNumber(value: true), with: "AXEnhancedUserInterface")
         }
-        let store = TaskStore(source: PreviewSource())
+        let store = TaskStore(source: idleAgent())
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
@@ -4131,7 +4191,7 @@ private struct ComposerHeightHost: View {
         var savedFrame = NSRect.zero
         do {
             let voice = VoiceSessionController(), dictation = DictationController()
-            let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
+            let workspace = WorkspaceStore(initialStore: TaskStore(source: idleAgent()), dictation: dictation, voice: voice)
             defer { workspace.shutdown(); voice.shutdown() }
             XCTAssertTrue(workspace.associateProject(workspace.addProject(url: root), conversationID: workspace.selected!.id))
             let main = MainWindowController(workspace: workspace, defaults: standard, settings: SettingsStore(secrets: ComposerSecrets()))
@@ -4193,7 +4253,7 @@ private struct ComposerHeightHost: View {
 
         // Relaunch: a fresh workspace and window read back what the first one left.
         let voice = VoiceSessionController(), dictation = DictationController()
-        let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
+        let workspace = WorkspaceStore(initialStore: TaskStore(source: idleAgent()), dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
         let main = MainWindowController(workspace: workspace, defaults: standard, settings: SettingsStore(secrets: ComposerSecrets()))
         // Disarmed before the defaults are put back, or its next deferred write lands after them.
@@ -4225,7 +4285,7 @@ private struct ComposerHeightHost: View {
         defer { try? FileManager.default.removeItem(at: root) }
         try Data("notes".utf8).write(to: root.appendingPathComponent("notes.txt"))
         let voice = VoiceSessionController(), dictation = DictationController()
-        let workspace = WorkspaceStore(initialStore: TaskStore(source: PreviewSource()), dictation: dictation, voice: voice)
+        let workspace = WorkspaceStore(initialStore: TaskStore(source: idleAgent()), dictation: dictation, voice: voice)
         defer { workspace.shutdown(); voice.shutdown() }
         XCTAssertTrue(workspace.associateProject(workspace.addProject(url: root), conversationID: workspace.selected!.id))
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
@@ -4310,7 +4370,7 @@ private struct ComposerHeightHost: View {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-project-action-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let workspace = WorkspaceStore(sourceFactory: { PreviewSource() })
+        let workspace = WorkspaceStore(sourceFactory: { idleAgent() })
         defer { workspace.shutdown() }
         let projectID = workspace.addProject(url: root)
         let plain = try XCTUnwrap(workspace.selected)
@@ -4429,10 +4489,10 @@ private struct ComposerHeightHost: View {
         let folder = root.appendingPathComponent("项目甲")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = root.appendingPathComponent("workspace.json")
-        var sources: [PreviewSource] = []
+        let sessions = PuppetSessions()
         let voice = VoiceSessionController(), dictation = DictationController()
         let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: url), dictation: dictation, voice: voice,
-                                       sourceFactory: { let source = PreviewSource(); sources.append(source); return source })
+                                       sourceFactory: sessions.factory)
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: SettingsStore(secrets: ComposerSecrets()),
                                             defaults: EchoTestResources.defaults())
@@ -4454,8 +4514,10 @@ private struct ComposerHeightHost: View {
             let panels = "pet=\(companion.petPanel.isVisible) activity=\(companion.activityPanel.isVisible) controls=\(companion.controlsPanel.isVisible)"
             var saved = "nothing saved"
             if let data = try? Data(contentsOf: url), let snapshot = try? JSONDecoder().decode(WorkspaceSnapshot.self, from: data) {
+                // An Agent conversation's history is in its sidecar; the manifest holds a reference.
+                let reader = WorkspacePersistence(url: url)
                 let chats = snapshot.conversations.map {
-                    "\($0.isUntitled ? "untitled" : $0.title) msgs=\($0.state.messages.count) task=\($0.state.task?.status.rawValue ?? "-") project=\($0.projectID != nil)"
+                    "\($0.isUntitled ? "untitled" : $0.title) msgs=\(reader.restoreSession($0).messages.count) task=\($0.state.task?.status.rawValue ?? "-") project=\($0.projectID != nil)"
                 }
                 let selected = snapshot.conversations.firstIndex { $0.id == snapshot.selectedID }.map { "chat\($0)" }
                     ?? (snapshot.drafts ?? []).firstIndex { $0.id == snapshot.selectedID }.map { "draft\($0)" } ?? "none"
@@ -4463,14 +4525,14 @@ private struct ComposerHeightHost: View {
             }
             outcomes.append("\(name) | title=\(title) | \(panels) | \(saved) | flushes=\(flushes(since: start))")
         }
-        func reply(_ source: PreviewSource?, _ chunks: [String]) async {
-            var text = ""
-            for chunk in chunks {
-                text += chunk
-                source?.receive?(.progress(text))
-                try? await Task.sleep(for: .milliseconds(60))
+        func reply(to message: String, _ chunks: [String]) async throws {
+            let reply = PuppetStream()
+            try await sessions.model(asked: message).answer(.stream(reply))
+            try await reply.send(chunks, gap: .milliseconds(60))
+            reply.finish()
+            try await eventually("The reply to \(message) completes") {
+                workspace.conversations.contains { $0.store.messages.last?.content == chunks.joined() }
             }
-            source?.receive?(.completed(text))
         }
 
         var chat: WorkspaceConversation?
@@ -4481,25 +4543,26 @@ private struct ComposerHeightHost: View {
         // A chat takes a project only while it is empty, so the project comes before the message.
         await step("project") { XCTAssertTrue(workspace.associateProject(workspace.addProject(url: folder), conversationID: id)) }
         await step("send") { XCTAssertTrue(workspace.send("你好", conversationID: id)) }
-        await step("reply") { await reply(sources.last, ["第一段", "，第二段", "，第三段。"]) }
+        try await step("reply") { try await reply(to: "你好", ["第一段", "，第二段", "，第三段。"]) }
         await step("rename") { workspace.renameConversation(id, to: "改过的名字") }
         await step("delete") { workspace.deleteConversation(id) }
         await step("cardShow") { XCTAssertTrue(workspace.sendQuickMessage("桌宠里的问题")) }
         let card = workspace.petActivityIDs.first
-        await step("cardReply") { await reply(sources.last, ["桌宠", "的回答。"]) }
+        try await step("cardReply") { try await reply(to: "桌宠里的问题", ["桌宠", "的回答。"]) }
         await step("cardHide") { if let card { workspace.dismissPetActivity(conversationID: card) } }
 
         let project = "projects=[\"项目甲\"]"
+        // A running Agent turn has no reply message until the reply is written, so it saves one message.
         let expected = [
             "launch | title=(hidden) | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=1",
             "showMain | title=新对话 | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=0",
             "newChat | title=新对话 | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=1",
             "project | title=新对话 | pet=true activity=false controls=true | \(project) chats=[] drafts=1 selected=draft0 | flushes=1",
-            "send | title=你好 | pet=true activity=true controls=true | \(project) chats=[\"你好 msgs=2 task=running project=true\"] drafts=0 selected=chat0 | flushes=1",
+            "send | title=你好 | pet=true activity=true controls=true | \(project) chats=[\"你好 msgs=1 task=running project=true\"] drafts=0 selected=chat0 | flushes=1",
             "reply | title=你好 | pet=true activity=false controls=true | \(project) chats=[\"你好 msgs=2 task=completed project=true\"] drafts=0 selected=chat0 | flushes=1",
             "rename | title=改过的名字 | pet=true activity=false controls=true | \(project) chats=[\"改过的名字 msgs=2 task=completed project=true\"] drafts=0 selected=chat0 | flushes=1",
             "delete | title=新对话 | pet=true activity=false controls=true | \(project) chats=[] drafts=1 selected=draft0 | flushes=2",
-            "cardShow | title=新对话 | pet=true activity=true controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=running project=false\"] drafts=1 selected=draft0 | flushes=1",
+            "cardShow | title=新对话 | pet=true activity=true controls=true | \(project) chats=[\"桌宠里的问题 msgs=1 task=running project=false\"] drafts=1 selected=draft0 | flushes=1",
             "cardReply | title=新对话 | pet=true activity=true controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=completed project=false\"] drafts=1 selected=draft0 | flushes=1",
             "cardHide | title=新对话 | pet=true activity=false controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=completed project=false\"] drafts=1 selected=draft0 | flushes=1",
         ]
