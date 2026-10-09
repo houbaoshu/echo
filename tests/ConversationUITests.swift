@@ -906,6 +906,8 @@ private struct ComposerHeightHost: View {
                      && puppet.requests.count == 1, "Sending while the Agent generates steers it, without a new run")
         try await type("supplement")
         press("conversation.stop"); try await settled(.stopped)
+        XCTAssertTrue(sent() == ["draft"] && store.mainDraft == "supplement\nsupplement",
+                     "The follow-up the stopped turn never took goes back to the draft, after what was typed since")
         try await check("conversation.send", present: ["conversation.resume", "dictation.start"], absent: ["conversation.stop", "voice.start"])
         original.insertText("!", replacementRange: NSRange(location: original.string.utf16.count, length: 0))
         original.setSelectedRange(NSRange(location: 2, length: 3))
@@ -917,7 +919,7 @@ private struct ComposerHeightHost: View {
                         enabled: false)
         XCTAssertTrue(node("dictation.finish")?.isAccessibilityEnabled?() == false, "Recording cannot finish before capture starts")
         XCTAssertTrue(!dictation.captureReady && !original.isEditable && original.string == draft)
-        key(original, 36); XCTAssertTrue(sent().count == 2)
+        key(original, 36); XCTAssertTrue(sent().count == 1)
         try await grantMicrophone()
         try await recognizerRuns()
         // Quiet-to-normal speech envelope, rather than a full-height constant signal.
@@ -945,7 +947,7 @@ private struct ComposerHeightHost: View {
             !dictation.isActive && original.isEditable && original.string == store.mainDraft && window.firstResponder === original
         }
         XCTAssertTrue(original.isEditable && window.firstResponder === original)
-        XCTAssertTrue(store.mainDraft.hasPrefix(draft + "\n") && sent().count == 2)
+        XCTAssertTrue(store.mainDraft.hasPrefix(draft + "\n") && sent().count == 1)
         XCTAssertTrue(original.selectedRange() == NSRange(location: store.mainDraft.utf16.count, length: 0),
                      "A finished recording leaves the caret after the transcript, not at the earlier selection")
         let appended = store.mainDraft
@@ -998,7 +1000,8 @@ private struct ComposerHeightHost: View {
         let resumed = puppet.requests.count
         press("conversation.resume")
         try await puppet.waitForRequests(resumed + 1)
-        XCTAssertTrue(puppet.requests.count == resumed + 1 && sent().count == 2, "Resume continues the stopped reply")
+        XCTAssertTrue(puppet.requests.count == resumed + 1 && sent().count == 1 && puppet.requests.last?.kinds.last == "continue",
+                     "Resume continues the stopped reply")
         try await check("conversation.stop", present: ["dictation.start"], absent: ["conversation.resume", "voice.start"])
         try await puppet.reply("继续后的回复"); try await settled(.completed)
         try await check("voice.start", present: ["dictation.start"], absent: ["conversation.resume", "conversation.stop"])
@@ -2580,12 +2583,10 @@ private struct ComposerHeightHost: View {
         store.stopTask()
 
         // A task that did not finish is not commentary either, so Live Voice keeps its row —
-        // and an input that never got its turn keeps the caption saying so.
-        var queued = ConversationMessage(role: .user, content: "跑个任务")
-        queued.steering = .interrupted
+        // and a reply cut short keeps the caption saying so.
         let archive = TaskStore.Snapshot(
             task: ActivityTask(id: UUID(), runID: UUID(), title: "任务", summary: "已中断 · 可继续跟进", status: .interrupted),
-            messages: [queued, .init(role: .assistant, content: "只写了一半", status: .interrupted)],
+            messages: [.init(role: .user, content: "跑个任务"), .init(role: .assistant, content: "只写了一半", status: .interrupted)],
             mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false)
         let broken = TaskStore(snapshot: archive, harness: idleAgent())
         defer { broken.shutdown() }
@@ -2786,23 +2787,28 @@ private struct ComposerHeightHost: View {
         try await settle("the half-heard words stand in") { standIns() == 1 }
         XCTAssertTrue(standIns() == 1, "A half-heard sentence stands in")
         store.stopTask()
-        try await settle("stopping takes the stand-in away") { standIns() == 0 }
-        XCTAssertTrue(voice.subtitle.isEmpty && store.messages.filter { $0.role == .user }.map(\.content) == settled,
-                     "Stopping discards it instead of sending it: \(voice.subtitle)")
+        try await settle("stopping takes the stand-in away") { standIns() == 0 && !store.isGenerating }
+        XCTAssertTrue(voice.subtitle.isEmpty && !store.mainDraft.contains("还没说完"),
+                     "Stopping discards it instead of sending it: \(voice.subtitle), draft \(store.mainDraft)")
         XCTAssertTrue(standIns() == 0, "Nothing unsent stays drawn")
+        // Stop settled the turn before it took the follow-up, so the follow-up leaves the chat
+        // for the draft, as a typed one does.
+        XCTAssertTrue(settled == ["讲讲今天的天气", "再说说明天"]
+                     && store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气"]
+                     && store.mainDraft == "再说说明天",
+                     "The follow-up the turn never took is back in the draft: \(store.messages.map(\.content)), draft \(store.mainDraft)")
 
-        // Ending the session leaves the messages it produced untouched.
+        // Ending the session leaves the messages it produced, and the draft, untouched.
         voice.end()
         for _ in 0..<100 where voice.isActive { try await Task.sleep(for: .milliseconds(20)) }
-        try await settle("the follow-up's caption shows outside Live Voice") { visibleText(in: view).contains { $0.contains("已中断") } }
+        try await settle("the session's end is drawn") { !voice.isActive && standIns() == 0 }
         XCTAssertTrue(standIns() == 0, "No stand-in outlives the session")
-        XCTAssertTrue(store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气", "再说说明天"],
-                     "The messages it produced are untouched: \(store.messages.map(\.content))")
-        // Stop settled the turn, so the follow-up that never got its turn is interrupted, and
-        // outside Live Voice its caption shows.
-        XCTAssertTrue(store.messages.last { $0.role == .user }?.steering == .interrupted
-                     && visibleText(in: view).contains { $0.contains("已中断") },
-                     "Outside Live Voice the follow-up's caption is there: \(visibleText(in: view))")
+        XCTAssertTrue(store.messages.filter { $0.role == .user }.map(\.content) == ["讲讲今天的天气"] && store.mainDraft == "再说说明天",
+                     "The messages it produced are untouched: \(store.messages.map(\.content)), draft \(store.mainDraft)")
+        // Outside Live Voice no message carries a follow-up caption: the one still queued at Stop
+        // is in the draft.
+        XCTAssertTrue(store.messages.allSatisfy { $0.steering == nil } && !visibleText(in: view).contains { $0.contains("待处理") },
+                     "No follow-up caption outside Live Voice: \(visibleText(in: view))")
     }
 
     /// Speaking in Live Voice starts a turn; its task card must never appear, not even briefly,

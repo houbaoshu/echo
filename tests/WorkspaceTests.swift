@@ -1013,9 +1013,10 @@ import FoundationModels
         #expect(workspace.persistenceNotice == nil)
         let first = try #require(workspace.conversation(id: unnamed))
         #expect(first.store.agentLoadError == WorkspacePersistence.unreadableHistory && !first.store.canSubmit)
-        // Queued at quit reopens as interrupted; a steering value this build does not know reads as none.
-        #expect(first.store.messages.map(\.steering) == [nil, .interrupted, .interrupted, nil, nil])
-        #expect(first.store.messages.map(\.content) == ["m1", "m2", "m3", "m4", "m5"])
+        // Queued at quit goes back to the draft; a steering value this build does not know reads as
+        // none, 已中断 from earlier builds included.
+        #expect(first.store.messages.map(\.steering) == [nil, nil, nil, nil])
+        #expect(first.store.messages.map(\.content) == ["m1", "m3", "m4", "m5"] && first.store.mainDraft == "m2")
         // A call without a result reopens as unknown, as before; an unrecognised state is worked
         // out from the result.
         #expect(first.store.tools.map(\.state) == [.unknown, .unknown, .unknown, .finished, .notExecuted, .finished])
@@ -1036,7 +1037,8 @@ import FoundationModels
         // The archive keeps storing the same text for these states.
         #expect(workspace.flush())
         let saved = try String(contentsOf: persistence.url, encoding: .utf8)
-        #expect(saved.contains(#""steering" : "已中断""#), "\(saved)")
+        // No message is left with a steering state: the queued one is in the draft.
+        #expect(!saved.contains(#""steering""#) && saved.contains(#""mainDraft" : "m2""#), "\(saved)")
         // Only Agent conversations save tool records, so encode them directly.
         let tools = String(decoding: try JSONEncoder().encode(first.store.tools), as: UTF8.self)
         for stored in [#""state":"执行结果未知""#, #""state":"未执行""#, #""state":"执行结束""#] {

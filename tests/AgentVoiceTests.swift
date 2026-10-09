@@ -74,11 +74,14 @@ extension VoiceTests {
             f.store.task?.status == .stopped && f.voice.snapshot.recognition == .listening
         }
         #expect(f.voice.isActive && f.store.canSubmit && f.synths.isEmpty, "cleanup restores listening without ending the call")
-        let requests = f.puppet.requests.count
-        #expect(f.workspace.retry(conversationID: f.conversation.id) && f.userTexts.count == users,
+        #expect(f.userTexts.count == users - 2 && f.store.mainDraft == "保留草稿\n原会话补充\n文字补充",
+                "the follow-ups the stopped turn never took go back to the draft, spoken or typed, in order")
+        let requests = f.puppet.requests.count, kept = f.userTexts.count
+        #expect(f.workspace.retry(conversationID: f.conversation.id) && f.userTexts.count == kept,
               "voice Continue neither replays nor appends the original request")
         try await f.puppet.waitForRequests(requests + 1)
-        #expect(f.puppet.requests.last?.kinds.last == "prompt", "the queued follow-ups are what continues")
+        #expect(f.puppet.requests.last?.kinds.last == "continue" && f.store.mainDraft == "保留草稿\n原会话补充\n文字补充",
+                "Continue resumes the stopped turn; the follow-ups wait in the draft")
         f.voice.end()
         #expect(f.store.isGenerating && !f.audio.capturing, "ending Live Voice releases audio without cancelling the Agent")
     }

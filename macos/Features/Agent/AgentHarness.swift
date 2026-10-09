@@ -228,6 +228,15 @@ enum AgentInstructions {
         resumeLease(granted: false)
     }
 
+    /// Takes back pending input between turns, so no later turn sends it. Returns what was taken
+    /// back, in the order it was queued.
+    @discardableResult func withdraw(_ messageIDs: Set<UUID>) -> [NativeAgentState.Input] {
+        guard !isRunning else { return [] }
+        let withdrawn = state.pendingInputs.filter { messageIDs.contains($0.messageID) }
+        state.pendingInputs.removeAll { messageIDs.contains($0.messageID) }
+        return withdrawn
+    }
+
     /// Starts a turn with the pending input, or continues the last turn when there is none.
     @discardableResult func begin() -> Bool {
         guard !isRunning else { return false }

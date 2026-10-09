@@ -32,16 +32,12 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
     var timestamp = Date()
     var errorMessage: String?
     var steering: Steering?
-    /// Where a follow-up sent while a turn runs stands. Accepted input carries no steering at all.
-    /// Raw values are what archives store.
+    /// A follow-up sent while a turn runs, until the turn takes it. Accepted input carries no
+    /// steering at all, and one the turn ends without goes back to the draft. Raw values are what
+    /// archives store.
     enum Steering: String, Codable, Sendable {
-        case queued = "待处理", interrupted = "已中断"
-        var label: String {
-            switch self {
-            case .queued: String(localized: "待处理")
-            case .interrupted: String(localized: "已中断")
-            }
-        }
+        case queued = "待处理"
+        var label: String { String(localized: "待处理") }
     }
 
     private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, steering }
@@ -65,6 +61,14 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         try values.encode(content, forKey: .content); try values.encode(status, forKey: .status)
         try values.encode(timestamp, forKey: .timestamp); try values.encodeIfPresent(errorMessage, forKey: .errorMessage)
         try values.encodeIfPresent(steering, forKey: .steering)
+    }
+}
+
+extension String {
+    /// Adds `text` to a draft on a line of its own, unless the draft is empty or already ends a line.
+    mutating func appendDraftLine(_ text: String) {
+        if !isEmpty, !hasSuffix("\n") { append("\n") }
+        append(text)
     }
 }
 
@@ -264,10 +268,12 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         tools = snapshot.tools ?? []; agentLoadError = snapshot.loadError
         agentStored = snapshot.agentStored
         if harness != nil, task?.status == .completed { task?.summary = String(localized: "已完成") }
+        mainDraft = snapshot.mainDraft
         // The engine rebuilds messages and tools from its transcript, closing calls left without a result.
         harness?.restore(snapshot.native)
         for index in tools.indices where tools[index].result == nil { tools[index].state = .unknown }
-        for index in messages.indices where messages[index].steering == .queued { messages[index].steering = .interrupted }
+        // Saved while the turn ran: the follow-ups it had not taken go back to the saved draft.
+        returnQueuedFollowUps()
         appendEndingWithoutReply()
         for index in messages.indices where [.pending, .streaming].contains(messages[index].status) {
             messages[index].status = .interrupted
@@ -283,7 +289,6 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                 }
             }
         }
-        mainDraft = snapshot.mainDraft
         followUpDraft = snapshot.followUpDraft
         activityDismissed = snapshot.activityDismissed
         activitiesCollapsed = snapshot.activitiesCollapsed
@@ -381,6 +386,16 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         messages.append(response)
         return true
     }
+    /// Follow-ups a turn ended without taking never reached the model. They leave the conversation
+    /// and the engine's queue and go back to the main draft, in the order they were sent, wherever
+    /// they were typed or spoken: Continue resumes the turn without them, and sending is up to the user.
+    private func returnQueuedFollowUps() {
+        let queued = messages.filter { $0.steering == .queued }
+        guard !queued.isEmpty else { return }
+        harness?.withdraw(Set(queued.map(\.id)))
+        messages.removeAll { $0.steering == .queued }
+        for message in queued { mainDraft.appendDraftLine(message.content) }
+    }
     /// Keeps a failed save's message: once a save fails, nothing more runs this turn.
     private func recordSaveFailure(_ error: any Error) -> String {
         let failure = String(localized: "会话保存失败，已停止后续执行：\(error.localizedDescription)")
@@ -477,7 +492,7 @@ extension TaskStore: AgentHarnessHost {
     func harnessFinish(_ ending: AgentTurnEnding) {
         guard !retired, isGenerating, let runID = task?.runID else { return }
         needsDirectory = false; waitingForProject = false
-        for index in messages.indices where messages[index].steering == .queued { messages[index].steering = .interrupted }
+        returnQueuedFollowUps()
         let stoppedSummary = harness?.continuable == true ? String(localized: "已停止 · 可继续处理") : String(localized: "已停止")
         var event: TaskLifecycleEvent
         switch ending {

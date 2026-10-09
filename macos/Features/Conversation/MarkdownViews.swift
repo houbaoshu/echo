@@ -129,13 +129,12 @@ struct ConversationMessageView: View {
         if message.status == .completed { return false }
         return showsProgress || !(message.status == .pending || message.status == .streaming)
     }
-    /// 待处理 is the only steering caption a Live Voice turn drops. It appears the instant the
-    /// spoken words settle and goes away as soon as the core takes them, so under Live Voice
-    /// it is one line appearing and vanishing under a bubble that just arrived. 已中断 says
-    /// the input never got its turn, which nothing else on screen says, so it stays.
+    /// A Live Voice turn drops 待处理. It appears the instant the spoken words settle and goes
+    /// away as soon as the core takes them, so under Live Voice it is one line appearing and
+    /// vanishing under a bubble that just arrived.
     private var steeringCaption: String? {
-        guard let steering = message.steering else { return nil }
-        return showsProgress || steering != .queued ? steering.label : nil
+        guard showsProgress else { return nil }
+        return message.steering?.label
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

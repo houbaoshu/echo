@@ -500,8 +500,7 @@ extension EchoIntegrationScenarios {
         second.store.send("skip queued call")
         try await eventually("queued steering", timeout: .seconds(8)) { !second.store.isGenerating }
         #expect(second.store.tools.first?.state == .notExecuted)
-        // Accepted steering leaves no caption behind: only a still-queued or interrupted
-        // follow-up keeps one.
+        // Accepted steering leaves no caption behind: only a still-queued follow-up keeps one.
         #expect(second.store.messages.last(where: { $0.role == .user })?.steering == nil)
         first.store.send("follow up during execution")
         first.store.hideMainWindow()

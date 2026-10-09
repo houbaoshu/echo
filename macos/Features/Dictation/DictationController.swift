@@ -215,9 +215,8 @@ import Observation
         // Callbacks were invalidated above, so the transcript is committed once.
         let content = finalTranscript ?? subtitle
         if !discard, !content.isEmpty, let store {
-            let separator = store.mainDraft.isEmpty || store.mainDraft.hasSuffix("\n") ? "" : "\n"
-            diagnosticTrace?.record("draft.append.before", ["draft": store.mainDraft, "content": content, "separator": separator])
-            store.mainDraft += separator + content
+            diagnosticTrace?.record("draft.append.before", ["draft": store.mainDraft, "content": content])
+            store.mainDraft.appendDraftLine(content)
             diagnosticTrace?.record("draft.append.after", ["draft": store.mainDraft])
         } else {
             diagnosticTrace?.record("draft.append.skipped", ["discard": discard, "content": content,

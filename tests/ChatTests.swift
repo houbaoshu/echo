@@ -135,11 +135,11 @@ import Testing
         #expect(interrupted.task?.status == .interrupted && interrupted.messages.map(\.content) == ["Hello", ""]
                 && interrupted.messages.last?.status == .interrupted && interrupted.canRetry)
         interrupted.shutdown()
-        // A follow-up still queued for the running turn reopens as interrupted.
+        // A follow-up still queued for the running turn reopens in the draft.
         #expect(running.send("follow up") && running.messages.last?.steering == .queued)
         let (reopened, _) = try Self.reopen(running.snapshot)
-        #expect(reopened.messages.first { $0.content == "follow up" }?.steering == .interrupted,
-                "A follow-up left queued at quit reopens as interrupted")
+        #expect(!reopened.messages.contains { $0.content == "follow up" } && reopened.mainDraft == "follow up",
+                "A follow-up left queued at quit goes back to the draft")
         reopened.shutdown(); running.shutdown()
 
         // A completed turn has its reply, and reopens with nothing added.
@@ -211,5 +211,206 @@ import Testing
         restored.id = shown.id
         #expect(reopened.messages.count == 2 && restored == shown, "The message matches the turn's final state")
         reopened.shutdown(); chat.shutdown()
+    }
+
+    // MARK: A follow-up still queued when its turn ends
+
+    /// How far the turn got before the follow-up was sent.
+    enum FollowUpProgress: String, CaseIterable, CustomTestStringConvertible {
+        /// The model has not answered the first request.
+        case noReply
+        /// The model is streaming a reply it has not finished.
+        case cutOffReply
+        /// The model finished a reply and a bash call after it; the command is running.
+        case replyBeforeCall
+        var testDescription: String { rawValue }
+    }
+    /// How the turn ended before its next model request could take the follow-up.
+    enum FollowUpEnding: String, CaseIterable, CustomTestStringConvertible {
+        case stop, fail
+        /// Echo went away while the turn ran: reopened from the last save, made while it ran.
+        /// A normal quit stops running turns and waits for them before it saves, as `stop` does.
+        case crash
+        var testDescription: String { rawValue }
+    }
+    /// Runs every command until the turn is stopped, or fails it once `failCommand` opens.
+    final class HeldRunner: CommandRunning, Sendable {
+        let failCommand = ScriptGate()
+        var runs: Int { failCommand.arrivals }
+        func run(command: String, directory: String) async -> CommandOutcome {
+            do { try await failCommand.wait(); return .failed(code: "spawn_failed", message: "boom") }
+            catch { return .cancelled }
+        }
+    }
+    /// One line per message: role, content (∅ when empty), status, steering, and the error if any.
+    static func rows(_ messages: [ConversationMessage]) -> [String] {
+        messages.map { message in
+            ["\(message.role)", message.content.isEmpty ? "∅" : message.content, "\(message.status)",
+             message.steering.map { "\($0)" } ?? "-"].joined(separator: "|") + (message.errorMessage.map { "|\($0)" } ?? "")
+        }
+    }
+
+    /// A follow-up sent while a turn runs is queued for the turn's next model request; here the
+    /// turn ends before that request. The follow-up goes back to the main draft and out of the
+    /// conversation and the engine's queue, while open and after reopening, and Continue resumes
+    /// the turn without it.
+    @Test(arguments: FollowUpProgress.allCases, FollowUpEnding.allCases)
+    static func followUpQueuedWhenTheTurnEnds(progress: FollowUpProgress, ending: FollowUpEnding) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-chat-\(UUID())").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runner = HeldRunner()
+        let puppet = PuppetModel()
+        let chat = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
+        chat.projectDirectory = { root }
+        var saved: [TaskStore.Snapshot] = []
+        chat.checkpoint = { saved.append($0) }
+        defer { chat.shutdown() }
+
+        try #require(chat.send("Hello"))
+        try await puppet.waitForRequests(1)
+        let stream = PuppetStream()
+        switch progress {
+        case .noReply: break
+        case .cutOffReply:
+            try await puppet.answer(.stream(stream))
+            try await stream.send(["A", "B", "C", "D"])
+            try await eventually("the reply streams") { chat.replyStream.live?.hasPrefix("AB") == true }
+        case .replyBeforeCall:
+            try await puppet.answer(.stream(stream))
+            try await stream.send(["A", "B"])
+            stream.call("bash", #"{"command":"hold"}"#); stream.finish()
+            try await eventually("the command runs") { runner.runs == 1 && chat.tools.first?.state == .running }
+        }
+        // The model is held on its first request, or the command is, so nothing takes the
+        // follow-up until the turn ends.
+        try #require(chat.send("follow up") && chat.messages.last?.steering == .queued)
+
+        switch ending {
+        case .stop: chat.stopTask()
+        case .fail:
+            switch progress {
+            case .noReply: try await puppet.answer(.fail(AgentModelError(message: "boom")))
+            case .cutOffReply: stream.fail(AgentModelError(message: "boom"))
+            case .replyBeforeCall: runner.failCommand.open()
+            }
+        case .crash: break
+        }
+        if ending != .crash {
+            try await eventually("the turn ends, or a request takes the follow-up") { !chat.isGenerating || puppet.requests.count > 1 }
+        }
+        try #require(puppet.requests.count == 1, "No model request took the follow-up")
+
+        // A reply cut off mid-stream is dropped; one finished before a tool call stays and ends
+        // the conversation, so only a turn that ends on its user message gets an ending message.
+        let ended = switch ending {
+        case .stop: "assistant|∅|stopped|-"
+        case .fail: "assistant|∅|failed|-|boom"
+        case .crash: "assistant|∅|interrupted|-"
+        }
+        let endedRows = ["user|Hello|completed|-"] + (progress == .replyBeforeCall ? ["assistant|AB|completed|-"] : [ended])
+        if ending != .crash {
+            #expect(rows(chat.messages) == endedRows, "The follow-up leaves the conversation; the ending follows the turn it ends")
+            #expect(chat.mainDraft == "follow up" && chat.snapshot.native?.pendingInputs.isEmpty == true,
+                    "The follow-up goes back to the draft and out of the engine's queue")
+            #expect(chat.task?.status == (ending == .stop ? .stopped : .failed) && chat.canRetry && chat.replyStream.live == nil,
+                    "The interrupted turn can still be continued")
+            #expect(saved.last?.messages == chat.messages && saved.last?.mainDraft == "follow up"
+                    && saved.last?.native?.pendingInputs.isEmpty == true, "What is saved is what is shown")
+        }
+
+        // Reopens from the last save: after the ending, or for a crash, the one the follow-up made.
+        let (reopened, reopenedModel) = try Self.reopen(try #require(saved.last))
+        defer { reopened.shutdown() }
+        #expect(rows(reopened.messages) == endedRows, "Reopening shows what the ending showed")
+        #expect(reopened.mainDraft == "follow up" && reopened.snapshot.native?.pendingInputs.isEmpty == true,
+                "The follow-up is in the draft once, and no longer queued")
+        let endedStatus: TaskStatus = switch ending { case .stop: .stopped; case .fail: .failed; case .crash: .interrupted }
+        #expect(reopened.task?.status == endedStatus && reopened.canRetry)
+
+        // Continue after reopening.
+        try #require(reopened.retry())
+        try await reopenedModel.waitForRequests(1)
+        let continued = reopenedModel.requests[0]
+        let toolResult = ending == .crash ? AgentToolResult.unknownAfterInterruption : AgentToolResult.cancelledDuring
+        #expect(continued.kinds == ["instructions", "prompt"] + (progress == .replyBeforeCall ? ["response", "toolCalls", "toolOutput"] : []) + ["continue"]
+                && continued.userTexts == ["Hello"]
+                && continued.replies == (progress == .replyBeforeCall ? ["AB"] : [])
+                && continued.toolOutputs == (progress == .replyBeforeCall ? [toolResult] : []),
+                "Continue resumes the interrupted turn, without the follow-up")
+        let runningRows = ["user|Hello|completed|-"] + (progress == .replyBeforeCall ? ["assistant|AB|completed|-"] : [])
+        #expect(rows(reopened.messages) == runningRows && reopened.mainDraft == "follow up",
+                "The ending message goes; the follow-up stays in the draft")
+        try await reopenedModel.reply("answer")
+        try await eventually("continued") { !reopened.isGenerating }
+        #expect(rows(reopened.messages) == runningRows + ["assistant|answer|completed|-"] && reopened.task?.status == .completed)
+
+        // Continue while open, after a Stop or a failure, sends the same.
+        guard ending != .crash else { return }
+        try #require(chat.retry())
+        try await puppet.waitForRequests(2)
+        #expect(puppet.requests[1].kinds == continued.kinds && puppet.requests[1].userTexts == continued.userTexts
+                && puppet.requests[1].replies == continued.replies && puppet.requests[1].toolOutputs == continued.toolOutputs,
+                "Continue while open sends what Continue after reopening sends")
+        #expect(rows(chat.messages) == runningRows && chat.mainDraft == "follow up")
+        try await puppet.reply("answer")
+        try await eventually("continued while open") { !chat.isGenerating }
+        #expect(rows(chat.messages) == runningRows + ["assistant|answer|completed|-"] && chat.task?.status == .completed)
+    }
+
+    /// Every follow-up a turn ends without goes back in the order it was sent, after what the
+    /// draft already holds and on a line of its own, as dictation adds to it; reopening neither
+    /// loses nor repeats them.
+    @Test(arguments: FollowUpEnding.allCases, ["draft", "draft\n"])
+    static func followUpsGoBackAfterTheDraft(ending: FollowUpEnding, draft: String) async throws {
+        let (chat, puppet) = Self.chat()
+        var saved: [TaskStore.Snapshot] = []
+        chat.checkpoint = { saved.append($0) }
+        defer { chat.shutdown() }
+        try #require(chat.send("Hello"))
+        try await puppet.waitForRequests(1)
+        chat.mainDraft = draft
+        try #require(chat.send("one") && chat.send("two"))
+        switch ending {
+        case .stop: chat.stopTask()
+        case .fail: try await puppet.answer(.fail(AgentModelError(message: "boom")))
+        case .crash: break
+        }
+        if ending != .crash { try await eventually("the turn ends") { !chat.isGenerating } }
+        let returned = "draft\none\ntwo"
+        if ending != .crash {
+            #expect(chat.mainDraft == returned && chat.messages.map(\.content) == ["Hello", ""]
+                    && chat.snapshot.native?.pendingInputs.isEmpty == true,
+                    "Both follow-ups follow the draft in order, and leave the conversation and the queue")
+        }
+
+        let (reopened, model) = try Self.reopen(try #require(saved.last))
+        defer { reopened.shutdown() }
+        #expect(reopened.mainDraft == returned && reopened.messages.map(\.content) == ["Hello", ""]
+                && reopened.snapshot.native?.pendingInputs.isEmpty == true,
+                "Reopening holds them in the draft once, and nowhere else")
+        #expect(reopened.retry())
+        try await model.waitForRequests(1)
+        #expect(model.requests[0].kinds == ["instructions", "prompt", "continue"] && model.requests[0].userTexts == ["Hello"],
+                "Continue sends neither")
+    }
+
+    /// A follow-up the turn ended without is in the draft, not the queue: the next message sent
+    /// goes alone.
+    @Test static func returnedFollowUpStaysOutOfTheNextMessage() async throws {
+        let (chat, puppet) = Self.chat()
+        defer { chat.shutdown() }
+        try #require(chat.send("Hello"))
+        try await puppet.waitForRequests(1)
+        try #require(chat.send("follow up"))
+        chat.stopTask()
+        try await eventually("stopped") { !chat.isGenerating }
+        try #require(chat.mainDraft == "follow up")
+
+        #expect(chat.send("next"))
+        try await puppet.waitForRequests(2)
+        #expect(puppet.requests[1].kinds == ["instructions", "prompt", "prompt"] && puppet.requests[1].userTexts == ["Hello", "next"],
+                "The model gets the new message without the follow-up")
+        #expect(rows(chat.messages) == ["user|Hello|completed|-", "user|next|completed|-"] && chat.mainDraft == "follow up")
     }
 }
