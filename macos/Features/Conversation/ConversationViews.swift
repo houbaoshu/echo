@@ -705,7 +705,7 @@ struct ConversationView: View {
                 .overlay(alignment: .topLeading) {
                     if presentation.isDictating {
                         Text(presentation.mode == .dictationFinalizing ? String(localized: "正在完成转写…") :
-                             presentation.mode == .dictationPreparing ? String(localized: "正在准备麦克风…") :
+                             presentation.mode == .dictationPreparing ? (dictation.isDownloadingModel ? String(localized: "正在下载语音模型…") : String(localized: "正在准备麦克风…")) :
                              dictation.subtitle.isEmpty ? String(localized: "正在聆听…") : dictation.subtitle)
                             .font(WorkspaceStyle.body).foregroundStyle(WorkspaceStyle.secondary)
                             .lineLimit(3).padding(.top, 4)

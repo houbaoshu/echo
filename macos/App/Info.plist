@@ -11,7 +11,6 @@
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>27.0</string>
     <key>NSMicrophoneUsageDescription</key><string>Echo 使用麦克风将讲话转写到输入框或进行语音通话。普通转写使用 Apple 本地识别；语音通话使用豆包识别。</string>
-    <key>NSSpeechRecognitionUsageDescription</key><string>Echo 使用 Apple 本地语音识别将讲话转写到输入框，音频不会发送至 Apple 云端。</string>
     <key>NSAppTransportSecurity</key><dict>
         <key>NSAllowsLocalNetworking</key><true/>
     </dict>

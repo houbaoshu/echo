@@ -21,9 +21,9 @@ extension EchoVoiceScenarios {
 @Suite(.serialized) enum DictationTests {
     @Test @MainActor static func recordFinishCancelAndPreview() async throws {
         let audio = FakeAudio(), recognizer = DictationRecognizer(), (store, puppet) = VoiceTests.agentStore()
-        var prepareFailure: SettingsError? = SettingsError("Apple 本地语音识别当前不可用")
+        var prepareFailure: SettingsError? = SettingsError("无法下载 Apple 语音模型（zh-CN）：网络不可用")
         var prepares = 0
-        let dictation = DictationController(audio: audio, recognizer: {
+        let dictation = DictationController(audio: audio, recognizer: { _ in
             prepares += 1
             if let prepareFailure { throw prepareFailure }
             return recognizer
@@ -44,7 +44,7 @@ extension EchoVoiceScenarios {
         dictation.start(conversation: conversation)
         try await eventually("the unprepared recognizer fails the recording") { dictation.state == .failed }
         #expect(dictation.state == .failed && !audio.capturing && prepares == 1
-                     && dictation.error?.contains("Apple 本地") == true, "A recognizer that cannot be prepared fails before recording")
+                     && dictation.error?.contains("无法下载 Apple 语音模型") == true, "A recognizer that cannot be prepared fails before recording")
         prepareFailure = nil
         dictation.start(conversation: conversation)
         try await ready()
@@ -116,14 +116,14 @@ extension EchoVoiceScenarios {
         #expect(!dictation.isActive && call.testing, "Settings probes exclude dictation")
         call.cancelTest()
         let deniedAudio = FakeAudio()
-        let denied = DictationController(audio: deniedAudio, recognizer: { DictationRecognizer() }, permission: { false })
+        let denied = DictationController(audio: deniedAudio, recognizer: { _ in DictationRecognizer() }, permission: { false })
         denied.start(conversation: conversation)
         try await eventually("the refused permission fails the recording") { denied.state == .failed }
         #expect(denied.state == .failed && !deniedAudio.capturing)
         denied.shutdown()
         var permissionReply: CheckedContinuation<Bool, Never>?
         let delayedAudio = FakeAudio()
-        let delayed = DictationController(audio: delayedAudio, recognizer: { DictationRecognizer() }, permission: {
+        let delayed = DictationController(audio: delayedAudio, recognizer: { _ in DictationRecognizer() }, permission: {
             await withCheckedContinuation { permissionReply = $0 }
         })
         delayed.start(conversation: conversation)
@@ -160,7 +160,7 @@ extension EchoVoiceScenarios {
         recognizer.emit("删除应丢弃")
         workspace.deleteConversation(conversation.id)
         #expect(!dictation.isActive && store.mainDraft == draft)
-        let silent = DictationController(audio: FakeAudio(), recognizer: { DictationRecognizer() },
+        let silent = DictationController(audio: FakeAudio(), recognizer: { _ in DictationRecognizer() },
                                          captureTimeout: .milliseconds(30), permission: { true })
         silent.start(conversation: second)
         try await eventually("the 30 ms capture timeout fails the recording") { silent.state == .failed }
@@ -179,7 +179,7 @@ extension EchoVoiceScenarios {
         let timeout = Duration.milliseconds(50), pastTimeout = timeout + .milliseconds(50)
         func makeDictation() -> (FakeAudio, DictationRecognizer, DictationController) {
             let audio = FakeAudio(), recognizer = DictationRecognizer()
-            let dictation = DictationController(audio: audio, recognizer: { recognizer }, finalizationTimeout: .seconds(5),
+            let dictation = DictationController(audio: audio, recognizer: { _ in recognizer }, finalizationTimeout: .seconds(5),
                                                 captureTimeout: timeout, permission: { true })
             dictation.start(conversation: conversation)
             return (audio, recognizer, dictation)
@@ -236,61 +236,6 @@ extension EchoVoiceScenarios {
         }
     }
 
-    @Test @MainActor static func recordedPauseRegression() async throws {
-        struct Fixture: Decodable {
-            struct Callback: Decodable { let text: String; let streamFinal: Bool; let elapsedMs: Double }
-            let expected: String
-            let callbacks: [Callback]
-            let phraseEnds: [Int]
-        }
-        let url = EchoTestResources.resource("fixtures/apple-dictation-pause-20260914.json")
-        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
-        let engine = TestAppleSpeechEngine(), store = TaskStore(harness: idleAgent())
-        let dictation = DictationController(audio: FakeAudio(), recognizer: {
-            try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
-        }, permission: { true })
-        let voice = VoiceSessionController(audio: FakeAudio(), permission: { true })
-        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
-        dictation.attach(workspace: workspace)
-        defer { workspace.shutdown() }
-        for termination in ["finish", "cancel", "error"] {
-            store.mainDraft = "已有草稿"
-            let starts = engine.starts
-            dictation.start(conversation: workspace.selected!)
-            try await eventually("the recording runs") { dictation.captureReady && engine.starts > starts }
-            for (index, callback) in fixture.callbacks.enumerated() {
-                if callback.streamFinal {
-                    if termination == "cancel" { dictation.cancel(discard: true) }
-                    else if termination == "error" {
-                        engine.receive?(nil, "test failure after completed phrases")
-                        try await eventually("the recognizer failure fails the recording") { dictation.state == .failed }
-                    } else { dictation.finishRecording() }
-                }
-                // The old controller trace did not capture metadata. These boundaries
-                // are video annotations, not invented "raw" timestamps; the separate
-                // device fixture verifies genuine Apple metadata end to end. Spacing
-                // stands in for the recorded multi-second pauses between phrases.
-                let segment = fixture.phraseEnds.firstIndex(of: index + 1).map {
-                    ASRResult.LocalSegment(start: Double($0) * 5, duration: 0.5)
-                }
-                engine.receive?(ASRResult(result: .init(text: callback.text, utterances: nil),
-                                          streamFinal: callback.streamFinal, localSegment: segment), nil)
-                // The recognizer takes results in order from its stream, so the test checks only where
-                // it reads the outcome; the callbacks themselves have nothing to show for each one.
-                if index == 9 {
-                    try await eventually("the second phrase's first partial is in the preview") { dictation.subtitle == "这是我的第一句话 这" }
-                    #expect(dictation.subtitle == "这是我的第一句话 这" && store.mainDraft == "已有草稿",
-                                 "A new partial preserves the first phrase in preview without writing the draft")
-                }
-            }
-            try await eventually("the recording ends") { !dictation.isActive }
-            // On error the recorded final arrives late; the four phrases were already recognized.
-            let expected = termination == "cancel" ? "已有草稿" : "已有草稿\n" + fixture.expected
-            #expect(store.mainDraft == expected,
-                         "Recorded Apple sequence keeps all four phrases once on finish or error; cancellation commits nothing")
-        }
-    }
-
     // This validates trace fidelity and isolation, not real ASR behavior.
     @Test @MainActor static func diagnosticLoggingTests() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("dictation-trace-\(UUID()).jsonl")
@@ -327,9 +272,9 @@ extension EchoVoiceScenarios {
     @Test @MainActor static func localTests() async throws {
         let audio = FakeAudio(), engine = TestAppleSpeechEngine(), (store, puppet) = VoiceTests.agentStore()
         var prepares = 0
-        let dictation = DictationController(audio: audio, recognizer: {
+        let dictation = DictationController(audio: audio, recognizer: { downloading in
             prepares += 1
-            return try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+            return try await AppleSpeechRecognizer.prepare(engine: engine, downloading: downloading)
         }, finalizationTimeout: .milliseconds(40), permission: { true })
         let voice = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
@@ -339,32 +284,32 @@ extension EchoVoiceScenarios {
         let conversation = workspace.selected!
         defer { workspace.shutdown() }
         store.mainDraft = "原草稿"
-        /// Starts a recording and waits until its recognizer has started Apple's engine.
+        /// Starts a recording and waits until its recognizer has started the engine.
         func record() async throws {
             let starts = engine.starts
             dictation.start(conversation: conversation)
             try await eventually("the recording runs") { dictation.captureReady && engine.starts > starts }
         }
-        /// Sends a partial and waits until the preview shows it.
-        func partial(_ text: String) async throws {
-            engine.emit(text, final: false)
-            try await eventually("the preview shows \(text)") { dictation.subtitle == text }
+        /// Sends a segment and waits until the preview shows the transcript it leads to.
+        func segment(_ text: String, final: Bool = false, shows transcript: String? = nil) async throws {
+            engine.emit(text, final: final)
+            let expected = transcript ?? text
+            try await eventually("the preview shows \(expected)") { dictation.subtitle == expected }
         }
 
         try await record()
-        #expect(prepares == 1 && audio.capturing)
-        #expect(engine.request?.requiresOnDeviceRecognition == true)
-        try await partial("本地临时")
+        #expect(prepares == 1 && audio.capturing && !dictation.isDownloadingModel)
+        try await segment("本地临时")
         #expect(dictation.subtitle == "本地临时" && store.mainDraft == "原草稿")
-        try await partial("本地修订")
+        try await segment("本地修订")
         #expect(dictation.subtitle == "本地修订" && store.mainDraft == "原草稿")
         dictation.finishRecording()
         #expect(voice.isDictating && !voice.canStartCall && !audio.capturing)
         voice.test(configuration: VoiceConfiguration(), key: "test", preview: false)
         #expect(!voice.testing, "Local finalization still excludes voice probes")
         store.mainDraft = "编辑后的草稿"
-        let lateFinal = engine.receive
-        engine.emit("本地最终文本", final: true)
+        let lateOutput = engine.output
+        engine.emit("本地最终文本", final: true); engine.end()
         try await eventually("the final ends the recording") { dictation.state == .idle }
         #expect(dictation.state == .idle && store.mainDraft == "编辑后的草稿\n本地最终文本")
         engine.emit("重复最终文本", final: true)
@@ -372,51 +317,39 @@ extension EchoVoiceScenarios {
         #expect(puppet.requests.isEmpty && store.messages.isEmpty && audio.played.isEmpty,
                 "Local STT never sends, calls a model or plays TTS")
 
-        // Reproduce clicking the mic to finish after a visible English hypothesis.
+        // Final segments settle as the speaker pauses; the draft gets them joined once.
         try await record()
-        try await partial("first version")
-        try await partial("corrected English text")
-        #expect(dictation.subtitle == "corrected English text")
-        let beforeEmptyFinal = store.mainDraft
+        let beforeSentences = store.mainDraft
+        try await segment("第一句话", final: true)
+        try await segment("，第二", shows: "第一句话，第二")
+        #expect(store.mainDraft == beforeSentences, "Settled segments stay in the preview until the recording ends")
+        try await segment("，第二句话", final: true, shows: "第一句话，第二句话")
         dictation.finishRecording()
-        engine.emit("", final: false)
-        // An empty partial changes nothing the test can read, and DictationController replaces the
-        // recognizer's per-result hook, so nothing marks that it was taken in: watch for a while.
-        await observationWindow(.milliseconds(25))
-        #expect(dictation.subtitle == "corrected English text", "Empty terminal hypotheses cannot erase the displayed text")
-        engine.emit(" ", final: true)
+        try await segment(" and English", final: true, shows: "第一句话，第二句话 and English")
+        engine.end()
         try await eventually("the final ends the recording") { dictation.state == .idle }
-        #expect(dictation.state == .idle && dictation.error == nil
-                     && store.mainDraft == beforeEmptyFinal + "\ncorrected English text")
-        engine.emit("", final: true)
-        #expect(store.mainDraft == beforeEmptyFinal + "\ncorrected English text", "Fallback final is appended once")
-        try await record()
-        let beforeChinese = store.mainDraft
-        try await partial("中文听写结果")
-        dictation.finishRecording(); engine.emit("", final: true)
-        try await eventually("the final ends the recording") { dictation.state == .idle }
-        #expect(dictation.state == .idle && store.mainDraft == beforeChinese + "\n中文听写结果")
+        #expect(dictation.error == nil && store.mainDraft == beforeSentences + "\n第一句话，第二句话 and English")
 
         try await record()
         let draft = store.mainDraft
-        lateFinal?(ASRResult(result: .init(text: "旧轮迟到结果", utterances: nil), streamFinal: true), nil)
-        try await partial("未确认")
+        lateOutput?.yield(AppleSpeechSegment(text: "旧轮迟到结果", isFinal: true, range: .zero))
+        try await segment("未确认")
         #expect(store.mainDraft == draft && dictation.subtitle == "未确认")
         dictation.cancel(discard: true)
-        engine.emit("取消后迟到结果", final: true)
+        engine.emit("取消后迟到结果", final: true); engine.end()
         #expect(!audio.capturing && !dictation.isActive && store.mainDraft == draft, "Discarding commits nothing")
 
         // A recording stopped without discarding (switching conversations, hiding the window,
-        // sleep) keeps Apple's latest cumulative text once; late callbacks add nothing.
+        // sleep) keeps the latest transcript once; late segments add nothing.
         var kept = draft
         try await record()
-        try await partial("停止前")
-        try await partial("停止前的文字")
+        try await segment("停止前", final: true)
+        try await segment("的文字", shows: "停止前的文字")
         dictation.cancel()
         kept += "\n停止前的文字"
         #expect(dictation.state == .idle && dictation.error == nil && !audio.capturing && store.mainDraft == kept,
                      "A non-discarding stop keeps the latest text")
-        engine.emit("停止后迟到", final: true)
+        engine.emit("停止后迟到", final: true); engine.end()
         #expect(store.mainDraft == kept, "A late final after a non-discarding stop is not committed again")
         try await record()
         dictation.cancel()
@@ -424,9 +357,9 @@ extension EchoVoiceScenarios {
 
         // A failed recording keeps the latest text the same way.
         try await record()
-        try await partial("识别失败前")
-        try await partial("识别失败前的文字")
-        engine.receive?(nil, "测试识别失败")
+        try await segment("识别失败前", final: true)
+        try await segment("的文字", shows: "识别失败前的文字")
+        engine.fail("测试识别失败")
         try await eventually("the recognizer failure fails the recording") { dictation.state == .failed }
         kept += "\n识别失败前的文字"
         #expect(dictation.state == .failed && dictation.error?.contains("测试识别失败") == true
@@ -435,22 +368,22 @@ extension EchoVoiceScenarios {
         #expect(store.mainDraft == kept, "A late final after a recognizer failure is not committed again")
 
         try await record()
-        try await partial("超时前的文字")
+        try await segment("超时前的文字")
         dictation.finishRecording()
         try await eventually("the 40 ms finalization timeout fails the recording") { dictation.state == .failed }
         kept += "\n超时前的文字"
         #expect(dictation.state == .failed && !audio.capturing && store.mainDraft == kept
                      && dictation.error?.contains("已保留识别到的文字") == true, "A final timeout keeps the latest text")
-        engine.emit("超时后迟到", final: true)
+        engine.emit("超时后迟到", final: true); engine.end()
         #expect(store.mainDraft == kept, "A late final after a timeout is not committed again")
 
         try await record()
-        try await partial("设备断开前的文字")
+        try await segment("设备断开前的文字")
         audio.onFailure?("音频设备已变化，通话已结束，请重新开始。", .deviceChange)
         kept += "\n设备断开前的文字"
         #expect(dictation.state == .failed && !audio.capturing && store.mainDraft == kept
                      && dictation.error == DictationController.message(for: .deviceChange), "A device failure keeps the latest text")
-        engine.emit("设备断开后迟到", final: true)
+        engine.emit("设备断开后迟到", final: true); engine.end()
         #expect(store.mainDraft == kept, "A late final after a device failure is not committed again")
 
         // Failures before any recognized text leave the draft alone.
@@ -458,32 +391,61 @@ extension EchoVoiceScenarios {
         dictation.finishRecording()
         try await eventually("the 40 ms finalization timeout fails the recording") { dictation.state == .failed }
         #expect(dictation.state == .failed && !audio.capturing && store.mainDraft == kept)
-        engine.emit("超时后迟到", final: true)
+        engine.emit("超时后迟到", final: true); engine.end()
         #expect(store.mainDraft == kept)
         try await record()
         audio.onFailure?("音频设备恢复失败，通话已结束，请重新开始。", .recoveryFailed)
         #expect(dictation.state == .failed && store.mainDraft == kept, "A device failure without text writes nothing")
         try await record()
-        engine.receive?(nil, "测试识别失败")
+        engine.fail("测试识别失败")
         try await eventually("the recognizer failure fails the recording") { dictation.state == .failed }
         #expect(dictation.state == .failed && store.mainDraft == kept, "A recognizer failure without text writes nothing")
 
-        // Speech can finalize itself (for example at its duration limit).
+        // Speech can finish on its own before the recording is ended.
         try await record()
-        engine.emit("自然定稿", final: true)
+        engine.emit("自然定稿", final: true); engine.end()
         try await eventually("the final ends the recording") { dictation.state == .idle }
         #expect(dictation.state == .idle && !audio.capturing && store.mainDraft == kept + "\n自然定稿")
+        kept += "\n自然定稿"
 
-        engine.supportsOnDeviceRecognition = false
+        // A missing language model downloads before the microphone starts.
+        engine.modelMissing = true
+        var starts = engine.starts
         dictation.start(conversation: conversation)
-        try await eventually("the unsupported recognizer fails the recording") { dictation.state == .failed }
-        #expect(dictation.state == .failed && !audio.capturing && dictation.error?.contains("不支持 Apple 本地") == true)
-        engine.supportsOnDeviceRecognition = true
+        try await eventually("the missing model downloads") { engine.download != nil }
+        #expect(dictation.isDownloadingModel && dictation.isActive && !dictation.captureReady && !audio.capturing)
+        engine.finishDownload()
+        try await eventually("the recording runs once the model is in") { dictation.captureReady && engine.starts > starts }
+        #expect(!dictation.isDownloadingModel && audio.capturing)
+        try await segment("下载后的文字", final: true)
+        dictation.finishRecording(); engine.end()
+        try await eventually("the final ends the recording") { dictation.state == .idle }
+        kept += "\n下载后的文字"
+        #expect(store.mainDraft == kept)
+
+        // Cancelling during the download never opens the microphone or writes the draft.
+        engine.modelMissing = true
+        starts = engine.starts
+        dictation.start(conversation: conversation)
+        try await eventually("the missing model downloads") { engine.download != nil }
+        dictation.cancel(discard: true)
+        #expect(!dictation.isActive && !dictation.isDownloadingModel)
+        engine.finishDownload()
+        await observationWindow(.milliseconds(25))
+        #expect(engine.starts == starts && !audio.capturing && store.mainDraft == kept,
+                "A recognizer prepared after cancellation is never started")
+
+        engine.installError = TestSpeechFailure(description: "网络不可用")
+        dictation.start(conversation: conversation)
+        try await eventually("the failed download fails the recording") { dictation.state == .failed }
+        #expect(!audio.capturing && !dictation.isDownloadingModel && store.mainDraft == kept
+                && dictation.error?.contains("无法下载 Apple 语音模型") == true)
+        engine.installError = nil
 
         // An authorization prompt owns the dictation slot, but must never open the mic after cancellation.
         var permissionReply: CheckedContinuation<Bool, Never>?
         let delayedAudio = FakeAudio(), delayedRecognizer = DictationRecognizer()
-        let delayed = DictationController(audio: delayedAudio, recognizer: {
+        let delayed = DictationController(audio: delayedAudio, recognizer: { _ in
             _ = await withCheckedContinuation { permissionReply = $0 }
             return delayedRecognizer
         }, permission: { true })

@@ -435,7 +435,7 @@ private struct HeldExecutor: LanguageModelExecutor {
         settings.voiceAPIKey = "test-voice"; settings.saveVoice()
         let recognizer = ComposerRecognizer()
         var permissionReply: CheckedContinuation<Bool, Never>?
-        let dictation = DictationController(audio: ComposerAudio(), recognizer: { recognizer }, permission: {
+        let dictation = DictationController(audio: ComposerAudio(), recognizer: { _ in recognizer }, permission: {
             await withCheckedContinuation { permissionReply = $0 }
         })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })

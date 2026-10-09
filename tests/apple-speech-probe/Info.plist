@@ -5,5 +5,4 @@
 <key>CFBundleIdentifier</key><string>local.chiyan.apple-speech-check</string>
 <key>CFBundleName</key><string>Apple Speech Check</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>NSSpeechRecognitionUsageDescription</key><string>使用本机生成的固定中英文音频验证 Apple 本地识别，不录制麦克风，不使用云端识别。</string>
 </dict></plist>

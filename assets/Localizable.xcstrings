@@ -240,6 +240,16 @@
         }
       }
     },
+    "Apple 本地识别不支持麦克风的音频格式。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On-device speech recognition doesn’t support the microphone’s audio format."
+          }
+        }
+      }
+    },
     "Apple 本地识别收到无效的麦克风音频。" : {
       "localizations" : {
         "en" : {
@@ -280,62 +290,12 @@
         }
       }
     },
-    "Apple 本地语音识别当前不可用（%@），请检查该语言的本地语音资源后重试。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "On-device speech recognition isn’t available right now (%@). Check the speech assets for this language, then try again."
-          }
-        }
-      }
-    },
-    "Apple 本地语音识别提前结束，请重新录音。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "On-device speech recognition ended early. Record again."
-          }
-        }
-      }
-    },
-    "Apple 本地转写结果处理过慢，请重试。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "On-device transcription fell behind. Try again."
-          }
-        }
-      }
-    },
     "Apple 语音识别不支持听写语言 %@，请检查首选语言。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Apple speech recognition doesn’t support the dictation language %@. Check your preferred languages."
-          }
-        }
-      }
-    },
-    "Apple 语音识别尚未获得授权，请重新开始转写。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Speech recognition isn’t authorized yet. Start dictation again."
-          }
-        }
-      }
-    },
-    "Apple 语音识别权限未开启，请在系统设置 → 隐私与安全性 → 语音识别中允许 Echo。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Echo doesn’t have speech recognition access. Allow it in System Settings > Privacy & Security > Speech Recognition."
           }
         }
       }
@@ -1885,6 +1845,22 @@
         }
       }
     },
+    "无法下载 Apple 语音模型（%@）：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t download the Apple speech model (%1$@): %2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "无法下载 Apple 语音模型（%1$@）：%2$@"
+          }
+        }
+      }
+    },
     "无法保存 API Key 到钥匙串。" : {
       "localizations" : {
         "en" : {
@@ -1901,26 +1877,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t create the image for frame %u."
-          }
-        }
-      }
-    },
-    "无法初始化 Apple 语音识别的听写语言，请检查本地语音资源。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t set up the dictation language for Apple speech recognition. Check the on-device speech assets."
-          }
-        }
-      }
-    },
-    "无法初始化 Apple 语音识别（%@），请检查本地语音资源。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t set up Apple speech recognition (%@). Check the on-device speech assets."
           }
         }
       }
@@ -2031,16 +1987,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t remove the old key from the keychain."
-          }
-        }
-      }
-    },
-    "无法确认 Apple 语音识别权限，请检查系统设置。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t check speech recognition access. Check System Settings."
           }
         }
       }
@@ -2495,6 +2441,16 @@
         }
       }
     },
+    "正在下载语音模型…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Downloading speech model…"
+          }
+        }
+      }
+    },
     "正在停止" : {
       "localizations" : {
         "en" : {
@@ -2781,26 +2737,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Connecting…"
-          }
-        }
-      }
-    },
-    "此 Mac 不支持 Apple 本地语音识别（%@）；不会使用 Apple 云端识别。请检查该语言的本地语音资源。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This Mac doesn’t support on-device speech recognition for %@, and Echo won’t use Apple’s server-based recognition. Check the on-device speech assets for this language."
-          }
-        }
-      }
-    },
-    "此 Mac 的 Apple 语音识别权限受到系统限制。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Speech recognition is restricted on this Mac."
           }
         }
       }

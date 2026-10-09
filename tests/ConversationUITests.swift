@@ -620,7 +620,7 @@ private struct ComposerHeightHost: View {
     func testConsecutiveDictationAppends() async throws {
         let recognizer = ComposerRecognizer()
         let (store, puppet) = puppetStore()
-        let dictation = DictationController(audio: ComposerAudio(), recognizer: { recognizer }, permission: { true })
+        let dictation = DictationController(audio: ComposerAudio(), recognizer: { _ in recognizer }, permission: { true })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         let conversation = workspace.selected!
@@ -720,7 +720,7 @@ private struct ComposerHeightHost: View {
         let puppet = PuppetModel(), runner = HeldRunner()
         let agentStore = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
         let recognizer = ComposerRecognizer()
-        let dictation = DictationController(audio: ComposerAudio(), recognizer: { recognizer }, permission: { true })
+        let dictation = DictationController(audio: ComposerAudio(), recognizer: { _ in recognizer }, permission: { true })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: agentStore, dictation: dictation, voice: voice)
         let conversation = workspace.selected!
@@ -816,7 +816,7 @@ private struct ComposerHeightHost: View {
     func testComposerActionMatrix() async throws {
         let audio = ComposerAudio(), recognizer = ComposerRecognizer()
         var permissionReply: CheckedContinuation<Bool, Never>?
-        let dictation = DictationController(audio: audio, recognizer: { recognizer }, permission: {
+        let dictation = DictationController(audio: audio, recognizer: { _ in recognizer }, permission: {
             await withCheckedContinuation { permissionReply = $0 }
         })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })

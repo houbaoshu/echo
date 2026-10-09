@@ -44,24 +44,6 @@
           }
         }
       }
-    },
-    "NSSpeechRecognitionUsageDescription" : {
-      "comment" : "Privacy - Speech Recognition Usage Description",
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Echo uses Apple’s on-device speech recognition to dictate into the message field. Audio isn’t sent to Apple’s servers."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Echo 使用 Apple 本地语音识别将讲话转写到输入框，音频不会发送至 Apple 云端。"
-          }
-        }
-      }
     }
   },
   "version" : "1.0"

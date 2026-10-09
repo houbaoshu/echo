@@ -10,16 +10,16 @@ enum AppleSpeechDeviceTests {
             let fixtures = [("zh-CN", ["今天"]), ("en-US", ["weather"]), ("mixed", ["今天", "weather"]),
                             ("paused", ["第一句话", "第二句话", "第三句话"])]
             for (language, fragments) in fixtures where language == selected {
-                let locale = try AppleSpeechRecognizer.speechLocale(preferredLanguages: ["zh-CN"], supportedLocales: SFSpeechRecognizer.supportedLocales())
-                let capability = SFSpeechRecognizer(locale: locale)
-                print("Speech \(locale.identifier): onDevice=\(capability?.supportsOnDeviceRecognition == true) available=\(capability?.isAvailable == true)")
-                let recognizer = try await AppleSpeechRecognizer.prepare()
+                let locale = try AppleSpeechRecognizer.speechLocale(preferredLanguages: ["zh-CN"],
+                                                                    supportedLocales: Set(await DictationTranscriber.supportedLocales))
+                print("Speech \(locale.identifier): installed=\(await DictationTranscriber.installedLocales.contains(locale))")
+                let recognizer = try await AppleSpeechRecognizer.prepare(downloading: { print("Speech model download started") })
                 var phraseBoundaries = 0
                 if language == "paused" {
-                    recognizer.onSpeechResult = { result in
-                        if let segment = result.localSegment, !result.streamFinal {
+                    recognizer.onSegment = { segment in
+                        if segment.isFinal {
                             phraseBoundaries += 1
-                            print("PHRASE start=\(segment.start) duration=\(segment.duration) text=\(result.result?.text ?? "")")
+                            print("PHRASE start=\(segment.range.start.seconds) end=\(segment.range.end.seconds) text=\(segment.text)")
                         }
                     }
                 }

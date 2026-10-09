@@ -41,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let voice = VoiceSessionController(audio: TestBootstrap.Audio(),
                         recognizer: { TestBootstrap.Recognizer() }, synthesizer: { TestBootstrap.Synthesizer() }, permission: { true })
                     let dictation = DictationController(audio: TestBootstrap.Audio(),
-                        recognizer: { TestBootstrap.Recognizer() }, permission: { true })
+                        recognizer: { _ in TestBootstrap.Recognizer() }, permission: { true })
                     let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("workspace.json")),
                         dictation: dictation, voice: voice, harnessFactory: { AgentHarness(resolveModel: { TestBootstrap.OfflineModel.factory }) })
                     try TestBootstrap.seed(workspace: workspace, root: root)

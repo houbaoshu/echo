@@ -1,60 +1,80 @@
 import Testing
 import AVFoundation
-import Speech
+import CoreMedia
+
+struct TestSpeechFailure: LocalizedError, CustomStringConvertible {
+    let description: String
+    var errorDescription: String? { description }
+}
 
 @MainActor final class TestAppleSpeechEngine: AppleSpeechEngine {
     var locale = Locale(identifier: "zh-CN")
-    var supportsOnDeviceRecognition = true
-    var isAvailable = true
-    var request: SFSpeechAudioBufferRecognitionRequest?
-    var receive: (@Sendable (ASRResult?, String?) -> Void)?
+    /// A missing model downloads until `finishDownload()`; an install error fails before any download.
+    var modelMissing = false
+    var installError: (any Error)?
+    var download: CheckedContinuation<Void, any Error>?
+    var downloads = 0
+    var audio: AsyncThrowingStream<Data, Error>?
+    var output: AsyncThrowingStream<AppleSpeechSegment, Error>.Continuation?
     var starts = 0
     var cancels = 0
-    func start(request: SFSpeechAudioBufferRecognitionRequest,
-               receive: @escaping @Sendable (ASRResult?, String?) -> Void) {
-        self.request = request; self.receive = receive; starts += 1
+    func installModel(downloading: @escaping @MainActor () -> Void) async throws {
+        if let installError { throw installError }
+        guard modelMissing else { return }
+        downloads += 1; downloading()
+        try await withCheckedThrowingContinuation { download = $0 }
+        modelMissing = false
+    }
+    func finishDownload() { download?.resume(); download = nil }
+    func transcribe(_ audio: AsyncThrowingStream<Data, Error>) -> AsyncThrowingStream<AppleSpeechSegment, Error> {
+        let (segments, output) = AsyncThrowingStream<AppleSpeechSegment, Error>.makeStream()
+        self.audio = audio; self.output = output; starts += 1
+        return segments
     }
     func cancel() { cancels += 1 }
-    func emit(_ text: String, final: Bool) {
-        receive?(ASRResult(result: .init(text: text, utterances: nil), streamFinal: final), nil)
+    func emit(_ text: String, final: Bool = false) {
+        output?.yield(AppleSpeechSegment(text: text, isFinal: final, range: .zero))
     }
+    /// All audio is final: the recognition ends.
+    func end() { output?.finish() }
+    func fail(_ message: String) { output?.finish(throwing: TestSpeechFailure(description: message)) }
 }
 
 extension EchoVoiceScenarios {
 @Suite(.serialized) enum AppleSpeechTests {
-    @Test @MainActor static func capabilityAndCancellation() async throws {
+    @Test @MainActor static func modelInstallation() async throws {
         let engine = TestAppleSpeechEngine()
-        for (capability, available, status, expected) in [
-            (false, true, SFSpeechRecognizerAuthorizationStatus.authorized, "不支持 Apple 本地"),
-            (true, false, .authorized, "当前不可用"),
-            (true, true, .denied, "权限未开启"),
-            (true, true, .restricted, "系统限制"),
-            (true, true, .notDetermined, "尚未获得授权")
-        ] {
-            engine.supportsOnDeviceRecognition = capability; engine.isAvailable = available
-            do {
-                _ = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { status })
-                Issue.record("Unsupported local recognition must fail closed")
-            } catch { #expect(error.localizedDescription.contains(expected)) }
-            #expect(engine.starts == 0)
-        }
+        var downloading = 0
+        _ = try await AppleSpeechRecognizer.prepare(engine: engine, downloading: { downloading += 1 })
+        #expect(engine.downloads == 0 && downloading == 0, "An installed model starts without a download")
+
+        engine.modelMissing = true
+        let preparation = Task { try await AppleSpeechRecognizer.prepare(engine: engine, downloading: { downloading += 1 }) }
+        try await eventually("the missing model downloads") { engine.download != nil }
+        #expect(downloading == 1 && engine.starts == 0, "Downloading is reported before recognition can start")
+        engine.finishDownload()
+        _ = try await preparation.value
+        #expect(engine.downloads == 1 && !engine.modelMissing)
+
+        engine.installError = TestSpeechFailure(description: "网络不可用")
         do {
-            _ = try await AppleSpeechRecognizer.prepare(engine: nil, permission: { Issue.record("Unsupported language must not request authorization"); return .denied })
-            Issue.record("Unsupported language must fail")
-        } catch { #expect(error.localizedDescription.contains("无法初始化")) }
-        engine.supportsOnDeviceRecognition = true; engine.isAvailable = true
-
-        var authorization: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>?
-        let preparation = Task {
-            try await AppleSpeechRecognizer.prepare(engine: engine) {
-                await withCheckedContinuation { authorization = $0 }
-            }
+            _ = try await AppleSpeechRecognizer.prepare(engine: engine)
+            Issue.record("A failed download must fail preparation")
+        } catch {
+            #expect(error is SettingsError && error.localizedDescription.contains("无法下载 Apple 语音模型（zh-CN）")
+                    && error.localizedDescription.contains("网络不可用"))
         }
-        try await eventually("the preparation asks for authorization") { authorization != nil }
-        preparation.cancel(); authorization?.resume(returning: .authorized)
-        do { _ = try await preparation.value; Issue.record("Cancelled permission must not prepare a recognizer") }
-        catch { #expect(error is CancellationError && engine.starts == 0) }
+        engine.installError = nil
 
+        engine.modelMissing = true
+        let cancelled = Task { try await AppleSpeechRecognizer.prepare(engine: engine) }
+        try await eventually("the missing model downloads") { engine.download != nil }
+        cancelled.cancel(); engine.finishDownload()
+        do { _ = try await cancelled.value; Issue.record("Cancelled preparation must not return a recognizer") }
+        catch { #expect(error is CancellationError && engine.starts == 0) }
+    }
+
+    @Test @MainActor static func pcmBufferTests() throws {
         let buffer = try AppleSpeechRecognizer.pcmBuffer(Data([0, 128, 255, 127, 0, 0]))
         #expect(buffer.format.sampleRate == 16000 && buffer.format.channelCount == 1 && buffer.frameLength == 3)
         #expect(buffer.int16ChannelData![0][0] == Int16.min && buffer.int16ChannelData![0][1] == Int16.max)
@@ -62,200 +82,106 @@ extension EchoVoiceScenarios {
             do { _ = try AppleSpeechRecognizer.pcmBuffer(invalid); Issue.record("Invalid PCM must fail") }
             catch { #expect(error.localizedDescription.contains("无效")) }
         }
+    }
 
-        let recognizer = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+    @Test @MainActor static func segmentsJoinIntoTheTranscript() async throws {
+        let engine = TestAppleSpeechEngine()
+        let recognizer = try await AppleSpeechRecognizer.prepare(engine: engine)
         let (audio, input) = AsyncThrowingStream<Data, Error>.makeStream()
-        var received: [ASRResult] = []
+        var received: [ASRResult] = [], seen: [AppleSpeechSegment] = []
+        recognizer.onSegment = { seen.append($0) }
         let recognition = Task { try await recognizer.run(key: "", audio: audio) { received.append($0) } }
-        try await eventually("recognition starts Apple's engine") { engine.request != nil }
-        #expect(engine.request?.requiresOnDeviceRecognition == true && engine.request?.shouldReportPartialResults == true
-                     && engine.request?.addsPunctuation == true)
-        input.yield(Data([0, 0])); input.finish()
-        engine.emit("临时", final: false)
-        try await eventually("the partial is delivered") { received.count == 1 }
-        #expect(received.count == 1 && !received[0].streamFinal)
-        engine.emit("最终", final: true)
-        try await recognition.value
-        #expect(received.count == 2 && received[1].streamFinal && engine.cancels > 0)
-        engine.emit("迟到", final: true)
-        #expect(received.count == 2)
+        try await eventually("recognition starts the engine") { engine.audio != nil }
+        input.yield(Data([1, 2])); input.finish()
+        var forwarded: [Data] = []
+        for try await packet in engine.audio! { forwarded.append(packet) }
+        #expect(forwarded == [Data([1, 2])], "The engine gets the PCM as it was captured")
 
-        let cancelled = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+        // Each step: the segment the engine reports and the transcript it leads to.
+        let steps: [(text: String, final: Bool, transcript: String)] = [
+            ("这是我的", false, "这是我的"),
+            ("这是我的第一", false, "这是我的第一"),
+            ("这是我的第一句话", true, "这是我的第一句话"),
+            ("，这是我", false, "这是我的第一句话，这是我"),
+            ("，这是我的第二句话", true, "这是我的第一句话，这是我的第二句话"),
+            (" and English", true, "这是我的第一句话，这是我的第二句话 and English")
+        ]
+        for (index, step) in steps.enumerated() {
+            engine.emit(step.text, final: step.final)
+            try await eventually("the transcript reads \(step.transcript)") { received.count == index + 1 }
+            #expect(received[index].result?.text == step.transcript && !received[index].streamFinal)
+        }
+        #expect(seen.map(\.text) == steps.map(\.text), "Every segment is visible before it is joined")
+        engine.end()
+        try await recognition.value
+        #expect(received.last?.streamFinal == true
+                && received.last?.result?.text == "这是我的第一句话，这是我的第二句话 and English")
+        #expect(received.count == steps.count + 1 && engine.cancels > 0)
+        engine.emit("迟到", final: true)
+        #expect(received.count == steps.count + 1, "Nothing is delivered after the final")
+
+        // A volatile segment the engine settles differently is replaced, not kept.
+        let revised = try await AppleSpeechRecognizer.prepare(engine: engine)
+        received = []
+        let revising = Task { try await revised.run(key: "", audio: audio) { received.append($0) } }
+        try await eventually("recognition starts the engine") { engine.starts == 2 }
+        engine.emit("临时", final: false)
+        engine.emit("修订", final: false)
+        engine.emit("修订后定稿", final: true)
+        engine.end()
+        try await revising.value
+        #expect(received.map { $0.result?.text } == ["临时", "修订", "修订后定稿", "修订后定稿"])
+    }
+
+    @Test @MainActor static func cancellationAndFailure() async throws {
+        let engine = TestAppleSpeechEngine()
         let (pendingAudio, _) = AsyncThrowingStream<Data, Error>.makeStream()
-        var begun = engine.starts
+
+        let cancelled = try await AppleSpeechRecognizer.prepare(engine: engine)
         let pending = Task { try await cancelled.run(key: "", audio: pendingAudio) { _ in Issue.record("Cancelled recognition delivered a result") } }
-        try await eventually("recognition starts Apple's engine") { engine.starts == begun + 1 }
+        try await eventually("recognition starts the engine") { engine.starts == 1 }
         pending.cancel()
         do { try await pending.value; Issue.record("Cancellation must terminate the task") }
-        catch { #expect(error is CancellationError) }
+        catch { #expect(error is CancellationError && engine.cancels > 0) }
         engine.emit("取消后的迟到结果", final: true)
 
-        let directlyCancelled = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
-        begun = engine.starts
+        let directlyCancelled = try await AppleSpeechRecognizer.prepare(engine: engine)
         let directTask = Task {
             try await directlyCancelled.run(key: "", audio: pendingAudio) { _ in
                 Issue.record("Direct cancel must discard even queued results")
             }
         }
-        try await eventually("recognition starts Apple's engine") { engine.starts == begun + 1 }
+        try await eventually("recognition starts the engine") { engine.starts == 2 }
         engine.emit("取消前排队的结果", final: true)
         directlyCancelled.cancel()
         do { try await directTask.value; Issue.record("Direct cancellation must terminate the task") }
         catch { #expect(error is CancellationError) }
 
-        let silent = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
-        begun = engine.starts
-        let silentTask = Task { try await silent.run(key: "", audio: pendingAudio) { _ in Issue.record("Empty final must not be committed") } }
-        try await eventually("recognition starts Apple's engine") { engine.starts == begun + 1 }
-        engine.emit("  ", final: true)
-        do { try await silentTask.value; Issue.record("Empty recognition must report a useful error") }
-        catch { #expect(error.localizedDescription.contains("未识别到清晰语音")) }
+        for (texts, reason) in [([String](), "Nothing recognized"), (["  "], "Only blank speech")] {
+            let silent = try await AppleSpeechRecognizer.prepare(engine: engine)
+            let starts = engine.starts
+            let silentTask = Task { try await silent.run(key: "", audio: pendingAudio) { _ in Issue.record("\(reason) must not be committed") } }
+            try await eventually("recognition starts the engine") { engine.starts == starts + 1 }
+            for text in texts { engine.emit(text, final: true) }
+            engine.end()
+            do { try await silentTask.value; Issue.record("\(reason) must report a useful error") }
+            catch { #expect(error.localizedDescription.contains("未识别到清晰语音"), "\(reason)") }
+        }
 
-        let changed = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+        let failing = try await AppleSpeechRecognizer.prepare(engine: engine)
         let starts = engine.starts
-        engine.supportsOnDeviceRecognition = false
-        do { try await changed.run(key: "", audio: pendingAudio) { _ in }; Issue.record("Changed capability must fail closed") }
-        catch { #expect(error.localizedDescription.contains("不支持 Apple 本地") && engine.starts == starts) }
-    }
-
-    @Test @MainActor static func recordedDevicePauseRegression() async throws {
-        struct Callback: Decodable {
-            let text: String
-            let streamFinal: Bool
-            let speechStart: Double?
-            let speechDuration: Double?
+        var received: [ASRResult] = []
+        let failingTask = Task { try await failing.run(key: "", audio: pendingAudio) { received.append($0) } }
+        try await eventually("recognition starts the engine") { engine.starts == starts + 1 }
+        engine.emit("失败前", final: false)
+        engine.fail("测试识别失败")
+        do { try await failingTask.value; Issue.record("An engine failure must fail the recognition") }
+        catch {
+            #expect(error is SettingsError && error.localizedDescription.contains("Apple 本地语音识别失败")
+                    && error.localizedDescription.contains("测试识别失败"))
         }
-        let fixture = try String(contentsOf: EchoTestResources.resource("fixtures/apple-speech-device-pauses-20260914.jsonl"), encoding: .utf8)
-        let callbacks = try fixture.split(separator: "\n").map {
-            try JSONDecoder().decode(Callback.self, from: Data($0.utf8))
-        }
-        let engine = TestAppleSpeechEngine()
-        let recognizer = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
-        let (audio, input) = AsyncThrowingStream<Data, Error>.makeStream()
-        var results: [ASRResult] = [], heard = 0
-        // Counts each result the recognizer has taken in, before it passes text on.
-        recognizer.onSpeechResult = { _ in heard += 1 }
-        let run = Task { try await recognizer.run(key: "", audio: audio) { results.append($0) } }
-        try await eventually("recognition starts Apple's engine") { engine.request != nil }
-        for (index, callback) in callbacks.enumerated() {
-            if callback.streamFinal { input.finish() }
-            let segment = callback.speechStart.map { ASRResult.LocalSegment(start: $0, duration: callback.speechDuration!) }
-            let taken = heard
-            engine.receive?(ASRResult(result: .init(text: callback.text, utterances: nil),
-                streamFinal: callback.streamFinal, localSegment: segment), nil)
-            try await eventually("the recognizer takes in the result") { heard > taken }
-            if index == 9 {
-                #expect(results.last?.result?.text == "这是我的第一句话 这",
-                             "Real Apple phrase metadata must protect the first phrase before the second partial arrives")
-            }
-        }
-        try await run.value
-        #expect(results.last?.streamFinal == true && results.last?.result?.text == "这是我的第一句话。这是我的第二句话",
-                     "Real empty request-final must preserve both finalized phrases, split by the real 3.87 s pause")
-        // Identity is acoustic, not textual: duplicate metadata is idempotent,
-        // while actually repeating the same words in another phrase is retained.
-        let repeated = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
-        let (repeatAudio, repeatInput) = AsyncThrowingStream<Data, Error>.makeStream()
-        repeated.onSpeechResult = { _ in heard += 1 }
-        let starts = engine.starts
-        let repeatRun = Task { try await repeated.run(key: "", audio: repeatAudio) { results.append($0) } }
-        try await eventually("recognition starts Apple's engine") { engine.starts == starts + 1 }
-        for start in [0.0, 0.0, 5.0, 5.0] {
-            let taken = heard
-            engine.receive?(ASRResult(result: .init(text: "再说一次", utterances: nil),
-                                      localSegment: .init(start: start, duration: 1)), nil)
-            try await eventually("the recognizer takes in the result") { heard > taken }
-        }
-        repeatInput.finish(); engine.emit("再说一次", final: true)
-        try await repeatRun.value
-        #expect(results.last?.result?.text == "再说一次。再说一次", "Only distinct speech segments append")
-    }
-
-    /// Replays phrase callbacks, then an empty request-final; returns every delivered text.
-    @MainActor private static func replay(_ callbacks: [(text: String, start: Double?, duration: Double)]) async throws -> [String] {
-        let engine = TestAppleSpeechEngine()
-        let recognizer = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
-        let (audio, input) = AsyncThrowingStream<Data, Error>.makeStream()
-        var texts: [String] = [], heard = 0
-        // Counts each result the recognizer has taken in, before it passes text on.
-        recognizer.onSpeechResult = { _ in heard += 1 }
-        let run = Task { try await recognizer.run(key: "", audio: audio) { texts.append($0.result?.text ?? "") } }
-        try await eventually("recognition starts Apple's engine") { engine.request != nil }
-        for callback in callbacks {
-            let taken = heard
-            engine.receive?(ASRResult(result: .init(text: callback.text, utterances: nil),
-                localSegment: callback.start.map { .init(start: $0, duration: callback.duration) }), nil)
-            try await eventually("the recognizer takes in the result") { heard > taken }
-        }
-        input.finish(); engine.emit("", final: true)
-        try await run.value
-        return texts
-    }
-
-    // Gaps mirror the device probe: natural phrase ends at 2-4 s of silence,
-    // Apple's forced ~60 s cut at 0.12 s mid-word.
-    @Test @MainActor static func phraseBoundaryPunctuationTests() async throws {
-        let cases: [(callbacks: [(text: String, start: Double?, duration: Double)], expected: String, reason: String)] = [
-            ([("第一句话", 0, 1.6), ("第二句话", 3.6, 1.6)], "第一句话。第二句话", "A long pause ends the sentence"),
-            ([("你吃饭了吗？", 0, 1.5), ("吃过了", 4.5, 1)], "你吃饭了吗？吃过了", "Existing terminal punctuation is not repeated"),
-            ([("我想说，", 0, 1), ("第二句", 3, 1)], "我想说。第二句", "A trailing comma becomes a full stop"),
-            ([("我们继续往下说不要停", 0, 59.94), ("顿这是", 60.06, 1)], "我们继续往下说不要停顿这是",
-             "A forced mid-word cut joins Han characters without a space"),
-            ([("we keep going", 0, 59.9), ("on and on", 60.02, 1)], "we keep going on and on",
-             "A forced cut between English words keeps the space"),
-            ([("不要停", 0, 59.9), ("OK", 60.02, 1)], "不要停 OK", "A forced cut between Han and Latin keeps the space")
-        ]
-        for (callbacks, expected, reason) in cases {
-            let texts = try await replay(callbacks)
-            #expect(texts.last == expected, "\(reason): \(texts.last ?? "<none>")")
-        }
-
-        let revised = try await replay([("你吃饭了吗", 0, 1.5), ("好的", 4, 1), ("你吃饭了吗？", 0, 1.6),
-                                        ("不要停", 10, 1), ("顿", 13, 1), ("不要停", 10, 2.9)])
-        #expect(revised[1] == "你吃饭了吗。好的" && revised[2] == "你吃饭了吗？好的",
-                     "A repeated phrase that gains a question mark rebuilds without a duplicate: \(revised)")
-        #expect(revised[4] == "你吃饭了吗？好的。不要停。顿" && revised.last == "你吃饭了吗？好的。不要停顿",
-                     "A repeated phrase updates its end, and with it the gap: \(revised)")
-
-        let partial = try await replay([("第一句话", 0, 1.6), ("第二", nil, 0), ("第二句话", 3.6, 1.6)])
-        #expect(partial[1] == "第一句话 第二" && partial.last == "第一句话。第二句话",
-                     "The untimed partial boundary keeps its space until the phrase finishes: \(partial)")
-    }
-
-    @Test @MainActor static func backgroundAuthorizationTests() async throws {
-        for status in [SFSpeechRecognizerAuthorizationStatus.authorized, .denied, .restricted] {
-            let engine = TestAppleSpeechEngine()
-            do {
-                _ = try await AppleSpeechRecognizer.prepare(engine: engine) {
-                    await AppleSpeechRecognizer.requestSpeechAuthorization { completion in
-                        DispatchQueue.global().async {
-                            #expect(!Thread.isMainThread)
-                            completion(status)
-                        }
-                    }
-                }
-                #expect(status == .authorized)
-            } catch {
-                #expect(status != .authorized && error is SettingsError)
-            }
-            MainActor.assertIsolated()
-            #expect(engine.starts == 0, "Authorization alone must not start recording or recognition")
-        }
-
-        // A delayed TCC response must remain harmless after cancelling dictation.
-        var reply: (@Sendable (SFSpeechRecognizerAuthorizationStatus) -> Void)?
-        let engine = TestAppleSpeechEngine()
-        let pending = Task {
-            try await AppleSpeechRecognizer.prepare(engine: engine) {
-                await AppleSpeechRecognizer.requestSpeechAuthorization { reply = $0 }
-            }
-        }
-        try await eventually("the preparation asks for authorization") { reply != nil }
-        pending.cancel()
-        let completion = reply!
-        DispatchQueue.global().async { completion(.authorized) }
-        do { _ = try await pending.value; Issue.record("Cancelled background authorization must not prepare ASR") }
-        catch { #expect(error is CancellationError && engine.starts == 0) }
+        #expect(received.map { $0.result?.text } == ["失败前"] && received.allSatisfy { !$0.streamFinal },
+                "A failure delivers no final")
     }
 
     @Test @MainActor static func localeTests() async throws {
@@ -275,18 +201,6 @@ extension EchoVoiceScenarios {
                 _ = try AppleSpeechRecognizer.speechLocale(preferredLanguages: ["zh-Hans-CN", "en-US"], supportedLocales: available)
                 Issue.record("Missing Mandarin support must not silently select English")
             } catch { #expect(error.localizedDescription.contains("zh-CN")) }
-        }
-        for language in ["zh-CN", "en-US"] {
-            let engine = TestAppleSpeechEngine()
-            engine.locale = try AppleSpeechRecognizer.speechLocale(preferredLanguages: [language], supportedLocales: supported)
-            engine.supportsOnDeviceRecognition = false
-            do {
-                _ = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
-                Issue.record("Being a supported speech locale does not guarantee on-device recognition")
-            } catch {
-                #expect(error.localizedDescription.contains("不支持 Apple 本地")
-                             && error.localizedDescription.contains(engine.locale.identifier) && engine.starts == 0)
-            }
         }
     }
 }

@@ -12,13 +12,15 @@ import Observation
     private(set) var subtitle = ""
     private(set) var error: String?
     private(set) var captureReady = false
+    /// The recognizer is downloading its language model before the recording can start.
+    private(set) var isDownloadingModel = false
     private(set) var levels: [Double] = []
     private(set) var conversationID: UUID?
     var isActive: Bool { state.isActive }
     @ObservationIgnored private weak var workspace: WorkspaceStore?
     @ObservationIgnored private weak var store: TaskStore?
     private let audio: any VoiceAudioHandling
-    private let makeRecognizer: () async throws -> any VoiceRecognizing
+    private let makeRecognizer: (_ downloading: @escaping @MainActor () -> Void) async throws -> any VoiceRecognizing
     private let permission: () async -> Bool
     private let finalizationTimeout: Duration
     private let captureTimeout: Duration
@@ -43,7 +45,9 @@ import Observation
     }
 
     init(audio: any VoiceAudioHandling = VoiceAudio(),
-         recognizer: @escaping () async throws -> any VoiceRecognizing = { try await AppleSpeechRecognizer.prepare() },
+         recognizer: @escaping (_ downloading: @escaping @MainActor () -> Void) async throws -> any VoiceRecognizing = {
+             try await AppleSpeechRecognizer.prepare(downloading: $0)
+         },
          finalizationTimeout: Duration = .seconds(5), captureTimeout: Duration = .seconds(5),
          permission: @escaping () async -> Bool = { await AVCaptureDevice.requestAccess(for: .audio) }) {
         self.audio = audio; makeRecognizer = recognizer; self.permission = permission
@@ -76,7 +80,7 @@ import Observation
             error = String(localized: "请先结束 Live Voice 或语音测试，再开始转写。"); state = .failed; return
         }
         generation = UUID(); let current = generation
-        captureReady = false; levels = []
+        captureReady = false; isDownloadingModel = false; levels = []
         conversationID = conversation.id; store = conversation.store
         finalTranscript = nil; subtitle = ""; error = nil; state = .recording
         diagnosticTrace = nil
@@ -91,21 +95,26 @@ import Observation
         startup = Task { [weak self] in
             guard let self, self.generation == current, !Task.isCancelled else { return }
             let recognizer: any VoiceRecognizing
-            do { recognizer = try await self.makeRecognizer() } catch {
+            do {
+                recognizer = try await self.makeRecognizer { [weak self] in
+                    guard let self, self.generation == current else { return }
+                    self.isDownloadingModel = true
+                    trace?.record("recognizer.downloadingModel")
+                }
+            } catch {
                 trace?.record("recognizer.prepareFailed", ["errorDomain": (error as NSError).domain,
                     "errorCode": (error as NSError).code])
                 guard self.generation == current, !Task.isCancelled else { return }
                 self.complete(error: error.localizedDescription); return
             }
             guard self.generation == current, !Task.isCancelled else { recognizer.cancel(); return }
+            self.isDownloadingModel = false
             self.recognizer = recognizer
             trace?.record("recognizer.prepared", ["type": String(describing: type(of: recognizer))])
             if let local = recognizer as? AppleSpeechRecognizer {
-                local.onSpeechResult = trace.map { trace in { result in
-                    trace.record("apple.rawCallback", ["text": result.result?.text as Any? ?? NSNull(),
-                        "streamFinal": result.streamFinal,
-                        "speechStart": result.localSegment?.start as Any? ?? NSNull(),
-                        "speechDuration": result.localSegment?.duration as Any? ?? NSNull()])
+                local.onSegment = trace.map { trace in { segment in
+                    trace.record("apple.rawCallback", ["text": segment.text, "isFinal": segment.isFinal,
+                        "start": segment.range.start.seconds, "end": segment.range.end.seconds])
                 } }
             }
             let allowed = await self.permission()
@@ -129,7 +138,7 @@ import Observation
                                 "callbackIndex": callbackIndex as Any? ?? NSNull()
                             ]) { _, new in new }) }
                             guard let self, self.generation == current, self.isActive else { return }
-                            // The Apple adapter provides cumulative text across local phrases;
+                            // The Apple adapter provides the cumulative transcript of all segments;
                             // an empty hypothesis never erases it.
                             let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                             if !text.isEmpty {
@@ -211,7 +220,7 @@ import Observation
         audioInput?.finish(); audioInput = nil
         recognitionTask?.cancel(); recognitionTask = nil; recognizer?.cancel(); recognizer = nil
         audio.stop()
-        captureReady = false; levels = []
+        captureReady = false; isDownloadingModel = false; levels = []
         // Callbacks were invalidated above, so the transcript is committed once.
         let content = finalTranscript ?? subtitle
         if !discard, !content.isEmpty, let store {
