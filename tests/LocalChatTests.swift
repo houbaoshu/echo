@@ -388,7 +388,8 @@ import Testing
             #expect(chat.store.send("你好"))
             try await chat.idle()
             #expect(chat.store.task?.status == .failed && chat.store.task?.summary.hasPrefix(message) == true, "\(message): \(chat.store.task?.summary ?? "")")
-            #expect(chat.backend.requests.isEmpty && chat.assistant.isEmpty)
+            #expect(chat.backend.requests.isEmpty && chat.assistant.map(\.content) == [""] && chat.assistant.last?.status == .failed,
+                    "\(message): only the failure's empty message, no local reply")
             chat.store.shutdown()
         }
     }

@@ -231,7 +231,8 @@ import Testing
         #expect(chat.store.task?.status == .stopping && !chat.store.canSubmit && !chat.store.send("while stopping"))
         try await chat.idle()
         #expect(chat.store.task?.status == .stopped && chat.store.task?.summary == "已停止 · 可继续处理")
-        #expect(chat.assistantTexts.isEmpty && chat.store.replyStream.live == nil)
+        #expect(chat.assistantTexts == [""] && chat.store.messages.last?.status == .stopped && chat.store.replyStream.live == nil,
+                "Only the Stop's empty message stands for the reply")
         #expect(!chat.native.entries.contains { if case .response = $0 { true } else { false } }, "The cut-off reply is not history")
         #expect(chat.events == ["started", "stopped"])
         #expect(chat.store.canRetry && chat.store.retry())

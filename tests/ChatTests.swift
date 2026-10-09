@@ -53,7 +53,8 @@ import Testing
         // Output the cancelled generation still writes reaches nothing.
         cutOff.send("late text"); cutOff.finish()
         await Task.yield()
-        #expect(chat.messages.map(\.content) == ["Hello"] && chat.replyStream.live == nil, "The cut-off reply is dropped")
+        #expect(chat.messages.map(\.content) == ["Hello", ""] && chat.messages.last?.status == .stopped && chat.replyStream.live == nil,
+                "The cut-off reply is dropped; the Stop shows as a message")
         #expect(events == ["started", "stopped"], "Stop is announced once")
 
         #expect(chat.retry() && !chat.retry(), "Continue starts once")
@@ -98,8 +99,8 @@ import Testing
         try #require(failing.send("Hello"))
         try await failingModel.answer(.fail(AgentModelError(message: "before first text")))
         try await eventually("failed") { !failing.isGenerating }
-        #expect(failing.task?.status == .failed && failing.messages.map(\.role) == [.user],
-                "While open, the failure is the turn's summary; no message stands for the reply")
+        #expect(failing.task?.status == .failed && failing.messages.map(\.role) == [.user, .assistant],
+                "While open, the failure already has its message")
         let (failed, failedModel) = try Self.reopen(failing.snapshot)
         let placeholder = try #require(failed.messages.last)
         #expect(failed.messages.map(\.content) == ["Hello", ""] && placeholder.role == .assistant && placeholder.status == .failed
@@ -158,5 +159,57 @@ import Testing
         try await eventually("shutdown cancels the request") { stoppedModel.cancelledCount == 1 }
         await Task.yield()
         #expect(stopped.messages == atShutdown && stopped.messages.map(\.content) == ["Hello"] && stopped.task?.status == .interrupted)
+    }
+
+    /// A turn that ends before any reply shows, while open, the message reopening adds: the
+    /// ending saves it, reopening does not add a second, and Continue replaces it.
+    @Test static func endingBeforeReplyWhileOpen() async throws {
+        for ending in [ConversationMessage.Status.failed, .stopped] {
+            let (chat, model) = Self.chat()
+            var saved: TaskStore.Snapshot?
+            chat.checkpoint = { saved = $0 }
+            try #require(chat.send("Hello"))
+            try await model.waitForRequests(1)
+            if ending == .failed { try await model.answer(.fail(AgentModelError(message: "before first text"))) }
+            else { chat.stopTask() }
+            try await eventually("\(ending)") { !chat.isGenerating }
+            let shown = try #require(chat.messages.last)
+            #expect(chat.messages.map(\.content) == ["Hello", ""] && shown.role == .assistant && shown.status == ending
+                    && shown.errorMessage == (ending == .failed ? "before first text" : nil) && chat.canRetry,
+                    "\(ending): the conversation itself shows the ending and Continue")
+            #expect(saved?.messages == chat.messages, "\(ending): the ending is saved as shown")
+
+            let (reopened, _) = try Self.reopen(try #require(saved))
+            var restored = try #require(reopened.messages.last)
+            restored.id = shown.id
+            #expect(reopened.messages.map(\.content) == ["Hello", ""] && restored == shown,
+                    "\(ending): reopening shows the same message, once")
+            reopened.shutdown()
+
+            #expect(chat.retry())
+            try await model.waitForRequests(2)
+            #expect(chat.messages.map(\.content) == ["Hello"], "\(ending): Continue drops the message once the turn runs")
+            try await model.reply("answer")
+            try await eventually("\(ending) continued") { !chat.isGenerating }
+            #expect(chat.messages.map(\.content) == ["Hello", "answer"] && chat.messages.last?.status == .completed
+                    && !chat.messages.contains { $0.id == shown.id })
+            chat.shutdown()
+        }
+
+        // A Stop whose ending cannot be saved ends failed, and its message says so.
+        let (chat, model) = Self.chat()
+        try #require(chat.send("Hello"))
+        try await model.waitForRequests(1)
+        chat.checkpoint = { _ in throw CocoaError(.fileWriteNoPermission) }
+        chat.stopTask()
+        try await eventually("stopped") { !chat.isGenerating }
+        let shown = try #require(chat.messages.last)
+        #expect(chat.task?.status == .failed && chat.messages.map(\.content) == ["Hello", ""]
+                && shown.status == .failed && shown.errorMessage == chat.task?.summary)
+        let (reopened, _) = try Self.reopen(chat.snapshot)
+        var restored = try #require(reopened.messages.last)
+        restored.id = shown.id
+        #expect(reopened.messages.count == 2 && restored == shown, "The message matches the turn's final state")
+        reopened.shutdown(); chat.shutdown()
     }
 }

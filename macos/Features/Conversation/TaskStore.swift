@@ -268,15 +268,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         harness?.restore(snapshot.native)
         for index in tools.indices where tools[index].result == nil { tools[index].state = .unknown }
         for index in messages.indices where messages[index].steering == .queued { messages[index].steering = .interrupted }
-        // A turn that ended before any reply has no assistant message. Materialize that
-        // terminal state so the conversation itself can show Retry.
-        if messages.last?.role == .user, let task, [.failed, .stopped, .interrupted].contains(task.status) {
-            let status: ConversationMessage.Status = task.status == .failed ? .failed : task.status == .stopped ? .stopped : .interrupted
-            var response = ConversationMessage(role: .assistant, content: "", status: status)
-            response.timestamp = Date(timeIntervalSince1970: 0)
-            if status == .failed { response.errorMessage = task.summary }
-            messages.append(response)
-        }
+        appendEndingWithoutReply()
         for index in messages.indices where [.pending, .streaming].contains(messages[index].status) {
             messages[index].status = .interrupted
         }
@@ -376,6 +368,18 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             else { task?.status = .failed }
             return false
         }
+    }
+    /// A turn that ended before any reply has no assistant message. Materialize that terminal
+    /// state so the conversation itself can show Retry, alike while open and after reopening.
+    /// The engine never projects it: the next projection drops it.
+    @discardableResult private func appendEndingWithoutReply() -> Bool {
+        guard messages.last?.role == .user, let task, [.failed, .stopped, .interrupted].contains(task.status) else { return false }
+        let status: ConversationMessage.Status = task.status == .failed ? .failed : task.status == .stopped ? .stopped : .interrupted
+        var response = ConversationMessage(role: .assistant, content: "", status: status)
+        response.timestamp = Date(timeIntervalSince1970: 0)
+        if status == .failed { response.errorMessage = task.summary }
+        messages.append(response)
+        return true
     }
     /// Keeps a failed save's message: once a save fails, nothing more runs this turn.
     private func recordSaveFailure(_ error: any Error) -> String {
@@ -500,11 +504,14 @@ extension TaskStore: AgentHarnessHost {
         }
         // The turn's directory leases end with it, before anyone is told.
         releaseDirectory?()
+        // Before the save, so what is saved is what is shown.
+        let materialized = appendEndingWithoutReply()
         // The ending joins the saved conversation before anyone is told.
         do { try checkpoint?(snapshot) }
         catch {
             let failure = recordSaveFailure(error)
             task?.status = .failed; task?.summary = failure; event = .reply(runID, .failed(failure))
+            if materialized { messages.removeLast(); appendEndingWithoutReply() }
         }
         lifecycle.send(event)
     }

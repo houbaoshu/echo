@@ -1336,8 +1336,9 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(conversationA.store.task?.status == .stopping, "Esc stops the reply")
         try await stopped()
         XCTAssertTrue(!conversationA.store.isGenerating, "Reply stopped by Esc")
-        // An Agent turn stopped before any reply keeps no reply message; the task says it stopped.
-        XCTAssertTrue(conversationA.store.messages.last?.role == .user, "No cut-off reply is kept")
+        // An Agent turn stopped before any reply keeps no cut-off text; an empty message says it stopped.
+        XCTAssertTrue(conversationA.store.messages.map(\.content) == ["Valid question", ""]
+                      && conversationA.store.messages.last?.status == .stopped, "No cut-off reply is kept")
 
         // Test 5: Esc when idle returns false
         XCTAssertTrue(!main.handleEscape(), "Esc when idle is not consumed")
@@ -2219,7 +2220,7 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(normal.contains { $0.contains("这是模型的回复。") }, "The reply itself is on screen: \(normal)")
         XCTAssertTrue(!normal.contains { $0.contains("已完成") }, "A successful reply carries no status caption: \(normal)")
 
-        // An Agent turn that fails keeps no reply message; its task row carries the reason.
+        // An Agent turn that fails before any reply shows its reason in an empty reply message.
         let (failed, failingModel) = puppetStore()
         defer { failed.shutdown() }
         failed.send("会失败的提问")
