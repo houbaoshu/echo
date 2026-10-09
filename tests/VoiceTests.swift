@@ -942,36 +942,39 @@ extension EchoVoiceScenarios {
             #expect(rig.gate.options == [reset] && rig.audio.routeBaseline == routeA && rig.failures.isEmpty,
                   "a route that comes back while the switch settles still resets the player, once")
         }
-        // 10. After a switch the microphone has to deliver again.
+        // 10. After a switch the microphone has to deliver again. The check runs once, 50 ms after
+        // the restart completes, and records nothing when it passes or never runs, so the checks
+        // that it does not fail watch 100 ms past finishSwitch, which returns once it is armed.
+        let resume = Duration.milliseconds(50), pastCheck = resume + .milliseconds(50)
         do {
-            let rig = try await makeRig(resume: .milliseconds(100))
+            let rig = try await makeRig(resume: resume)
             defer { rig.audio.stop() }
             try await finishSwitch(rig, to: routeB)
-            try await eventually("the 100 ms capture check fails the recovery") { rig.failures == [.recoveryFailed] }
+            try await eventually("the 50 ms capture check fails the recovery") { rig.failures == [.recoveryFailed] }
             #expect(rig.failures == [.recoveryFailed], "a silent microphone after the switch ends the call as a failed recovery")
         }
         do {
-            let rig = try await makeRig(resume: .milliseconds(100))
+            let rig = try await makeRig(resume: resume)
             defer { rig.audio.stop() }
             try await finishSwitch(rig, to: routeB)
             rig.graph.converter?.accept(micBuffer())
-            try await Task.sleep(for: .milliseconds(250))
+            await observationWindow(pastCheck)
             #expect(rig.failures.isEmpty, "a microphone delivering after the switch passes the check")
         }
         do {
-            let rig = try await makeRig(resume: .milliseconds(100))
+            let rig = try await makeRig(resume: resume)
             defer { rig.audio.stop() }
             rig.audio.resetCapture(epoch: 2, paused: true)
             try await finishSwitch(rig, to: routeB)
             rig.graph.converter?.accept(micBuffer())
-            try await Task.sleep(for: .milliseconds(250))
+            await observationWindow(pastCheck)
             #expect(rig.failures.isEmpty, "a muted microphone still counts as delivering")
         }
         do {
-            let rig = try await makeRig(resume: .milliseconds(100))
+            let rig = try await makeRig(resume: resume)
             try await finishSwitch(rig, to: routeB)
             rig.audio.stop()
-            try await Task.sleep(for: .milliseconds(250))
+            await observationWindow(pastCheck)
             #expect(rig.failures.isEmpty, "stop() before the check cancels it")
         }
     }
@@ -986,9 +989,12 @@ extension EchoVoiceScenarios {
             let (store, puppet) = agentStore()
             var recognizers: [FakeRecognizer] = []
             // Once listening has begun, the reply has to reach the pause before the armed timeout
-            // does; nothing the test holds orders the two, so that case gets a timeout the reply
-            // reliably beats.
-            let timeout: Duration = alreadyGenerating ? .milliseconds(100) : .milliseconds(300)
+            // does; nothing the test holds orders the two. The reply takes about 20 ms under the
+            // full suite, so 100 ms leaves it more than 50 ms to spare.
+            let timeout = Duration.milliseconds(100)
+            // The watchdog was armed before the step that checks it, so a watch from there that runs
+            // 50 ms past one timeout also runs past its deadline; it records nothing when cancelled.
+            let pastTimeout = timeout + .milliseconds(50)
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let recognizer = FakeRecognizer(); recognizers.append(recognizer); return recognizer
             }, synthesizer: { FakeSynthesizer() }, captureTimeout: timeout,
@@ -1017,7 +1023,7 @@ extension EchoVoiceScenarios {
             #expect(audio.capturePaused && recognizers.count == 1 && recognizers[0].cancelled,
                   "speaking the final reply intentionally pauses capture before its first packet")
             let runID = store.task?.runID
-            try await Task.sleep(for: timeout + .milliseconds(80))
+            await observationWindow(pastTimeout)
             #expect(voice.isActive && voice.error == nil && store.task?.runID == runID && store.task?.status == .completed,
                   "paused capture never times out or disturbs the completed reply")
 
@@ -1036,7 +1042,7 @@ extension EchoVoiceScenarios {
                       "capture timeout preserves the completed text reply")
             } else {
                 audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: audio.captureEpoch))
-                try await Task.sleep(for: timeout + .milliseconds(80))
+                await observationWindow(pastTimeout)
                 #expect(voice.isActive && voice.error == nil && recognizers.last?.packets == 1,
                       "valid first packet after recovery cancels the capture timeout")
             }
@@ -1074,10 +1080,13 @@ extension EchoVoiceScenarios {
 
         // Replays run 4: capture starts, the watchdog is armed, a device change restarts the
         // engine for longer than the timeout, and the first packet arrives only after recovery.
+        // A watchdog that keeps the call records nothing, so each restart and each check that the
+        // call survives lasts 50 ms past the deadline it has to cross.
+        let captureTimeout = Duration.milliseconds(50), pastTimeout = captureTimeout + .milliseconds(50)
         func makeCall() -> (FakeAudio, VoiceSessionController, TaskStore) {
             let audio = FakeAudio(), store = TaskStore(harness: idleAgent())
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
-                                               synthesizer: { FakeSynthesizer() }, captureTimeout: timeout,
+                                               synthesizer: { FakeSynthesizer() }, captureTimeout: captureTimeout,
                                                permission: { true })
             voice.start(conversation: WorkspaceConversation(store: store), configuration: VoiceConfiguration(), key: "test")
             return (audio, voice, store)
@@ -1087,36 +1096,40 @@ extension EchoVoiceScenarios {
             defer { voice.shutdown(); store.shutdown() }
             try await eventually("voice.isActive") { voice.isActive }
             audio.isRestartingCapture = true
-            try await Task.sleep(for: .milliseconds(300))
+            // Armed by the time the call is active, so this runs past the timeout's first deadline.
+            await observationWindow(pastTimeout)
             #expect(voice.isActive && voice.error == nil,
                   "an engine restart longer than the timeout does not end the call as a first-packet timeout")
             audio.isRestartingCapture = false; audio.captureRestartedAt = .now
-            try await Task.sleep(for: .milliseconds(50))
             audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: audio.captureEpoch))
-            try await Task.sleep(for: .milliseconds(200))
+            // Past restartedAt + timeout, the deadline the packet has to cancel.
+            await observationWindow(pastTimeout)
             #expect(voice.isActive && voice.error == nil,
-                  "a first packet shortly after the restart completes keeps the call")
+                  "a first packet right after the restart completes keeps the call")
         }
         do {
             let (audio, voice, store) = makeCall()
             defer { voice.shutdown(); store.shutdown() }
             try await eventually("voice.isActive") { voice.isActive }
             audio.isRestartingCapture = true
-            try await Task.sleep(for: .milliseconds(300))
+            // While the engine restarts the watchdog looks again every timeout from when it was
+            // armed; ending the restart halfway between two looks means a deadline the restart did
+            // not reset fires half a timeout early instead of about one timeout after it.
+            await observationWindow(captureTimeout + .milliseconds(75))
             let restartedAt = ContinuousClock.now
             audio.isRestartingCapture = false; audio.captureRestartedAt = restartedAt
-            try await Task.sleep(for: .milliseconds(30))
-            #expect(voice.isActive, "the recovered microphone gets a full timeout of its own")
+            #expect(voice.isActive, "the call outlasts a restart longer than the timeout")
             try await eventually("!voice.isActive") { !voice.isActive }
             let endedAfter = restartedAt.duration(to: .now)
             let reason = VoiceDiagnostics.shared.lines.last { $0.contains("[通话结束] REASON") }
-            #expect(!voice.isActive && endedAfter >= timeout && reason?.contains("麦克风首包超时") == true
+            #expect(!voice.isActive && endedAfter >= captureTimeout && reason?.contains("麦克风首包超时") == true
                   && voice.error?.contains("没有返回音频") == true,
-                  "with no packet after the restart the call ends as a first-packet timeout, after restartedAt + timeout")
+                  "with no packet after the restart the recovered microphone gets a full timeout of its own, and the call ends as a first-packet timeout")
         }
     }
     @Test @MainActor static func mutedPlaybackTailProtectionTests() async throws {
         _ = NSApplication.shared
+        let tail = Duration.milliseconds(50)
         for unmuteBeforeExpiry in [true, false] {
             let audio = FakeAudio()
             let (store, puppet) = agentStore()
@@ -1124,7 +1137,7 @@ extension EchoVoiceScenarios {
             var recognizers: [FakeRecognizer] = []
             let voice = VoiceSessionController(audio: audio, recognizer: {
                 let recognizer = FakeRecognizer(); recognizers.append(recognizer); return recognizer
-            }, synthesizer: { synth }, tailProtectionDuration: .milliseconds(200), permission: { true })
+            }, synthesizer: { synth }, tailProtectionDuration: tail, permission: { true })
             let conversation = WorkspaceConversation(store: store)
             var finishDrain: CheckedContinuation<Void, Never>?
             audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
@@ -1138,10 +1151,14 @@ extension EchoVoiceScenarios {
             #expect(!audio.played.isEmpty, "reply has played audio before muting")
             voice.toggleMute()
             // The model completed before playback began; the protection clock still waits for the drain.
-            try await Task.sleep(for: .milliseconds(260))
+            // A tail run early would have started no later than the mute, so watch 50 ms past one
+            // tail from here; while the drain waits nothing else moves.
+            await observationWindow(tail + .milliseconds(50))
             #expect(voice.isMuted && voice.snapshot.replyAudio == .draining(store.task!.runID)
                   && recognizers.count == 1 && audio.capturePaused,
                   "muted playback keeps ASR paused until the player finishes draining")
+            // The tail starts once the drain returns, so not before this.
+            let drainReleased = ContinuousClock.now
             finishDrain?.resume(); finishDrain = nil
             try await eventually("the drain completes") { voice.snapshot.replyAudio == .none }
             #expect(voice.snapshot.replyAudio == .none && voice.isMuted && voice.status == "麦克风已静音",
@@ -1153,14 +1170,16 @@ extension EchoVoiceScenarios {
                       && voice.status == "正在恢复聆听",
                       "unmuting just after muted playback ends must wait for tail protection")
             }
-            try await Task.sleep(for: .milliseconds(260))
             if !unmuteBeforeExpiry {
-                #expect(voice.isMuted && recognizers.count == 1 && audio.capturePaused,
+                // Still muted, the tail running out moves recognition from recovery to muted.
+                try await eventually("the tail runs out") { voice.snapshot.recognition != .off(.recovery) }
+                #expect(voice.snapshot.recognition == .off(.muted) && voice.isMuted && recognizers.count == 1 && audio.capturePaused,
                       "tail protection expiry never overrides the user's mute preference")
                 voice.toggleMute()
             }
             // Unmuted before the tail ran out, recognition reopens when it does, on its own task.
             try await eventually("listening resumes on a fresh recognizer") { voice.snapshot.recognition == .listening && recognizers.count == 2 }
+            #expect(drainReleased.duration(to: .now) >= tail, "listening resumes no sooner than one tail after the drain")
             #expect(voice.isActive && voice.error == nil && recognizers.count == 2
                   && voice.snapshot.recognition == .listening && !audio.capturePaused,
                   "listening resumes after both tail protection and mute have ended")
@@ -1170,18 +1189,20 @@ extension EchoVoiceScenarios {
     @Test @MainActor static func captureDiagnosticsTests() async throws {
         _ = NSApplication.shared
         let audio = FakeAudio(), recognizer = FakeRecognizer()
+        let timeout = Duration.milliseconds(50)
         let voice = VoiceSessionController(audio: audio, recognizer: { recognizer },
-                                           captureTimeout: .milliseconds(100), permission: { true })
+                                           captureTimeout: timeout, permission: { true })
         let conversation = WorkspaceConversation(store: TaskStore(harness: idleAgent()))
         defer { voice.shutdown() }
         voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
-        try await eventually("the 100 ms capture timeout ends the call") { !voice.isActive }
+        try await eventually("the 50 ms capture timeout ends the call") { !voice.isActive }
         #expect(!voice.isActive && !audio.capturing && recognizer.cancelled, "missing microphone frames ends call and releases resources")
         #expect(voice.error?.contains("没有返回音频") == true, "missing capture reports its own cause")
         voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "test")
         try await eventually("the call starts capturing") { audio.capturing }
         audio.input?.yield(VoiceCapturePacket(data: Data(repeating: 0, count: 6400), epoch: audio.captureEpoch))
-        try await Task.sleep(for: .milliseconds(180))
+        // The watchdog, armed once capture started, records nothing when cancelled: watch 50 ms past its deadline.
+        await observationWindow(timeout + .milliseconds(50))
         #expect(voice.isActive, "silent PCM is valid capture and cancels startup watchdog")
         let secret = "diagnostic-do-not-log"
         let reason = VoiceDiagnostics.reason(NSError(domain: "com.apple.coreaudio.avfaudio", code: -10875,
@@ -1821,7 +1842,7 @@ extension EchoVoiceScenarios {
                 let r = FakeRecognizer(); recognizers.append(r); return r
             }, synthesizer: {
                 let s = FakeSynthesizer(); s.emitsAudio = true; synths.append(s); return s
-            }, tailProtectionDuration: .milliseconds(40), permission: { true })
+            }, tailProtectionDuration: .milliseconds(50), permission: { true })
             let conversation = WorkspaceConversation(store: store)
             var finishDrain: CheckedContinuation<Void, Never>?
             audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
@@ -1851,7 +1872,8 @@ extension EchoVoiceScenarios {
             // Mute during tail protection
             voice.toggleMute()
             #expect(voice.isMuted && voice.status == "麦克风已静音", "mute during tail protection reflects preference")
-            try await Task.sleep(for: .milliseconds(60))
+            // Muted, the tail running out moves recognition from recovery to muted.
+            try await eventually("the 50 ms tail runs out") { voice.snapshot.recognition != .off(.recovery) }
             #expect(recognizers.count == 1 && voice.snapshot.recognition == .off(.muted),
                   "tail protection expiration while muted does not open ASR")
 
@@ -2186,8 +2208,8 @@ extension EchoVoiceScenarios {
             // Call end while in recovery
             voice.end()
             #expect(voice.snapshot.session == .inactive, "ended during recovery")
-            // Wait beyond tail protection duration
-            try await Task.sleep(for: .milliseconds(80))
+            // Nothing records that the cancelled tail did not run out: watch 50 ms past the 50 ms tail.
+            await observationWindow(.milliseconds(100))
             #expect(recognizers.count == 1, "cancelled recovery task does NOT create a new recognizer")
             #expect(voice.snapshot.session == .inactive, "session remains inactive")
         }

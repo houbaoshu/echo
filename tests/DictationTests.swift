@@ -174,7 +174,9 @@ extension EchoVoiceScenarios {
     @Test @MainActor static func deviceRecoveryTests() async throws {
         let store = TaskStore(harness: idleAgent()), conversation = WorkspaceConversation(store: store)
         defer { store.shutdown() }
-        let timeout = Duration.milliseconds(100)
+        // A watchdog that keeps recording records nothing, so each restart and each check that the
+        // recording survives lasts 50 ms past the deadline it has to cross.
+        let timeout = Duration.milliseconds(50), pastTimeout = timeout + .milliseconds(50)
         func makeDictation() -> (FakeAudio, DictationRecognizer, DictationController) {
             let audio = FakeAudio(), recognizer = DictationRecognizer()
             let dictation = DictationController(audio: audio, recognizer: { recognizer }, finalizationTimeout: .seconds(5),
@@ -187,30 +189,33 @@ extension EchoVoiceScenarios {
             defer { dictation.shutdown() }
             try await eventually("dictation.captureReady") { dictation.captureReady }
             audio.isRestartingCapture = true
-            try await Task.sleep(for: .milliseconds(300))
+            // Armed by the time capture is ready, so this runs past the timeout's first deadline.
+            await observationWindow(pastTimeout)
             #expect(dictation.state == .recording && dictation.error == nil,
                          "An engine restart longer than the timeout is not a missing microphone")
             audio.isRestartingCapture = false; audio.captureRestartedAt = .now
-            try await Task.sleep(for: .milliseconds(50))
             audio.input?.yield(.init(data: Data(repeating: 0, count: 6400), epoch: 1))
-            try await Task.sleep(for: .milliseconds(200))
+            // Past restartedAt + timeout, the deadline the packet has to cancel.
+            await observationWindow(pastTimeout)
             #expect(dictation.state == .recording && dictation.error == nil,
-                         "A first packet shortly after the restart keeps recording")
+                         "A first packet right after the restart keeps recording")
         }
         do {
             let (audio, _, dictation) = makeDictation()
             defer { dictation.shutdown() }
             try await eventually("dictation.captureReady") { dictation.captureReady }
             audio.isRestartingCapture = true
-            try await Task.sleep(for: .milliseconds(300))
+            // While the engine restarts the watchdog looks again every timeout from when it was
+            // armed; ending the restart halfway between two looks means a deadline the restart did
+            // not reset fires half a timeout early instead of about one timeout after it.
+            await observationWindow(timeout + .milliseconds(75))
             let restartedAt = ContinuousClock.now
             audio.isRestartingCapture = false; audio.captureRestartedAt = restartedAt
-            try await Task.sleep(for: .milliseconds(30))
-            #expect(dictation.state == .recording, "The recovered microphone gets a full timeout of its own")
+            #expect(dictation.state == .recording, "Recording outlasts a restart longer than the timeout")
             try await eventually("the recovered microphone times out") { dictation.state != .recording }
             #expect(dictation.state == .failed && restartedAt.duration(to: .now) >= timeout
                          && dictation.error?.contains("没有返回音频") == true,
-                         "With no packet after the restart the recording fails after restartedAt + timeout")
+                         "With no packet after the restart the recovered microphone gets a full timeout of its own, and the recording fails after restartedAt + timeout")
         }
         do {
             // Stopping mid-restart still finalizes: capture ends, the recognizer gets its final packet.

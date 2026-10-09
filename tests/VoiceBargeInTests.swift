@@ -23,6 +23,10 @@ import Foundation
     init(timeout: Duration = .seconds(3), activityWindow: Duration = .milliseconds(800)) {
         self.timeout = timeout; self.activityWindow = activityWindow
     }
+    /// A probe timeout for tests that act on the probe before it gives up: start(), probe(),
+    /// recognize() and the step after them take about 15 ms under the full suite, so 100 ms leaves
+    /// more than 50 ms to spare.
+    static let shortTimeout = Duration.milliseconds(100)
     var userTexts: [String] { store.messages.filter { $0.role == .user }.map(\.content) }
     /// Speaks the completed reply, its first audio still playing: the Agent hands TTS the whole
     /// reply at once, so the audio is held to stay in the middle of playback.
@@ -211,9 +215,9 @@ extension VoiceTests {
     @Test @MainActor static func bargeInRejectionTests() async throws {
         _ = NSApplication.shared
         do {
-            // A 100 ms activity window under the real 3 s ASR deadline. The wait stops well short
+            // A 50 ms activity window under the real 3 s ASR deadline. The wait stops well short
             // of 3 s, so resuming on that deadline instead fails.
-            let f = BargeInFixture(activityWindow: .milliseconds(100))
+            let f = BargeInFixture(activityWindow: .milliseconds(50))
             defer { f.shutdown() }
             try await f.start(); try await f.probe()
             try await eventually("playback resumes after the activity window", timeout: .seconds(1)) { !f.audio.playbackPaused }
@@ -223,7 +227,7 @@ extension VoiceTests {
         // Echo may trigger the local energy detector. Once output pauses, its tail
         // must disappear without uploading any of the audible-playback samples.
         do {
-            let f = BargeInFixture(timeout: .milliseconds(220))
+            let f = BargeInFixture(timeout: BargeInFixture.shortTimeout)
             defer { f.shutdown() }
             try await f.start()
             try await f.frames(1); try await f.frames(1, Data(repeating: 0, count: 640))
@@ -234,7 +238,7 @@ extension VoiceTests {
             #expect(f.recognizers.count == 1 && f.userTexts.count == 1,
                   "speaker-only echo and its tail never open ASR or create a turn")
             let run = f.store.task!.runID
-            try await eventually("the unconfirmed probe resumes the reply after its 220 ms timeout") {
+            try await eventually("the unconfirmed probe resumes the reply after its 100 ms timeout") {
                 !f.audio.playbackPaused && f.voice.snapshot.bargeIn == .armed(run)
             }
             #expect(!f.audio.playbackPaused && !f.synths[0].cancelled && f.voice.snapshot.replyAudio == .playing(run)
@@ -242,14 +246,14 @@ extension VoiceTests {
                   "unconfirmed acoustic probe resumes the same reply")
         }
         for echo in ["今天的天气非常晴朗。", "今天的天气非常清朗", "？！"] {
-            let f = BargeInFixture(timeout: .milliseconds(220))
+            let f = BargeInFixture(timeout: BargeInFixture.shortTimeout)
             defer { f.shutdown() }
             try await f.start(); try await f.probe(); try await f.recognize()
             f.recognizers[1].emit(echo, start: 0, end: 300, final: false)
             f.recognizers[1].emit(echo, start: 0, end: 500, final: true)
             #expect(f.userTexts.count == 1 && f.voice.subtitle.isEmpty && !f.synths[0].cancelled,
                   "residual echo/empty transcript cannot confirm or submit")
-            try await eventually("the echo-only probe gives up after its 220 ms timeout") {
+            try await eventually("the echo-only probe gives up after its 100 ms timeout") {
                 !f.audio.playbackPaused && f.recognizers[1].cancelled
             }
             #expect(!f.audio.playbackPaused && f.recognizers[1].cancelled && f.voice.snapshot.replyAudio == .playing(f.store.task!.runID),
@@ -265,7 +269,7 @@ extension VoiceTests {
     @Test @MainActor static func bargeInCancellationTests() async throws {
         _ = NSApplication.shared
         for action in ["mute", "stop", "send", "end", "failure", "restart"] {
-            let f = BargeInFixture(timeout: .milliseconds(240))
+            let f = BargeInFixture(timeout: BargeInFixture.shortTimeout)
             defer { f.shutdown() }
             try await f.start(); try await f.probe(); try await f.recognize()
             let old = f.recognizers[1]
@@ -297,7 +301,9 @@ extension VoiceTests {
             let users = f.userTexts.count
             old.emit("迟到的插话", start: 0, end: 500, final: true)
             old.onReady?()
-            try await Task.sleep(for: .milliseconds(290))
+            // The late ASR is refused at once; the old probe timer, started before the action and
+            // recording nothing once invalidated, needs a watch 50 ms past its timeout.
+            await observationWindow(BargeInFixture.shortTimeout + .milliseconds(50))
             #expect(f.userTexts.count == users && !f.audio.playbackPaused,
                   "\(action) invalidates late ASR and the old probe timer")
             if action == "send" {
@@ -314,7 +320,7 @@ extension VoiceTests {
     @Test @MainActor static func bargeInCompletionAndWatchdogTests() async throws {
         _ = NSApplication.shared
         do {
-            let f = BargeInFixture(timeout: .milliseconds(220))
+            let f = BargeInFixture(timeout: BargeInFixture.shortTimeout)
             var finishDrain: CheckedContinuation<Void, Never>?
             f.audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
             defer { finishDrain?.resume(); f.shutdown() }
@@ -326,7 +332,7 @@ extension VoiceTests {
             #expect(f.audio.playbackPaused && f.recognizers.count == 2,
                   "later TTS chunks cannot bypass a paused probe")
             f.audio.releasePlayback()
-            try await eventually("the probe gives up after its 220 ms timeout and playback drains") {
+            try await eventually("the probe gives up after its 100 ms timeout and playback drains") {
                 !f.audio.playbackPaused && f.voice.snapshot.replyAudio == .draining(run) && f.recognizers[1].cancelled
             }
             #expect(!f.audio.playbackPaused && f.voice.snapshot.replyAudio == .draining(run)
@@ -346,7 +352,7 @@ extension VoiceTests {
             synth.emitsAudio = true
             let (store, puppet) = agentStore()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
-                synthesizer: { synth }, captureTimeout: .milliseconds(70), permission: { await permission.ask() })
+                synthesizer: { synth }, captureTimeout: .milliseconds(50), permission: { await permission.ask() })
             let conversation = WorkspaceConversation(store: store)
             var finishDrain: CheckedContinuation<Void, Never>?
             audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
@@ -360,7 +366,7 @@ extension VoiceTests {
             permission.answer(true)
             try await eventually("finishDrain != nil") { finishDrain != nil }
             #expect(audio.monitoring, "text reply enables local monitoring even before the first capture packet")
-            try await eventually("the first-capture watchdog ends the call after its 70 ms timeout") { !voice.isActive }
+            try await eventually("the first-capture watchdog ends the call after its 50 ms timeout") { !voice.isActive }
             #expect(!voice.isActive && voice.error?.contains("没有返回音频") == true,
                   "local monitoring also enforces the first-capture watchdog")
         }
