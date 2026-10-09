@@ -37,14 +37,13 @@ struct ConversationProjectPicker: View {
                     .help(project.map(workspace.isAvailable) == false ? "项目不可用" : "选择项目文件夹")
                     .accessibilityIdentifier("conversation.project")
                     .accessibilityValue("可选择项目")
+                    // The xmark only shows on hover or keyboard focus, and SwiftUI leaves a hidden
+                    // view out of the accessibility tree, so the picker offers the same action by name.
+                    .accessibilityActions {
+                        if project != nil { Button("取消关联项目", action: detach) }
+                    }
                 if project != nil {
-                    Button {
-                        guard workspace.selectedID == conversationID else { return }
-                        isPresented = false
-                        if workspace.associateProject(nil, conversationID: conversationID) {
-                            workspace.requestComposerFocus(conversationID: conversationID)
-                        }
-                    } label: {
+                    Button(action: detach) {
                         Image(systemName: "xmark").font(.caption)
                             .frame(width: 24, height: 28).contentShape(Rectangle())
                     }.buttonStyle(.plain).focused($detachFocused)
@@ -63,6 +62,13 @@ struct ConversationProjectPicker: View {
             if old && !new && workspace.selectedID == conversationID { workspace.requestComposerFocus(conversationID: conversationID) }
         }
         .onChange(of: editable) { _, value in if !value { isPresented = false } }
+    }
+    private func detach() {
+        guard workspace.selectedID == conversationID else { return }
+        isPresented = false
+        if workspace.associateProject(nil, conversationID: conversationID) {
+            workspace.requestComposerFocus(conversationID: conversationID)
+        }
     }
     private var label: some View {
         HStack(spacing: 6) {

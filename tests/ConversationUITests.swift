@@ -3685,18 +3685,9 @@ private struct ComposerHeightHost: View {
         let conversation = workspace.selected!
         conversation.store.mainDraft = "保留输入草稿"
         XCTAssertTrue(workspace.associateProject(projectID, conversationID: conversation.id))
-        /// Project files are listed and read off the main actor and reach the inspector on a
-        /// later SwiftUI update, so wait for what should appear rather than for a set time.
-        func waitUntil(_ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
-            let clock = ContinuousClock(), deadline = clock.now + .seconds(10)
-            while true {
-                main.window?.contentView?.layoutSubtreeIfNeeded()
-                if condition() { return }
-                guard clock.now < deadline else { throw SettingsError("Timed out waiting: \(label())") }
-                try await Task.sleep(for: .milliseconds(20))
-            }
-        }
-        try await waitUntil("the project tree lists README.md") {
+        // Project files are listed and read off the main actor and reach the inspector on a
+        // later SwiftUI update, so wait for what should appear rather than for a set time.
+        try await eventually("the project tree lists README.md", timeout: .seconds(10), layingOut: main.window?.contentView) {
             findAccessibility("projectFiles.entry.README.md", in: main.inspectorItem.viewController.view) != nil
         }
         XCTAssertTrue(workspace.projects.contains { $0.id == projectID })
@@ -3727,12 +3718,12 @@ private struct ComposerHeightHost: View {
         let collapsedValue: Any? = folder.accessibilityValue?()
         XCTAssertTrue(collapsedValue as? String == "已折叠")
         XCTAssertTrue(folder.accessibilityPerformPress?() == true)
-        try await waitUntil("the folder opens") { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) != nil }
+        try await eventually("the folder opens", timeout: .seconds(10), layingOut: main.window?.contentView) { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) != nil }
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) != nil)
         let expandedValue: Any? = findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityValue?()
         XCTAssertTrue(expandedValue as? String == "已展开")
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
-        try await waitUntil("the folder closes") { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil }
+        try await eventually("the folder closes", timeout: .seconds(10), layingOut: main.window?.contentView) { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil }
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil)
 
         // The tree is a system source list; that is what supplies the disclosure triangle,
@@ -3754,13 +3745,13 @@ private struct ComposerHeightHost: View {
             window.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                 windowNumber: window.windowNumber, context: nil, characters: characters,
                 charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
-            try await waitUntil(label, condition)
+            try await eventually(label, timeout: .seconds(10), layingOut: main.window?.contentView, condition)
         }
         // Opening a folder highlights it, and the list agrees about which row that is.
         // The pointer handing this list the first responder is the shared SidebarListFocus,
         // which the chat sidebar's own pointer test covers.
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
-        try await waitUntil("the opened folder is selected and highlighted") {
+        try await eventually("the opened folder is selected and highlighted", timeout: .seconds(10), layingOut: main.window?.contentView) {
             workspace.fileBrowser.state.selectedPath == "folder" && tree.selectedRow == treeRow("projectFiles.entry.folder")
         }
         XCTAssertTrue(workspace.fileBrowser.state.expanded.contains("folder")
@@ -3791,9 +3782,9 @@ private struct ComposerHeightHost: View {
                      && workspace.fileBrowser.state.selectedPath == "folder/child.txt",
                      "Return opens the file the arrow keys reached")
         workspace.fileBrowser.returnToDirectory()
-        try await waitUntil("the tree is back") { findAccessibility("projectFiles.entry.folder", in: inspector) != nil }
+        try await eventually("the tree is back", timeout: .seconds(10), layingOut: main.window?.contentView) { findAccessibility("projectFiles.entry.folder", in: inspector) != nil }
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
-        try await waitUntil("the folder closes again") { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil }
+        try await eventually("the folder closes again", timeout: .seconds(10), layingOut: main.window?.contentView) { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil }
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil,
                      "The tree is closed again for the checks that follow")
         func openPicker() async throws -> NSWindow {
@@ -3803,7 +3794,7 @@ private struct ComposerHeightHost: View {
                     $0.isVisible && $0.contentView.map { findAccessibility("projectPicker.search", in: $0) != nil } == true
                 }
             }
-            try await waitUntil("the project panel opens") { open() != nil }
+            try await eventually("the project panel opens", timeout: .seconds(10), layingOut: main.window?.contentView) { open() != nil }
             guard let panel = open() else { throw SettingsError("Project panel did not open") }
             // AppKit picks the side with room; above and below are both the system's call.
             let anchor = picker.accessibilityFrame?() ?? .zero, frame = panel.frame
@@ -3823,35 +3814,29 @@ private struct ComposerHeightHost: View {
         }
         var panel = try await openPicker()
         key(panel, code: 53, characters: "\u{1b}")
-        try await waitUntil("Escape closes the project panel") { !panel.isVisible }
-        if NSApp.isFullKeyboardAccessEnabled {
-            // Keyboard focus also exposes the hover action for accessibility users.
-            picker.setAccessibilityFocused?(true)
-            try await Task.sleep(for: .milliseconds(100)); content.layoutSubtreeIfNeeded()
-            guard let detach = findAccessibility("conversation.project.detach", in: content) else {
-                throw SettingsError("Draft project detach action missing")
-            }
-            XCTAssertTrue(detach.accessibilityPerformPress?() == true)
-            try await Task.sleep(for: .milliseconds(150))
-            XCTAssertTrue(conversation.projectID == nil && conversation.store.mainDraft == "保留输入草稿",
-                         "Detach preserves the draft")
-            XCTAssertTrue(window.firstResponder === composer, "Detach returns composer focus")
-        } else {
-            // With macOS Keyboard Navigation off, plain buttons never take focus, and this hosted
-            // view has no event loop for real hover; EchoUITests.testProjectPickerKeyboardScrollPreviewAndDetach
-            // covers that path.
-            XCTAssertTrue(workspace.associateProject(nil, conversationID: conversation.id))
-        }
+        try await eventually("Escape closes the project panel", timeout: .seconds(10), layingOut: main.window?.contentView) { !panel.isVisible }
+        // Detach runs through the picker's named action, which runs the same function as the
+        // xmark: the xmark only shows on hover or keyboard focus, and while hidden it is not in the
+        // accessibility tree. Focus leaves the composer first, so the detach has to bring it back.
+        try await eventually("Escape returns focus to the composer") { window.firstResponder === composer }
+        window.makeFirstResponder(nil)
+        let actions: [NSAccessibilityCustomAction] = picker.accessibilityCustomActions?() ?? []
+        let detach = try XCTUnwrap(actions.first { $0.name == "取消关联项目" },
+                                   "The picker offers detach by name: \(actions.map(\.name))")
+        XCTAssertTrue(detach.handler?() ?? (detach.target?.perform(detach.selector, with: detach) != nil))
+        try await eventually("Detach clears the project") { conversation.projectID == nil }
+        XCTAssertTrue(conversation.store.mainDraft == "保留输入草稿", "Detach preserves the draft")
+        try await eventually("Detach returns composer focus") { window.firstResponder === composer }
         panel = try await openPicker()
         guard let projectOption = findAccessibility("projectPicker.project.\(projectID)", in: panel.contentView!) else {
             throw SettingsError("Existing project menu item missing")
         }
         XCTAssertTrue(projectOption.accessibilityPerformPress?() == true)
-        try await waitUntil("choosing the project closes the panel") { conversation.projectID == projectID && !panel.isVisible }
+        try await eventually("choosing the project closes the panel", timeout: .seconds(10), layingOut: main.window?.contentView) { conversation.projectID == projectID && !panel.isVisible }
         XCTAssertTrue(conversation.projectID == projectID, "Menu selects existing project")
         panel = try await openPicker()
         key(panel, code: 53, characters: "\u{1b}")
-        // Not waitUntil: with the main window laid out before every look, this wait did not
+        // Not laid out before every look: with the main window laid out each time, this wait did not
         // finish (the failure read as SwiftUI's InvalidTransition; see stopTest).
         try await eventually("Escape closes the panel and focus returns to the composer") {
             !panel.isVisible && window.firstResponder === composer
@@ -3859,7 +3844,7 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(!panel.isVisible && window.firstResponder === composer, "Escape dismisses project panel and restores input focus")
         let oneLine = composer.enclosingScrollView?.frame.height ?? 0
         conversation.store.mainDraft = Array(repeating: "多行草稿", count: 8).joined(separator: "\n")
-        try await waitUntil("the composer grows for the multi-line draft") {
+        try await eventually("the composer grows for the multi-line draft", timeout: .seconds(10), layingOut: main.window?.contentView) {
             composer.string == conversation.store.mainDraft && (composer.enclosingScrollView?.frame.height ?? 0) > oneLine
         }
         assertPlacement()
@@ -3869,7 +3854,7 @@ private struct ComposerHeightHost: View {
         /// refresh re-reads the open file and supersedes the read already in flight.
         func openPreview(_ path: String, until shown: () -> Bool) async throws {
             workspace.fileBrowser.openFile(path)
-            try await waitUntil("the \(path) preview, state: \(workspace.fileBrowser.state.preview)") {
+            try await eventually("the \(path) preview, state: \(workspace.fileBrowser.state.preview)", timeout: .seconds(10), layingOut: main.window?.contentView) {
                 workspace.fileBrowser.state.preview != .loading && shown()
             }
         }
@@ -3911,7 +3896,7 @@ private struct ComposerHeightHost: View {
         /// is animating, by collapsing or restoring the conversation column.
         func togglePreview() async throws {
             XCTAssertTrue(findAccessibility("projectFiles.toggleExpansion", in: inspector)?.accessibilityPerformPress?() == true)
-            try await waitUntil("the columns follow the preview's expansion") {
+            try await eventually("the columns follow the preview's expansion", timeout: .seconds(10), layingOut: main.window?.contentView) {
                 main.conversationItem.isCollapsed == workspace.fileBrowser.isPreviewExpanded
             }
         }
@@ -3953,7 +3938,7 @@ private struct ComposerHeightHost: View {
         }
         try await togglePreview()
         workspace.fileBrowser.returnToDirectory()
-        try await waitUntil("leaving the file ends the expansion and its control") {
+        try await eventually("leaving the file ends the expansion and its control", timeout: .seconds(10), layingOut: main.window?.contentView) {
             !main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded
                 && findAccessibility("projectFiles.toggleExpansion", in: inspector) == nil
         }
@@ -3962,7 +3947,7 @@ private struct ComposerHeightHost: View {
         try await openPreview("README.md") { findAccessibility("projectFiles.toggleExpansion", in: inspector) != nil }
         try await togglePreview()
         workspace.fileBrowser.openFile("folder/child.txt")
-        try await waitUntil("opening another file ends the expansion") {
+        try await eventually("opening another file ends the expansion", timeout: .seconds(10), layingOut: main.window?.contentView) {
             !main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded
         }
         XCTAssertTrue(!main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded)
@@ -4119,7 +4104,7 @@ private struct ComposerHeightHost: View {
         try await Task.sleep(for: .milliseconds(50))
         main.toggleInspector()
         try await Task.sleep(for: .milliseconds(150))
-        try await waitUntil("the updated README.md preview") { workspace.fileBrowser.state.preview == .text("updated") }
+        try await eventually("the updated README.md preview", timeout: .seconds(10), layingOut: main.window?.contentView) { workspace.fileBrowser.state.preview == .text("updated") }
         // AppKit collapses a column only while the person drags the window narrower; a
         // programmatic resize stops at the columns' own minimum widths instead. Opening a
         // column that does not fit widens the window rather than closing the other one.
@@ -4129,13 +4114,13 @@ private struct ComposerHeightHost: View {
         // The collapse is still animating, the column still at its width, but a collapsed
         // column no longer holds the window wide: the resize lands at once.
         window.setContentSize(NSSize(width: 760, height: 650))
-        try await waitUntil("the window narrows to 760pt, got \(window.frame.width)") {
+        try await eventually("the window narrows to 760pt, got \(window.frame.width)", timeout: .seconds(10), layingOut: main.window?.contentView) {
             !main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed && abs(window.frame.width - 760) < 1
         }
         XCTAssertTrue(!main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed && abs(window.frame.width - 760) < 1,
                      "The chat list and the conversation fit at 760pt, got \(window.frame.width)")
         main.toggleInspector()
-        try await waitUntil("AppKit widens the window for the opening column, got \(window.frame.width)") {
+        try await eventually("AppKit widens the window for the opening column, got \(window.frame.width)", timeout: .seconds(10), layingOut: main.window?.contentView) {
             !main.inspectorItem.isCollapsed && window.frame.width >= 920
         }
         XCTAssertTrue(!main.sidebarItem.isCollapsed && !main.inspectorItem.isCollapsed,
@@ -4147,7 +4132,7 @@ private struct ComposerHeightHost: View {
         assertPlacement()
         XCTAssertTrue(workspace.sendMainMessage(conversationID: conversation.id))
         workspace.stop(conversationID: conversation.id)
-        try await waitUntil("the sent chat drops its project picker") { findAccessibility("conversation.project", in: content) == nil }
+        try await eventually("the sent chat drops its project picker", timeout: .seconds(10), layingOut: main.window?.contentView) { findAccessibility("conversation.project", in: content) == nil }
         XCTAssertTrue(findAccessibility("conversation.project", in: content) == nil,
                      "Established conversation has no composer project picker")
         XCTAssertTrue(findAccessibility("conversation.project.detach", in: content) == nil)
@@ -4174,7 +4159,7 @@ private struct ComposerHeightHost: View {
         let sameProject = workspace.newConversation(projectID: projectID)
         XCTAssertTrue(sameProject.id != conversation.id && !workspace.fileBrowser.isPreviewExpanded,
                      "Switching chats in the same project clears expansion")
-        try await waitUntil("the conversation column comes back") { !main.conversationItem.isCollapsed }
+        try await eventually("the conversation column comes back", timeout: .seconds(10), layingOut: main.window?.contentView) { !main.conversationItem.isCollapsed }
         XCTAssertTrue(!main.conversationItem.isCollapsed)
         workspace.select(conversation.id)
         // A check that the expansion does not come back, so it keeps an observation window.
@@ -4182,7 +4167,7 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(!workspace.fileBrowser.isPreviewExpanded, "Returning to a chat does not restore stale expansion")
         try await togglePreview()
         workspace.select(another.id)
-        try await waitUntil("an unassociated chat ends the expansion and drops its control") {
+        try await eventually("an unassociated chat ends the expansion and drops its control", timeout: .seconds(10), layingOut: main.window?.contentView) {
             !main.conversationItem.isCollapsed && !workspace.fileBrowser.isPreviewExpanded
                 && findAccessibility("projectFiles.toggleExpansion", in: inspector) == nil
         }
@@ -4231,15 +4216,6 @@ private struct ComposerHeightHost: View {
             return columns.count == 3 && columns.allSatisfy { !$0.collapsed }
                 && abs(columns[0].width - 263) < 1 && abs(columns[2].width - 291) < 1
         }
-        func waitUntil(_ main: MainWindowController, _ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
-            let clock = ContinuousClock(), deadline = clock.now + .seconds(5)
-            while true {
-                main.window?.contentView?.layoutSubtreeIfNeeded()
-                if condition() { return }
-                guard clock.now < deadline else { throw SettingsError("Timed out waiting: \(label())") }
-                try await Task.sleep(for: .milliseconds(50))
-            }
-        }
 
         // First launch: lay out all three columns, then expand the preview.
         var savedFrame = NSRect.zero
@@ -4265,7 +4241,7 @@ private struct ComposerHeightHost: View {
             XCTAssertTrue(main.sidebarItem.isCollapsed && main.inspectorItem.isCollapsed, "With no autosave yet, a first launch")
             // Set up without the toggles' animation, which a cold first run can outlast.
             main.sidebarItem.isCollapsed = false; main.inspectorItem.isCollapsed = false
-            try await waitUntil(main, "both side columns open") {
+            try await eventually("both side columns open", layingOut: main.window?.contentView) {
                 main.splitController.columnWidth(main.sidebarItem) >= 220 && main.splitController.columnWidth(main.inspectorItem) >= 260
             }
             // Widths off every clamp, so drift to a minimum or maximum cannot pass for a restore.
@@ -4276,13 +4252,13 @@ private struct ComposerHeightHost: View {
                                   + main.splitController.columnWidth(main.inspectorItem) - 291, ofDividerAt: 1)
             splitView.layoutSubtreeIfNeeded()
             workspace.fileBrowser.openFile("notes.txt")
-            try await waitUntil(main, "the normal layout is on screen and saved, saved \(describeSaved())") {
+            try await eventually("the normal layout is on screen and saved, saved \(describeSaved())", layingOut: main.window?.contentView) {
                 workspace.fileBrowser.state.showingFile && savedNormalLayout()
                     && abs(main.splitController.columnWidth(main.sidebarItem) - 263) < 1
                     && abs(main.splitController.columnWidth(main.inspectorItem) - 291) < 1
             }
             workspace.fileBrowser.togglePreviewExpansion()
-            try await waitUntil(main, "the expansion is on screen and saved, saved \(describeSaved())") {
+            try await eventually("the expansion is on screen and saved, saved \(describeSaved())", layingOut: main.window?.contentView) {
                 main.conversationItem.isCollapsed && saved().map(\.collapsed) == [false, true, false]
             }
             XCTAssertTrue(workspace.fileBrowser.isPreviewExpanded && main.splitController.columnWidth(main.inspectorItem) > 291 + 400,
@@ -4313,7 +4289,7 @@ private struct ComposerHeightHost: View {
         // Disarmed before the defaults are put back, or its next deferred write lands after them.
         defer { main.shutdown(); main.splitController.splitView.autosaveName = nil; main.window?.setFrameAutosaveName("") }
         main.present()
-        try await waitUntil(main, "the relaunched window is laid out") {
+        try await eventually("the relaunched window is laid out", layingOut: main.window?.contentView) {
             main.window?.isVisible == true && main.splitController.columnWidth(main.conversationItem) > 0
         }
         XCTAssertTrue(main.window?.frame == savedFrame,
@@ -4347,15 +4323,6 @@ private struct ComposerHeightHost: View {
         defer { main.shutdown() }
         main.present()
         let split = main.splitController
-        func waitUntil(_ label: @autoclosure () -> String, _ condition: () -> Bool) async throws {
-            let clock = ContinuousClock(), deadline = clock.now + .seconds(5)
-            while true {
-                main.window?.contentView?.layoutSubtreeIfNeeded()
-                if condition() { return }
-                guard clock.now < deadline else { throw SettingsError("Timed out waiting: \(label())") }
-                try await Task.sleep(for: .milliseconds(20))
-            }
-        }
         func describe() -> String {
             [main.sidebarItem, main.conversationItem, main.inspectorItem].map {
                 $0.isCollapsed ? "collapsed" : "\(split.columnWidth($0))"
@@ -4367,7 +4334,7 @@ private struct ComposerHeightHost: View {
         }
         // Set up without the toggles' animation, at widths off every clamp.
         main.sidebarItem.isCollapsed = false; main.inspectorItem.isCollapsed = false
-        try await waitUntil("both side columns open") {
+        try await eventually("both side columns open", layingOut: main.window?.contentView) {
             split.columnWidth(main.sidebarItem) >= 220 && split.columnWidth(main.inspectorItem) >= 260
         }
         split.splitView.setPosition(split.column(main.sidebarItem).frame.minX + 263, ofDividerAt: 0)
@@ -4376,7 +4343,7 @@ private struct ComposerHeightHost: View {
                                     + split.columnWidth(main.inspectorItem) - 291, ofDividerAt: 1)
         split.splitView.layoutSubtreeIfNeeded()
         workspace.fileBrowser.openFile("notes.txt")
-        try await waitUntil("the file is open at the normal widths, got \(describe())") {
+        try await eventually("the file is open at the normal widths, got \(describe())", layingOut: main.window?.contentView) {
             workspace.fileBrowser.state.showingFile && normalLayout()
         }
         for (name, item, toggle) in [("inspector", main.inspectorItem!, main.toggleInspector),
@@ -4389,11 +4356,11 @@ private struct ComposerHeightHost: View {
             NSAnimationContext.runAnimationGroup({ _ in toggle(nil) }, completionHandler: { opened.withLock { $0 = true } })
             XCTAssertTrue(!item.isCollapsed, "The \(name) toggle opens it")
             workspace.fileBrowser.togglePreviewExpansion()
-            try await waitUntil("the \(name) opens with the preview expanded, got \(describe())") {
+            try await eventually("the \(name) opens with the preview expanded, got \(describe())", layingOut: main.window?.contentView) {
                 opened.withLock { $0 } && main.conversationItem.isCollapsed
             }
             workspace.fileBrowser.togglePreviewExpansion()
-            try await waitUntil("the columns are back after opening the \(name), got \(describe())") {
+            try await eventually("the columns are back after opening the \(name), got \(describe())", layingOut: main.window?.contentView) {
                 !workspace.fileBrowser.isPreviewExpanded && normalLayout()
             }
         }
