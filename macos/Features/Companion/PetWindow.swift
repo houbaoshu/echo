@@ -110,20 +110,6 @@ final class PetPanel: NSPanel {
         localPointerMonitor = nil
         super.close()
     }
-
-    override func sendEvent(_ event: NSEvent) {
-        // Presses, drags and context clicks reach the pet view's gesture recognizers and
-        // menu(for:) through NSWindow.sendEvent; only hover is still routed by hand.
-        guard let interaction = contentView as? PetInteractionView else {
-            super.sendEvent(event)
-            return
-        }
-        switch event.type {
-        case .mouseEntered: interaction.mouseEntered(with: event)
-        case .mouseExited: interaction.mouseExited(with: event)
-        default: super.sendEvent(event)
-        }
-    }
 }
 
 // AppKit handles the window gesture; SwiftUI only displays the image.

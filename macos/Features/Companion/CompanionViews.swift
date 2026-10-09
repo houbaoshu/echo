@@ -13,9 +13,9 @@ struct CompanionBackground<SurfaceShape: Shape>: View {
 
 /// The companion panels are borderless floating panels that are almost never the key window, so
 /// a system button style would draw its inactive, washed-out variant there even though the control
-/// is live. The controls are always live, so they render as if their window were active.
+/// is live. The controls are always live, so they appear active whatever their window's state.
 private extension View {
-    func companionControlActive() -> some View { environment(\.controlActiveState, .active) }
+    func companionControlAppearsActive() -> some View { environment(\.appearsActive, true) }
 }
 
 /// The bordered system styles inset their label by 4 pt on every side. Taking that back out of the
@@ -74,7 +74,7 @@ struct RoundControl: View {
                     .frame(width: size - systemButtonInset, height: size - systemButtonInset)
             }
             .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
-            .companionControlActive()
+            .companionControlAppearsActive()
         } else {
             Button(action: action) { Image(systemName: symbol) }
                 .buttonStyle(CompanionRoundButtonStyle(size: size, textStyle: textStyle, hovered: hovered))
@@ -228,7 +228,7 @@ struct ActivityCapsule: View {
                         .font(.system(.body, weight: .medium))
                         .frame(width: 28 - systemButtonInset, height: 28 - systemButtonInset)
                 }
-                .buttonStyle(.borderedProminent).buttonBorderShape(.circle).companionControlActive()
+                .buttonStyle(.borderedProminent).buttonBorderShape(.circle).companionControlAppearsActive()
                 .help(store.isFollowUpExpanded ? "取消跟进" : "跟进")
                 .accessibilityLabel(store.isFollowUpExpanded ? "取消跟进" : "跟进")
                 .accessibilityValue(store.isFollowUpExpanded ? "已展开" : "已收起")
