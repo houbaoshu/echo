@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import Synchronization
+import Testing
 
 /// A deterministic, in-process model for the native Agent engine. Each model request runs the
 /// script's step with the request and its index; the step streams into the channel through a
@@ -254,22 +255,20 @@ final class PuppetModel: Sendable {
     var cancelledCount: Int { queue.cancelled.withLock { $0 } }
 
     /// Waits until a request is waiting, then answers the oldest one.
-    @MainActor func answer(_ answer: Answer, timeout: Duration = .seconds(5)) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while waiting == 0 {
-            guard ContinuousClock.now < deadline else { throw SettingsError("No model request to answer") }
-            try await Task.sleep(for: .milliseconds(2))
-        }
+    @MainActor func answer(_ answer: Answer, timeout: Duration = .seconds(5),
+                           fileID: String = #fileID, file: StaticString = #filePath, line: UInt = #line, column: Int = #column) async throws {
+        try await eventually("A model request waits to be answered", timeout: timeout, fileID: fileID, file: file, line: line, column: column) { waiting > 0 }
         let waiter = queue.waiting.withLock { $0.removeFirst() }
         waiter.continuation.resume(returning: answer)
     }
-    @MainActor func reply(_ text: String) async throws { try await answer(.text(text)) }
+    @MainActor func reply(_ text: String, fileID: String = #fileID, file: StaticString = #filePath, line: UInt = #line, column: Int = #column) async throws {
+        try await answer(.text(text), fileID: fileID, file: file, line: line, column: column)
+    }
     /// Waits until `count` requests reached the model.
-    @MainActor func waitForRequests(_ count: Int, timeout: Duration = .seconds(5)) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while requests.count < count {
-            guard ContinuousClock.now < deadline else { throw SettingsError("Model request \(count) never arrived") }
-            try await Task.sleep(for: .milliseconds(2))
+    @MainActor func waitForRequests(_ count: Int, timeout: Duration = .seconds(5),
+                                    fileID: String = #fileID, file: StaticString = #filePath, line: UInt = #line, column: Int = #column) async throws {
+        try await eventually("Model request \(count) arrives", timeout: timeout, fileID: fileID, file: file, line: line, column: column) {
+            requests.count >= count
         }
     }
 }
@@ -295,13 +294,11 @@ final class PuppetModel: Sendable {
     /// Model requests across every conversation.
     var requestCount: Int { models.reduce(0) { $0 + $1.requests.count } }
     /// The model of the conversation whose latest request ends with the user message `text`.
-    func model(asked text: String, timeout: Duration = .seconds(5)) async throws -> PuppetModel {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while true {
-            if let model = models.first(where: { $0.requests.last?.userTexts.last == text }) { return model }
-            guard ContinuousClock.now < deadline else { throw SettingsError("No model request for \(text)") }
-            try await Task.sleep(for: .milliseconds(2))
-        }
+    func model(asked text: String, timeout: Duration = .seconds(5),
+               fileID: String = #fileID, file: StaticString = #filePath, line: UInt = #line, column: Int = #column) async throws -> PuppetModel {
+        func asked() -> PuppetModel? { models.first { $0.requests.last?.userTexts.last == text } }
+        try await eventually("A model request for \(text) arrives", timeout: timeout, fileID: fileID, file: file, line: line, column: column) { asked() != nil }
+        return asked()!
     }
 }
 

@@ -3,13 +3,6 @@ import Testing
 
 extension EchoIntegrationScenarios {
   @Suite(.serialized) @MainActor struct AgentVoiceIntegrationTests {
-    private static func waitForAgentVoice(_ label: String, _ condition: () -> Bool) async throws {
-      let deadline = ContinuousClock.now.advanced(by: .seconds(8))
-      while !condition() {
-        try #require(ContinuousClock.now < deadline, "Timed out: \(label)")
-        try await Task.sleep(for: .milliseconds(10))
-      }
-    }
     @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses], ["tool", "model", "directory", "queue", "stop"])
     static func voiceRouting(apiProtocol: ModelAPIProtocol, scenario: String) async throws {
       try await withSession { session in
@@ -19,7 +12,7 @@ extension EchoIntegrationScenarios {
         defer { f.shutdown() }
         let project = session.root.appendingPathComponent("\(apiProtocol)-\(scenario)")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        await f.start()
+        try await f.start()
         let owner = f.conversation.id
         var holder: WorkspaceConversation?
         if scenario != "directory" {
@@ -28,7 +21,7 @@ extension EchoIntegrationScenarios {
           if scenario == "queue" {
             holder = f.workspace.newConversation(projectID: projectID)
             holder!.store.send("cancel-tool")
-            try await waitForAgentVoice("queue holder starts") {
+            try await eventually("queue holder starts", timeout: .seconds(8)) {
               holder!.store.tools.first?.state == .running
             }
           }
@@ -40,22 +33,23 @@ extension EchoIntegrationScenarios {
         let run = f.store.task!.runID
         switch scenario {
         case "model":
-          // The fixture records a request before it answers slowly.
-          try await waitForAgentVoice("model request started") {
-            session.server.requests.contains { String(decoding: $0, as: UTF8.self).contains("slow-model") }
-          }
-          try await Task.sleep(for: .milliseconds(120))
+          // The fixture holds the request until it is released: the model request is under way.
+          try await eventually("the model request is held", timeout: .seconds(8)) { session.server.slowModel.arrivals == 1 }
         case "directory":
-          try await waitForAgentVoice("voice waits for directory") { f.store.needsDirectory }
+          try await eventually("voice waits for directory", timeout: .seconds(8)) { f.store.needsDirectory }
           #expect(
             f.voice.status.contains("等待选择项目文件夹") && f.synths.isEmpty,
             "directory pause does not speak assistant explanation")
         case "queue":
-          try await waitForAgentVoice("voice waits for project") { f.store.waitingForProject }
+          try await eventually("voice waits for project", timeout: .seconds(8)) { f.store.waitingForProject }
           #expect(f.voice.status == "等待项目空闲… · 可补充语音", "project queue exposes live voice input")
         default:
-          try await waitForAgentVoice("voice command starts") {
+          try await eventually("voice command starts", timeout: .seconds(8)) {
             f.store.tools.first?.state == .running
+          }
+          if scenario == "tool" {
+            // The command waits for the release file, so the follow-ups below arrive while it runs.
+            try await eventually("the slow command is running", timeout: .seconds(8)) { SlowTool.started(in: project) }
           }
           #expect(
             f.voice.status.contains("正在运行命令") && f.synths.isEmpty,
@@ -70,7 +64,7 @@ extension EchoIntegrationScenarios {
             f.store.task?.status == .stopping && !f.store.canSubmit
               && f.voice.snapshot.recognition == .off(.stopping),
             "voice Stop gates the real command cleanup")
-          try await waitForAgentVoice("voice Stop acknowledged") {
+          try await eventually("voice Stop acknowledged", timeout: .seconds(8)) {
             !f.store.isGenerating && f.voice.snapshot.recognition == .listening
           }
           #expect(
@@ -85,7 +79,9 @@ extension EchoIntegrationScenarios {
           #expect(
             f.store.task?.runID == run && f.store.task?.status == .running,
             "voice steering does not cancel/restart the turn")
-          try await waitForAgentVoice("voice final") {
+          if scenario == "model" { session.server.slowModel.release() }
+          if scenario == "tool" { try SlowTool.release(in: project) }
+          try await eventually("voice final", timeout: .seconds(8)) {
             !f.store.isGenerating && f.synths.first?.chunks.isEmpty == false
           }
           let users = f.store.messages.filter { $0.role == .user }
@@ -125,18 +121,18 @@ extension EchoIntegrationScenarios {
         let f = AgentVoiceFixture(harness: makeHarness())
         f.harnessFactory = makeHarness
         defer { f.shutdown() }
-        await f.start()
+        try await f.start()
         f.voice.toggleSpeakerMute()
-        f.speak("slow-stream markdown-stream 汇报结果")
         let final = "## 结果\n\n- **第一项**通过\n- 运行 `swift test`\n- 第三项\n- 第四项完成"
+        // Every text the reply passes through while the turn runs, as each change is written.
         var seen: [String] = []
-        try await waitForAgentVoice("streamed reply completes for \(apiProtocol)") {
-          let text = f.store.replyStream.text
-          if f.store.isGenerating, !text.isEmpty, seen.last != text {
-            seen.append(text)
-          }
-          return !f.store.isGenerating
+        let store = f.store
+        let watch = observeChanges({ store.replyStream.text }) { text in
+          if store.isGenerating, !text.isEmpty { seen.append(text) }
         }
+        defer { watch.cancel() }
+        f.speak("slow-stream markdown-stream 汇报结果")
+        try await eventually("streamed reply completes for \(apiProtocol)", timeout: .seconds(8)) { !f.store.isGenerating }
         #expect(
           seen.filter { $0 != final }.count >= 2 && seen.allSatisfy { final.hasPrefix($0) },
           "real SSE deltas grow the reply before the turn completes (\(apiProtocol): \(seen.count) updates)"

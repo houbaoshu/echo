@@ -6,9 +6,6 @@ extension EchoIntegrationScenarios {
   /// Chat scenarios the Agent must pass. They observe only `TaskStore`, `WorkspaceStore`, the
   /// loopback server and files on disk.
   @MainActor enum ChatScenarios {
-    static func wait(_ label: String, _ condition: () -> Bool) async throws {
-      try await AgentSessionTests.wait(label, condition)
-    }
     static func assistantReply(_ state: TaskStore.Snapshot) -> Bool {
       state.messages.contains { $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
@@ -20,7 +17,7 @@ extension EchoIntegrationScenarios {
       let factory = { f.harness() }
       let chat = try #require(workspace.selected)
       #expect(chat.store.send("hello"))
-      try await wait("direct answer") { !chat.store.isGenerating }
+      try await eventually("direct answer", timeout: .seconds(8)) { !chat.store.isGenerating }
       #expect(chat.store.task?.status == .completed && chat.store.tools.isEmpty && !chat.store.needsDirectory)
       #expect(chat.store.messages.filter { $0.role == .assistant }.count == 1)
       #expect(chat.store.messages.last?.content == "最终回复：hello")
@@ -39,7 +36,7 @@ extension EchoIntegrationScenarios {
         if assistantReply(state) { throw CocoaError(.fileWriteNoPermission) }
       }
       completedSaveFailure.store.send("hello")
-      try await wait("completed save failure") { !completedSaveFailure.store.isGenerating }
+      try await eventually("completed save failure", timeout: .seconds(8)) { !completedSaveFailure.store.isGenerating }
       #expect(completedSaveFailure.store.task?.status == .failed && !completedSaveFailure.store.canRetry,
               "A save failure after a completed turn does not offer a continue")
       #expect(completedSaveFailure.store.notice?.contains("保存失败") == true)
@@ -52,7 +49,7 @@ extension EchoIntegrationScenarios {
         }
       }
       raced.store.send("hello race")
-      try await wait("stop after completion") { !raced.store.isGenerating }
+      try await eventually("stop after completion", timeout: .seconds(8)) { !raced.store.isGenerating }
       raceStop.cancel()
       #expect(raced.store.task?.status == .stopped && raced.store.task?.summary == "已停止"
               && !raced.store.canRetry && !raced.store.retry(),
@@ -65,10 +62,10 @@ extension EchoIntegrationScenarios {
       earlyStop.store.send("hello before reply")
       earlyStop.store.stopTask()
       #expect(earlyStop.store.task?.status == .stopping && !earlyStop.store.canSubmit)
-      try await wait("stop before reply") { !earlyStop.store.isGenerating }
+      try await eventually("stop before reply", timeout: .seconds(8)) { !earlyStop.store.isGenerating }
       #expect(earlyStop.store.task?.status == .stopped && earlyStop.store.canRetry)
       #expect(earlyStop.store.retry())
-      try await wait("continue unanswered user") { !earlyStop.store.isGenerating }
+      try await eventually("continue unanswered user", timeout: .seconds(8)) { !earlyStop.store.isGenerating }
       #expect(earlyStop.store.task?.status == .completed)
       #expect(earlyStop.store.messages.filter { $0.role == .user }.count == 1)
       #expect(earlyStop.store.messages.last?.content == "最终回复：hello before reply")
@@ -90,7 +87,7 @@ extension EchoIntegrationScenarios {
       defer { workspace.shutdown() }
       let chat = try #require(workspace.selected)
       #expect(chat.store.send("hello before settings change"))
-      try await wait("chat completes before invalid settings") { !chat.store.isGenerating }
+      try await eventually("chat completes before invalid settings", timeout: .seconds(8)) { !chat.store.isGenerating }
       #expect(chat.store.task?.status == .completed)
       let originalMessages = chat.store.messages
 
@@ -102,7 +99,7 @@ extension EchoIntegrationScenarios {
         #expect(settings.notice == nil && settings.snapshot.model.model.isEmpty,
                 "Saving an empty Model ID must remain a legal settings operation")
         #expect(chat.store.send("hello after invalid settings \(attempt)"))
-        try await wait("failed reopen leaves stopping") { !chat.store.isGenerating }
+        try await eventually("failed reopen leaves stopping", timeout: .seconds(8)) { !chat.store.isGenerating }
         #expect(chat.store.task?.status == .failed && chat.store.canSubmit)
         #expect(chat.store.notice == "请先在设置中配置并保存默认模型。")
         #expect(Array(chat.store.messages.prefix(originalMessages.count)) == originalMessages,
@@ -112,7 +109,7 @@ extension EchoIntegrationScenarios {
           settings.save()
           #expect(settings.notice == nil)
           #expect(chat.store.send("hello after restoring settings"))
-          try await wait("same session recovers after valid settings") { !chat.store.isGenerating }
+          try await eventually("same session recovers after valid settings", timeout: .seconds(8)) { !chat.store.isGenerating }
           #expect(chat.store.task?.status == .completed)
           #expect(chat.store.messages.last?.content == "最终回复：hello after restoring settings")
         }
@@ -122,7 +119,7 @@ extension EchoIntegrationScenarios {
         await workspace.prepareForTermination()
         terminated = true
       }
-      try await wait("termination after failed reopen") { terminated }
+      try await eventually("termination after failed reopen", timeout: .seconds(8)) { terminated }
       await termination.value
     }
 
@@ -142,7 +139,7 @@ extension EchoIntegrationScenarios {
         let projectID = workspace.addProject(url: temp)
         let chat = workspace.newConversation(projectID: projectID)
         #expect(chat.store.send(seed))
-        try await wait("seed history for \(failure)") { !chat.store.isGenerating }
+        try await eventually("seed history for \(failure)", timeout: .seconds(8)) { !chat.store.isGenerating }
         #expect(chat.store.task?.status == .completed && chat.store.tools.isEmpty == (seed != "tool"))
         let expected = chat.store.snapshot
         workspace.shutdown()
@@ -187,7 +184,7 @@ extension EchoIntegrationScenarios {
                 "Restoring history must retain messages and tools")
         modelContext(recovered, expected)
         #expect(recovered.send("hello after history recovery"))
-        try await wait("continue after \(failure) history recovery") { !recovered.isGenerating }
+        try await eventually("continue after \(failure) history recovery", timeout: .seconds(8)) { !recovered.isGenerating }
         #expect(recovered.task?.status == .completed)
         #expect(recovered.messages.last?.content
                 == (seed == "tool" ? "最终回复：已读取真实工具结果" : "最终回复：hello after history recovery"))
@@ -220,7 +217,7 @@ extension EchoIntegrationScenarios {
     static func missingSidecarBlocksSend(_ f: SessionFixture) async throws {
       let chat = try #require(f.workspace.selected)
       try #require(chat.store.send("hello"))
-      try await wait("seed saved history") { !chat.store.isGenerating }
+      try await eventually("seed saved history", timeout: .seconds(8)) { !chat.store.isGenerating }
       f.workspace.flush()
       try FileManager.default.moveItem(at: f.persistence.sessionURL(chat.id),
                                        to: f.root.appendingPathComponent("preserved-chat.json"))
@@ -240,7 +237,7 @@ extension EchoIntegrationScenarios {
       for mode in ["http-500", "context-length", "stream-error"] {
         let chat = f.workspace.newConversation()
         #expect(chat.store.send("\(mode) please"))
-        try await wait("model error \(mode)") { !chat.store.isGenerating }
+        try await eventually("model error \(mode)", timeout: .seconds(8)) { !chat.store.isGenerating }
         let summary = chat.store.task?.summary ?? ""
         summaries[mode] = summary
         #expect(chat.store.task?.status == .failed, "\(mode): \(summary)")
@@ -254,14 +251,6 @@ extension EchoIntegrationScenarios {
   }
 
   @Suite(.serialized) @MainActor struct AgentSessionTests {
-    static func wait(_ label: String, _ condition: () -> Bool) async throws {
-      let deadline = Date().addingTimeInterval(8)
-      while !condition() {
-        try #require(Date() < deadline, "Timed out: \(label)")
-        try await Task.sleep(for: .milliseconds(10))
-      }
-    }
-
     // MARK: Chat scenarios
 
     @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
@@ -314,7 +303,7 @@ extension EchoIntegrationScenarios {
         try Data("fixture text\n".utf8).write(to: project.appendingPathComponent("src/note.txt"))
         let chat = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
         #expect(chat.store.send("list-files please"))
-        try await wait("list files") { !chat.store.isGenerating }
+        try await eventually("list files", timeout: .seconds(8)) { !chat.store.isGenerating }
         #expect(chat.store.task?.status == .completed, "\(chat.store.task?.summary ?? "")")
         #expect(chat.store.tools.map(\.tool) == ["list_files"] && chat.store.tools.first?.state == .finished)
         #expect(chat.store.tools.first?.result == #"{"files":["src/"],"truncated":false}"#)
@@ -327,7 +316,7 @@ extension EchoIntegrationScenarios {
         // The fixture calls a tool only before any result is in the conversation.
         let reader = f.workspace.newConversation(projectID: chat.projectID)
         #expect(reader.store.send("read-file please"))
-        try await wait("read file") { !reader.store.isGenerating }
+        try await eventually("read file", timeout: .seconds(8)) { !reader.store.isGenerating }
         #expect(reader.store.tools.last?.tool == "read_file" && reader.store.tools.last?.command == "src/note.txt")
         #expect(reader.store.tools.last?.result == #"{"content":"fixture text","start_line":1,"truncated":false}"#)
         #expect(ExecutionService.activeCommands == 0, "Reading runs no command")
@@ -342,7 +331,7 @@ extension EchoIntegrationScenarios {
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let chat = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
         #expect(chat.store.send("tool"))
-        try await wait("tool turn") { !chat.store.isGenerating }
+        try await eventually("tool turn", timeout: .seconds(8)) { !chat.store.isGenerating }
         #expect(chat.store.task?.status == .completed)
         let assistants = chat.store.messages.filter { $0.role == .assistant }
         #expect(assistants.map(\.content) == ["我先检查文件。", "最终回复：已读取真实工具结果"])
@@ -361,7 +350,7 @@ extension EchoIntegrationScenarios {
         f.protocolName = api
         let empty = f.workspace.newConversation()
         #expect(empty.store.send("empty-reply please"))
-        try await wait("empty replies") { !empty.store.isGenerating }
+        try await eventually("empty replies", timeout: .seconds(8)) { !empty.store.isGenerating }
         #expect(empty.store.task?.status == .failed && empty.store.task?.summary == "模型连续返回无效工具格式，已停止。")
         #expect(empty.store.messages.filter { $0.role == .user }.map(\.content) == ["empty-reply please"])
         #expect(f.server.requests.last.map { String(decoding: $0, as: UTF8.self).contains("not_executed") } == true,
@@ -372,7 +361,7 @@ extension EchoIntegrationScenarios {
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let invalid = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
         #expect(invalid.store.send("invalid-tool please"))
-        try await wait("invalid tool calls") { !invalid.store.isGenerating }
+        try await eventually("invalid tool calls", timeout: .seconds(8)) { !invalid.store.isGenerating }
         #expect(invalid.store.task?.status == .failed && invalid.store.task?.summary == "模型连续返回无效工具格式，已停止。")
         #expect(invalid.store.tools.count == 3 && invalid.store.tools.allSatisfy { $0.state == .notExecuted && $0.tool == "python" })
         #expect(invalid.store.messages.filter { $0.role == .user }.count == 1)
@@ -418,15 +407,19 @@ extension EchoIntegrationScenarios {
           #expect(result.failure?.hasPrefix("模型请求失败") == true && result.failure?.contains("secret-provider-body") == false,
                   "A provider error reports the request failure, never the provider's body")
           config.model = "probe-delay:\(forbidden.path)"
+          let heldBefore = f.server.probeDelay.arrivals
           let cancelling = Task { [config] in
             try await tester.test(configuration: config, key: "synthetic-key")
           }
-          try await Task.sleep(for: .milliseconds(100))
+          // The fixture holds the probe's request: cancel it while it is under way.
+          try await eventually("the probe request is held", timeout: .seconds(8)) { f.server.probeDelay.arrivals > heldBefore }
           cancelling.cancel()
           do {
             try await cancelling.value
             Issue.record("Probe cancellation must throw")
           } catch is CancellationError {}
+          // Answer the abandoned request now, as the delay used to, rather than when the server stops.
+          f.server.probeDelay.release()
         }
         try await waitForAgentShutdown()
         #expect(
@@ -448,7 +441,7 @@ extension EchoIntegrationScenarios {
         defer { bindWorkspace.shutdown() }
         let unbound = try #require(bindWorkspace.selected)
         unbound.store.send("tool")
-        try await wait("bind failure directory pause") { unbound.store.needsDirectory }
+        try await eventually("bind failure directory pause", timeout: .seconds(8)) { unbound.store.needsDirectory }
         let bindTarget = temp.appendingPathComponent("bind-target")
         try FileManager.default.createDirectory(at: bindTarget, withIntermediateDirectories: true)
         let bindRoot = bindPersistence.url.deletingLastPathComponent().path
@@ -459,7 +452,7 @@ extension EchoIntegrationScenarios {
           unbound.projectID == nil && bindWorkspace.projects.isEmpty
             && bindWorkspace.persistenceNotice != nil,
           "A failed binding save leaves no unsaved project association")
-        try await wait("bind failure stops") { !unbound.store.isGenerating }
+        try await eventually("bind failure stops", timeout: .seconds(8)) { !unbound.store.isGenerating }
         #expect(
           unbound.store.task?.status == .stopped
             && !FileManager.default.fileExists(
@@ -476,10 +469,10 @@ extension EchoIntegrationScenarios {
         let persistence = f.persistence
         let chat = try #require(workspace.selected)
         try #require(chat.store.send("hello"))
-        try await wait("seed unbound conversation") { !chat.store.isGenerating }
+        try await eventually("seed unbound conversation", timeout: .seconds(8)) { !chat.store.isGenerating }
         let first = workspace.newConversation()
         first.store.send("slow-tool")
-        try await wait("directory pause") { first.store.needsDirectory }
+        try await eventually("directory pause", timeout: .seconds(8)) { first.store.needsDirectory }
         #expect(
           !workspace.canAssociateProject(conversationID: first.id),
           "Ordinary picker stays fixed during directory wait")
@@ -492,7 +485,9 @@ extension EchoIntegrationScenarios {
           persistence.load().0?.conversations.first { $0.id == first.id }?.projectID
             == first.projectID,
           "Directory exception saves association before tool execution")
-        try await wait("first tool starts") { first.store.tools.first?.state == .running }
+        try await eventually("first tool starts", timeout: .seconds(8)) { first.store.tools.first?.state == .running }
+        // The command now waits for the release file, so everything below happens while it runs.
+        try await eventually("the slow command is running", timeout: .seconds(8)) { SlowTool.started(in: project) }
         let projectID = try #require(first.projectID)
         #expect(!workspace.associateProject(nil, conversationID: first.id))
         workspace.relocateProject(projectID, to: temp)
@@ -501,9 +496,9 @@ extension EchoIntegrationScenarios {
         #expect(first.projectID == projectID)
         let second = workspace.newConversation(projectID: projectID)
         second.store.send("tool")
-        try await wait("same directory queues") { second.store.waitingForProject }
+        try await eventually("same directory queues", timeout: .seconds(8)) { second.store.waitingForProject }
         second.store.send("skip queued call")
-        try await wait("queued steering") { !second.store.isGenerating }
+        try await eventually("queued steering", timeout: .seconds(8)) { !second.store.isGenerating }
         #expect(second.store.tools.first?.state == .notExecuted)
         // Accepted steering leaves no caption behind: only a still-queued or interrupted
         // follow-up keeps one.
@@ -512,7 +507,9 @@ extension EchoIntegrationScenarios {
         first.store.hideMainWindow()
         first.store.closeActivity()
         workspace.select(chat.id)
-        try await wait("first finishes") { !first.store.isGenerating }
+        #expect(first.store.tools.first?.state == .running, "The follow-up arrived while the command ran")
+        try SlowTool.release(in: project)
+        try await eventually("first finishes", timeout: .seconds(8)) { !first.store.isGenerating }
         #expect(first.store.task?.status == .completed)
         #expect(first.store.messages.last(where: { $0.role == .user })?.steering == nil)
         let firstTrace = try String(
@@ -523,36 +520,36 @@ extension EchoIntegrationScenarios {
           "Another project's completion cannot change selected file root")
         workspace.select(first.id)
         workspace.fileBrowser.openFile("trace")
-        try await wait("trace preview") { workspace.fileBrowser.state.preview == .text(firstTrace) }
+        try await eventually("trace preview", timeout: .seconds(8)) { workspace.fileBrowser.state.preview == .text(firstTrace) }
         workspace.fileBrowser.returnToDirectory()
 
         let modelSteer = workspace.newConversation(projectID: projectID)
-        let requestsBefore = f.server.requests.count
+        let heldBefore = f.server.slowModel.arrivals
         modelSteer.store.send("slow-model tool")
-        // The fixture records a request before it answers slowly: the model request is under way.
-        try await wait("model request started") { f.server.requests.count > requestsBefore }
-        try await Task.sleep(for: .milliseconds(100))
+        // The fixture holds the request until it is released: the model request is under way.
+        try await eventually("the model request is held", timeout: .seconds(8)) { f.server.slowModel.arrivals > heldBefore }
         modelSteer.store.send("skip old model call")
-        try await wait("model steering") { !modelSteer.store.isGenerating }
+        f.server.slowModel.release()
+        try await eventually("model steering", timeout: .seconds(8)) { !modelSteer.store.isGenerating }
         #expect(modelSteer.store.tools.first?.state == .notExecuted)
 
         let cancelled = workspace.newConversation()
         cancelled.store.send("tool")
-        try await wait("cancel directory") { cancelled.store.needsDirectory }
+        try await eventually("cancel directory", timeout: .seconds(8)) { cancelled.store.needsDirectory }
         workspace.provideDirectory(nil, conversationID: cancelled.id)
-        try await wait("directory cancelled") { !cancelled.store.isGenerating }
+        try await eventually("directory cancelled", timeout: .seconds(8)) { !cancelled.store.isGenerating }
         #expect(cancelled.store.tools.first?.state == .notExecuted)
 
         let stop = workspace.newConversation(projectID: projectID)
         stop.store.send("cancel-tool")
-        try await wait("cancellable command starts") { stop.store.tools.first?.state == .running }
+        try await eventually("cancellable command starts", timeout: .seconds(8)) { stop.store.tools.first?.state == .running }
         stop.store.stopTask()
         #expect(stop.store.task?.status == .stopping && !stop.store.send("must wait"))
-        try await wait("cleanup acknowledged") { !stop.store.isGenerating }
+        try await eventually("cleanup acknowledged", timeout: .seconds(8)) { !stop.store.isGenerating }
         #expect(stop.store.task?.status == .stopped && stop.store.tools.first?.state == .unknown)
         let userCount = stop.store.messages.filter { $0.role == .user }.count
         #expect(stop.store.retry())
-        try await wait("continue") { !stop.store.isGenerating }
+        try await eventually("continue", timeout: .seconds(8)) { !stop.store.isGenerating }
         #expect(stop.store.messages.filter { $0.role == .user }.count == userCount)
         let stoppedTrace = try String(
           contentsOf: project.appendingPathComponent("trace"), encoding: .utf8)
@@ -574,8 +571,8 @@ extension EchoIntegrationScenarios {
         f.protocolName = .responses
         let responses = workspace.newConversation(projectID: projectID)
         responses.store.send("tool")
-        try await wait("responses tools") { !responses.store.isGenerating }
-        try await wait("agent refreshes loaded directory") {
+        try await eventually("responses tools", timeout: .seconds(8)) { !responses.store.isGenerating }
+        try await eventually("agent refreshes loaded directory", timeout: .seconds(8)) {
           if case .loaded(let files) = workspace.fileBrowser.state.directories[""] {
             return files.contains { $0.name == "trace" }
           }
@@ -592,7 +589,7 @@ extension EchoIntegrationScenarios {
             && responses.store.tools.first?.result != nil)
         let multiple = workspace.newConversation(projectID: projectID)
         multiple.store.send("multi-tool")
-        try await wait("multiple calls") { !multiple.store.isGenerating }
+        try await eventually("multiple calls", timeout: .seconds(8)) { !multiple.store.isGenerating }
         #expect(multiple.store.task?.status == .completed && multiple.store.tools.count == 2)
         #expect(Set(multiple.store.tools.map(\.id)).count == 2)
         #expect(multiple.store.tools.allSatisfy { $0.result != nil })
@@ -619,7 +616,7 @@ extension EchoIntegrationScenarios {
         restoredSummary.shutdown()
         #expect(!restored.store.isGenerating)
         restored.store.send("hello again")
-        try await wait("recovered context") { !restored.store.isGenerating }
+        try await eventually("recovered context", timeout: .seconds(8)) { !restored.store.isGenerating }
         #expect(restored.store.messages.last?.content.contains("真实工具结果") == true)
 
         recovered.shutdown()
@@ -638,7 +635,7 @@ extension EchoIntegrationScenarios {
           if !(state.tools ?? []).isEmpty { throw CocoaError(.fileWriteNoPermission) }
         }
         failed.store.send("tool")
-        try await wait("storage failure stops") { !failed.store.isGenerating }
+        try await eventually("storage failure stops", timeout: .seconds(8)) { !failed.store.isGenerating }
         #expect(
           failed.store.task?.status == .failed && failed.store.notice?.contains("保存失败") == true)
         #expect(failed.store.tools.first?.state != .finished)
@@ -652,7 +649,7 @@ extension EchoIntegrationScenarios {
           }
         }
         resultFailure.store.send("tool")
-        try await wait("result save failure stops") { !resultFailure.store.isGenerating }
+        try await eventually("result save failure stops", timeout: .seconds(8)) { !resultFailure.store.isGenerating }
         #expect(resultFailure.store.task?.status == .failed)
         #expect(resultFailure.store.tools.first?.result?.contains("stdout") == true)
         #expect(resultFailure.store.responseMessage == nil)
@@ -678,7 +675,7 @@ extension EchoIntegrationScenarios {
         let parallelID = workspace.addProject(url: parallelPath)
         let holder = workspace.newConversation(projectID: projectID)
         holder.store.send("cancel-tool")
-        try await wait("lease held") { holder.store.tools.first?.state == .running }
+        try await eventually("lease held", timeout: .seconds(8)) { holder.store.tools.first?.state == .running }
         let crashPersistence = WorkspacePersistence(
           url: temp.appendingPathComponent("crash/workspace.json"))
         var crashSnapshot = workspace.snapshot
@@ -690,19 +687,19 @@ extension EchoIntegrationScenarios {
         #expect(workspace.addProject(url: alias) == projectID)
         let queued = workspace.newConversation(projectID: projectID)
         queued.store.send("tool")
-        try await wait("alias queue") { queued.store.waitingForProject }
+        try await eventually("alias queue", timeout: .seconds(8)) { queued.store.waitingForProject }
         let parallel = workspace.newConversation(projectID: parallelID)
         parallel.store.send("tool")
-        try await wait("different directory completes") { !parallel.store.isGenerating }
+        try await eventually("different directory completes", timeout: .seconds(8)) { !parallel.store.isGenerating }
         #expect(holder.store.isGenerating && queued.store.waitingForProject)
         queued.store.stopTask()
-        try await wait("queue stop") { !queued.store.isGenerating }
+        try await eventually("queue stop", timeout: .seconds(8)) { !queued.store.isGenerating }
         #expect(queued.store.tools.first?.state == .notExecuted)
         let afterDelete = workspace.newConversation(projectID: projectID)
         afterDelete.store.send("tool")
-        try await wait("delete waiter") { afterDelete.store.waitingForProject }
+        try await eventually("delete waiter", timeout: .seconds(8)) { afterDelete.store.waitingForProject }
         workspace.deleteConversation(holder.id)
-        try await wait("delete releases after cleanup") { !afterDelete.store.isGenerating }
+        try await eventually("delete releases after cleanup", timeout: .seconds(8)) { !afterDelete.store.isGenerating }
         #expect(afterDelete.store.task?.status == .completed)
 
         let crashRecovery = WorkspaceStore(persistence: crashPersistence, harnessFactory: factory)
@@ -711,7 +708,7 @@ extension EchoIntegrationScenarios {
         #expect(interrupted.store.task?.status == .interrupted)
         #expect(interrupted.store.tools.first?.state == .unknown)
         #expect(interrupted.store.retry())
-        try await wait("unknown result recovery") { !interrupted.store.isGenerating }
+        try await eventually("unknown result recovery", timeout: .seconds(8)) { !interrupted.store.isGenerating }
         #expect(interrupted.store.tools.first?.result?.contains("unknown") == true)
         #expect(interrupted.store.tools.count == 1)
         crashRecovery.shutdown()
@@ -720,16 +717,16 @@ extension EchoIntegrationScenarios {
         // gate must re-enter directory selection, not fail or run in a moved cwd.
         let invalidHolder = workspace.newConversation(projectID: parallelID)
         invalidHolder.store.send("cancel-tool")
-        try await wait("invalid holder") { invalidHolder.store.tools.first?.state == .running }
+        try await eventually("invalid holder", timeout: .seconds(8)) { invalidHolder.store.tools.first?.state == .running }
         let invalidWaiter = workspace.newConversation(projectID: parallelID)
         invalidWaiter.store.send("tool")
-        try await wait("invalid waiter") { invalidWaiter.store.waitingForProject }
+        try await eventually("invalid waiter", timeout: .seconds(8)) { invalidWaiter.store.waitingForProject }
         let moved = temp.appendingPathComponent("moved-project")
         try FileManager.default.moveItem(at: parallelPath, to: moved)
         invalidHolder.store.stopTask()
-        try await wait("invalid directory pauses") { invalidWaiter.store.needsDirectory }
+        try await eventually("invalid directory pauses", timeout: .seconds(8)) { invalidWaiter.store.needsDirectory }
         workspace.provideDirectory(moved, conversationID: invalidWaiter.id)
-        try await wait("new directory resumes") { !invalidWaiter.store.isGenerating }
+        try await eventually("new directory resumes", timeout: .seconds(8)) { !invalidWaiter.store.isGenerating }
         #expect(
           invalidWaiter.store.task?.status == .completed,
           "\(invalidWaiter.store.task?.summary ?? "missing task")")
@@ -748,7 +745,7 @@ extension EchoIntegrationScenarios {
         var workspace = WorkspaceStore(persistence: persistence, harnessFactory: { f.harness() })
         let current = try #require(workspace.selected)
         #expect(workspace.send("hello", conversationID: current.id))
-        try await wait("native reply") { !current.store.isGenerating }
+        try await eventually("native reply", timeout: .seconds(8)) { !current.store.isGenerating }
         let currentMessages = current.store.messages
         workspace.flush(); workspace.shutdown()
 

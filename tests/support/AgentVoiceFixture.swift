@@ -29,26 +29,38 @@ import Foundation
     }
     /// User messages of the fixture's conversation, in order.
     var userTexts: [String] { store.messages.filter { $0.role == .user }.map(\.content) }
-    func start() async {
+    /// Starts the call without waiting for it.
+    func begin() {
         voice.attach(workspace: workspace, settings: settings)
         voice.start(conversation: conversation, configuration: .init(), key: "fake")
-        await VoiceFixtureSupport.tick()
+    }
+    /// Starts the call and waits until recognition has heard its first packet.
+    func start() async throws {
+        begin()
+        try await eventually("the call captures audio") { audio.capturing }
         audio.input?.yield(.init(data: Data(repeating: 0, count: 640), epoch: audio.captureEpoch))
-        await VoiceFixtureSupport.tick()
+        try await eventually("recognition receives the first packet") { recognizers.last?.packets == 1 }
     }
     func speak(_ text: String, start: Int = 0, final: Bool = true) {
         recognizers.last?.emit(text, start: start, end: start + 200, final: final)
     }
     func holdPlayback() { audio.onDrain = { [unowned self] in await withCheckedContinuation { finishDrain = $0 } } }
     func releasePlayback() { finishDrain?.resume(); finishDrain = nil; audio.onDrain = nil }
-    func frames(_ count: Int) async {
+    /// Sends `count` loud packets and waits until the call has handled them all.
+    func frames(_ count: Int) async throws {
+        let handled = audio.handledPackets
         for _ in 0..<count { audio.input?.yield(.init(data: VoiceFixtureSupport.activityPCM(), epoch: audio.captureEpoch)) }
-        await VoiceFixtureSupport.tick()
+        try await eventually("the call handles \(count) captured packets") { audio.handledPackets >= handled + count }
     }
-    func probe() async {
-        await frames(5) // Sustained activity pauses playback.
-        await frames(12) // Discard the acoustic tail.
-        await frames(5) // Independent activity opens clean ASR.
+    /// Activity during the reply, through to the barge-in recognizer that confirms it.
+    func probe() async throws {
+        let recognizers = recognizers.count
+        try await frames(5) // Sustained activity pauses playback.
+        try await frames(12) // Discard the acoustic tail.
+        try await frames(5) // Independent activity opens clean ASR.
+        try await eventually("the barge-in recognizer runs") {
+            self.recognizers.count == recognizers + 1 && self.recognizers.last?.callback != nil
+        }
     }
     func shutdown() { releasePlayback(); workspace.shutdown() }
 }

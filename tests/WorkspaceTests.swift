@@ -5,20 +5,12 @@ import FoundationModels
 /// The workspace with native Agent conversations, each answered by its own puppet model
 /// (`PuppetSessions`): a turn ends when the test answers its model request.
 @Suite(.serialized) struct WorkspaceTests {
-    @MainActor static func wait(_ label: String, sourceLocation: SourceLocation = #_sourceLocation,
-                                _ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !condition() {
-            try #require(ContinuousClock.now < deadline, "Timed out: \(label)", sourceLocation: sourceLocation)
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
     /// Answers the conversation's waiting model request and waits for its turn to end.
     @MainActor static func finish(_ conversation: WorkspaceConversation, _ model: PuppetModel?, _ answer: PuppetModel.Answer,
                                   sourceLocation: SourceLocation = #_sourceLocation) async throws {
         let model = try #require(model, sourceLocation: sourceLocation)
         try await model.answer(answer)
-        try await wait("turn ends", sourceLocation: sourceLocation) { !conversation.store.isGenerating }
+        try await eventually("turn ends", sourceLocation: sourceLocation) { !conversation.store.isGenerating }
     }
     @MainActor static func reply(_ conversation: WorkspaceConversation, _ model: PuppetModel?, _ text: String,
                                  sourceLocation: SourceLocation = #_sourceLocation) async throws {
@@ -40,7 +32,7 @@ import FoundationModels
             #expect(workspace.send("again", conversationID: first.id))
         }
         first.store.stopTask()
-        try await wait("stopped") { !first.store.isGenerating }
+        try await eventually("stopped") { !first.store.isGenerating }
         #expect(first.store.task?.status == .stopped && workspace.keepsPetControlsExpanded, "A stopped card keeps the controls")
 
         workspace.toggleActivityTray()
@@ -444,7 +436,7 @@ import FoundationModels
         let streamed = PuppetStream()
         try await puppets.model(asked: "正在当前聊天内发送").answer(.stream(streamed))
         try await streamed.send(["回复片段", "完整回复"]); streamed.finish()
-        try await wait("the reply ends") { !draft.store.isGenerating }
+        try await eventually("the reply ends") { !draft.store.isGenerating }
         #expect(workspace.recentConversations.map(\.id) == order, "Sending and streaming preserve the active chat's position")
         workspace.select(second.id)
         #expect(workspace.recentConversations.map(\.id) == order, "Leaving after sending never reorders this app session")
@@ -464,7 +456,7 @@ import FoundationModels
         workspace.select(draft.id)
         second.store.stopTask()
         // A Stop settles before anything new can be sent.
-        try await wait("second stops") { !second.store.isGenerating }
+        try await eventually("second stops") { !second.store.isGenerating }
         second.store.send("后台跟进")
         let backgroundSentAt = workspace.snapshot.conversations.first { $0.id == second.id }!.lastUsed
         workspace.select(second.id)
@@ -473,7 +465,7 @@ import FoundationModels
         #expect(workspace.recentConversations.map(\.id) == order, "Background follow-up never reorders this session")
         draft.store.send("准备重试的请求")
         draft.store.stopTask()
-        try await wait("the draft stops") { !draft.store.isGenerating }
+        try await eventually("the draft stops") { !draft.store.isGenerating }
         #expect(draft.store.retry(), "The stopped request continues")
         let retryAt = workspace.snapshot.conversations.first { $0.id == draft.id }!.lastUsed
         #expect(workspace.recentConversations.map(\.id) == order, "Retry keeps the current order")
@@ -560,20 +552,20 @@ import FoundationModels
         let opening = PuppetStream()
         try await quickModel.answer(.stream(opening))
         try await opening.send(["第一段，", "正在读取内容", "……", "……"])
-        try await wait("the stream reaches the card") { quick.store.cardSummary.contains("读取内容") }
+        try await eventually("the stream reaches the card") { quick.store.cardSummary.contains("读取内容") }
         #expect(quick.store.cardSummary.hasPrefix("第一段，正在读取内容"), "Streamed text reaches the compact card")
         opening.call("read_file", #"{"path":"README"}"#); opening.finish()
-        try await wait("the tool asks for a folder") { quick.store.needsDirectory }
+        try await eventually("the tool asks for a folder") { quick.store.needsDirectory }
         let streamedAt = cards.lastIndex { $0.hasPrefix("第一段，") }
         #expect(streamedAt.map { cards[$0...].contains("正在读取文件 · README") } == true, "Tool progress replaces the earlier stream: \(cards)")
         quick.store.provideDirectory(nil)
         let long = PuppetStream()
         try await quickModel.answer(.stream(long))
         try await long.send([String(repeating: "开头内容", count: 100), "最后的新内容", "……", "……"])
-        try await wait("the long reply reaches the card") { quick.store.cardSummary.contains("最后的新内容") }
+        try await eventually("the long reply reaches the card") { quick.store.cardSummary.contains("最后的新内容") }
         #expect(quick.store.cardSummary.count <= 260, "Long streams retain the latest text")
         long.finish()
-        try await wait("the turn ends") { !quick.store.isGenerating }
+        try await eventually("the turn ends") { !quick.store.isGenerating }
         watch.cancel()
         #expect(ws.isPetActivityVisible && !quick.store.isFollowUpExpanded && ws.unseenCompletedCount == 1,
               "A completed result remains visible and unread without a composer")
@@ -592,7 +584,7 @@ import FoundationModels
             #expect(ws.sendFollowUp(conversationID: quick.id), "Follow-up is accepted")
             #expect(ws.petActivities.count == 1 && ws.petFollowUpID == quick.id && quick.store.isFollowUpExpanded,
                   "Consecutive follow-ups keep the same entry and editor")
-            try await wait("the follow-up reaches the model") { quickModel.requests.last?.userTexts.last == message }
+            try await eventually("the follow-up reaches the model") { quickModel.requests.last?.userTexts.last == message }
             #expect(quickModel.requests.last?.userTexts.first == "桌宠里的问题", "Follow-up targets the original conversation")
             try await reply(quick, quickModel, "新回复：" + message)
             #expect(quick.store.cardSummary.contains(message) && ws.unseenCompletedCount == 1,
@@ -615,18 +607,18 @@ import FoundationModels
         let failing = PuppetStream()
         try await quickModel.answer(.stream(failing))
         try await failing.send(["已有的", "部分内容", "……", "……"])
-        try await wait("the partial reaches the card") { quick.store.cardSummary.contains("部分内容") }
+        try await eventually("the partial reaches the card") { quick.store.cardSummary.contains("部分内容") }
         failing.fail(AgentModelError(message: "连接失败"))
-        try await wait("the turn fails") { !quick.store.isGenerating }
+        try await eventually("the turn fails") { !quick.store.isGenerating }
         #expect(quick.store.cardSummary.contains("部分内容") && quick.store.task?.status == .failed
               && quick.store.task?.summary == "连接失败", "Failure keeps partial content and its status")
         quick.store.send("停止的任务")
         let stopping = PuppetStream()
         try await quickModel.answer(.stream(stopping))
         try await stopping.send(["停止前", "的内容", "……", "……"])
-        try await wait("the partial reaches the card") { quick.store.cardSummary.contains("停止前") }
+        try await eventually("the partial reaches the card") { quick.store.cardSummary.contains("停止前") }
         quick.store.stopTask()
-        try await wait("the turn stops") { !quick.store.isGenerating }
+        try await eventually("the turn stops") { !quick.store.isGenerating }
         #expect(quick.store.cardSummary.contains("停止前") && quick.store.task?.status == .stopped,
               "Stop keeps partial content")
         ws.select(quick.id); ws.isMainWindowVisible = true
@@ -701,7 +693,7 @@ import FoundationModels
         #expect(!ws.associateFolder(root, conversationID: first.id))
         #expect(first.projectID == a && ws.projects.count == 2)
         #expect(ws.retry(conversationID: first.id)); ws.stop(conversationID: first.id)
-        try await wait("stopped") { !first.store.isGenerating }
+        try await eventually("stopped") { !first.store.isGenerating }
         #expect(!ws.associateProject(nil, conversationID: first.id), "Stop does not unlock project")
         #expect(ws.associateProject(nil, conversationID: second.id))
         #expect(second.store.mainDraft == "second draft")
@@ -823,7 +815,9 @@ import FoundationModels
         let conversation = workspace.selected!
         let model = try #require(puppets.last)
         conversation.store.mainDraft = "streaming request"
-        try await Task.sleep(for: .milliseconds(600))
+        try await eventually("the draft edit is saved after the debounce") {
+            persistence.load().0?.drafts?.first?.state.mainDraft == "streaming request"
+        }
         #expect(persistence.load().0?.drafts?.first?.state.mainDraft == "streaming request",
               "A short draft edit still saves promptly after the debounce interval")
         #expect(workspace.sendMainMessage(conversationID: conversation.id), "Streaming request is accepted")
@@ -862,8 +856,11 @@ import FoundationModels
         #expect(conversation.store.isGenerating && model.requests.count == 1 && model.cancelledCount == 0,
               "Automatic saves do not stop or restart the model request")
         stream.send("完成"); stream.finish()
-        try await wait("the reply ends") { !conversation.store.isGenerating }
-        try await Task.sleep(for: .milliseconds(600))
+        try await eventually("the reply ends") { !conversation.store.isGenerating }
+        try await eventually("the final response is saved") {
+            let finished = saved().map { persistence.restoreSession($0) }
+            return finished?.task?.status == .completed && finished?.messages.last?.content == text + "完成"
+        }
         let finished = saved().map { persistence.restoreSession($0) }
         #expect(finished?.task?.status == .completed && finished?.messages.last?.content == text + "完成",
               "The final response saves promptly after streaming stops")

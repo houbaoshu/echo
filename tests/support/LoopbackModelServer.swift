@@ -4,9 +4,7 @@ import Darwin
 /// A real loopback HTTP/SSE peer for Rust's HTTP client. All sockets belong to
 /// this fixture and are shut down before stop() returns, including cancelled streams.
 final class LoopbackModelServer: @unchecked Sendable {
-    enum Mode { case session, unicode }
     private let listener: Int32
-    private let mode: Mode
     private let lock = NSLock()
     private let workers = DispatchGroup()
     private var sockets: Set<Int32> = []
@@ -16,9 +14,13 @@ final class LoopbackModelServer: @unchecked Sendable {
     let port: UInt16
     var baseURL: String { "http://127.0.0.1:\(port)" }
     var requests: [Data] { lock.withLock { recorded } }
+    /// Holds a request whose last user message contains "slow-model" before it is answered, so the
+    /// test can steer the turn while the model request is under way.
+    let slowModel = FixtureHold()
+    /// Holds a connection probe whose model starts with "probe-delay:" until the test lets it go.
+    let probeDelay = FixtureHold()
 
-    init(mode: Mode = .session) throws {
-        self.mode = mode
+    init() throws {
         let listener = socket(AF_INET, SOCK_STREAM, 0)
         self.listener = listener
         guard listener >= 0 else { throw FixtureError("socket: \(errno)") }
@@ -74,6 +76,8 @@ final class LoopbackModelServer: @unchecked Sendable {
     }
 
     func stop() throws {
+        // A request still held would keep its worker, and so stop(), waiting.
+        slowModel.openForGood(); probeDelay.openForGood()
         lock.withLock {
             guard !stopping else { return }
             stopping = true
@@ -115,16 +119,6 @@ final class LoopbackModelServer: @unchecked Sendable {
         lock.withLock { recorded.append(data) }
         guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw FixtureError("Expected model JSON object") }
         let responses = String(decoding: request.prefix(start), as: UTF8.self).components(separatedBy: "\r\n")[0].contains("/responses ")
-        if mode == .unicode {
-            guard body["stream"] as? Bool == true, body["tool_choice"] as? String == "auto" else { throw FixtureError("Bridge request lost stream/tool_choice") }
-            guard write(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n") else { return }
-            for piece in ["你好，", "bridge", " 🌱"] {
-                Thread.sleep(forTimeInterval: 0.17)
-                if !event(fd, ["choices": [["index": 0, "delta": ["content": piece], "finish_reason": NSNull()]]]) { return }
-            }
-            _ = event(fd, ["choices": [["index": 0, "delta": [:], "finish_reason": "stop"]]])
-            _ = write(fd, "data: [DONE]\n\n"); return
-        }
         let items = body[responses ? "input" : "messages"] as? [[String: Any]] ?? []
         let text = items.last(where: { $0["role"] as? String == "user" })?["content"] as? String ?? ""
         let results = items.filter { $0["role"] as? String == "tool" || $0["type"] as? String == "function_call_output" }
@@ -142,11 +136,11 @@ final class LoopbackModelServer: @unchecked Sendable {
             _ = event(fd, responses ? ["type": "error", "message": secret] : ["error": ["message": secret]])
             return
         }
-        if text.contains("slow-model") { Thread.sleep(forTimeInterval: 0.5) }
+        if text.contains("slow-model") { slowModel.pass() }
         var command: Any?
         if text.contains("tool"), results.isEmpty {
             command = "printf 'one\\n' >> trace; printf '工具输出 🌱'; printf 'diagnostic' >&2"
-            if text.contains("slow-tool") { command = "printf 'started\\n' >> trace; sleep 0.7; printf 'done\\n' >> trace" }
+            if text.contains("slow-tool") { command = SlowTool.command }
             if text.contains("cancel-tool") { command = "printf 'started\\n' >> trace; sleep 15; printf 'forbidden\\n' >> trace" }
         }
         if text.contains("acceptance-quit-tool"), results.isEmpty {
@@ -175,7 +169,7 @@ final class LoopbackModelServer: @unchecked Sendable {
                 _ = write(fd, "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body)
                 return
             }
-            if model.hasPrefix("probe-delay:") { Thread.sleep(forTimeInterval: 1) }
+            if model.hasPrefix("probe-delay:") { probeDelay.pass() }
             if model.hasPrefix("probe:") || model.hasPrefix("probe-delay:") {
                 let path = String(model.split(separator: ":", maxSplits: 1)[1])
                 command = "printf forbidden > '" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -214,7 +208,7 @@ final class LoopbackModelServer: @unchecked Sendable {
             return
         }
         guard write(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n") else { return }
-        let pause = text.contains("slow-stream") ? 0.15 : 0.0
+        let pause = text.contains("slow-stream") ? 0.05 : 0.0
         func emit(_ data: [String: Any]) -> Bool {
             let sent = event(fd, data)
             if pause > 0 { Thread.sleep(forTimeInterval: pause) }
@@ -262,6 +256,48 @@ final class LoopbackModelServer: @unchecked Sendable {
             }
             return true
         }
+    }
+}
+
+/// A point where the fixture holds a request until the test lets it go. Each request that
+/// reaches it is counted, so the test can wait until one is held, do what it needs while the
+/// request is under way, and then release it.
+final class FixtureHold: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var arrived = 0
+    private var allowed = 0
+    private var open = false
+    /// Requests that have reached the hold so far.
+    var arrivals: Int { condition.lock(); defer { condition.unlock() }; return arrived }
+    /// Lets every request held now go on; a later one is held again.
+    func release() {
+        condition.lock(); allowed = arrived; condition.broadcast(); condition.unlock()
+    }
+    /// Lets every request through from now on, as the server does when it stops.
+    func openForGood() {
+        condition.lock(); open = true; condition.broadcast(); condition.unlock()
+    }
+    /// Called on the request's worker thread: blocks until released.
+    func pass() {
+        condition.lock()
+        arrived += 1
+        let arrival = arrived
+        while !open && arrival > allowed { condition.wait() }
+        condition.unlock()
+    }
+}
+
+/// The command the fixture model asks for on "slow-tool": it writes "started" to `trace` in its
+/// directory, waits until the test drops the release file there (10 s at most), then writes
+/// "done". The test waits for `started` before it acts on the running command.
+enum SlowTool {
+    static let releaseFile = "slow-tool.release"
+    static let command = "printf 'started\\n' >> trace; n=0; while [ ! -e \(releaseFile) ] && [ $n -lt 1000 ]; do sleep 0.01; n=$((n+1)); done; printf 'done\\n' >> trace"
+    static func started(in directory: URL) -> Bool {
+        (try? String(contentsOf: directory.appendingPathComponent("trace"), encoding: .utf8))?.contains("started") == true
+    }
+    static func release(in directory: URL) throws {
+        try Data().write(to: directory.appendingPathComponent(releaseFile))
     }
 }
 

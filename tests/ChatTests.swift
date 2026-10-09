@@ -5,13 +5,6 @@ import Testing
 /// A conversation's own commands on the native Agent engine, with a puppet model. The turn itself
 /// (context, streaming, Stop, steering, failures) is AgentHarnessTests'.
 @MainActor @Suite(.serialized) struct ChatTests {
-    static func wait(_ label: String, _ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !condition() {
-            try #require(ContinuousClock.now < deadline, "Timed out: \(label)")
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
     static func chat() -> (TaskStore, PuppetModel) {
         let puppet = PuppetModel()
         return (TaskStore(harness: AgentHarness(resolveModel: { puppet.factory })), puppet)
@@ -47,7 +40,7 @@ import Testing
         let cutOff = PuppetStream()
         try await puppet.answer(.stream(cutOff))
         try await cutOff.send(["A", "B", "C", "D"])
-        try await Self.wait("the reply streams") { chat.replyStream.live?.hasPrefix("AB") == true }
+        try await eventually("the reply streams") { chat.replyStream.live?.hasPrefix("AB") == true }
         chat.stopTask()
         let stopping = chat.task
         #expect(stopping?.status == .stopping)
@@ -55,7 +48,7 @@ import Testing
         #expect(chat.mainDraft == "keep draft", "A send refused during Stop keeps the draft")
         chat.stopTask()
         #expect(chat.task == stopping, "A second Stop changes nothing")
-        try await Self.wait("stopped") { !chat.isGenerating }
+        try await eventually("stopped") { !chat.isGenerating }
         #expect(chat.task?.status == .stopped && puppet.cancelledCount == 1)
         // Output the cancelled generation still writes reaches nothing.
         cutOff.send("late text"); cutOff.finish()
@@ -67,11 +60,11 @@ import Testing
         try await puppet.waitForRequests(2)
         #expect(puppet.requests[1].kinds == ["instructions", "prompt", "continue"], "Continue adds no user message")
         try await puppet.answer(.fail(AgentModelError(message: "offline")))
-        try await Self.wait("failed") { !chat.isGenerating }
+        try await eventually("failed") { !chat.isGenerating }
         #expect(chat.task?.status == .failed && chat.task?.summary == "offline" && chat.canRetry)
         #expect(chat.retry())
         try await puppet.reply("answer")
-        try await Self.wait("answered") { !chat.isGenerating }
+        try await eventually("answered") { !chat.isGenerating }
         #expect(chat.task?.status == .completed && !chat.canRetry && chat.messages.map(\.content) == ["Hello", "answer"])
         chat.stopTask()
         #expect(chat.task?.status == .completed, "Stop after the turn ended does nothing")
@@ -82,7 +75,7 @@ import Testing
         let before = chat.messages
         chat.shutdown()
         #expect(chat.task?.status == .interrupted && !chat.send("after shutdown"))
-        try await Self.wait("shutdown cancels the request") { puppet.cancelledCount == 2 }
+        try await eventually("shutdown cancels the request") { puppet.cancelledCount == 2 }
         await Task.yield()
         #expect(chat.messages == before && chat.task?.status == .interrupted, "Nothing reaches a retired conversation")
         #expect(events.last == "retired" && events.filter { $0.hasPrefix("completed") } == ["completed:answer"])
@@ -104,7 +97,7 @@ import Testing
         let (failing, failingModel) = Self.chat()
         try #require(failing.send("Hello"))
         try await failingModel.answer(.fail(AgentModelError(message: "before first text")))
-        try await Self.wait("failed") { !failing.isGenerating }
+        try await eventually("failed") { !failing.isGenerating }
         #expect(failing.task?.status == .failed && failing.messages.map(\.role) == [.user],
                 "While open, the failure is the turn's summary; no message stands for the reply")
         let (failed, failedModel) = try Self.reopen(failing.snapshot)
@@ -117,7 +110,7 @@ import Testing
         try await failedModel.waitForRequests(1)
         #expect(failedModel.requests[0].kinds == ["instructions", "prompt", "continue"] && failedModel.requests[0].userTexts == ["Hello"])
         try await failedModel.reply("answer")
-        try await Self.wait("continued") { !failed.isGenerating }
+        try await eventually("continued") { !failed.isGenerating }
         #expect(failed.messages.map(\.content) == ["Hello", "answer"] && !failed.messages.contains { $0.id == placeholder.id },
                 "Continue replaces the placeholder with the reply")
         failed.shutdown(); failing.shutdown()
@@ -127,7 +120,7 @@ import Testing
         try #require(stopping.send("Hello"))
         try await stoppingModel.waitForRequests(1)
         stopping.stopTask()
-        try await Self.wait("stopped") { !stopping.isGenerating }
+        try await eventually("stopped") { !stopping.isGenerating }
         let (stopped, stoppedModel) = try Self.reopen(stopping.snapshot)
         #expect(stopped.messages.map(\.content) == ["Hello", ""] && stopped.messages.last?.role == .assistant
                 && stopped.messages.last?.status == .stopped && stopped.messages.last?.errorMessage == nil && stopped.canRetry)
@@ -152,7 +145,7 @@ import Testing
         let (completing, completingModel) = Self.chat()
         try #require(completing.send("Hello"))
         try await completingModel.reply("answer")
-        try await Self.wait("answered") { !completing.isGenerating }
+        try await eventually("answered") { !completing.isGenerating }
         let (completed, _) = try Self.reopen(completing.snapshot)
         #expect(completed.messages == completing.messages && completed.messages.map(\.content) == ["Hello", "answer"])
         completed.shutdown(); completing.shutdown()
@@ -162,7 +155,7 @@ import Testing
         try await stoppedModel.waitForRequests(1)
         stopped.shutdown()
         let atShutdown = stopped.messages
-        try await Self.wait("shutdown cancels the request") { stoppedModel.cancelledCount == 1 }
+        try await eventually("shutdown cancels the request") { stoppedModel.cancelledCount == 1 }
         await Task.yield()
         #expect(stopped.messages == atShutdown && stopped.messages.map(\.content) == ["Hello"] && stopped.task?.status == .interrupted)
     }

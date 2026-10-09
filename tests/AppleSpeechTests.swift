@@ -50,7 +50,8 @@ extension EchoVoiceScenarios {
                 await withCheckedContinuation { authorization = $0 }
             }
         }
-        await VoiceTests.tick(); preparation.cancel(); authorization?.resume(returning: .authorized)
+        try await eventually("the preparation asks for authorization") { authorization != nil }
+        preparation.cancel(); authorization?.resume(returning: .authorized)
         do { _ = try await preparation.value; Issue.record("Cancelled permission must not prepare a recognizer") }
         catch { #expect(error is CancellationError && engine.starts == 0) }
 
@@ -66,41 +67,47 @@ extension EchoVoiceScenarios {
         let (audio, input) = AsyncThrowingStream<Data, Error>.makeStream()
         var received: [ASRResult] = []
         let recognition = Task { try await recognizer.run(key: "", audio: audio) { received.append($0) } }
-        await VoiceTests.tick()
+        try await eventually("recognition starts Apple's engine") { engine.request != nil }
         #expect(engine.request?.requiresOnDeviceRecognition == true && engine.request?.shouldReportPartialResults == true
                      && engine.request?.addsPunctuation == true)
         input.yield(Data([0, 0])); input.finish()
-        engine.emit("临时", final: false); await VoiceTests.tick()
+        engine.emit("临时", final: false)
+        try await eventually("the partial is delivered") { received.count == 1 }
         #expect(received.count == 1 && !received[0].streamFinal)
         engine.emit("最终", final: true)
         try await recognition.value
         #expect(received.count == 2 && received[1].streamFinal && engine.cancels > 0)
-        engine.emit("迟到", final: true); await VoiceTests.tick()
+        engine.emit("迟到", final: true)
         #expect(received.count == 2)
 
         let cancelled = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         let (pendingAudio, _) = AsyncThrowingStream<Data, Error>.makeStream()
+        var begun = engine.starts
         let pending = Task { try await cancelled.run(key: "", audio: pendingAudio) { _ in Issue.record("Cancelled recognition delivered a result") } }
-        await VoiceTests.tick(); pending.cancel()
+        try await eventually("recognition starts Apple's engine") { engine.starts == begun + 1 }
+        pending.cancel()
         do { try await pending.value; Issue.record("Cancellation must terminate the task") }
         catch { #expect(error is CancellationError) }
-        engine.emit("取消后的迟到结果", final: true); await VoiceTests.tick()
+        engine.emit("取消后的迟到结果", final: true)
 
         let directlyCancelled = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+        begun = engine.starts
         let directTask = Task {
             try await directlyCancelled.run(key: "", audio: pendingAudio) { _ in
                 Issue.record("Direct cancel must discard even queued results")
             }
         }
-        await VoiceTests.tick()
+        try await eventually("recognition starts Apple's engine") { engine.starts == begun + 1 }
         engine.emit("取消前排队的结果", final: true)
         directlyCancelled.cancel()
         do { try await directTask.value; Issue.record("Direct cancellation must terminate the task") }
         catch { #expect(error is CancellationError) }
 
         let silent = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
+        begun = engine.starts
         let silentTask = Task { try await silent.run(key: "", audio: pendingAudio) { _ in Issue.record("Empty final must not be committed") } }
-        await VoiceTests.tick(); engine.emit("  ", final: true)
+        try await eventually("recognition starts Apple's engine") { engine.starts == begun + 1 }
+        engine.emit("  ", final: true)
         do { try await silentTask.value; Issue.record("Empty recognition must report a useful error") }
         catch { #expect(error.localizedDescription.contains("未识别到清晰语音")) }
 
@@ -125,15 +132,18 @@ extension EchoVoiceScenarios {
         let engine = TestAppleSpeechEngine()
         let recognizer = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         let (audio, input) = AsyncThrowingStream<Data, Error>.makeStream()
-        var results: [ASRResult] = []
+        var results: [ASRResult] = [], heard = 0
+        // Counts each result the recognizer has taken in, before it passes text on.
+        recognizer.onSpeechResult = { _ in heard += 1 }
         let run = Task { try await recognizer.run(key: "", audio: audio) { results.append($0) } }
-        await VoiceTests.tick()
+        try await eventually("recognition starts Apple's engine") { engine.request != nil }
         for (index, callback) in callbacks.enumerated() {
             if callback.streamFinal { input.finish() }
             let segment = callback.speechStart.map { ASRResult.LocalSegment(start: $0, duration: callback.speechDuration!) }
+            let taken = heard
             engine.receive?(ASRResult(result: .init(text: callback.text, utterances: nil),
                 streamFinal: callback.streamFinal, localSegment: segment), nil)
-            await VoiceTests.tick()
+            try await eventually("the recognizer takes in the result") { heard > taken }
             if index == 9 {
                 #expect(results.last?.result?.text == "这是我的第一句话 这",
                              "Real Apple phrase metadata must protect the first phrase before the second partial arrives")
@@ -146,12 +156,15 @@ extension EchoVoiceScenarios {
         // while actually repeating the same words in another phrase is retained.
         let repeated = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         let (repeatAudio, repeatInput) = AsyncThrowingStream<Data, Error>.makeStream()
+        repeated.onSpeechResult = { _ in heard += 1 }
+        let starts = engine.starts
         let repeatRun = Task { try await repeated.run(key: "", audio: repeatAudio) { results.append($0) } }
-        await VoiceTests.tick()
+        try await eventually("recognition starts Apple's engine") { engine.starts == starts + 1 }
         for start in [0.0, 0.0, 5.0, 5.0] {
+            let taken = heard
             engine.receive?(ASRResult(result: .init(text: "再说一次", utterances: nil),
                                       localSegment: .init(start: start, duration: 1)), nil)
-            await VoiceTests.tick()
+            try await eventually("the recognizer takes in the result") { heard > taken }
         }
         repeatInput.finish(); engine.emit("再说一次", final: true)
         try await repeatRun.value
@@ -163,13 +176,16 @@ extension EchoVoiceScenarios {
         let engine = TestAppleSpeechEngine()
         let recognizer = try await AppleSpeechRecognizer.prepare(engine: engine, permission: { .authorized })
         let (audio, input) = AsyncThrowingStream<Data, Error>.makeStream()
-        var texts: [String] = []
+        var texts: [String] = [], heard = 0
+        // Counts each result the recognizer has taken in, before it passes text on.
+        recognizer.onSpeechResult = { _ in heard += 1 }
         let run = Task { try await recognizer.run(key: "", audio: audio) { texts.append($0.result?.text ?? "") } }
-        await VoiceTests.tick()
+        try await eventually("recognition starts Apple's engine") { engine.request != nil }
         for callback in callbacks {
+            let taken = heard
             engine.receive?(ASRResult(result: .init(text: callback.text, utterances: nil),
                 localSegment: callback.start.map { .init(start: $0, duration: callback.duration) }), nil)
-            await VoiceTests.tick()
+            try await eventually("the recognizer takes in the result") { heard > taken }
         }
         input.finish(); engine.emit("", final: true)
         try await run.value
@@ -234,7 +250,7 @@ extension EchoVoiceScenarios {
                 await AppleSpeechRecognizer.requestSpeechAuthorization { reply = $0 }
             }
         }
-        await VoiceTests.tick()
+        try await eventually("the preparation asks for authorization") { reply != nil }
         pending.cancel()
         let completion = reply!
         DispatchQueue.global().async { completion(.authorized) }

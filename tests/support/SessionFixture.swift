@@ -5,11 +5,7 @@ import Testing
 
 /// Waits until every command the execution core started has finished its cleanup.
 @MainActor func waitForAgentShutdown() async throws {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(8))
-    while ExecutionService.activeCommands != 0 {
-        try #require(ContinuousClock.now < deadline, "Command cleanup did not finish before the deadline")
-        try await Task.sleep(for: .milliseconds(10))
-    }
+    try await eventually("Command cleanup finishes", timeout: .seconds(8)) { ExecutionService.activeCommands == 0 }
 }
 
 /// Harnesses for the loopback model server. Each turn resolves the protocol, as settings are

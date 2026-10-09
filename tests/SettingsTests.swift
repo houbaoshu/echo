@@ -193,15 +193,8 @@ import Testing
         let settings = SettingsStore(url: url, secrets: ProviderSecrets(), tester: tester)
         #expect(settings.notice == nil)
         settings.testConnection()
-        try await waitUntil { !settings.testing }
+        try await eventually("the connection test ends") { !settings.testing }
         #expect(tester.count == 1 && settings.testSucceeded)
-    }
-    @MainActor private static func waitUntil(_ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !condition() {
-            try #require(ContinuousClock.now < deadline)
-            try await Task.sleep(for: .milliseconds(5))
-        }
     }
     private final class RecordingTester: ConnectionTesting, @unchecked Sendable {
         private let lock = NSLock()

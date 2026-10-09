@@ -3,14 +3,6 @@ import Testing
 import Foundation
 
 extension VoiceTests {
-    @MainActor private static func waitForAgentVoice(_ label: String, _ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(8)
-        while !condition() {
-            guard Date() < deadline else { throw SettingsError("Timed out: \(label)") }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
     /// Speech while the Agent works steers the same run; a folder request and a project queue keep
     /// voice input open; mute closes only input; Stop pauses submission until cleanup; Continue
     /// appends nothing; ending the call leaves the Agent running.
@@ -18,7 +10,7 @@ extension VoiceTests {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        await f.start()
+        try await f.start()
         f.store.mainDraft = "保留草稿"
         f.speak("开始检查")
         let run = try #require(f.store.task?.runID)
@@ -28,7 +20,7 @@ extension VoiceTests {
               "Agent voice submits once and keeps recognition during the model request")
         // The model asks for a folder the conversation does not have yet.
         try await f.puppet.answer(.call(name: "list_files", arguments: #"{"path":"."}"#))
-        try await waitForAgentVoice("folder requested") { f.store.needsDirectory }
+        try await eventually("folder requested", timeout: .seconds(8)) { f.store.needsDirectory }
         #expect(f.voice.status == "等待选择项目文件夹 · 可补充语音", "directory wait remains visible while voice input stays enabled")
         f.speak("先回答问题", start: 300)
         #expect(!f.store.needsDirectory && f.userTexts.last == "先回答问题" && !recognizer.cancelled && f.store.task?.runID == run,
@@ -41,7 +33,8 @@ extension VoiceTests {
         f.speak("静音不能提交", start: 1200)
         #expect(f.userTexts.count == 4 && f.audio.capturePaused && f.store.task?.status == .running,
               "mute closes only input during an active Agent task")
-        f.voice.toggleMute(); await tick()
+        f.voice.toggleMute()
+        try await eventually("the unmuted call listens on a new recognizer") { f.voice.snapshot.recognition == .listening && f.recognizers.count == 2 }
         #expect(f.voice.snapshot.recognition == .listening && f.recognizers.count == 2,
               "unmute resumes input while the Agent is still running")
 
@@ -53,7 +46,7 @@ extension VoiceTests {
               "navigation and parallel conversation activity do not move voice ownership")
         #expect(f.workspace.send("文字补充", conversationID: f.conversation.id) && f.store.task?.runID == run
               && f.store.task?.status == .running, "workspace text uses steering even when Live Voice owns the conversation")
-        await tick()
+        try await eventually("listening reopens after the text follow-up") { f.voice.snapshot.recognition == .listening }
         #expect(f.voice.snapshot.recognition == .listening && f.store.mainDraft == "保留草稿",
               "text follow-up reopens listening and preserves drafts")
         f.workspace.stop(conversationID: f.conversation.id)
@@ -66,7 +59,7 @@ extension VoiceTests {
         f.speak("停止期间的迟到定稿", start: 1800)
         #expect(!f.workspace.send("等待清理", conversationID: f.conversation.id) && f.userTexts.count == users,
               "late voice and text cannot start a run during cleanup")
-        try await waitForAgentVoice("cleanup restores listening") {
+        try await eventually("cleanup restores listening", timeout: .seconds(8)) {
             f.store.task?.status == .stopped && f.voice.snapshot.recognition == .listening
         }
         #expect(f.voice.isActive && f.store.canSubmit && f.synths.isEmpty, "cleanup restores listening without ending the call")
@@ -85,7 +78,7 @@ extension VoiceTests {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        await f.start(); f.holdPlayback(); f.speak("第一个问题")
+        try await f.start(); f.holdPlayback(); f.speak("第一个问题")
         #expect(f.store.isGenerating, "the first utterance opened a turn")
 
         // Refused while the turn runs: the message is appended, the partial is not kept.
@@ -96,7 +89,7 @@ extension VoiceTests {
               "the refused follow-up still left its own message: \(f.store.messages.map(\.content))")
         #expect(f.voice.subtitle.isEmpty, "a refused follow-up is not also a pending partial: \(f.voice.subtitle)")
         #expect(f.store.notice != nil, "the chat says why it was refused")
-        try await waitForAgentVoice("refused turn ends") { !f.store.isGenerating }
+        try await eventually("refused turn ends", timeout: .seconds(8)) { !f.store.isGenerating }
 
         // Refused before submission is even allowed: nothing is left standing in for a message.
         f.store.agentLoadError = "Agent 会话无法加载。"
@@ -113,9 +106,9 @@ extension VoiceTests {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        await f.start(); f.holdPlayback(); f.speak("第一次问题")
+        try await f.start(); f.holdPlayback(); f.speak("第一次问题")
         try await f.puppet.reply("第一次回答")
-        try await waitForAgentVoice("first reply") {
+        try await eventually("first reply", timeout: .seconds(8)) {
             f.store.task?.status == .completed && f.synths.count == 1 && f.audio.played.count == 1
         }
         #expect(f.workspace.send("第二次问题", conversationID: f.conversation.id), "text can interrupt completed audio")
@@ -129,18 +122,18 @@ extension VoiceTests {
         #expect(f.voice.snapshot.recognition == .off(.recovery) && f.audio.capturePaused,
               "another submission cannot bypass the existing acoustic tail timer")
         f.releasePlayback()
-        await waitUntil { f.voice.snapshot.recognition == .listening }
+        try await eventually("f.voice.snapshot.recognition == .listening") { f.voice.snapshot.recognition == .listening }
         #expect(!f.audio.capturePaused && f.store.isGenerating, "tail expiry restores listening during model work")
         f.voice.end()
-        await f.start(); f.holdPlayback()
+        try await f.start(); f.holdPlayback()
         // The request that was running when the follow-up arrived answers first; that text is not the reply.
         try await f.puppet.reply("先说第二次")
         try await f.puppet.reply("新的最终回答")
-        try await waitForAgentVoice("rejoined final") { f.synths.count == 2 && !f.synths[1].chunks.isEmpty }
+        try await eventually("rejoined final", timeout: .seconds(8)) { f.synths.count == 2 && !f.synths[1].chunks.isEmpty }
         #expect(f.voice.error == nil, "rejoining a running Agent resets old TTS text and speaks the new final")
         #expect(f.synths[1].chunks == ["新的最终回答"], "rejoining a running Agent resets old TTS text and speaks the new final")
         f.releasePlayback()
-        await waitUntil { f.voice.snapshot.recognition == .listening }
+        try await eventually("f.voice.snapshot.recognition == .listening") { f.voice.snapshot.recognition == .listening }
         f.recognizers.last?.callback?(.init(result: .init(text: "下一句仍在讲话", utterances: [
             .init(text: "已经定稿", start_time: 0, end_time: 200, definite: true),
             .init(text: "下一句仍在讲话", start_time: 300, end_time: 500, definite: false)
@@ -157,7 +150,7 @@ extension VoiceTests {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        await f.start(); f.holdPlayback()
+        try await f.start(); f.holdPlayback()
         f.voice.toggleSpeakerMute(); f.speak("第一个问题")
         try await f.puppet.waitForRequests(1)
         let stream = f.store.replyStream
@@ -165,20 +158,21 @@ extension VoiceTests {
         let first = PuppetStream()
         try await f.puppet.answer(.stream(first))
         try await first.send(["今天", "**天气**不错，", "适合"])
-        try await waitForAgentVoice("the first delta shows") { stream.live?.hasPrefix("今天") == true }
+        try await eventually("the first delta shows", timeout: .seconds(8)) { stream.live?.hasPrefix("今天") == true }
         #expect(f.synths.isEmpty, "streaming text never starts speech")
         first.send("散步。"); first.finish()
-        try await waitForAgentVoice("final reply") { f.synths.count == 1 && !f.synths[0].chunks.isEmpty }
+        try await eventually("final reply", timeout: .seconds(8)) { f.synths.count == 1 && !f.synths[0].chunks.isEmpty }
         #expect(stream.text == "今天**天气**不错，适合散步。", "speech receives only the final reply")
         #expect(stream.live == nil, "speech receives only the final reply")
         #expect(f.synths[0].chunks == ["今天**天气**不错，适合散步。"], "speech receives only the final reply")
         #expect(f.store.messages.last?.content == "今天**天气**不错，适合散步。",
               "the settled reply is the conversation's own message, so nothing streams beside it")
-        f.releasePlayback(); await tick()
+        f.releasePlayback()
+        try await eventually("playback ends") { f.voice.snapshot.replyAudio == .none }
         #expect(stream.text == "今天**天气**不错，适合散步。", "the reply stays after playback ends")
 
         let recognizers = f.recognizers.count
-        try await waitForAgentVoice("listening resumes after the reply") {
+        try await eventually("listening resumes after the reply", timeout: .seconds(8)) {
             f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
         }
         f.speak("第二个问题", start: 400)
@@ -188,15 +182,15 @@ extension VoiceTests {
         let second = PuppetStream()
         try await f.puppet.answer(.stream(second))
         try await second.send([" \n", "我先看看目录。", "\n"])
-        try await waitForAgentVoice("the next turn's text replaces the previous reply") { stream.text.contains("我先看看目录") }
+        try await eventually("the next turn's text replaces the previous reply", timeout: .seconds(8)) { stream.text.contains("我先看看目录") }
         second.call("list_files", #"{"path":"."}"#); second.finish()
-        try await waitForAgentVoice("text beside a call is withdrawn") {
+        try await eventually("text beside a call is withdrawn", timeout: .seconds(8)) {
             stream.text == "今天**天气**不错，适合散步。" && stream.live == nil
         }
         #expect(f.store.messages.contains { $0.role == .assistant && $0.content.contains("我先看看目录") },
               "the withdrawn text stays as a message of its own")
         f.workspace.stop(conversationID: f.conversation.id)
-        try await waitForAgentVoice("stopped") { !f.store.isGenerating }
+        try await eventually("stopped", timeout: .seconds(8)) { !f.store.isGenerating }
         #expect(stream.text == "今天**天气**不错，适合散步。" && stream.live == nil, "a stopped step keeps no partial reply")
     }
 
@@ -206,7 +200,7 @@ extension VoiceTests {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        await f.start(); f.holdPlayback()
+        try await f.start(); f.holdPlayback()
         f.voice.toggleSpeakerMute()
         func bubble() -> CompanionBubbleContent {
             CompanionBubbleContent(voice: f.voice.snapshot, spoken: f.voice.spoken, position: f.voice.spokenPosition, notice: nil)
@@ -219,7 +213,7 @@ extension VoiceTests {
         #expect(bubble() == .none && !shown(), "requesting the model shows no bubble")
         f.audio.playbackFrames = 4800
         try await f.puppet.reply(reply)
-        try await waitForAgentVoice("reply synthesized") { f.synths.count == 1 && f.audio.played.count == 1 }
+        try await eventually("reply synthesized", timeout: .seconds(8)) { f.synths.count == 1 && f.audio.played.count == 1 }
         #expect(f.voice.spoken == nil, "audio that starts before its subtitles shows nothing yet")
         #expect(!shown(), "audio that starts before its subtitles shows nothing yet")
         let synth = f.synths[0]
@@ -234,12 +228,13 @@ extension VoiceTests {
         #expect(bubble() == .reply(reply, heard: "##天气。今天天气很"), "1.8 seconds in, the reply is still within its first sentence")
         f.audio.playbackFrames = 4800 + 64800
         #expect(bubble() == .reply(reply, heard: "##天气。今天天气很好，适合散"), "later sentences extend the timeline")
-        f.releasePlayback(); await tick()
+        f.releasePlayback()
+        try await eventually("the reply finishes playing") { f.voice.spoken?.stoppedAt == .infinity }
         #expect(f.voice.spoken?.stoppedAt == .infinity && bubble() == .reply(reply, heard: nil) && shown(),
               "finished playback shows the whole reply and keeps it")
 
         let recognizers = f.recognizers.count
-        try await waitForAgentVoice("listening resumes after the reply") {
+        try await eventually("listening resumes after the reply", timeout: .seconds(8)) {
             f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
         }
         f.holdPlayback()
@@ -247,7 +242,7 @@ extension VoiceTests {
         try await f.puppet.waitForRequests(2)
         #expect(bubble() == .reply(reply, heard: nil), "the next request keeps the previous reply")
         try await f.puppet.reply("好的，下午见。")
-        try await waitForAgentVoice("second reply synthesized") { f.synths.count == 2 && f.audio.played.count == 2 }
+        try await eventually("second reply synthesized", timeout: .seconds(8)) { f.synths.count == 2 && f.audio.played.count == 2 }
         #expect(bubble() == .reply(reply, heard: nil), "new audio without subtitles keeps the previous reply")
         f.synths[1].subtitle([("好", 0), ("的，", 0.2), ("下", 0.6), ("午", 0.8), ("见。", 1.0)])
         f.audio.playbackFrames += 7200
@@ -256,7 +251,6 @@ extension VoiceTests {
         #expect(bubble() == .reply("好的，下午见。", heard: "好的，下"), "the new reply is timed from its own audio, on its own timeline")
         f.audio.playbackFrames -= 7200
         f.voice.stopReply()
-        await tick()
         f.audio.playbackFrames = 96000
         #expect(f.voice.spoken?.stoppedAt == 0.3 && bubble() == .reply("好的，下午见。", heard: "好的，"),
               "an interrupted reply keeps what was heard")
@@ -266,16 +260,17 @@ extension VoiceTests {
 
         // A voice that sends no subtitles shows its reply once playback has finished.
         let recovered = f.recognizers.count
-        try await waitForAgentVoice("listening resumes after the stop") {
+        try await eventually("listening resumes after the stop", timeout: .seconds(8)) {
             f.voice.snapshot.recognition == .listening && f.recognizers.count > recovered
         }
         f.speak("第三个问题", start: 800)
         try await f.puppet.reply("没有字幕的回复。")
-        try await waitForAgentVoice("third reply synthesized") { f.synths.count == 3 && f.audio.played.count == 3 }
+        try await eventually("third reply synthesized", timeout: .seconds(8)) { f.synths.count == 3 && f.audio.played.count == 3 }
         #expect(bubble() == .reply("好的，下午见。", heard: "好的，"), "until playback finishes the previous reply stays")
-        f.releasePlayback(); await tick()
+        f.releasePlayback()
+        try await eventually("the reply without subtitles finishes playing") { f.voice.spoken?.source == "没有字幕的回复。" }
         #expect(bubble() == .reply("没有字幕的回复。", heard: nil) && shown(), "a reply without subtitles appears whole after playback")
-        f.voice.end(); await tick()
+        f.voice.end()
         #expect(f.voice.spoken == nil, "ending Live Voice forgets the spoken reply")
     }
 
@@ -286,28 +281,29 @@ extension VoiceTests {
             let f = AgentVoiceFixture()
             defer { f.shutdown() }
             f.workspace.isMainWindowVisible = viewed
-            await f.start(); f.holdPlayback()
+            try await f.start(); f.holdPlayback()
             f.speak("第一轮")
             #expect(f.store.isGenerating && !f.store.isActivityVisible, "a Live Voice turn keeps its task card folded")
             try await f.puppet.reply("第一轮回复")
-            try await waitForAgentVoice("first reply") { f.synths.count == 1 }
+            try await eventually("first reply", timeout: .seconds(8)) { f.synths.count == 1 }
             f.releasePlayback()
             let recognizers = f.recognizers.count
-            try await waitForAgentVoice("listening resumes") {
+            try await eventually("listening resumes", timeout: .seconds(8)) {
                 f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
             }
             f.holdPlayback()
             f.speak("第二轮", start: 400)
             try await f.puppet.reply("第二轮回复")
-            try await waitForAgentVoice("second reply") { f.synths.count == 2 }
-            f.releasePlayback(); await tick()
+            try await eventually("second reply", timeout: .seconds(8)) { f.synths.count == 2 }
+            f.releasePlayback()
+            try await eventually("the second reply finishes playing") { f.voice.snapshot.replyAudio == .none }
             let surface = PetSurfacePresentation(hovered: true, composerOpen: false, draft: "",
                 activityCount: f.store.activityCount, activitiesCollapsed: f.store.activitiesCollapsed,
                 unseenCompleted: f.workspace.unseenCompletedCount, voice: f.voice.snapshot, canStartVoice: false,
                 runningTasks: f.workspace.runningTaskCount)
             #expect(f.workspace.unseenCompletedCount == 0 && !f.store.hasUnseenCompletion && surface.tray != .bell(unseen: 0)
                   && surface.tray != .bell(unseen: 1), "completed Live Voice turns are neither unseen nor shown as a bell")
-            f.voice.end(); await tick()
+            f.voice.end()
             if viewed {
                 #expect(f.workspace.unseenCompletedCount == 0, "a Live Voice conversation viewed in the main window ends seen")
             } else {
@@ -324,7 +320,7 @@ extension VoiceTests {
         // A session with no completed reply leaves nothing unseen.
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        await f.start(); f.voice.end(); await tick()
+        try await f.start(); f.voice.end()
         #expect(f.workspace.unseenCompletedCount == 0, "an empty Live Voice session creates no unseen item")
     }
 
@@ -333,9 +329,9 @@ extension VoiceTests {
         for finalFirst in [false, true] {
             let f = AgentVoiceFixture()
             defer { f.shutdown() }
-            await f.start(); f.holdPlayback(); f.speak("最初的问题")
+            try await f.start(); f.holdPlayback(); f.speak("最初的问题")
             let run = try #require(f.store.task?.runID)
-            await tick()
+            try await f.puppet.waitForRequests(1)
             #expect(f.synths.isEmpty && f.voice.snapshot.recognition == .listening,
                   "a question with no reply yet starts no synthesis and keeps ASR open")
             var completions: [String] = []
@@ -344,7 +340,7 @@ extension VoiceTests {
             }
             defer { subscription.cancel() }
             try await f.puppet.reply("今天的天气非常晴朗，适合出门散步。")
-            try await waitForAgentVoice("final reply") { f.synths.count == 1 && f.finishDrain != nil }
+            try await eventually("final reply", timeout: .seconds(8)) { f.synths.count == 1 && f.finishDrain != nil }
             #expect(f.synths[0].chunks == ["今天的天气非常晴朗，适合出门散步。"], "only the final reply is spoken as one synthesis input")
             #expect(f.voice.snapshot.replyAudio == .draining(run), "only the final reply is spoken as one synthesis input")
             let finalMessage = try #require(f.store.responseMessage)
@@ -352,10 +348,9 @@ extension VoiceTests {
                   && completions == [finalMessage.content] && f.store.task?.summary == "已完成",
                   "history owns the only final message; completion and speech use its content, summary contains only status")
             f.store.lifecycle.send(.reply(run, .completed(finalMessage.content)))
-            await tick()
             #expect(f.synths.count == 1 && f.synths[0].chunks.count == 1, "a repeated completion never replays the final")
             let oldAudio = f.synths[0].callback!, oldRecognizer = f.recognizers[0]
-            await f.probe()
+            try await f.probe()
             #expect(f.voice.snapshot.bargeIn == .checking(run) && f.recognizers.count == 2,
                   "final playback retains acoustic barge-in confirmation")
             f.speak("今天的天气非常晴朗", final: true)
@@ -373,17 +368,18 @@ extension VoiceTests {
                   && f.voice.snapshot.recognition == .listening, "one final starts the next round after completed playback")
             do { try await oldAudio(Data([1, 2])); Issue.record("old audio must be rejected") }
             catch is CancellationError {  }
-            f.releasePlayback(); await tick()
+            let drains = f.audio.finishedDrains
+            f.releasePlayback()
+            try await eventually("the old playback drain returns") { f.audio.finishedDrains > drains }
             #expect(f.voice.snapshot.recognition == .listening && f.synths.count == 1,
                   "old playback drain cannot change the new round or replay its predecessor")
         }
         // A final arriving while the user has a partial must preserve that utterance.
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        await f.start(); f.speak("问题"); f.speak("正在补充", start: 300, final: false)
+        try await f.start(); f.speak("问题"); f.speak("正在补充", start: 300, final: false)
         try await f.puppet.reply("刚返回的最终结果")
-        try await waitForAgentVoice("final arrives") { f.store.task?.status == .completed }
-        await tick()
+        try await eventually("final arrives", timeout: .seconds(8)) { f.store.task?.status == .completed }
         #expect(f.synths.isEmpty && f.voice.subtitle == "正在补充", "a final cannot cut off a follow-up already being spoken")
         f.speak("正在补充", start: 300)
         #expect(f.userTexts.count == 2 && f.store.isGenerating, "the preserved utterance can start the next round")
@@ -399,18 +395,18 @@ extension VoiceTests {
             _ = f.conversation
             #expect(f.store.send("通话前开始的任务"), "the Agent run starts before Live Voice")
             let run = try #require(f.store.task?.runID)
-            await f.start()
+            f.begin()
+            try await eventually("the call asks for the microphone") { allowed != nil }
             #expect(allowed != nil && f.voice.snapshot.session == .starting(f.voice.snapshot.session.owner!),
                   "the call waits for microphone permission while the Agent runs")
             try await f.puppet.reply("启动期间完成的最终回复")
-            try await waitForAgentVoice("final during startup") { f.store.task?.status == .completed }
+            try await eventually("final during startup", timeout: .seconds(8)) { f.store.task?.status == .completed }
             #expect(f.synths.isEmpty, "a final received during startup waits for audio activation")
             allowed?.resume(returning: true); allowed = nil
-            try await waitForAgentVoice("startup final is spoken") {
+            try await eventually("startup final is spoken", timeout: .seconds(8)) {
                 f.synths.first?.chunks == ["启动期间完成的最终回复"]
             }
             f.store.lifecycle.send(.reply(run, .completed("启动期间完成的最终回复")))
-            await tick()
             #expect(f.synths.count == 1, "the deferred final is spoken once after activation")
         }
         for failure in [false, true] {
@@ -421,11 +417,13 @@ extension VoiceTests {
             _ = f.conversation
             f.store.send("已经运行的任务")
             let run = f.store.task?.runID
-            await f.start()
+            f.begin()
+            try await eventually("the call asks for the microphone") { allowed != nil }
             #expect(f.workspace.send("权限等待期间补充", conversationID: f.conversation.id)
                   && f.userTexts.last == "权限等待期间补充" && f.store.task?.status == .running,
                   "voice startup preserves an existing task and allows text steering")
-            allowed?.resume(returning: true); allowed = nil; await tick()
+            allowed?.resume(returning: true); allowed = nil
+            try await eventually("activation listens") { f.voice.snapshot.recognition == .listening }
             #expect(f.voice.snapshot.recognition == .listening && f.store.task?.runID == run,
                   "activation begins listening during the existing Agent round")
             if failure {
@@ -434,10 +432,10 @@ extension VoiceTests {
                       "audio failure ends voice and reports its owner without cancelling the Agent")
             } else {
                 f.voice.toggleMute(); f.workspace.stop(conversationID: f.conversation.id)
-                try await waitForAgentVoice("cleanup") { !f.store.isGenerating }
-                await tick()
+                try await eventually("cleanup", timeout: .seconds(8)) { !f.store.isGenerating }
                 #expect(f.voice.isMuted && f.voice.snapshot.recognition == .off(.muted), "cleanup preserves microphone mute")
-                f.voice.toggleMute(); await tick()
+                f.voice.toggleMute()
+                try await eventually("unmuting restarts recognition") { f.voice.snapshot.recognition == .listening }
                 #expect(f.voice.snapshot.recognition == .listening, "unmute after cleanup restarts recognition")
             }
         }
@@ -466,16 +464,16 @@ extension VoiceTests {
         var completions: [String] = []
         let subscription = f.store.lifecycle.sink { if case .reply(_, .completed(let text)) = $0 { completions.append(text) } }
         defer { subscription.cancel() }
-        await f.start()
+        try await f.start()
         f.speak("开始检查")
         let run = try #require(f.store.task?.runID)
-        try await waitForAgentVoice("model request") { gate.arrivals == 1 }
+        try await eventually("model request", timeout: .seconds(8)) { gate.arrivals == 1 }
         #expect(f.voice.snapshot.recognition == .listening, "Recognition stays open during the model request")
         f.speak("补充一", start: 300)
         #expect(f.store.task?.runID == run && f.store.messages.last?.steering == .queued, "Speech steers the same run")
         gate.open()
-        try await waitForAgentVoice("final reply") { !f.store.isGenerating }
-        await tick()
+        try await eventually("final reply", timeout: .seconds(8)) { !f.store.isGenerating }
+        try await eventually("the final reply is synthesized") { f.synths.first?.chunks == ["最终回复：开始检查，补充一"] }
         #expect(completions == ["最终回复：开始检查，补充一"] && f.store.responseMessage?.content == completions.first)
         #expect(f.synths.count == 1 && f.synths.first?.chunks == ["最终回复：开始检查，补充一"],
                 "Only the final reply is spoken, once; the text before the steering is not")
@@ -483,16 +481,15 @@ extension VoiceTests {
 
         // The reply is still being spoken; the next run starts from the composer, as text does during a call.
         #expect(f.workspace.send("再查一次", conversationID: f.conversation.id))
-        try await waitForAgentVoice("second run") { f.store.isGenerating && stopGate.arrivals == 1 }
+        try await eventually("second run", timeout: .seconds(8)) { f.store.isGenerating && stopGate.arrivals == 1 }
         f.workspace.stop(conversationID: f.conversation.id)
         #expect(f.store.task?.status == .stopping && !f.store.canSubmit)
         #expect(!f.workspace.send("停止期间", conversationID: f.conversation.id), "Nothing starts during cleanup")
-        try await waitForAgentVoice("stopped") { f.store.task?.status == .stopped }
-        await tick()
+        try await eventually("stopped", timeout: .seconds(8)) { f.store.task?.status == .stopped }
         #expect(f.voice.isActive && f.store.canSubmit && f.synths.count == 1, "A stopped turn is not spoken and the call goes on")
         let users = f.store.messages.filter { $0.role == .user }.count
         #expect(f.workspace.retry(conversationID: f.conversation.id))
-        try await waitForAgentVoice("continued") { !f.store.isGenerating }
+        try await eventually("continued", timeout: .seconds(8)) { !f.store.isGenerating }
         #expect(f.store.messages.filter { $0.role == .user }.count == users && f.store.responseMessage?.content == "继续后的回复")
     }
 }

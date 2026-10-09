@@ -7,14 +7,6 @@ import Testing
 /// The native Agent engine driven through `TaskStore`, the surface the UI and Live Voice use,
 /// with an in-process scripted model: deterministic and without sockets or the Rust core.
 @MainActor @Suite(.serialized) struct AgentHarnessTests {
-    static func wait(_ label: String, _ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !condition() {
-            try #require(ContinuousClock.now < deadline, "Timed out: \(label)")
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
-
     /// A conversation on the native engine. `saved` receives every checkpoint.
     @MainActor final class Chat {
         let store: TaskStore
@@ -54,7 +46,7 @@ import Testing
                 }
             }
         }
-        func idle() async throws { try await AgentHarnessTests.wait("turn ends") { !self.store.isGenerating } }
+        func idle() async throws { try await eventually("turn ends") { !self.store.isGenerating } }
         var native: NativeAgentState { store.snapshot.native! }
         var assistantTexts: [String] { store.messages.filter { $0.role == .assistant }.map(\.content) }
         var userTexts: [String] { store.messages.filter { $0.role == .user }.map(\.content) }
@@ -128,10 +120,10 @@ import Testing
         try await puppet.answer(.stream(reply))
         // Snapshots trail the model by two chunks.
         try await reply.send(["今天", "天气", "不错，", "适合"])
-        try await Self.wait("the reply streams") { store.replyStream.live?.hasPrefix("今天") == true }
+        try await eventually("the reply streams") { store.replyStream.live?.hasPrefix("今天") == true }
         #expect(store.messages.map(\.role) == [.user], "Only the stream shows the reply: \(store.messages.map(\.content))")
         reply.send("散步。"); reply.finish()
-        try await Self.wait("turn ends") { !store.isGenerating }
+        try await eventually("turn ends") { !store.isGenerating }
         #expect(store.messages.map(\.content) == ["讲讲天气", "今天天气不错，适合散步。"] && store.replyStream.live == nil)
     }
 
@@ -215,7 +207,7 @@ import Testing
         let unset = TaskStore(harness: AgentHarness(resolveModel: { throw SettingsError("请先在设置中配置并保存默认模型。") }))
         unset.checkpoint = { _ in }
         #expect(unset.send("hello"))
-        try await Self.wait("settings failure") { !unset.isGenerating }
+        try await eventually("settings failure") { !unset.isGenerating }
         #expect(unset.task?.status == .failed && unset.notice == "请先在设置中配置并保存默认模型。" && unset.canSubmit && unset.canRetry)
     }
 
@@ -234,7 +226,7 @@ import Testing
         }
         #expect(chat.store.send("hello"))
         // Stream snapshots can trail what the model sent, so "partial " itself may not show yet.
-        try await Self.wait("partial streamed") { gate.arrivals == 1 }
+        try await eventually("partial streamed") { gate.arrivals == 1 }
         chat.store.stopTask()
         #expect(chat.store.task?.status == .stopping && !chat.store.canSubmit && !chat.store.send("while stopping"))
         try await chat.idle()
@@ -266,7 +258,7 @@ import Testing
             }
         }, project: root)
         #expect(chat.store.send("list"))
-        try await Self.wait("second generation") { gate.arrivals == 1 }
+        try await eventually("second generation") { gate.arrivals == 1 }
         chat.store.stopTask()
         try await chat.idle()
         #expect(chat.store.task?.status == .stopped && chat.store.canRetry)
@@ -321,7 +313,7 @@ import Testing
             }
         }
         #expect(chat.store.send("first"))
-        try await Self.wait("generating") { gate.arrivals == 1 }
+        try await eventually("generating") { gate.arrivals == 1 }
         #expect(chat.store.send("also this"))
         #expect(chat.store.messages.last?.steering == .queued)
         gate.open()
@@ -338,7 +330,7 @@ import Testing
             else { try await emit.text("after \(request.toolOutputs.joined())") }
         }
         #expect(chat.store.send("read"))
-        try await Self.wait("folder requested") { chat.store.needsDirectory }
+        try await eventually("folder requested") { chat.store.needsDirectory }
         #expect(chat.store.task?.summary == "等待选择项目文件夹" && chat.store.tools.first?.state == .running)
         #expect(chat.store.send("never mind"))
         try await chat.idle()
@@ -387,7 +379,7 @@ import Testing
             }
         }
         #expect(chat.store.send("files?"))
-        try await Self.wait("folder requested") { chat.store.needsDirectory }
+        try await eventually("folder requested") { chat.store.needsDirectory }
         chat.project = root
         chat.store.provideDirectory(root)
         try await chat.idle()
@@ -395,7 +387,7 @@ import Testing
 
         chat.project = nil
         #expect(chat.store.send("again"))
-        try await Self.wait("folder requested again") { chat.store.needsDirectory }
+        try await eventually("folder requested again") { chat.store.needsDirectory }
         chat.store.provideDirectory(nil)
         try await chat.idle()
         #expect(chat.store.tools.last?.state == .notExecuted && chat.store.tools.last?.result == AgentToolResult.directoryDeclined)
@@ -425,7 +417,7 @@ import Testing
             if index == 0 { await emit.call("list_files", #"{"path":"."}"#) } else { try await gate.wait() }
         }, project: root)
         #expect(first.store.send("list"))
-        try await Self.wait("second request") { gate.arrivals == 1 }
+        try await eventually("second request") { gate.arrivals == 1 }
         // A crash now: the last save holds the call, its result, and no outcome.
         let crashed = try #require(first.saved.last)
         #expect(crashed.native?.turns.last?.outcome == nil && crashed.task?.status == .running)
@@ -453,7 +445,7 @@ import Testing
         let unset = TaskStore(harness: AgentHarness(resolveModel: { throw SettingsError("请先在设置中配置并保存默认模型。") }))
         unset.checkpoint = { _ in }
         #expect(unset.send("hello"))
-        try await Self.wait("settings failure") { !unset.isGenerating }
+        try await eventually("settings failure") { !unset.isGenerating }
         var reopened = unset.snapshot
         for _ in 0..<3 {
             let store = TaskStore(snapshot: reopened, harness: AgentHarness(resolveModel: { throw SettingsError("x") }))
@@ -473,7 +465,7 @@ import Testing
             } else { try await gate.wait() }
         }, project: root)
         #expect(running.store.send("list"))
-        try await Self.wait("second request") { gate.arrivals == 1 }
+        try await eventually("second request") { gate.arrivals == 1 }
         // A crash with the screen ahead of the last save: the text beside the call is shown, but
         // the save before the tool result is the last one.
         var crashed = try #require(running.saved.first { $0.task?.status == .running })
@@ -621,7 +613,7 @@ import Testing
         var store = workspace()
         let chat = try #require(store.selected)
         #expect(store.send("hello", conversationID: chat.id))
-        try await AgentHarnessTests.wait("reply") { !chat.store.isGenerating }
+        try await eventually("reply") { !chat.store.isGenerating }
         #expect(chat.store.task?.status == .completed)
         store.flush()
         let native = persistence.sessionURL(chat.id)
@@ -640,7 +632,7 @@ import Testing
         let reopened = try #require(store.conversation(id: chat.id)).store
         #expect(reopened.agentLoadError == nil && reopened.messages == expected)
         #expect(store.send("again", conversationID: chat.id))
-        try await AgentHarnessTests.wait("second reply") { !reopened.isGenerating }
+        try await eventually("second reply") { !reopened.isGenerating }
         #expect(reopened.messages.last?.content == "reply 2")
         store.flush(); store.shutdown()
 
@@ -673,7 +665,6 @@ import Testing
 /// bash on the native engine, with a fake runner in place of the Rust core.
 @MainActor @Suite(.serialized) struct NativeBashTests {
     typealias Chat = AgentHarnessTests.Chat
-    static func wait(_ label: String, _ condition: () -> Bool) async throws { try await AgentHarnessTests.wait(label, condition) }
     static func canonical(_ url: URL) -> String { ExecutionService.canonicalPath(url.path)! }
 
     @Test func aCommandRunsAfterItsFolderLeaseAndSave() async throws {
@@ -751,7 +742,7 @@ import Testing
             } else { try await emit.text("continued") }
         }, project: root, runner: runner)
         #expect(chat.store.send("run"))
-        try await Self.wait("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == .running } }
+        try await eventually("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == .running } }
         #expect(chat.store.tools.contains { $0.result == #"{"stdout":"first"}"# && $0.state == .finished },
                 "A finished command shows its result before the batch is written")
         chat.store.stopTask()
@@ -778,7 +769,7 @@ import Testing
             }
         }, project: root, runner: runner)
         #expect(chat.store.send("run"))
-        try await Self.wait("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == .running } }
+        try await eventually("second command runs") { runner.runs.count == 2 && chat.store.tools.contains { $0.state == .running } }
         chat.store.stopTask()
         try await chat.idle()
         #expect(chat.store.tools.map(\.command) == ["first", "second"])
@@ -790,11 +781,12 @@ import Testing
     @Test func stopDuringACommandMarksOnlyThatCallUnknown() async throws {
         let root = try AgentHarnessTests.project()
         defer { try? FileManager.default.removeItem(at: root) }
-        let cleaned = Mutex(false)
+        let cleaned = Mutex(false), cleanup = ScriptGate()
         let runner = AgentHarnessTests.FakeRunner { _, _, _ in
             while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
-            // The process tree is being killed; cancellation does not cut that short.
-            await Task.detached { try? await Task.sleep(for: .milliseconds(300)) }.value
+            // The process tree is being killed until the test lets the cleanup end; cancellation
+            // does not cut that short, so the wait runs outside the cancelled task.
+            await Task.detached { try? await cleanup.wait() }.value
             cleaned.withLock { $0 = true }
             return .cancelled
         }
@@ -804,10 +796,13 @@ import Testing
             } else { try await emit.text("continued") }
         }, project: root, runner: runner)
         #expect(chat.store.send("run"))
-        try await Self.wait("command starts") { chat.store.tools.contains { $0.state == .running } }
+        try await eventually("command starts") { chat.store.tools.contains { $0.state == .running } }
         let runningID = try #require(chat.store.tools.first { $0.state == .running }?.callID)
         chat.store.stopTask()
         #expect(chat.store.task?.status == .stopping && !chat.store.canSubmit)
+        try await eventually("the command's cleanup begins") { cleanup.arrivals == 1 }
+        #expect(chat.store.task?.status == .stopping && !chat.store.canSubmit, "Stop waits while the command cleans up")
+        cleanup.open()
         try await chat.idle()
         #expect(cleaned.withLock { $0 }, "Stop ends only after the command's cleanup")
         #expect(runner.runs.count == 1, "The second identical call never started")
@@ -831,7 +826,7 @@ import Testing
         chat.store.cancelDirectoryWait = { scheduler.cancelWait(owner) }
         chat.store.releaseDirectory = { scheduler.release(owner) }
         #expect(chat.store.send("make"))
-        try await Self.wait("queued behind another conversation") { chat.store.waitingForProject }
+        try await eventually("queued behind another conversation") { chat.store.waitingForProject }
         #expect(chat.store.task?.summary == "等待项目空闲…" && chat.store.tools.first?.state == .waiting)
         #expect(chat.store.send("never mind"))
         try await chat.idle()
@@ -865,7 +860,7 @@ import Testing
             if index == 0 { await emit.call("bash", #"{"command":"make"}"#) } else { try await emit.text("done") }
         }, project: root, runner: runner)
         #expect(chat.store.send("make"))
-        try await Self.wait("asks for a folder") { chat.store.needsDirectory }
+        try await eventually("asks for a folder") { chat.store.needsDirectory }
         #expect(chat.store.tools.first?.state == .waiting, "Nothing ran in the moved folder")
         chat.project = elsewhere
         chat.store.provideDirectory(elsewhere)

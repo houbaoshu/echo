@@ -350,15 +350,16 @@ import Testing
                                       transport: Self.transport(), ledger: ledger, budget: GenerationBudget())
         let session = LanguageModelSession(profile: TestProfile(model: model), history: [])
         let task = Task { for try await _ in session.streamResponse(to: "go") {} }
-        var deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while Stub.state.withLock({ $0.delivered }) == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-        try await Task.sleep(for: .milliseconds(50))
+        try await eventually("the stub delivers the first chunk") { Stub.state.withLock { $0.delivered } > 0 }
+        // The cut-off reply has to be under way in the session. Its first chunk shows in no
+        // snapshot (they trail the model by two chunks, and the next is ten seconds away), so
+        // nothing marks that the session took it in: give it the time the test always gave it.
+        await observationWindow(.milliseconds(50))
         let started = ContinuousClock.now
         task.cancel()
         _ = await task.result
         #expect(ContinuousClock.now - started < .seconds(2))
-        deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while Stub.state.withLock({ $0.stopped }) == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        try await eventually("the HTTP request is cancelled", timeout: .seconds(2)) { Stub.state.withLock { $0.stopped } == 1 }
         #expect(Stub.state.withLock { $0.stopped } == 1, "The HTTP request is cancelled")
         let responses = session.transcript.compactMap { if case .response(let r) = $0 { r.id } else { nil } }
         #expect(responses.allSatisfy { !ledger.isComplete($0) }, "A cut-off reply is never recorded as finished")

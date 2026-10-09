@@ -41,21 +41,6 @@ extension PuppetStream {
     func sendWhole(_ chunks: [String]) async throws { try await send(chunks + ["", ""]) }
 }
 
-/// Runs a condition check until it holds. With `view`, lays it out before each look, so SwiftUI
-/// has drawn the latest state. After five seconds it records which condition it was waiting for
-/// and throws, which ends the test there.
-@MainActor private func eventually(_ label: @autoclosure () -> String, layingOut view: NSView? = nil,
-                                   file: StaticString = #filePath, line: UInt = #line,
-                                   _ condition: () -> Bool) async throws {
-    let deadline = Date().addingTimeInterval(5)
-    while true {
-        view?.layoutSubtreeIfNeeded()
-        if condition() { return }
-        guard Date() < deadline else { throw stopTest("Timed out: \(label())", file: file, line: line) }
-        try await Task.sleep(for: .milliseconds(10))
-    }
-}
-
 /// Records `message` as a failure and returns an error to throw, so the test stops right there.
 /// Read the recorded failure, not the "caught error" XCTest adds for the throw: XCTest reports the
 /// last Swift error thrown during the test, and when a test's `defer` orders a SwiftUI window out
@@ -67,13 +52,6 @@ private func stopTest(_ message: String, file: StaticString = #filePath, line: U
 private struct TestStopped: Error, CustomStringConvertible {
     let message: String
     var description: String { message }
-}
-
-/// Lets the main queue run everything already queued on it, such as work a handler sent off
-/// with `DispatchQueue.main.async`. Enough for a check that something does not happen only
-/// where the handler itself runs synchronously; anything later needs an observation window.
-@MainActor private func nextMainTurn() async {
-    await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
 }
 
 /// A drag carrying the given file URLs, one pasteboard item each, as Finder writes them.

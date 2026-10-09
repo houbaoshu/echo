@@ -63,7 +63,7 @@ import Testing
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.checkpoint = { [unowned self] in self.saved.append($0) }
         }
-        func idle() async throws { try await AgentHarnessTests.wait("turn ends") { !self.store.isGenerating } }
+        func idle() async throws { try await eventually("turn ends") { !self.store.isGenerating } }
         var native: NativeAgentState { store.snapshot.native! }
         var assistant: [ConversationMessage] { store.messages.filter { $0.role == .assistant } }
     }
@@ -183,7 +183,7 @@ import Testing
             }
         }
         #expect(chat.store.send("讲个长故事"))
-        try await AgentHarnessTests.wait("the reply streams") { chat.store.replyStream.live?.isEmpty == false }
+        try await eventually("the reply streams") { chat.store.replyStream.live?.isEmpty == false }
         chat.store.stopTask()
         try await chat.idle()
         #expect(chat.store.task?.status == .stopped && chat.assistant.allSatisfy { $0.content.isEmpty })
@@ -207,9 +207,11 @@ import Testing
         let second = LocalChat({ _, _, _ in }, service: service)
         let third = LocalChat({ _, _, _ in }, service: service)
         #expect(first.store.send("one"))
-        try await AgentHarnessTests.wait("first generates") { gate.arrivals == 1 }
+        try await eventually("first generates") { gate.arrivals == 1 }
         #expect(second.store.send("two") && third.store.send("three"))
-        try await Task.sleep(for: .milliseconds(100))
+        // The other two turns queue in LocalChatGate, which keeps its waiters to itself, so nothing
+        // marks that they reached it: watch for a second request for a while.
+        await observationWindow(.milliseconds(100))
         #expect(backend.requests.count == 1, "The others wait for the model")
         third.store.stopTask()
         try await third.idle()
@@ -332,7 +334,7 @@ import Testing
                 }
             }
         }
-        func idle() async throws { try await AgentHarnessTests.wait("turn ends") { !self.store.isGenerating } }
+        func idle() async throws { try await eventually("turn ends") { !self.store.isGenerating } }
         var native: NativeAgentState { store.snapshot.native! }
         var assistant: [ConversationMessage] { store.messages.filter { $0.role == .assistant } }
         var users: [String] { store.messages.filter { $0.role == .user }.map(\.content) }
@@ -523,7 +525,7 @@ import Testing
         let chat = FallbackChat(cloud: { cloud.factory }, backend: backend)
         chat.localOnly = true
         #expect(chat.store.send("一"))
-        try await AgentHarnessTests.wait("the local model generates") { gate.arrivals == 1 }
+        try await eventually("the local model generates") { gate.arrivals == 1 }
         // Switching back to the cloud leaves the reply being written where it is.
         chat.localOnly = false
         gate.open()

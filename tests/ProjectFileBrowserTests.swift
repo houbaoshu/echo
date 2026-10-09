@@ -5,13 +5,6 @@ import Darwin
 import AppKit
 
 @MainActor @Suite(.serialized) enum ProjectFileBrowserTests {
-    static func wait(_ label: String, _ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(5)
-        while !condition() {
-            try #require(Date() < deadline, "Timed out: \(label)")
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
     @Test static func filesystemPermissionsWatchersAndPreviews() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("echo-files-\(UUID())").resolvingSymlinksInPath()
@@ -71,13 +64,13 @@ import AppKit
         browser.togglePreviewExpansion()
         #expect(!browser.isPreviewExpanded, "No preview cannot expand")
         browser.select(project: project)
-        try await wait("root loaded") { if case .loaded = browser.state.directories[""] { return true }; return false }
+        try await eventually("root loaded") { if case .loaded = browser.state.directories[""] { return true }; return false }
         #expect(browser.state.directories["dir"] == nil, "No eager recursion")
         browser.toggleDirectory("dir")
-        try await wait("expanded") { if case .loaded = browser.state.directories["dir"] { return true }; return false }
+        try await eventually("expanded") { if case .loaded = browser.state.directories["dir"] { return true }; return false }
         browser.setScrollID("dir")
         browser.openFile("file2.txt")
-        try await wait("preview") { browser.state.preview == .text("你好\nsecond\tline") }
+        try await eventually("preview") { browser.state.preview == .text("你好\nsecond\tline") }
         browser.togglePreviewExpansion()
         #expect(browser.isPreviewExpanded)
         browser.refresh()
@@ -92,41 +85,41 @@ import AppKit
         browser.select(project: project)
         #expect(browser.state.expanded == ["dir"] && browser.state.selectedPath == "file2.txt")
         browser.openFile("file2.txt")
-        try await wait("preview after return") { browser.state.preview == .text("你好\nsecond\tline") }
+        try await eventually("preview after return") { browser.state.preview == .text("你好\nsecond\tline") }
         browser.togglePreviewExpansion()
         browser.openFile("file10.txt")
         #expect(!browser.isPreviewExpanded, "Changing file clears expansion")
         browser.openFile("file2.txt")
-        try await wait("original preview") { browser.state.preview == .text("你好\nsecond\tline") }
+        try await eventually("original preview") { browser.state.preview == .text("你好\nsecond\tline") }
         try write("file2.txt", Data("updated".utf8))
         browser.refresh(projectID: UUID())
         #expect(browser.state.preview == .text("你好\nsecond\tline"), "Unrelated background task does not refresh or switch project")
-        try await wait("automatic preview update") { browser.state.preview == .text("updated") }
+        try await eventually("automatic preview update") { browser.state.preview == .text("updated") }
         try fm.removeItem(at: root.appendingPathComponent("file2.txt"))
-        try await wait("automatic deleted preview") { if case .failed = browser.state.preview { return true }; return false }
+        try await eventually("automatic deleted preview") { if case .failed = browser.state.preview { return true }; return false }
         browser.returnToDirectory()
         func names(_ path: String = "") -> [String] {
             guard case .loaded(let entries) = browser.state.directories[path] else { return [] }
             return entries.map(\.name)
         }
         try write("dir/new.txt", Data("new".utf8))
-        try await wait("nested file creation") { names("dir").contains("new.txt") }
+        try await eventually("nested file creation") { names("dir").contains("new.txt") }
         try fm.moveItem(at: root.appendingPathComponent("dir/new.txt"), to: root.appendingPathComponent("dir/renamed.txt"))
-        try await wait("nested file rename") { names("dir").contains("renamed.txt") && !names("dir").contains("new.txt") }
+        try await eventually("nested file rename") { names("dir").contains("renamed.txt") && !names("dir").contains("new.txt") }
         try fm.removeItem(at: root.appendingPathComponent("dir/renamed.txt"))
-        try await wait("nested file deletion") { !names("dir").contains("renamed.txt") }
+        try await eventually("nested file deletion") { !names("dir").contains("renamed.txt") }
         try fm.createDirectory(at: root.appendingPathComponent("created/child"), withIntermediateDirectories: true)
-        try await wait("directory creation") { names().contains("created") }
+        try await eventually("directory creation") { names().contains("created") }
         browser.toggleDirectory("created")
-        try await wait("new directory expands") { names("created").contains("child") }
+        try await eventually("new directory expands") { names("created").contains("child") }
         try fm.moveItem(at: root.appendingPathComponent("created"), to: root.appendingPathComponent("renamed"))
-        try await wait("directory rename") { names().contains("renamed") && !names().contains("created") }
+        try await eventually("directory rename") { names().contains("renamed") && !names().contains("created") }
         try fm.removeItem(at: root.appendingPathComponent("renamed"))
-        try await wait("directory deletion") { !names().contains("renamed") }
+        try await eventually("directory deletion") { !names().contains("renamed") }
         browser.toggleDirectory("dir")
         #expect(!browser.state.expanded.contains("dir"))
         try write("dir/collapsed.txt", Data())
-        try await wait("loaded collapsed directory updates") { names("dir").contains("collapsed.txt") }
+        try await eventually("loaded collapsed directory updates") { names("dir").contains("collapsed.txt") }
         browser.toggleDirectory("dir")
         #expect(browser.state.expanded.contains("dir") && browser.state.scrollID == "dir")
         let otherRoot = root.appendingPathComponent("other")
@@ -139,12 +132,12 @@ import AppKit
         browser.select(project: project)
         #expect(!browser.isPreviewExpanded, "Cached project cannot restore expansion")
         browser.select(project: other)
-        try await wait("switch project") { browser.state.directories[""] == .loaded([]) }
+        try await eventually("switch project") { browser.state.directories[""] == .loaded([]) }
         try write("old-project.txt", Data())
         try await Task.sleep(for: .milliseconds(500))
         #expect(browser.location?.projectID == other.id && browser.state.directories[""] == .loaded([]))
         try write("other/current.txt", Data())
-        try await wait("new project watcher") { names().contains("current.txt") }
+        try await eventually("new project watcher") { names().contains("current.txt") }
         browser.select(project: nil)
         try write("other/after-detach.txt", Data())
         try await Task.sleep(for: .milliseconds(500))
@@ -152,7 +145,7 @@ import AppKit
         var relocated = project; relocated.path = root.appendingPathComponent("missing").path
         browser.select(project: relocated)
         #expect(browser.state.selectedPath == nil && browser.state.expanded.isEmpty)
-        try await wait("missing root") { if case .failed = browser.state.directories[""] { return true }; return false }
+        try await eventually("missing root") { if case .failed = browser.state.directories[""] { return true }; return false }
 
         // Inject slow readers to force old root, old project and old preview results
         // to finish after a newer selection, with no main-thread blocking.
@@ -167,7 +160,7 @@ import AppKit
         var moved = old; moved.path = "/fast"
         slow.select(project: old); slow.openFile("old")
         slow.select(project: moved); slow.openFile("new")
-        try await wait("new result") { slow.state.preview == .text("/fastnew") }
+        try await eventually("new result") { slow.state.preview == .text("/fastnew") }
         try await Task.sleep(for: .milliseconds(250))
         #expect(slow.location?.root == "/fast" && slow.state.preview == .text("/fastnew"))
         #expect(slow.state.directories[""] == .loaded([.init(path: "/fast", name: "/fast", kind: .file)]))
@@ -239,7 +232,7 @@ import AppKit
         defer { gate.releaseFirst() }
         let browser = ProjectFileBrowserStore(readDirectory: { _, path in gate.read(path) })
         browser.select(project: project)
-        try await wait("first refresh started") { gate.counts.calls == 1 }
+        try await eventually("first refresh started") { gate.counts.calls == 1 }
 
         gate.setVersion(2)
         for _ in 0..<100 { browser.refresh() }
@@ -249,12 +242,14 @@ import AppKit
         #expect(gate.counts.calls == 1, "Returning to the same location must wait for its old scan")
 
         gate.releaseFirst()
-        try await wait("coalesced refresh applied latest result") {
+        try await eventually("coalesced refresh applied latest result") {
             gate.counts.calls == 2 && browser.state.directories[""] == .loaded([
                 .init(path: "version-2", name: "version-2", kind: .file)
             ])
         }
-        try await Task.sleep(for: .milliseconds(100))
+        // A third scan would start after the coalesced one hands back its last commit, in a task
+        // that leaves no trace until its reads begin, so watch for one for a while.
+        await observationWindow(.milliseconds(100))
         #expect(gate.counts.calls == 2 && gate.counts.peak == 1,
                      "The burst must produce one follow-up scan, with no concurrent scans")
         browser.select(project: nil)
@@ -280,9 +275,9 @@ import AppKit
         }, readPreview: { _, _ in .text("") })
 
         browser.select(project: WorkspaceProject(name: "commits", path: "/commits"))
-        try await wait("root loaded") { if case .loaded = browser.state.directories[""] { return true }; return false }
+        try await eventually("root loaded") { if case .loaded = browser.state.directories[""] { return true }; return false }
         for folder in folders { browser.toggleDirectory(folder) }
-        try await wait("all expanded") {
+        try await eventually("all expanded") {
             folders.allSatisfy { if case .loaded = browser.state.directories[$0] { return true }; return false }
         }
 
@@ -299,13 +294,12 @@ import AppKit
 
         grown.set()
         browser.refresh()
-        try await wait("every folder grew") {
+        try await eventually("every folder grew") {
             folders.allSatisfy { folder in
                 guard case .loaded(let entries) = browser.state.directories[folder] else { return false }
                 return entries.contains { $0.name == "added.txt" }
             }
         }
-        try await Task.sleep(for: .milliseconds(200))
         #expect(recorder.changedDirectories >= folders.count,
                      "Every grown folder is observed: \(recorder.changedDirectories)")
         #expect(recorder.busiestTurn == 1,
@@ -318,7 +312,9 @@ import AppKit
         let quietSubscription = observeChanges({ browser.state.directories }, initial: true) { quiet.record($0) }
         defer { quietSubscription.cancel() }
         browser.refresh()
-        try await Task.sleep(for: .milliseconds(300))
+        // The refresh reads off the main actor and returns to compare in a task that writes nothing
+        // when nothing changed, so there is no state to wait on: watch for a rewrite for a while.
+        await observationWindow(.milliseconds(300))
         #expect(quiet.changedDirectories == 0,
                      "An unchanged refresh rewrites no directory, saw \(quiet.changedDirectories)")
     }

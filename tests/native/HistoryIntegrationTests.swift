@@ -15,18 +15,18 @@ extension EchoIntegrationScenarios {
         try Data("before\n".utf8).write(to: note)
         let work = f.workspace.newConversation()
         try #require(work.store.send("acceptance-rwv"))
-        try await AgentSessionTests.wait("read/edit/verify directory gate") {
+        try await eventually("read/edit/verify directory gate", timeout: .seconds(8)) {
           work.store.needsDirectory
         }
         #expect(try String(contentsOf: note, encoding: .utf8) == "before\n")
         f.workspace.provideDirectory(project, conversationID: work.id)
-        try await AgentSessionTests.wait("read/edit/verify completion") { !work.store.isGenerating }
+        try await eventually("read/edit/verify completion", timeout: .seconds(8)) { !work.store.isGenerating }
         #expect(work.store.task?.status == .completed)
         #expect(work.store.tools.count == 3 && work.store.tools.allSatisfy { $0.result != nil })
         #expect(try String(contentsOf: note, encoding: .utf8) == "after\n")
         f.protocolName = api == .responses ? .chatCompletions : .responses
         try #require(work.store.send("acceptance-history"))
-        try await AgentSessionTests.wait("protocol switch preserves tools") {
+        try await eventually("protocol switch preserves tools", timeout: .seconds(8)) {
           !work.store.isGenerating
         }
         #expect(work.store.task?.status == .completed && work.store.tools.count == 3)

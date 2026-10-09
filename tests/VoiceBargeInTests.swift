@@ -25,20 +25,32 @@ import Foundation
     func start() async throws {
         audio.holdsPlayback = true
         voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "fake")
-        await VoiceTests.tick()
+        try await eventually("the call listens") { voice.snapshot.recognition == .listening && recognizers.count == 1 }
         recognizers[0].emit("用户原来的问题", start: 0, end: 200, final: true)
         try await puppet.reply(Self.reply)
-        await VoiceTests.waitUntil { audio.pendingPlays == 1 }
+        try await eventually("audio.pendingPlays == 1") { audio.pendingPlays == 1 }
     }
-    func frames(_ count: Int, _ data: Data = VoiceTests.activityPCM(), epoch: Int? = nil) async {
-        let epoch = epoch ?? audio.captureEpoch
+    /// Sends `count` packets and waits until the call has handled them all, used or dropped.
+    func frames(_ count: Int, _ data: Data = VoiceTests.activityPCM(), epoch: Int? = nil) async throws {
+        let epoch = epoch ?? audio.captureEpoch, handled = audio.handledPackets
         for _ in 0..<count { audio.input?.yield(.init(data: data, epoch: epoch)) }
-        await VoiceTests.tick()
+        try await eventually("the call handles \(count) captured packets") { audio.handledPackets >= handled + count }
     }
-    func probe() async { await frames(5) }
-    func recognize() async {
-        await frames(12) // acoustic tail, deliberately loud to prove it is excluded
-        await frames(5, VoiceTests.activityPCM(amplitude: 0.08))
+    /// Sustained activity, which pauses playback for confirmation.
+    func probe() async throws {
+        try await frames(5)
+        try await eventually("activity pauses playback for confirmation") {
+            audio.playbackPaused && { if case .checking = voice.snapshot.bargeIn { true } else { false } }()
+        }
+    }
+    /// The acoustic tail and then independent activity, which opens a recognizer fed the clean audio.
+    func recognize() async throws {
+        let opened = recognizers.count
+        try await frames(12) // acoustic tail, deliberately loud to prove it is excluded
+        try await frames(5, VoiceTests.activityPCM(amplitude: 0.08))
+        try await eventually("the confirming recognizer receives the clean audio") {
+            recognizers.count == opened + 1 && recognizers.last?.receivedAudio.count == 1
+        }
     }
     func shutdown() { voice.shutdown(); store.shutdown() }
 }
@@ -132,14 +144,14 @@ extension VoiceTests {
             f.store.mainDraft = "保留文字草稿"
             #expect(f.voice.snapshot.bargeIn == .armed(run) && f.audio.monitoring && f.recognizers.count == 1,
                   "first playback arms only local capture; ASR stays closed")
-            await f.probe()
+            try await f.probe()
             // The Agent speaks a turn once it has completed; that completed turn is what must survive.
             #expect(f.audio.playbackPaused && f.store.task?.status == .completed && !f.synths[0].cancelled
                   && f.voice.snapshot.bargeIn == .checking(run) && f.voice.status == "正在确认讲话…",
                   "local activity pauses playback without cancelling or submitting")
-            await f.frames(20, epoch: oldEpoch)
+            try await f.frames(20, epoch: oldEpoch)
             #expect(f.recognizers.count == 1, "queued pre-pause PCM cannot advance confirmation or reach ASR")
-            await f.recognize()
+            try await f.recognize()
             #expect(f.recognizers.count == 2 && f.audio.playbackPaused && f.store.task?.status == .completed,
                   "fresh ASR is opened only after independent post-tail activity")
             #expect(f.recognizers[1].receivedAudio == [Data(repeating: activityPCM(amplitude: 0.08), count: 5)],
@@ -179,15 +191,15 @@ extension VoiceTests {
         try await f.start()
         let run = f.store.task!.runID
         f.audio.releasePlayback()
-        await waitUntil { finishDrain != nil }
+        try await eventually("finishDrain != nil") { finishDrain != nil }
         #expect(f.voice.snapshot.replyAudio == .draining(run), "fixture is in playback drain after synthesis finished")
-        await f.probe(); await f.recognize()
+        try await f.probe(); try await f.recognize()
         f.recognizers[1].emit("我还有个问题", start: 0, end: 300, final: true)
         #expect(f.store.messages[1].status == .completed && f.userTexts.count == 2,
               "barge-in during drain preserves completed assistant text")
-        let state = f.voice.snapshot
+        let state = f.voice.snapshot, drains = f.audio.finishedDrains
         finishDrain?.resume(); finishDrain = nil
-        await tick()
+        try await eventually("the old drain returns") { f.audio.finishedDrains > drains }
         #expect(f.voice.snapshot == state && f.recognizers.count == 2,
               "old drain completion cannot resume listening or alter a new run")
     }
@@ -197,7 +209,7 @@ extension VoiceTests {
         do {
             let f = BargeInFixture() // real 800 ms activity deadline, not the 3 s ASR deadline
             defer { f.shutdown() }
-            try await f.start(); await f.probe()
+            try await f.start(); try await f.probe()
             try await Task.sleep(for: .milliseconds(950))
             #expect(!f.audio.playbackPaused && f.recognizers.count == 1 && !f.synths[0].cancelled,
                   "absence of post-pause activity resumes promptly without waiting for ASR timeout")
@@ -208,15 +220,17 @@ extension VoiceTests {
             let f = BargeInFixture(timeout: .milliseconds(220))
             defer { f.shutdown() }
             try await f.start()
-            await f.frames(1); await f.frames(1, Data(repeating: 0, count: 640))
+            try await f.frames(1); try await f.frames(1, Data(repeating: 0, count: 640))
             #expect(!f.audio.playbackPaused, "a click cannot pause playback")
-            await f.probe()
-            await f.frames(12)
-            await f.frames(12, Data(repeating: 0, count: 640))
+            try await f.probe()
+            try await f.frames(12)
+            try await f.frames(12, Data(repeating: 0, count: 640))
             #expect(f.recognizers.count == 1 && f.userTexts.count == 1,
                   "speaker-only echo and its tail never open ASR or create a turn")
-            try await Task.sleep(for: .milliseconds(250))
             let run = f.store.task!.runID
+            try await eventually("the unconfirmed probe resumes the reply after its 220 ms timeout") {
+                !f.audio.playbackPaused && f.voice.snapshot.bargeIn == .armed(run)
+            }
             #expect(!f.audio.playbackPaused && !f.synths[0].cancelled && f.voice.snapshot.replyAudio == .playing(run)
                   && f.voice.snapshot.bargeIn == .armed(run),
                   "unconfirmed acoustic probe resumes the same reply")
@@ -224,12 +238,14 @@ extension VoiceTests {
         for echo in ["今天的天气非常晴朗。", "今天的天气非常清朗", "？！"] {
             let f = BargeInFixture(timeout: .milliseconds(220))
             defer { f.shutdown() }
-            try await f.start(); await f.probe(); await f.recognize()
+            try await f.start(); try await f.probe(); try await f.recognize()
             f.recognizers[1].emit(echo, start: 0, end: 300, final: false)
             f.recognizers[1].emit(echo, start: 0, end: 500, final: true)
             #expect(f.userTexts.count == 1 && f.voice.subtitle.isEmpty && !f.synths[0].cancelled,
                   "residual echo/empty transcript cannot confirm or submit")
-            try await Task.sleep(for: .milliseconds(250))
+            try await eventually("the echo-only probe gives up after its 220 ms timeout") {
+                !f.audio.playbackPaused && f.recognizers[1].cancelled
+            }
             #expect(!f.audio.playbackPaused && f.recognizers[1].cancelled && f.voice.snapshot.replyAudio == .playing(f.store.task!.runID),
                   "echo-only probe closes its ASR and resumes the existing reply")
             let state = f.voice.snapshot
@@ -245,7 +261,7 @@ extension VoiceTests {
         for action in ["mute", "stop", "send", "end", "failure", "restart"] {
             let f = BargeInFixture(timeout: .milliseconds(240))
             defer { f.shutdown() }
-            try await f.start(); await f.probe(); await f.recognize()
+            try await f.start(); try await f.probe(); try await f.recognize()
             let old = f.recognizers[1]
             var published: [VoiceSessionSnapshot] = []
             let observation = observeChanges({ f.voice.snapshot }, initial: true) { published.append($0) }
@@ -271,7 +287,6 @@ extension VoiceTests {
                 f.voice.end()
                 f.voice.start(conversation: f.conversation, configuration: VoiceConfiguration(), key: "fake")
             }
-            await tick()
             #expect(old.cancelled, "\(action) closes pending barge-in ASR")
             let users = f.userTexts.count
             old.emit("迟到的插话", start: 0, end: 500, final: true)
@@ -297,7 +312,7 @@ extension VoiceTests {
             var finishDrain: CheckedContinuation<Void, Never>?
             f.audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
             defer { finishDrain?.resume(); f.shutdown() }
-            try await f.start(); await f.probe(); await f.recognize()
+            try await f.start(); try await f.probe(); try await f.recognize()
             let run = f.store.task!.runID
             // The Agent sends no more model text after the final reply; TTS can still deliver audio.
             f.audio.holdsPlayback = false
@@ -305,13 +320,16 @@ extension VoiceTests {
             #expect(f.audio.playbackPaused && f.recognizers.count == 2,
                   "later TTS chunks cannot bypass a paused probe")
             f.audio.releasePlayback()
-            await tick()
-            try await Task.sleep(for: .milliseconds(250))
+            try await eventually("the probe gives up after its 220 ms timeout and playback drains") {
+                !f.audio.playbackPaused && f.voice.snapshot.replyAudio == .draining(run) && f.recognizers[1].cancelled
+            }
             #expect(!f.audio.playbackPaused && f.voice.snapshot.replyAudio == .draining(run)
                   && f.store.messages[1].status == .completed && f.recognizers[1].cancelled,
                   "no ASR result resumes a completed model's remaining playback")
+            // The draining state is set before the drain itself begins; release it once it waits.
+            try await eventually("the drain waits to finish") { finishDrain != nil }
             finishDrain?.resume(); finishDrain = nil
-            await waitUntil { f.voice.snapshot.recognition == .listening }
+            try await eventually("f.voice.snapshot.recognition == .listening") { f.voice.snapshot.recognition == .listening }
             #expect(f.voice.snapshot.bargeIn == .off && f.recognizers.count == 3,
                   "normal drain and tail recovery clear the local monitor before fresh listening")
             f.recognizers[1].emit("旧候选", start: 0, end: 300, final: true)
@@ -332,11 +350,11 @@ extension VoiceTests {
             store.send("麦克风首包之前的文字")
             voice.start(conversation: conversation, configuration: VoiceConfiguration(), key: "fake")
             try await puppet.reply("开始播报")
-            await waitUntil { store.task?.status == .completed && permission.isWaiting }
+            try await eventually("store.task?.status == .completed && permission.isWaiting") { store.task?.status == .completed && permission.isWaiting }
             permission.answer(true)
-            await waitUntil { finishDrain != nil }
+            try await eventually("finishDrain != nil") { finishDrain != nil }
             #expect(audio.monitoring, "text reply enables local monitoring even before the first capture packet")
-            try await Task.sleep(for: .milliseconds(120))
+            try await eventually("the first-capture watchdog ends the call after its 70 ms timeout") { !voice.isActive }
             #expect(!voice.isActive && voice.error?.contains("没有返回音频") == true,
                   "local monitoring also enforces the first-capture watchdog")
         }

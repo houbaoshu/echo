@@ -44,7 +44,27 @@ actor PendingModelTester: ConnectionTesting {
         self.recoversDeviceSwitch = recoversDeviceSwitch
         let (stream, continuation) = AsyncThrowingStream<VoiceCapturePacket, Error>.makeStream()
         input = continuation
-        return stream
+        let reader = PacketReader(stream.makeAsyncIterator())
+        return AsyncThrowingStream { @MainActor [weak self] in
+            // The call asks for the next packet only once it has handled the one before.
+            if reader.handedOut { self?.handledPackets += 1 }
+            let packet = try await reader.next()
+            reader.handedOut = packet != nil
+            return packet
+        }
+    }
+    /// Captured packets the call has finished with, across every capture stream, whether it used
+    /// or dropped them: a packet counts once the call asks for the one after it.
+    private(set) var handledPackets = 0
+    @MainActor private final class PacketReader {
+        private var iterator: AsyncThrowingStream<VoiceCapturePacket, Error>.Iterator
+        var handedOut = false
+        init(_ iterator: AsyncThrowingStream<VoiceCapturePacket, Error>.Iterator) { self.iterator = iterator }
+        func next() async throws -> VoiceCapturePacket? {
+            var current = iterator
+            defer { iterator = current }
+            return try await current.next(isolation: #isolation)
+        }
     }
     /// When set, background starts wait in `heldStarts` until `releaseStarts()`, like a slow
     /// engine build; unset, they return at once. A stop() meanwhile cancels them, as VoiceAudio does.
@@ -52,10 +72,14 @@ actor PendingModelTester: ConnectionTesting {
     private var heldStarts: [CheckedContinuation<Void, Never>] = []
     private var stopCalls = 0
     var pendingStarts: Int { heldStarts.count }
+    /// Background starts that have returned or thrown. Counted on the way out, so the caller's
+    /// code after the start has run by the time a test sees the new count.
+    private(set) var finishedStarts = 0
     /// What the last start, background or not, asked for.
     var recoversDeviceSwitch: Bool?
     func startInBackground(capture: Bool, recoversDeviceSwitch: Bool) async throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         stop()
+        defer { finishedStarts += 1 }
         self.recoversDeviceSwitch = recoversDeviceSwitch
         let stops = stopCalls
         if holdsStarts { await withCheckedContinuation { heldStarts.append($0) } }
@@ -89,7 +113,10 @@ actor PendingModelTester: ConnectionTesting {
         played.append(data)
         if holdsPlayback { await withCheckedContinuation { heldPlays.append($0) } }
     }
-    func drain() async throws { await onDrain?() }
+    /// Drains that have returned, counted after `onDrain`: once a test sees the new count, the
+    /// caller's code after the drain has run.
+    private(set) var finishedDrains = 0
+    func drain() async throws { await onDrain?(); finishedDrains += 1 }
     func interruptPlayback() { stops += 1; playbackPaused = false; playbackFrames = 0; releasePlayback() }
     func stop() { stopCalls += 1; capturing = false; playbackPaused = false; monitoring = false; playbackFrames = 0; releasePlayback(); input?.finish(); input = nil }
 }
@@ -160,11 +187,15 @@ actor PendingModelTester: ConnectionTesting {
 @MainActor final class SuspendedRecognizer: VoiceRecognizing {
     var cancelled = false
     var pending: CheckedContinuation<Void, Never>?
+    /// Runs that have returned, counted after the wait: once a test sees the new count, the
+    /// caller's code after the run has run.
+    private(set) var returns = 0
     func run(key: String, audio: AsyncThrowingStream<Data, Error>,
              onReady: (@MainActor () -> Void)? = nil,
              receive: @escaping @MainActor (ASRResult) -> Void) async throws {
         onReady?()
         await withCheckedContinuation { pending = $0 }
+        returns += 1
     }
     func cancel() { cancelled = true; pending?.resume(); pending = nil }
 }
@@ -179,7 +210,6 @@ actor PendingModelTester: ConnectionTesting {
 }
 
 enum VoiceFixtureSupport {
-    @MainActor static func tick() async { try? await Task.sleep(for: .milliseconds(25)) }
     static func activityPCM(amplitude: Double = 0.05, samples: Int = 320) -> Data {
         var data = Data()
         for i in 0..<samples {

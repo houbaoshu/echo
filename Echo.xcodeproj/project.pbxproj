@@ -116,6 +116,11 @@
 		E11600000000000000000B00 /* tests/RuntimeCargoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11600000000000000000F00 /* tests/RuntimeCargoTests.swift */; };
 		E11600000000000000000B01 /* tests/ExecBridgeCargoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11600000000000000000F01 /* tests/ExecBridgeCargoTests.swift */; };
 		E11600000000000000000B02 /* tests/support/CargoTestRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11600000000000000000F02 /* tests/support/CargoTestRun.swift */; };
+		E90000000000000000005A11 /* tests/support/Waiting.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90000000000000000005A01 /* tests/support/Waiting.swift */; };
+		E90000000000000000005A12 /* tests/support/Waiting.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90000000000000000005A01 /* tests/support/Waiting.swift */; };
+		E90000000000000000005A13 /* tests/support/Waiting.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90000000000000000005A01 /* tests/support/Waiting.swift */; };
+		E90000000000000000005A14 /* tests/support/Waiting.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90000000000000000005A01 /* tests/support/Waiting.swift */; };
+		E90000000000000000005A15 /* tests/support/Waiting.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90000000000000000005A01 /* tests/support/Waiting.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -310,6 +315,7 @@
 		E11600000000000000000F01 /* tests/ExecBridgeCargoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/ExecBridgeCargoTests.swift; sourceTree = "<group>"; };
 		E11600000000000000000F02 /* tests/support/CargoTestRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/CargoTestRun.swift; sourceTree = "<group>"; };
 		E11600000000000000000F03 /* tests/support/EchoRustTests-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "tests/support/EchoRustTests-Info.plist"; sourceTree = "<group>"; };
+		E90000000000000000005A01 /* tests/support/Waiting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/Waiting.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -563,6 +569,7 @@
 				89D5CB17C33E07630F4519C6 /* tests/support/VoiceFakes.swift */,
 				6BF4D83C4FDB9149833754EA /* tests/support/AgentVoiceFixture.swift */,
 				655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */,
+				E90000000000000000005A01 /* tests/support/Waiting.swift */,
 				E11600000000000000000F02 /* tests/support/CargoTestRun.swift */,
 				E11600000000000000000F03 /* tests/support/EchoRustTests-Info.plist */,
 			);
@@ -1155,6 +1162,7 @@
 		E110000000000000000000A1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				E90000000000000000005A11 /* tests/support/Waiting.swift in Sources */,
 				F68549B4E6629AA6F02A9CDC /* macos/Features/Agent/ExecutionService.swift in Sources */,
 				0BB27615F70BEF3BF486FD84 /* macos/Features/ProjectBrowser/ProjectPathAccess.swift in Sources */,
 				26BC95D8A7B3E4F129E9AD9F /* macos/Features/Agent/AgentLanguageModels.swift in Sources */,
@@ -1175,6 +1183,7 @@
 		E112000000000000000000A1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				E90000000000000000005A12 /* tests/support/Waiting.swift in Sources */,
 				C622A7EBBE746BA108EA86AA /* tests/support/ScriptedAgentModel.swift in Sources */,
 				E11200000000000000000B00 /* AgentSessionTests.swift in Sources */,
 				775CBE322F97683D29D5475B /* tests/support/LoopbackModelServer.swift in Sources */,
@@ -1191,6 +1200,7 @@
 		E113000000000000000000A1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				E90000000000000000005A13 /* tests/support/Waiting.swift in Sources */,
 				4BC45D0F3EB64F8C20E7ACCA /* tests/support/ScriptedAgentModel.swift in Sources */,
 				E11300000000000000000B00 /* VoiceTests.swift in Sources */,
 				E11300000000000000000B01 /* VoiceBargeInTests.swift in Sources */,
@@ -1205,6 +1215,7 @@
 		E114000000000000000000A1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				E90000000000000000005A14 /* tests/support/Waiting.swift in Sources */,
 				3B42CB39447CC127369519D4 /* tests/AgentHarnessTests.swift in Sources */,
 				DDBEF3D5359192AC5896BA28 /* tests/AgentModelTests.swift in Sources */,
 				F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */,
@@ -1218,6 +1229,7 @@
 		E115000000000000000000A1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
+				E90000000000000000005A15 /* tests/support/Waiting.swift in Sources */,
 				95CCEB857B3C1FC166E82D2E /* tests/support/ScriptedAgentModel.swift in Sources */,
 				E11500000000000000000B00 /* ConversationUITests.swift in Sources */,
 				EE2B5A483F67D04C0F2A9F6A /* tests/support/EchoTestResources.swift in Sources */,

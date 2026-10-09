@@ -21,7 +21,10 @@ import Foundation
     var outputMuted = false
     func setOutputMuted(_ muted: Bool) { outputMuted = muted }
     func play(_ data: Data) async throws {}
-    func drain() async throws { await onDrain?() }
+    /// Drains that have returned, counted after `onDrain`: once a test sees the new count, the
+    /// caller's code after the drain has run.
+    var finishedDrains = 0
+    func drain() async throws { await onDrain?(); finishedDrains += 1 }
     func interruptPlayback() { interruptions += 1 }
     func stop() { capturing = false; input?.finish(); input = nil; onStop?() }
 }
@@ -60,14 +63,6 @@ import Foundation
 /// Agent with its own puppet model, so text sent during a turn steers it, only a turn's final reply
 /// is spoken, and ending the call leaves the Agent running (see AgentVoiceTests for the voice side).
 @MainActor @Suite(.serialized) enum WorkspaceVoiceCommandTests {
-    static func tick() async { try? await Task.sleep(for: .milliseconds(25)) }
-    static func wait(_ label: String, _ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !condition() {
-            try #require(ContinuousClock.now < deadline, "Timed out: \(label)")
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
     @Test static func routesVoiceCommands() async throws {
         let audio = CommandAudio()
         var permission: CheckedContinuation<Bool, Never>?
@@ -92,7 +87,7 @@ import Foundation
         let initial = PuppetStream()
         try await ma.answer(.stream(initial))
         try await initial.send(["initial ", "partial", "…", "…"])
-        try await wait("A's reply streams") { a.store.replyStream.live?.hasPrefix("initial partial") == true }
+        try await eventually("A's reply streams") { a.store.replyStream.live?.hasPrefix("initial partial") == true }
         let b = workspace.newConversation(), mb = puppets.models[1]
         let initialRun = a.store.task!.runID
         #expect(workspace.startVoice(conversationID: a.id), "Voice starts on explicit A while viewing B")
@@ -104,20 +99,23 @@ import Foundation
               "Workspace and controller both reject a second Session while starting")
         #expect(workspace.selectedID == b.id && voice.snapshot.session == .starting(firstOwner), "Rejected start never navigates or migrates")
         #expect(workspace.send("B parallel", conversationID: b.id) && a.store.isGenerating, "A Voice allows an independent B model")
-        await tick(); permission?.resume(returning: true); permission = nil; await tick()
+        try await eventually("the call asks for the microphone") { permission != nil }
+        permission?.resume(returning: true); permission = nil
+        try await eventually("the call becomes active and listens") { voice.snapshot.session == .active(firstOwner) && voice.snapshot.recognition == .listening && recognizers.count == 1 }
         #expect(voice.snapshot.session == .active(firstOwner) && recognizers.count == 1 && voice.snapshot.recognition == .listening
               && audio.capturing, "Active Voice listens during the existing Agent run, where speech would steer it")
         #expect(!workspace.startVoice(conversationID: b.id), "Active Session rejects a second start")
         let bReply = PuppetStream()
         try await mb.answer(.stream(bReply))
-        try await initial.send(["full", "…"]); try await bReply.send(["B partial", "…", "…"]); await tick()
+        try await initial.send(["full", "…"]); try await bReply.send(["B partial", "…", "…"])
+        try await eventually("both replies stream") { a.store.replyStream.live?.contains("full") == true && b.store.replyStream.live?.hasPrefix("B partial") == true }
         #expect(synths.isEmpty, "Text of A's and B's runs never enters TTS while it is written")
         initial.finish()
-        try await wait("A's final reply is spoken") { synths.count == 1 && !synths[0].chunks.isEmpty }
+        try await eventually("A's final reply is spoken") { synths.count == 1 && !synths[0].chunks.isEmpty }
         let aFinal = try #require(a.store.responseMessage?.content)
         #expect(aFinal.hasPrefix("initial partial"), "The run Voice joined is spoken once, from its final reply")
         #expect(synths[0].chunks == [aFinal], "The run Voice joined is spoken once, from its final reply")
-        try await wait("listening resumes") { voice.snapshot.recognition == .listening && recognizers.count == 2 }
+        try await eventually("listening resumes") { voice.snapshot.recognition == .listening && recognizers.count == 2 }
         let oldASR = recognizers[1]
         oldASR.emit("unconfirmed", final: false)
         a.store.mainDraft = " \n "
@@ -131,16 +129,17 @@ import Foundation
         #expect(userTexts(a) == ["A initial", "A spoken text"], "Delayed discarded final cannot submit")
         let spoken = PuppetStream()
         try await ma.answer(.stream(spoken))
-        try await spoken.send(["stopped ", "answer", "…", "…"]); await tick()
+        try await spoken.send(["stopped ", "answer", "…", "…"])
+        try await eventually("A's new reply streams") { a.store.replyStream.live?.hasPrefix("stopped answer") == true }
         #expect(synths.count == 1, "A's new run is not spoken while it is written")
         let aState = voice.snapshot, aCancels = ma.cancelledCount
         workspace.stop(conversationID: b.id)
-        try await wait("B stops") { !b.store.isGenerating }
+        try await eventually("B stops") { !b.store.isGenerating }
         #expect(voice.snapshot == aState && ma.cancelledCount == aCancels, "B Stop cannot touch A")
         let bMessageCount = b.store.messages.count
         #expect(workspace.retry(conversationID: b.id) && b.store.messages.count == bMessageCount, "B Continue adds no message of its own")
         try await mb.reply("B retried")
-        try await wait("B answers") { !b.store.isGenerating }
+        try await eventually("B answers") { !b.store.isGenerating }
         #expect(synths.count == 1 && voice.snapshot == aState, "B Continue and completion cannot enter A TTS or change A state")
         a.store.followUpDraft = "A replacement"; a.store.toggleFollowUp()
         let aRun = a.store.task?.runID
@@ -154,14 +153,15 @@ import Foundation
               "The steered request carries the follow-up after the earlier input")
         let replacement = PuppetStream()
         try await ma.answer(.stream(replacement))
-        try await replacement.send(["replacement ", "partial", "…", "…"]); await tick()
+        try await replacement.send(["replacement ", "partial", "…", "…"])
+        try await eventually("the replacement streams") { a.store.replyStream.live?.hasPrefix("replacement partial") == true }
         workspace.toggleVoiceMute(owner: firstOwner)
         workspace.stop(conversationID: a.id)
         #expect(a.store.task?.status == .stopping && voice.snapshot.recognition == .off(.stopping), "Stop waits for cleanup with input paused")
         let stoppingState = voice.snapshot, stopCount = audio.interruptions
         workspace.stop(conversationID: a.id)
         #expect(voice.snapshot == stoppingState && audio.interruptions == stopCount, "Repeated Stop during cleanup is a no-op")
-        try await wait("A stops") { !a.store.isGenerating }
+        try await eventually("A stops") { !a.store.isGenerating }
         #expect(voice.isActive && voice.isMuted && a.store.task?.status == .stopped
               && !a.store.messages.contains { $0.content.hasPrefix("replacement") },
               "Stop retains Session and user mute, and drops the cut-off reply")
@@ -193,7 +193,9 @@ import Foundation
         #expect(workspace.send("during permission", conversationID: a.id) && a.store.messages.last?.steering == .queued,
               "Starting Session accepts text, which steers A's run")
         let startingSynths = synths.count
-        await tick(); permission?.resume(returning: true); permission = nil; await tick()
+        try await eventually("the call asks for the microphone") { permission != nil }
+        permission?.resume(returning: true); permission = nil
+        try await eventually("activation listens") { voice.snapshot.recognition == .listening }
         #expect(voice.snapshot.recognition == .listening && synths.count == startingSynths, "Activation listens during A's run")
         // The Continue request answers first; with the follow-up queued, its text is not the reply.
         try await ma.reply("continued")
@@ -204,14 +206,16 @@ import Foundation
         var finishDrain: CheckedContinuation<Void, Never>?
         audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
         try await ma.reply("startup text")
-        try await wait("the final's audio drains") { finishDrain != nil }
+        try await eventually("the final's audio drains") { finishDrain != nil }
         #expect(!a.store.isGenerating && voice.snapshot.replyAudio.runID != nil && synths.count == startingSynths + 1
               && synths.last?.chunks == ["startup text"], "Only the final reply is spoken, and the fixture holds its audio")
         let completedMessage = a.store.messages.last!
         #expect(workspace.send("replace draining audio", conversationID: a.id), "Text replaces audio after model completion")
         #expect(a.store.messages.contains(completedMessage) && synths.last?.cancelled == true,
               "Replacing audio preserves the completed text status")
-        finishDrain?.resume(); finishDrain = nil; audio.onDrain = nil; await tick()
+        let drains = audio.finishedDrains
+        finishDrain?.resume(); finishDrain = nil; audio.onDrain = nil
+        try await eventually("the old drain returns") { audio.finishedDrains > drains }
         #expect(a.store.isGenerating && a.store.messages.last?.content == "replace draining audio", "Old drain cannot finish the new run")
         workspace.endVoice(owner: nextOwner)
         b.store.mainDraft = "B follow-up"
@@ -219,8 +223,12 @@ import Foundation
               "Without Live Voice a chat steers its running turn the same way")
         #expect(workspace.startVoice(conversationID: a.id), "Permission cancellation fixture starts")
         let cancelledOwner = voice.snapshot.session.owner!
-        await tick(); workspace.endVoice(owner: cancelledOwner)
-        permission?.resume(returning: true); permission = nil; await tick()
+        try await eventually("the call asks for the microphone") { permission != nil }
+        workspace.endVoice(owner: cancelledOwner)
+        permission?.resume(returning: true); permission = nil
+        // The startup task resumes on the late approval and must stop there; the permission closure
+        // does not return on the call's own job, so nothing marks that it has, and the window stays.
+        await observationWindow(.milliseconds(25))
         #expect(!voice.isActive && !audio.capturing, "End during permission rejects the late approval")
         workspace.deleteConversation(a.id)
         #expect(!workspace.send("deleted", conversationID: a.id) && !workspace.retry(conversationID: a.id)
