@@ -37,6 +37,14 @@ extension VoiceTests {
         try await eventually("the unmuted call listens on a new recognizer") { f.voice.snapshot.recognition == .listening && f.recognizers.count == 2 }
         #expect(f.voice.snapshot.recognition == .listening && f.recognizers.count == 2,
               "unmute resumes input while the Agent is still running")
+        // Request 1 asked for the folder; the generation the follow-up superseded never reached
+        // the model. Request 2 takes the follow-ups so far and waits at the model; until then a
+        // follow-up sent below could still join it, leaving nothing queued for Continue.
+        try await eventually("request 2 has taken the earlier follow-ups and waits at the model") {
+            f.puppet.requests.count == 2 && f.puppet.waiting == 1
+                && f.puppet.requests.last?.userTexts.suffix(3) == ["先回答问题", "补充一", "补充二"]
+                && !f.store.messages.contains { $0.steering == .queued }
+        }
 
         let other = f.workspace.newConversation(), owner = try #require(f.voice.snapshot.session.owner)
         f.workspace.send("其他会话", conversationID: other.id)
@@ -49,6 +57,9 @@ extension VoiceTests {
         try await eventually("listening reopens after the text follow-up") { f.voice.snapshot.recognition == .listening }
         #expect(f.voice.snapshot.recognition == .listening && f.store.mainDraft == "保留草稿",
               "text follow-up reopens listening and preserves drafts")
+        // What the Continue check below relies on: these two are still queued when Stop lands.
+        #expect(f.store.messages.filter { $0.steering == .queued }.map(\.content) == ["原会话补充", "文字补充"],
+                "the two latest follow-ups wait for the next request")
         f.workspace.stop(conversationID: f.conversation.id)
         #expect(f.store.task?.status == .stopping && f.voice.status == "正在停止…" && f.voice.snapshot.recognition == .off(.stopping),
               "explicit Stop waits for cleanup with voice submission paused")
