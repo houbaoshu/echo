@@ -2015,6 +2015,102 @@ private struct ComposerHeightHost: View {
         XCTAssertEqual(axValue(bell), "1 个已完成任务未查看")
     }
 
+    /// A running card offers stop right of the follow-up button while the pointer is on it or its
+    /// follow-up is open, and to VoiceOver and the keyboard as a named action. Stopping keeps the
+    /// card, showing it stopped, and it takes follow-ups as before.
+    func testRunningPetCardStopsFromItsButtonAndNamedAction() async throws {
+        let sessions = PuppetSessions()
+        let workspace = WorkspaceStore(harnessFactory: sessions.factory)
+        defer { workspace.shutdown() }
+        XCTAssertTrue(workspace.sendQuickMessage("先完成的任务"))
+        try await answer("先完成的任务", in: workspace, sessions: sessions, with: .text("已完成的结果"))
+        let completed = try XCTUnwrap(workspace.activity)
+        XCTAssertTrue(workspace.sendQuickMessage("运行中的任务"))
+        let running = try XCTUnwrap(workspace.activity)
+        _ = try await sessions.model(asked: "运行中的任务")
+        XCTAssertNotEqual(running.id, completed.id)
+        XCTAssertEqual(running.store.task?.status, .running)
+
+        var windows: [NSWindow] = []
+        func hosted(_ view: some View) -> NSView {
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CompanionLayout.capsuleWidth + 96, height: 300),
+                                  styleMask: .borderless, backing: .buffered, defer: false)
+            window.contentView = host
+            windows.append(window)
+            return host
+        }
+        func stopActions(_ card: AnyObject) -> [NSAccessibilityCustomAction] {
+            ((card.accessibilityCustomActions?() as? [NSAccessibilityCustomAction]) ?? []).filter { $0.name == "停止回复" }
+        }
+
+        // The pointer on the card shows its buttons; only a running card's include stop.
+        for (conversation, hovered) in [(running, false), (running, true), (completed, true)] {
+            let host = hosted(ActivityCapsule(store: conversation.store, send: {}, placement: ActivityPlacement(),
+                                              stop: { workspace.stop(conversationID: conversation.id) }, hovered: hovered))
+            try await eventually("The card shows", layingOut: host) { findAccessibility("activity.summary", in: host) != nil }
+            let isRunning = conversation.id == running.id
+            let follow = findAccessibility("activity.followUp.toggle", in: host)
+            let stop = findAccessibility("activity.stop", in: host)
+            XCTAssertEqual(follow != nil, hovered, "Follow-up shows on hover, running \(isRunning)")
+            XCTAssertEqual(stop != nil, hovered && isRunning, "Stop shows on hover only while running, hovered \(hovered)")
+            let summary = try XCTUnwrap(findAccessibility("activity.summary", in: host))
+            XCTAssertEqual(stopActions(summary).count, isRunning ? 1 : 0, "Only a running card names stop, hover or not")
+            if let stop, let follow {
+                XCTAssertEqual(stop.accessibilityLabel?(), "停止回复")
+                XCTAssertEqual(stop.accessibilityRole?(), .button)
+                let stopFrame = try XCTUnwrap(axFrame(stop)), followFrame = try XCTUnwrap(axFrame(follow))
+                XCTAssertGreaterThan(stopFrame.minX, followFrame.maxX, "Stop is the rightmost button")
+                XCTAssertEqual(stopFrame.size, followFrame.size, "Stop is the follow-up button's size")
+                XCTAssertEqual(stopFrame.midY, followFrame.midY, accuracy: 0.5)
+            }
+        }
+        XCTAssertEqual(running.store.task?.status, .running, "Showing the buttons stops nothing")
+
+        // An open follow-up shows stop without the pointer; its click stops the task and keeps the card.
+        let tray = hosted(WorkspaceActivityCapsule(workspace: workspace, placement: ActivityPlacement()))
+        workspace.enterPetFollowUp(running.id)
+        try await eventually("The open follow-up shows stop", layingOut: tray) { findAccessibility("activity.stop", in: tray) != nil }
+        let stop = try XCTUnwrap(findAccessibility("activity.stop", in: tray))
+        XCTAssertTrue(stop.accessibilityPerformPress?() == true)
+        try await eventually("Clicking stop stops the task", layingOut: tray) {
+            running.store.task?.status == .stopped && findAccessibility("activity.stop", in: tray) == nil
+        }
+        let stopped = try XCTUnwrap(findAccessibility("activity.summary", in: tray), "The card stays")
+        XCTAssertTrue((stopped.accessibilityLabel?() ?? "").hasPrefix("已停止"), "\(stopped.accessibilityLabel?() ?? "")")
+        XCTAssertEqual(stopActions(stopped).count, 0)
+        XCTAssertNotNil(findAccessibility("activity.followUp", in: tray), "The follow-up stays open")
+        XCTAssertFalse(running.store.activityDismissed)
+        running.store.followUpDraft = "停止后继续"
+        XCTAssertTrue(workspace.sendFollowUp(conversationID: running.id), "A stopped card takes follow-ups")
+        _ = try await sessions.model(asked: "停止后继续")
+        XCTAssertEqual(running.store.task?.status, .running)
+
+        // In the list, the running card's named action stops it; the completed card has none.
+        workspace.exitPetFollowUp()
+        workspace.expandActivityList()
+        var cards: [AnyObject] = []
+        try await eventually("The list shows both cards", layingOut: tray) {
+            cards = findAllAccessibility("activity.summary", in: tray)
+            return cards.count == 2
+        }
+        func card(_ title: String) throws -> AnyObject {
+            try XCTUnwrap(cards.first { ($0.accessibilityLabel?() ?? "").contains(title) }, "The list has \(title)")
+        }
+        XCTAssertNil(findAccessibility("activity.stop", in: tray), "Without the pointer the list shows no stop")
+        XCTAssertEqual(stopActions(try card("先完成的任务")).count, 0)
+        let action = try XCTUnwrap(stopActions(try card("运行中的任务")).first)
+        XCTAssertTrue(action.handler?() ?? (action.target?.perform(action.selector, with: action) != nil))
+        try await eventually("The named action stops the task", layingOut: tray) {
+            cards = findAllAccessibility("activity.summary", in: tray)
+            return running.store.task?.status == .stopped && cards.count == 2
+                && (try? card("运行中的任务"))?.accessibilityLabel?()?.hasPrefix("已停止") == true
+        }
+        XCTAssertEqual(stopActions(try card("运行中的任务")).count, 0)
+        XCTAssertEqual(completed.store.task?.status, .completed)
+        withExtendedLifetime(windows) {}
+    }
+
     func testCompletedPetControlsSurvivePointerExit() async throws {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let sessions = PuppetSessions()
@@ -4454,6 +4550,21 @@ private struct ComposerHeightHost: View {
             guard visited.insert(ObjectIdentifier(object)).inserted else { return }
             if let label = object.accessibilityLabel?() { found.append(label) }
             if let text = axValue(object) { found.append(text) }
+            let children = (value as? NSView)?.accessibilityChildren() ?? object.accessibilityChildren?() ?? []
+            for child in children { visit(child) }
+            if let view = value as? NSView { for child in view.subviews { visit(child) } }
+        }
+        visit(root)
+        return found
+    }
+    /// Every element published with `id`, in tree order.
+    private func findAllAccessibility(_ id: String, in root: Any) -> [AnyObject] {
+        var visited: Set<ObjectIdentifier> = []
+        var found: [AnyObject] = []
+        func visit(_ value: Any) {
+            let object = value as AnyObject
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return }
+            if object.accessibilityIdentifier?() == id { found.append(object) }
             let children = (value as? NSView)?.accessibilityChildren() ?? object.accessibilityChildren?() ?? []
             for child in children { visit(child) }
             if let view = value as? NSView { for child in view.subviews { visit(child) } }

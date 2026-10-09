@@ -112,17 +112,21 @@ struct ActivityCapsule: View {
     var followUp: (() -> Void)?
     var exit: (() -> Void)?
     var end: (() -> Void)?
+    var stop: (() -> Void)?
     /// The front card of a stack: `open` opens the list, and the card has no buttons of its own.
     var stacked = false
     @State private var hovered = false
     @State private var followUpFocusRequest = 0
 
+    /// `hovered` starts the card as if the pointer were on it.
     init(store: TaskStore, send: @escaping () -> Void,
          open: @escaping () -> Void = {}, placement: ActivityPlacement, title: String? = nil,
-         followUp: (() -> Void)? = nil, exit: (() -> Void)? = nil, end: (() -> Void)? = nil, stacked: Bool = false) {
-        self.store = store
+         followUp: (() -> Void)? = nil, exit: (() -> Void)? = nil, end: (() -> Void)? = nil,
+         stop: (() -> Void)? = nil, stacked: Bool = false, hovered: Bool = false) {
+        self.store = store; _hovered = State(initialValue: hovered)
         self.send = send; self.open = open; self.placement = placement
-        self.title = title; self.followUp = followUp; self.exit = exit; self.end = end; self.stacked = stacked
+        self.title = title; self.followUp = followUp; self.exit = exit; self.end = end; self.stop = stop
+        self.stacked = stacked
     }
     /// Only an ended task gets an icon; while it runs, the reply line already says it is working.
     private var statusSymbol: String? {
@@ -161,22 +165,30 @@ struct ActivityCapsule: View {
         return Text("\(icon)  \(heading)")
     }
     private var accessibilitySummary: String { String(localized: "\(statusLabel)，\(cardTitle)，\(summary)") }
-    /// The room the follow-up button takes from the text while it shows.
-    private var followUpInset: CGFloat { hovered || store.isFollowUpExpanded ? 50 : 0 }
+    private var showsButtons: Bool { hovered || store.isFollowUpExpanded }
+    /// Stop shows while the task runs, and stays, disabled, while it is stopping, like the chat's.
+    private var showsStop: Bool { stop != nil && store.isGenerating }
+    private var stopEnabled: Bool { store.task?.status == .running }
+    /// The room the buttons take from the text while they show: each is 28 pt with 8 pt between,
+    /// after the 16 pt padding at the end and 6 pt clear of the text.
+    private var buttonInset: CGFloat {
+        guard showsButtons else { return 0 }
+        return showsStop ? 86 : 50
+    }
     /// A reply that fits on one line gets a line of its own under the title. A longer one runs on
     /// after the title as one paragraph of up to two lines, so it can show more. The choice is made
-    /// at the card's full text width, so showing the follow-up button only squeezes the text and
+    /// at the card's full text width, so showing the buttons only squeezes the text and
     /// never switches the layout. Without a summary the title stands alone, centered in the card.
     private var summaryView: some View {
         Group {
             if summary.isEmpty {
                 headingLabel.lineLimit(1)
-                    .padding(.trailing, followUpInset)
+                    .padding(.trailing, buttonInset)
             } else {
                 ViewThatFits(in: .horizontal) {
                     titleAboveReply
                     paragraph.lineLimit(2)
-                        .padding(.trailing, followUpInset)
+                        .padding(.trailing, buttonInset)
                 }
             }
         }
@@ -187,7 +199,7 @@ struct ActivityCapsule: View {
         .accessibilityLabel(accessibilitySummary)
     }
     /// `ViewThatFits` takes this layout when its ideal width fits. The hidden reply alone sets that
-    /// width, so the title's length and the follow-up button's inset play no part in the choice.
+    /// width, so the title's length and the buttons' inset play no part in the choice.
     private var titleAboveReply: some View {
         ZStack(alignment: .leading) {
             Text(summary).hidden()
@@ -195,7 +207,7 @@ struct ActivityCapsule: View {
                 headingLabel
                 Text(summary).foregroundStyle(.secondary)
             }
-            .padding(.trailing, followUpInset)
+            .padding(.trailing, buttonInset)
             .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
         .lineLimit(1)
@@ -218,24 +230,40 @@ struct ActivityCapsule: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // The buttons show only on hover, out of reach of VoiceOver and the keyboard.
+            .accessibilityActions {
+                if let stop, stopEnabled { Button(String(localized: "停止回复"), action: stop) }
+            }
             .accessibilityIdentifier("activity.summary")
-            if hovered || store.isFollowUpExpanded {
-                Button {
-                    if store.isFollowUpExpanded { (exit ?? store.toggleFollowUp)() }
-                    else { (followUp ?? store.toggleFollowUp)() }
-                } label: {
-                    Image(systemName: "arrowshape.turn.up.left.fill")
-                        .font(.system(.body, weight: .medium))
-                        .frame(width: 28 - systemButtonInset, height: 28 - systemButtonInset)
+            if showsButtons {
+                HStack(spacing: 8) {
+                    Button {
+                        if store.isFollowUpExpanded { (exit ?? store.toggleFollowUp)() }
+                        else { (followUp ?? store.toggleFollowUp)() }
+                    } label: {
+                        roundButtonSymbol("arrowshape.turn.up.left.fill")
+                    }
+                    .buttonStyle(.borderedProminent).buttonBorderShape(.circle).companionControlAppearsActive()
+                    .help(store.isFollowUpExpanded ? "取消跟进" : "跟进")
+                    .accessibilityLabel(store.isFollowUpExpanded ? "取消跟进" : "跟进")
+                    .accessibilityValue(store.isFollowUpExpanded ? "已展开" : "已收起")
+                    .accessibilityIdentifier("activity.followUp.toggle")
+                    if let stop, showsStop {
+                        Button(action: stop) { roundButtonSymbol("stop.fill") }
+                            .buttonStyle(.borderedProminent).buttonBorderShape(.circle).companionControlAppearsActive()
+                            .disabled(!stopEnabled)
+                            .help("停止回复").accessibilityLabel("停止回复")
+                            .accessibilityIdentifier("activity.stop")
+                    }
                 }
-                .buttonStyle(.borderedProminent).buttonBorderShape(.circle).companionControlAppearsActive()
-                .help(store.isFollowUpExpanded ? "取消跟进" : "跟进")
-                .accessibilityLabel(store.isFollowUpExpanded ? "取消跟进" : "跟进")
-                .accessibilityValue(store.isFollowUpExpanded ? "已展开" : "已收起")
-                .accessibilityIdentifier("activity.followUp.toggle")
                 .padding(.trailing, 16)
             }
         }
+    }
+    private func roundButtonSymbol(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(.body, weight: .medium))
+            .frame(width: 28 - systemButtonInset, height: 28 - systemButtonInset)
     }
 
     private var followUpComposer: some View {
@@ -848,7 +876,8 @@ struct WorkspaceActivityCapsule: View {
             open: stacked ? { workspace.expandActivityList() } : { workspace.openPetActivity(conversationID: conversation.id) },
             placement: placement, title: conversation.displayTitle,
             followUp: { workspace.enterPetFollowUp(conversation.id) }, exit: { workspace.exitPetFollowUp() },
-            end: { workspace.dismissPetActivity(conversationID: conversation.id) }, stacked: stacked)
+            end: { workspace.dismissPetActivity(conversationID: conversation.id) },
+            stop: { workspace.stop(conversationID: conversation.id) }, stacked: stacked)
             .id(conversation.id)
     }
     var body: some View {
