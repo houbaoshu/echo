@@ -12,13 +12,17 @@ import Foundation
     var recognizers: [FakeRecognizer] = []
     var synths: [FakeSynthesizer] = []
     let timeout: Duration
+    let activityWindow: Duration
     lazy var voice = VoiceSessionController(audio: audio, recognizer: { [unowned self] in
         let r = FakeRecognizer(); recognizers.append(r); return r
     }, synthesizer: { [unowned self] in
         let s = FakeSynthesizer(); s.emitsAudio = true; synths.append(s); return s
-    }, tailProtectionDuration: .milliseconds(40), bargeInTimeout: timeout, permission: { true })
+    }, tailProtectionDuration: .milliseconds(40), bargeInTimeout: timeout,
+       bargeInActivityWindow: activityWindow, permission: { true })
     lazy var conversation = WorkspaceConversation(store: store)
-    init(timeout: Duration = .seconds(3)) { self.timeout = timeout }
+    init(timeout: Duration = .seconds(3), activityWindow: Duration = .milliseconds(800)) {
+        self.timeout = timeout; self.activityWindow = activityWindow
+    }
     var userTexts: [String] { store.messages.filter { $0.role == .user }.map(\.content) }
     /// Speaks the completed reply, its first audio still playing: the Agent hands TTS the whole
     /// reply at once, so the audio is held to stay in the middle of playback.
@@ -207,10 +211,12 @@ extension VoiceTests {
     @Test @MainActor static func bargeInRejectionTests() async throws {
         _ = NSApplication.shared
         do {
-            let f = BargeInFixture() // real 800 ms activity deadline, not the 3 s ASR deadline
+            // A 100 ms activity window under the real 3 s ASR deadline. The wait stops well short
+            // of 3 s, so resuming on that deadline instead fails.
+            let f = BargeInFixture(activityWindow: .milliseconds(100))
             defer { f.shutdown() }
             try await f.start(); try await f.probe()
-            try await Task.sleep(for: .milliseconds(950))
+            try await eventually("playback resumes after the activity window", timeout: .seconds(1)) { !f.audio.playbackPaused }
             #expect(!f.audio.playbackPaused && f.recognizers.count == 1 && !f.synths[0].cancelled,
                   "absence of post-pause activity resumes promptly without waiting for ASR timeout")
         }

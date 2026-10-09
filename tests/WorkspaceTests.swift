@@ -810,7 +810,10 @@ import FoundationModels
         defer { try? FileManager.default.removeItem(at: directory) }
         let persistence = WorkspacePersistence(url: directory.appendingPathComponent("workspace.json"))
         let puppets = PuppetSessions()
-        let workspace = WorkspaceStore(persistence: persistence, harnessFactory: puppets.factory)
+        // The debounce stays well above the 50 ms between edits below, so only the cap can save
+        // while they keep coming.
+        let workspace = WorkspaceStore(persistence: persistence, saveDebounce: .milliseconds(200),
+                                       maximumSaveDelay: .milliseconds(300), harnessFactory: puppets.factory)
         defer { workspace.shutdown() }
         let conversation = workspace.selected!
         let model = try #require(puppets.last)
@@ -826,10 +829,11 @@ import FoundationModels
         func saved() -> WorkspaceSnapshot.Conversation? { persistence.load().0?.conversations.first { $0.id == conversation.id } }
 
         // A reply being written is not the conversation's yet, so streaming alone saves nothing.
-        // The follow-up draft is typed meanwhile, each edit well inside the 400 ms debounce.
+        // The follow-up draft is typed meanwhile, each edit well inside the 200 ms debounce. Each
+        // round lasts the 300 ms cap and 300 ms more, so at least one capped save lands in it.
         var text = "", typed = 0, previousSavedDraft = -1
         for _ in 0..<2 {
-            let deadline = ContinuousClock.now + .milliseconds(2600)
+            let deadline = ContinuousClock.now + .milliseconds(600)
             while ContinuousClock.now < deadline {
                 text += "片段"; stream.send("片段")
                 typed += 1; conversation.store.followUpDraft = "跟进\(typed)"
@@ -877,7 +881,7 @@ import FoundationModels
         let url = root.appendingPathComponent("workspace.json")
         let puppets = PuppetSessions()
         func open() -> WorkspaceStore {
-            WorkspaceStore(persistence: WorkspacePersistence(url: url), harnessFactory: puppets.factory)
+            WorkspaceStore(persistence: WorkspacePersistence(url: url), saveDebounce: .milliseconds(50), harnessFactory: puppets.factory)
         }
 
         // A chat with a finished reply, a project, and an empty draft: then a fresh launch, so the
@@ -894,7 +898,9 @@ import FoundationModels
         defer { workspace.shutdown() }
         let chat = try #require(workspace.conversation(id: seeded.id))
         let draft = try #require(workspace.selected)
-        try await Task.sleep(for: .milliseconds(600))
+        // Lets the launch's own save land first, so it cannot carry the first field below. A save
+        // can follow another one, so this covers two 50 ms debounces and 50 ms more.
+        await observationWindow(.milliseconds(150))
 
         func archive() throws -> WorkspaceSnapshot { try JSONDecoder().decode(WorkspaceSnapshot.self, from: Data(contentsOf: url)) }
         func saved(_ snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot.Conversation? { snapshot.conversations.first { $0.id == chat.id } }
@@ -944,7 +950,10 @@ import FoundationModels
         try await expectSaved("a dismissed card", { chat.store.closeActivity() }) { saved($0)?.state.activityDismissed == true }
         try await expectSaved("a load error", { chat.store.agentLoadError = "记录无法读取" }) { saved($0)?.state.loadError == "记录无法读取" }
         chat.store.agentLoadError = nil
-        try await Task.sleep(for: .milliseconds(600))
+        try await eventually("the cleared load error is saved") {
+            guard let state = try saved(archive())?.state else { return false }
+            return state.loadError == nil
+        }
         try await expectSaved("a sent message", { #expect(workspace.send("第二个问题", conversationID: chat.id)) }) { _ in
             history()?.messages.contains { $0.content == "第二个问题" } == true
         }

@@ -298,6 +298,8 @@ struct WorkspaceSnapshot: Codable {
     /// fires afterwards is stale and does nothing.
     @ObservationIgnored private var saveTracking = 0
     @ObservationIgnored private var saveDeadline: DispatchTime?
+    private let saveDebounce: DispatchTimeInterval
+    private let maximumSaveDelay: DispatchTimeInterval
     @ObservationIgnored private var shuttingDown = false
     /// A Live Voice conversation whose completed replies have not been viewed. It becomes an
     /// unseen completion only when the voice session ends; until then the conversation is in progress.
@@ -314,8 +316,11 @@ struct WorkspaceSnapshot: Codable {
     convenience init(persistence: WorkspacePersistence,
                      dictation: DictationController = DictationController(),
                      voice: VoiceSessionController = VoiceSessionController(),
+                     saveDebounce: Duration = .milliseconds(400),
+                     maximumSaveDelay: Duration = .seconds(2),
                      harnessFactory: @escaping () -> AgentHarness) {
-        self.init(persistence: persistence, initialStore: nil, dictation: dictation, voice: voice, harnessFactory: harnessFactory)
+        self.init(persistence: persistence, initialStore: nil, dictation: dictation, voice: voice,
+                  saveDebounce: saveDebounce, maximumSaveDelay: maximumSaveDelay, harnessFactory: harnessFactory)
     }
     /// A workspace that is never saved. Without `harnessFactory` its conversations cannot send.
     convenience init(initialStore: TaskStore? = nil,
@@ -325,8 +330,11 @@ struct WorkspaceSnapshot: Codable {
         self.init(persistence: nil, initialStore: initialStore, dictation: dictation, voice: voice, harnessFactory: harnessFactory)
     }
     private init(persistence: WorkspacePersistence?, initialStore: TaskStore?, dictation: DictationController,
-                 voice: VoiceSessionController, harnessFactory: (() -> AgentHarness)?) {
+                 voice: VoiceSessionController, saveDebounce: Duration = .milliseconds(400),
+                 maximumSaveDelay: Duration = .seconds(2), harnessFactory: (() -> AgentHarness)?) {
         self.dictation = dictation; self.voice = voice
+        self.saveDebounce = .nanoseconds(Int(saveDebounce / .nanoseconds(1)))
+        self.maximumSaveDelay = .nanoseconds(Int(maximumSaveDelay / .nanoseconds(1)))
         self.persistence = persistence
         self.harnessFactory = harnessFactory
         voiceObservation = observeChanges({ voice.snapshot.session.owner == nil }, initial: true) { [weak self] ended in
@@ -799,13 +807,13 @@ struct WorkspaceSnapshot: Codable {
         guard !shuttingDown else { return }
         let now = DispatchTime.now()
         // Keep the trailing debounce, but continuous updates cannot postpone a
-        // checkpoint more than two seconds after the first unsaved change.
-        let deadline = saveDeadline ?? (now + 2)
+        // checkpoint more than `maximumSaveDelay` after the first unsaved change.
+        let deadline = saveDeadline ?? (now + maximumSaveDelay)
         saveDeadline = deadline
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { _ = self?.flush() } }
         saveWork = work
-        DispatchQueue.main.asyncAfter(deadline: min(now + 0.4, deadline), execute: work)
+        DispatchQueue.main.asyncAfter(deadline: min(now + saveDebounce, deadline), execute: work)
     }
     @discardableResult func flush() -> Bool {
         saveWork?.cancel(); saveWork = nil; saveDeadline = nil

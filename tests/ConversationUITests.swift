@@ -1099,7 +1099,9 @@ private struct ComposerHeightHost: View {
         }
         defer { pasteboard.clearContents(); pasteboard.writeObjects(savedItems) }
         let code = "\tlet message = \"你好 👋 **literal**\"\n\n    print(message)\n" + String(repeating: "wide ", count: 100) + "\n"
+        // The feedback stays long enough for the checks below to read it before it clears.
         let host = NSHostingView(rootView: AssistantMarkdown(content: "```swift\n\(code)```")
+            .environment(\.codeCopyFeedbackDuration, .milliseconds(300))
             .frame(width: 400, height: 300).accessibilityElement(children: .contain))
         host.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
@@ -1116,11 +1118,10 @@ private struct ComposerHeightHost: View {
         try await eventually("Copy says it copied", layingOut: host) { copyButton()?.accessibilityLabel?() == "已复制" }
         XCTAssertTrue(pasteboard.string(forType: .string) == code, "Copy preserves all code, whitespace and Unicode, without fences")
         XCTAssertTrue(findAccessibility("conversation.code.copy", in: host)?.accessibilityLabel?() == "已复制")
-        // Kept as a fixed wait: the feedback clears on the view's own 1.5 s timer.
-        try await Task.sleep(for: .milliseconds(1600))
         try await eventually("Copy feedback clears", layingOut: host) { copyButton()?.accessibilityLabel?() == "复制代码" }
         XCTAssertTrue(findAccessibility("conversation.code.copy", in: host)?.accessibilityLabel?() == "复制代码", "Copy feedback clears")
         host.rootView = AssistantMarkdown(content: "```python\nprint('updated')\n```")
+            .environment(\.codeCopyFeedbackDuration, .milliseconds(300))
             .frame(width: 400, height: 300).accessibilityElement(children: .contain)
         try await eventually("The code block shows the streamed update", layingOut: host) {
             return accessibilityText(in: host).contains { $0.contains("print('updated')") }
@@ -1969,7 +1970,8 @@ private struct ComposerHeightHost: View {
         let sessions = PuppetSessions()
         let workspace = WorkspaceStore(harnessFactory: sessions.factory)
         let settings = SettingsStore(secrets: ComposerSecrets())
-        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults(),
+                                            activityFadeDuration: .milliseconds(50))
         defer { companion.shutdown() }
         // What ignoring does to the workspace is WorkspaceTests.ignoringPetNotificationsPreservesHistoryAndFutureResults;
         // this is the close button that does it, and what the companion's panels show.
@@ -2013,8 +2015,10 @@ private struct ComposerHeightHost: View {
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let sessions = PuppetSessions()
         let workspace = WorkspaceStore(harnessFactory: sessions.factory)
+        let fade = Duration.milliseconds(50)
         let companion = CompanionController(petStore: pet, workspace: workspace,
-                                            settings: SettingsStore(secrets: ComposerSecrets()), defaults: EchoTestResources.defaults())
+                                            settings: SettingsStore(secrets: ComposerSecrets()), defaults: EchoTestResources.defaults(),
+                                            activityFadeDuration: fade)
         defer { companion.shutdown() }
         let controls = companion.controlsPanel.contentView!
         let presentation = companion.controlsPresentation
@@ -2040,14 +2044,17 @@ private struct ComposerHeightHost: View {
         try await pointer(outside) { node("pet.compose") != nil && node("pet.activity.collapse") != nil }
         XCTAssertFalse(presentation.isHovered)
         XCTAssertTrue(companion.activityPanel.isVisible)
+        // Nothing marks that the controls stayed. The only timed work a pointer move can set off is
+        // the activity panel's fade, whose completion handler orders the panel out, so each window
+        // outlasts the fade by 50 ms.
         for point in [inside, outside, inside, outside] {
             companion.petPanel.samplePointer(at: point)
-            try await Task.sleep(for: .milliseconds(250))
+            await observationWindow(fade + .milliseconds(50))
             XCTAssertNotNil(node("pet.activity.collapse"), "The card's controls survive pointer enter/exit and animation callbacks")
             XCTAssertNil(node("pet.collapsed"))
             XCTAssertTrue(companion.activityPanel.isVisible)
         }
-        try await Task.sleep(for: .seconds(1))
+        await observationWindow(fade + .milliseconds(50))
         XCTAssertNotNil(node("pet.activity.collapse"), "A stationary outside pointer cannot hide completed controls")
         let collapse = try XCTUnwrap(node("pet.activity.collapse"))
         XCTAssertTrue(collapse.accessibilityPerformPress?() == true)
@@ -2063,7 +2070,8 @@ private struct ComposerHeightHost: View {
         let sessions = PuppetSessions()
         let workspace = WorkspaceStore(harnessFactory: sessions.factory)
         let settings = SettingsStore(secrets: ComposerSecrets())
-        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults(),
+                                            activityFadeDuration: .milliseconds(50))
         defer { companion.shutdown() }
         let presentation = companion.controlsPresentation
         // Pointer events now drive sampling; repeat the injected sample until SwiftUI shows `ready`.
@@ -2808,7 +2816,8 @@ private struct ComposerHeightHost: View {
             }, synthesizer: { ComposerSynthesizer() }, permission: { true })
             let workspace = WorkspaceStore(voice: voice, harnessFactory: sessions.factory)
             let settings = SettingsStore(secrets: ComposerSecrets())
-            let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults())
+            let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings, defaults: EchoTestResources.defaults(),
+                                                activityFadeDuration: .milliseconds(50))
             defer { companion.shutdown() }
             if scenario == "card closed with ×" {
                 XCTAssertTrue(workspace.sendQuickMessage("之前的任务"))
@@ -2965,7 +2974,8 @@ private struct ComposerHeightHost: View {
         voice.updateSnapshot { $0.session = .starting(owner) }
         try await eventually("Starting Live Voice shows the connecting button", layingOut: host) { node("voice.connecting") != nil }
         // Kept as a fixed wait: the strip's own transition into the button has to finish before
-        // two renders can show that the dot itself is still.
+        // two renders can show that the dot itself is still. That is the morph transition,
+        // 0.18 s in CompanionViews, which is not injectable.
         try await Task.sleep(for: .milliseconds(240)); host.layoutSubtreeIfNeeded()
         func render() -> Data? {
             guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
@@ -4511,11 +4521,12 @@ private struct ComposerHeightHost: View {
         let url = root.appendingPathComponent("workspace.json")
         let sessions = PuppetSessions()
         let voice = VoiceSessionController(), dictation = DictationController()
+        // The debounce stays well above the 60 ms between reply chunks.
         let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: url), dictation: dictation, voice: voice,
-                                       harnessFactory: sessions.factory)
+                                       saveDebounce: .milliseconds(150), harnessFactory: sessions.factory)
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: SettingsStore(secrets: ComposerSecrets()),
-                                            defaults: EchoTestResources.defaults())
+                                            defaults: EchoTestResources.defaults(), activityFadeDuration: .milliseconds(50))
         defer { companion.shutdown(); workspace.shutdown(); voice.shutdown(); VoiceDiagnostics.shared.cancelTimeline() }
 
         // Saves are counted through the diagnostics timeline, which logs every flush while it is open.
@@ -4529,9 +4540,10 @@ private struct ComposerHeightHost: View {
             begin(name)
             let start = diagnostics.lines.count
             try await body()
-            // Kept as a fixed wait: saves are debounced by the workspace's own 400 ms timer, and
-            // the flush count also checks that no further save follows.
-            try? await Task.sleep(for: .milliseconds(700))
+            // Kept as a fixed wait: the flush count also checks that no further save follows. A
+            // save can set off another one, so this covers two 150 ms debounces and 50 ms more,
+            // which also outlasts the 50 ms activity panel fade.
+            await observationWindow(.milliseconds(350))
             let title = companion.mainWindow?.isVisible == true ? companion.mainWindow?.title ?? "-" : "(hidden)"
             let panels = "pet=\(companion.petPanel.isVisible) activity=\(companion.activityPanel.isVisible) controls=\(companion.controlsPanel.isVisible)"
             var saved = "nothing saved"

@@ -85,7 +85,7 @@ extension EchoVoiceScenarios {
         let voice = VoiceSessionController()
         defer { voice.shutdown() }
         let settings = SettingsStore(secrets: FakeSecrets())
-        let planets = PlanetStore(settings: settings, root: root, voice: voice)
+        let planets = PlanetStore(settings: settings, root: root, voice: voice, endingDuration: .milliseconds(200))
         #expect(planets.active == nil, "an idle session decodes nothing")
 
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
@@ -114,9 +114,9 @@ extension EchoVoiceScenarios {
         voice.end()
         #expect(planets.playing == "review" && planets.active != nil,
               "ending shows review before unloading the planet")
-        try await Task.sleep(for: .milliseconds(1100))
-        #expect(planets.active == nil && planets.playing == nil && voice.snapshot.session == .inactive,
-              "review completes before the call becomes inactive")
+        try await eventually("review completes and the call becomes inactive") {
+            planets.active == nil && planets.playing == nil && voice.snapshot.session == .inactive
+        }
 
         // A clip the runtime accepts can still fail on its first tick. That stops the planet, and
         // the clip it asked for must not outlive the sprite.
@@ -2520,7 +2520,9 @@ extension EchoVoiceScenarios {
     @Test @MainActor static func bubblePetPlanetAndUnseenFollowTheSession() async throws {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
-        let planets = PlanetStore(settings: f.settings, root: EchoTestResources.resource("planets"), voice: f.voice)
+        // Long enough that the ending's review is still showing when each step records it.
+        let planets = PlanetStore(settings: f.settings, root: EchoTestResources.resource("planets"), voice: f.voice,
+                                  endingDuration: .milliseconds(200))
         let companion = CompanionController(petStore: try PetStore(directory: EchoTestResources.resource("pets/chiyan")),
                                             workspace: f.workspace, settings: f.settings, planets: planets,
                                             defaults: EchoTestResources.defaults())

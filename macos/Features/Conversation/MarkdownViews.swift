@@ -76,8 +76,14 @@ struct AssistantMarkdown: View, Equatable {
     }
 }
 
+extension EnvironmentValues {
+    /// How long a code block's copy button shows that the code was copied.
+    @Entry var codeCopyFeedbackDuration: Duration = .milliseconds(1500)
+}
+
 private struct MarkdownCodeBlock: View {
     let text: AttributedString
+    @Environment(\.codeCopyFeedbackDuration) private var copyFeedbackDuration
     @State private var copiedAt: UUID?
 
     var body: some View {
@@ -105,7 +111,7 @@ private struct MarkdownCodeBlock: View {
             .onChange(of: text) { _, _ in copiedAt = nil }
             .task(id: copiedAt) {
                 guard copiedAt != nil else { return }
-                do { try await Task.sleep(for: .milliseconds(1500)) } catch { return }
+                do { try await Task.sleep(for: copyFeedbackDuration) } catch { return }
                 copiedAt = nil
             }
     }

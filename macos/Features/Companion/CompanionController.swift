@@ -48,6 +48,8 @@ import SwiftUI
 
 @MainActor final class CompanionController: NSObject, NSWindowDelegate {
     private let defaults: UserDefaults
+    /// How long the activity panel takes to fade in or out.
+    private let activityFadeDuration: Duration
     let workspace: WorkspaceStore
     let settings: SettingsStore
     let pets: PetCatalog
@@ -88,8 +90,10 @@ import SwiftUI
     var systemOpen: (SystemOpen.Destination) -> Void = { SystemOpen.open($0) }
 
     init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore, pets: PetCatalog? = nil,
-         planets: PlanetStore? = nil, defaults: UserDefaults = .standard) {
+         planets: PlanetStore? = nil, defaults: UserDefaults = .standard,
+         activityFadeDuration: Duration = .milliseconds(200)) {
         self.defaults = defaults
+        self.activityFadeDuration = activityFadeDuration
         self.workspace = workspace
         self.settings = settings; self.pets = pets ?? PetCatalog(settings: settings)
         let planets = planets ?? PlanetStore(settings: settings, voice: workspace.voice)
@@ -300,7 +304,7 @@ import SwiftUI
             return
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
+            context.duration = activityFadeDuration / .seconds(1)
             activityPanel.animator().alphaValue = visible ? 1 : 0
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {

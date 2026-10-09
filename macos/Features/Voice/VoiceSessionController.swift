@@ -121,6 +121,7 @@ enum VoiceCaptureWatchdog {
     private let captureTimeout: Duration
     private let tailProtectionDuration: Duration
     private let bargeInTimeout: Duration
+    private let bargeInActivityWindow: Duration
 
     init(audio: any VoiceAudioHandling = VoiceAudio(),
          recognizer: @escaping () -> any VoiceRecognizing = { DoubaoRecognizer() },
@@ -129,10 +130,11 @@ enum VoiceCaptureWatchdog {
          captureTimeout: Duration = .seconds(5),
          tailProtectionDuration: Duration = .seconds(2),
          bargeInTimeout: Duration = .seconds(3),
+         bargeInActivityWindow: Duration = .milliseconds(800),
          permission: @escaping () async -> Bool = { await AVCaptureDevice.requestAccess(for: .audio) }) {
         self.audio = audio; makeRecognizer = recognizer; makeSynthesizer = synthesizer; self.permission = permission
         self.probeTimeout = probeTimeout; self.captureTimeout = captureTimeout; self.tailProtectionDuration = tailProtectionDuration
-        self.bargeInTimeout = bargeInTimeout
+        self.bargeInTimeout = bargeInTimeout; self.bargeInActivityWindow = bargeInActivityWindow
         super.init()
         // The audio side words its failure in the source language: shown localized, logged as is.
         audio.onFailure = { [weak self] message, failure in
@@ -424,10 +426,10 @@ enum VoiceCaptureWatchdog {
             updateSnapshot { $0.bargeIn = .checking(run) }
             let call = sessionID, token = UUID()
             bargeInID = token
-            bargeInTask = Task { [weak self, bargeInTimeout] in
+            bargeInTask = Task { [weak self, bargeInTimeout, bargeInActivityWindow] in
                 // An echo/click that disappears when playback pauses should not
                 // leave a long gap. Allow more time only for ASR confirmation.
-                let activityWindow = min(bargeInTimeout, .milliseconds(800))
+                let activityWindow = min(bargeInTimeout, bargeInActivityWindow)
                 do { try await Task.sleep(for: activityWindow) } catch { return }
                 if self?.bargeInGate == nil {
                     do { try await Task.sleep(for: bargeInTimeout - activityWindow) } catch { return }

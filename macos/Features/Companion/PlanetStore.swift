@@ -29,9 +29,9 @@ struct PlanetEntry: Identifiable {
     var notice: String?
     /// The clip the planet is playing, so a test can assert a swap kept the current state.
     @ObservationIgnored private(set) var playing: String?
-    /// How long the runtime's `review` clip plays once: five 150 ms frames and a 280 ms hold.
-    private static let endingDuration: Duration = .milliseconds(1030)
-
+    /// How long the runtime's `review` clip plays once. The default follows its timing in
+    /// runtime/src/model.rs:305: six frames, the first five 150 ms each and the last held 280 ms.
+    private let endingDuration: Duration
     private let settings: SettingsStore?
     private let root: URL?
     private let importedRoot: URL?
@@ -41,7 +41,9 @@ struct PlanetEntry: Identifiable {
     @ObservationIgnored private var voiceObservation: ObservationHandle?
     @ObservationIgnored private var reduceMotionObservation: AnyCancellable?
 
-    init(settings: SettingsStore? = nil, root: URL? = nil, importedRoot: URL? = nil, voice: VoiceSessionController? = nil) {
+    init(settings: SettingsStore? = nil, root: URL? = nil, importedRoot: URL? = nil, voice: VoiceSessionController? = nil,
+         endingDuration: Duration = .milliseconds(1030)) {
+        self.endingDuration = endingDuration
         self.settings = settings
         self.root = root
         self.importedRoot = importedRoot
@@ -117,7 +119,7 @@ struct PlanetEntry: Identifiable {
             let previous = active
             active = next
             previous?.stop()
-            voice?.endingAnimationDuration = Self.endingDuration
+            voice?.endingAnimationDuration = endingDuration
             next.start()
             // The indicator stream is de-duplicated, so a swap has to replay the current state
             // itself. Without this the new planet sits in idle until Live Voice happens to move.
@@ -189,7 +191,7 @@ struct PlanetEntry: Identifiable {
                 try makeStore(at: directory)
             }
             active = store
-            voice?.endingAnimationDuration = Self.endingDuration
+            voice?.endingAnimationDuration = endingDuration
             playing = nil
             store.start()
             return store
