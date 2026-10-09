@@ -183,8 +183,7 @@ extension VoiceTests {
             try await f.puppet.waitForRequests(2)
             #expect(f.userTexts == ["用户原来的问题", "我想换一个问题"] && f.puppet.requests[1].userTexts.last == "我想换一个问题",
                   "one fresh final submits exactly one new user turn")
-            // The same final again. ASR stays open while the Agent works, so it must be the very
-            // utterance that submitted: one ending later counts as new speech.
+            // The same final again, while ASR stays open for the Agent's work.
             f.recognizers[1].emit("我想换一个问题", start: 0, end: finalFirst ? 300 : 500, final: true)
             do { try await oldTTS(Data([3, 4])); Issue.record("old TTS must reject") }
             catch is CancellationError {  }

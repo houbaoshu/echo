@@ -160,19 +160,23 @@ extension ASRResult.Result.Utterance {
 
 struct VoiceUtteranceTracker {
     // Finalized times advance monotonically; repeated text in a later utterance is valid.
+    // An utterance starting no later than the last final is that final again, even if
+    // its end was revised later, so it neither commits twice nor begins new speech.
+    private var finalStart = -1
     private var finalEnd = -1
     private var currentStart: Int?
     mutating func accept(_ result: ASRResult) -> VoiceTranscription {
         var update = VoiceTranscription()
         for utterance in (result.result?.utterances ?? []).sorted(by: { $0.start_time < $1.start_time }) {
             let text = utterance.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard utterance.end_time > finalEnd, !text.isEmpty else { continue }
+            guard utterance.start_time > finalStart, utterance.end_time > finalEnd, !text.isEmpty else { continue }
             if currentStart != utterance.start_time {
                 currentStart = utterance.start_time; update.beganSpeaking = true
             }
             update.subtitle = text
             if utterance.definite == true {
-                update.committed.append(text); finalEnd = utterance.end_time; currentStart = nil
+                update.committed.append(text)
+                finalStart = utterance.start_time; finalEnd = utterance.end_time; currentStart = nil
             }
         }
         return update
