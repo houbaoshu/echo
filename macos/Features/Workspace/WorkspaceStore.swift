@@ -323,13 +323,18 @@ struct WorkspaceSnapshot: Codable {
                   saveDebounce: saveDebounce, maximumSaveDelay: maximumSaveDelay, harnessFactory: harnessFactory)
     }
     /// A workspace that is never saved. Without `harnessFactory` its conversations cannot send.
+    /// `petActivities` start out on the pet's tray, the first at the front of the stack; one
+    /// without a task is only a conversation.
     convenience init(initialStore: TaskStore? = nil,
+                     petActivities: [WorkspaceConversation] = [],
                      dictation: DictationController = DictationController(),
                      voice: VoiceSessionController = VoiceSessionController(),
                      harnessFactory: (() -> AgentHarness)? = nil) {
-        self.init(persistence: nil, initialStore: initialStore, dictation: dictation, voice: voice, harnessFactory: harnessFactory)
+        self.init(persistence: nil, initialStore: initialStore, petActivities: petActivities,
+                  dictation: dictation, voice: voice, harnessFactory: harnessFactory)
     }
-    private init(persistence: WorkspacePersistence?, initialStore: TaskStore?, dictation: DictationController,
+    private init(persistence: WorkspacePersistence?, initialStore: TaskStore?, petActivities: [WorkspaceConversation] = [],
+                 dictation: DictationController,
                  voice: VoiceSessionController, saveDebounce: Duration = .milliseconds(400),
                  maximumSaveDelay: Duration = .seconds(2), harnessFactory: (() -> AgentHarness)?) {
         self.dictation = dictation; self.voice = voice
@@ -372,6 +377,9 @@ struct WorkspaceSnapshot: Codable {
                 (conversations + drafts).forEach(bind)
             }
         }
+        conversations += petActivities
+        petActivityIDs += petActivities.filter { $0.store.task != nil }.map(\.id)
+        petActivities.forEach(bind)
         // Armed after loading, which only repeats what is on disk, and before the first chat of a
         // launch is made, which is new.
         _ = trackingSaves { snapshot }

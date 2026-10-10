@@ -1132,11 +1132,3 @@ struct WorkspaceCompanionBubble: View {
         }
     }
 }
-
-#Preview("精灵控制") {
-    HStack(spacing: 12) {
-        RoundControl(symbol: "square.and.pencil", label: "输入", textStyle: .body) {}
-        RoundControl(symbol: "waveform", label: "语音", textStyle: .body, emphasized: true) {}
-    }
-    .padding(24)
-}

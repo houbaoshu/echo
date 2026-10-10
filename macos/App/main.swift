@@ -11,6 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var workspaceCommands: WorkspaceCommands?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Xcode's canvas hosts previews in this executable and runs it through here; launching
+        // for real would put a second pet on screen and read and write the user's saved data.
+        guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else { return }
         // Settings… in the status item and the pet's menu opens Echo with this event; see SystemOpen.
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(showPreferences(_:withReplyEvent:)),
             forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEShowPreferences))
