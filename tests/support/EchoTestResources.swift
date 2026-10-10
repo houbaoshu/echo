@@ -6,7 +6,7 @@ private final class EchoTestBundleToken {}
 enum EchoTestResources {
     @MainActor private static var defaultsSuites: [String] = []
     @MainActor static func defaults() -> UserDefaults {
-        let suite = "local.chiyan.tests.\(UUID())"
+        let suite = "io.github.houbaoshu.echo.tests.\(UUID())"
         defaultsSuites.append(suite)
         return UserDefaults(suiteName: suite)!
     }

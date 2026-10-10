@@ -71,7 +71,7 @@ ditto "$rebuilt" "$unrelated"
 if /usr/bin/codesign --verify -R "=$requirement" "$unrelated" >/dev/null 2>&1; then
     echo "FAIL: unrelated signer matches the development identity" >&2; exit 1
 fi
-test_service="local.chiyan.keychain-regression.$(/usr/bin/uuidgen)"
+test_service="io.github.houbaoshu.echo.keychain-regression.$(/usr/bin/uuidgen)"
 installed="$temp_dir/installed/Echo.app"
 mkdir -p "$temp_dir/installed"
 ditto "$first" "$installed"

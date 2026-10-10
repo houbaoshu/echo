@@ -83,7 +83,7 @@ kill -0 "$process_id"
 [[ -n "$output" ]] || output="$(mktemp -d "${TMPDIR:-/tmp}/echo-voice-startup.XXXXXX")"
 mkdir -p "$output"
 log_file="$output/voice-$mode.log"
-/usr/bin/log stream --style compact --level debug --predicate "processIdentifier == $process_id AND subsystem == \"local.chiyan.desktop-pet\" AND category == \"voice\"" > "$log_file" 2>&1 &
+/usr/bin/log stream --style compact --level debug --predicate "processIdentifier == $process_id AND subsystem == \"io.github.houbaoshu.echo\" AND category == \"voice\"" > "$log_file" 2>&1 &
 log_pid=$!
 cleanup() { kill "$log_pid" 2>/dev/null || true; wait "$log_pid" 2>/dev/null || true }
 trap cleanup EXIT

@@ -26,7 +26,7 @@ main="$(field assets.main)"
 [[ "$(field language.embedded_tokenizer)" == true && -f "$source/tokenizer/tokenizer.json" ]] \
     || { echo "Missing embedded tokenizer; Core AI would fetch one from the network" >&2; exit 1 }
 
-models="$HOME/Library/Application Support/local.chiyan.desktop-pet/Models"
+models="$HOME/Library/Application Support/io.github.houbaoshu.echo/Models"
 target="$models/$name"
 mkdir -p "$models"
 if [[ -L "$target" ]]; then

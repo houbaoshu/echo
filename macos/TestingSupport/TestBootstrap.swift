@@ -11,14 +11,14 @@ import FoundationModels
         guard let mode = env["ECHO_TEST_MODE"] else { return nil }
         if mode == "hosted" { return .hosted }
         guard mode == "ui", let path = env["ECHO_TEST_ROOT"],
-              let suite = env["ECHO_TEST_SUITE"], suite.hasPrefix("local.chiyan.tests."),
+              let suite = env["ECHO_TEST_SUITE"], suite.hasPrefix("io.github.houbaoshu.echo.tests."),
               let defaults = UserDefaults(suiteName: suite) else {
             throw SettingsError("Incomplete Echo test launch configuration")
         }
         let root = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let temporary = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path + "/"
         let runnerTemporary = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/local.chiyan.EchoUITests.xctrunner/Data/tmp")
+            .appendingPathComponent("Library/Containers/io.github.houbaoshu.echo.EchoUITests.xctrunner/Data/tmp")
             .resolvingSymlinksInPath().path + "/"
         guard (root.path.hasPrefix(temporary) || root.path.hasPrefix(runnerTemporary)),
               root.lastPathComponent.hasPrefix("echo-ui-"),

@@ -4290,7 +4290,7 @@ private struct ComposerHeightHost: View {
     /// are the test runner's domain, never Echo's; whatever autosave had there is put back.
     func testQuittingWithExpandedPreviewRestoresNormalColumns() async throws {
         let standard = UserDefaults.standard
-        guard Bundle.main.bundleIdentifier != "local.chiyan.desktop-pet" else {
+        guard Bundle.main.bundleIdentifier != "io.github.houbaoshu.echo" else {
             throw SettingsError("Standard defaults here are Echo's own; this test must not write them")
         }
         let splitKey = "NSSplitView Subview Frames main", frameKey = "NSWindow Frame main"

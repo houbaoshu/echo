@@ -51,7 +51,7 @@ extension VoiceEndReason {
 @MainActor @Observable final class VoiceDiagnostics {
     static let shared = VoiceDiagnostics()
     private(set) var lines: [String] = []
-    @ObservationIgnored private let logger = Logger(subsystem: "local.chiyan.desktop-pet", category: "voice")
+    @ObservationIgnored private let logger = Logger(subsystem: "io.github.houbaoshu.echo", category: "voice")
     var text: String { lines.joined(separator: "\n") }
 
     func record(_ stage: String, _ status: String, _ message: String) {
@@ -72,7 +72,7 @@ extension VoiceEndReason {
     // Lines are written only while a call is open, so the spans on shared paths (PlanetStore,
     // workspace saves) stay silent the rest of the time. Signposts are always emitted, so the
     // same stages line up with Time Profiler in Instruments ("voice-timeline" category).
-    @ObservationIgnored private let signposter = OSSignposter(subsystem: "local.chiyan.desktop-pet", category: "voice-timeline")
+    @ObservationIgnored private let signposter = OSSignposter(subsystem: "io.github.houbaoshu.echo", category: "voice-timeline")
     @ObservationIgnored private var timelineStart: ContinuousClock.Instant?
     var isTimelineOpen: Bool { timelineStart != nil }
 

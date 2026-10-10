@@ -24,7 +24,7 @@ import XCTest
     @MainActor private func withApp(fixture: String? = nil, petPosition: String? = nil, _ body: (XCUIApplication, URL) throws -> Void) throws {
         continueAfterFailure = false
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-ui-\(UUID())")
-        let suite = "local.chiyan.tests.\(UUID())"
+        let suite = "io.github.houbaoshu.echo.tests.\(UUID())"
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try suite.write(to: root.appendingPathComponent(".echo-test"), atomically: true, encoding: .utf8)
         testRoot = root; defaultsSuite = suite

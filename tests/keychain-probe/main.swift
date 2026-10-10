@@ -14,7 +14,7 @@ func check(_ status: OSStatus, _ operation: String) {
 guard CommandLine.arguments.count == 3 else { exit(1) }
 let mode = CommandLine.arguments[1]
 let service = CommandLine.arguments[2]
-guard service.hasPrefix("local.chiyan.keychain-regression.") else { exit(1) }
+guard service.hasPrefix("io.github.houbaoshu.echo.keychain-regression.") else { exit(1) }
 /// The probe exercises the legacy file keychain, and only this deprecated call turns off its
 /// interaction prompts. The attribute silences that one deprecation and nothing else.
 @diagnose(DeprecatedDeclaration, as: ignored)

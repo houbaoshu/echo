@@ -69,7 +69,7 @@ extension LocalizedStringResource {
 @MainActor final class KeychainSecretStore: SecretStore {
     private func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "local.chiyan.desktop-pet.model", kSecAttrAccount as String: account]
+         kSecAttrService as String: "io.github.houbaoshu.echo.model", kSecAttrAccount as String: account]
     }
     func read(_ account: String) throws -> String {
         var query = query(account)
@@ -230,7 +230,7 @@ protocol ConnectionTesting: Sendable {
     private var loadBlocked = false
     static var directory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("local.chiyan.desktop-pet")
+            .appendingPathComponent("io.github.houbaoshu.echo")
     }
     var isDirty: Bool {
         selectedProvider != snapshot.activeProvider || draft != snapshot.settings(for: selectedProvider).model

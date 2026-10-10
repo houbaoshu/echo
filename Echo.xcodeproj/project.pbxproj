@@ -1348,7 +1348,7 @@
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCoreAudioProbe;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoCoreAudioProbe;
 			};
 			name = Release;
 		};
@@ -1358,7 +1358,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoLiveTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoLiveTests;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoLiveHost.app/Contents/MacOS/Echo";
 			};
 			name = Release;
@@ -1369,7 +1369,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoDeviceTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoDeviceTests;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoSpeechHost.app/Contents/MacOS/AppleSpeechCheck";
 			};
 			name = Release;
@@ -1380,7 +1380,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoPerformanceTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoPerformanceTests;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
 			};
 			name = Release;
@@ -1390,7 +1390,7 @@
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCoreAudioProbe;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoCoreAudioProbe;
 			};
 			name = Debug;
 		};
@@ -1399,7 +1399,7 @@
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFrameworkRepros;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoFrameworkRepros;
 			};
 			name = Debug;
 		};
@@ -1409,7 +1409,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo;
 				PRODUCT_MODULE_NAME = EchoLiveHost;
 				PRODUCT_NAME = Echo;
 				WRAPPER_NAME = EchoLiveHost.app;
@@ -1422,7 +1422,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo;
 				PRODUCT_MODULE_NAME = EchoLiveHost;
 				PRODUCT_NAME = Echo;
 				WRAPPER_NAME = EchoLiveHost.app;
@@ -1435,7 +1435,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoAppIntegrationTests;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
 			};
 			name = Debug;
@@ -1446,7 +1446,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
 				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
+				PRODUCT_BUNDLE_IDENTIFIER = "io.github.houbaoshu.echo.apple-speech-check";
 				PRODUCT_MODULE_NAME = EchoSpeechHost;
 				PRODUCT_NAME = AppleSpeechCheck;
 				WRAPPER_NAME = EchoSpeechHost.app;
@@ -1459,7 +1459,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoLiveTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoLiveTests;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoLiveHost.app/Contents/MacOS/Echo";
 			};
 			name = Debug;
@@ -1470,7 +1470,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoUITests;
 				TEST_TARGET_NAME = Echo;
 			};
 			name = Debug;
@@ -1480,7 +1480,7 @@
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFixtureServer;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoFixtureServer;
 			};
 			name = Debug;
 		};
@@ -1489,7 +1489,7 @@
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFrameworkRepros;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoFrameworkRepros;
 			};
 			name = Release;
 		};
@@ -1499,7 +1499,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoDeviceTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoDeviceTests;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/EchoSpeechHost.app/Contents/MacOS/AppleSpeechCheck";
 			};
 			name = Debug;
@@ -1519,7 +1519,7 @@
 					"-framework",
 					CoreFoundation,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoCABITests;
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
 			};
 			name = Release;
@@ -1529,7 +1529,7 @@
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoFixtureServer;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoFixtureServer;
 			};
 			name = Release;
 		};
@@ -1539,7 +1539,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoPerformanceTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoPerformanceTests;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
 			};
 			name = Debug;
@@ -1550,7 +1550,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoAppIntegrationTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoAppIntegrationTests;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
 			};
 			name = Release;
@@ -1570,7 +1570,7 @@
 					"-framework",
 					CoreFoundation,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoCABITests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoCABITests;
 				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
 			};
 			name = Debug;
@@ -1620,7 +1620,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = Echo;
 				INFOPLIST_FILE = macos/App/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 			};
 			name = Debug;
@@ -1630,7 +1630,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = Echo;
 				INFOPLIST_FILE = macos/App/Info.plist;
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 			};
 			name = Release;
@@ -1653,7 +1653,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoUITests;
 				TEST_TARGET_NAME = Echo;
 			};
 			name = Release;
@@ -1662,7 +1662,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoChatTests;
 			};
 			name = Debug;
 		};
@@ -1670,7 +1670,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoChatTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoChatTests;
 			};
 			name = Release;
 		};
@@ -1678,7 +1678,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoIntegrationTests;
 			};
 			name = Debug;
 		};
@@ -1686,7 +1686,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoIntegrationTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoIntegrationTests;
 			};
 			name = Release;
 		};
@@ -1694,7 +1694,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoVoiceTests;
 			};
 			name = Debug;
 		};
@@ -1702,7 +1702,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoVoiceTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoVoiceTests;
 			};
 			name = Release;
 		};
@@ -1710,7 +1710,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoWorkspaceTests;
 			};
 			name = Debug;
 		};
@@ -1718,7 +1718,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoWorkspaceTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoWorkspaceTests;
 			};
 			name = Release;
 		};
@@ -1726,7 +1726,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoViewTests;
 			};
 			name = Debug;
 		};
@@ -1734,7 +1734,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoViewTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoViewTests;
 			};
 			name = Release;
 		};
@@ -1744,7 +1744,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "tests/support/EchoRustTests-Info.plist";
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoRustTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoRustTests;
 			};
 			name = Debug;
 		};
@@ -1754,7 +1754,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "tests/support/EchoRustTests-Info.plist";
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = local.chiyan.EchoRustTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoRustTests;
 			};
 			name = Release;
 		};
@@ -1763,7 +1763,7 @@
 			buildSettings = {
 				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo;
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
 				WRAPPER_NAME = KeychainProbe.app;
@@ -1775,7 +1775,7 @@
 			buildSettings = {
 				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo;
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
 				WRAPPER_NAME = KeychainProbe.app;
@@ -1787,7 +1787,7 @@
 			buildSettings = {
 				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo;
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
@@ -1800,7 +1800,7 @@
 			buildSettings = {
 				INFOPLIST_FILE = macos/App/Info.plist;
 				OTHER_LDFLAGS = "";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.desktop-pet";
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo;
 				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
 				PRODUCT_NAME = Echo;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SECOND_BUILD $(inherited)";
@@ -1814,7 +1814,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "tests/apple-speech-probe/Info.plist";
 				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "local.chiyan.apple-speech-check";
+				PRODUCT_BUNDLE_IDENTIFIER = "io.github.houbaoshu.echo.apple-speech-check";
 				PRODUCT_MODULE_NAME = EchoSpeechHost;
 				PRODUCT_NAME = AppleSpeechCheck;
 				WRAPPER_NAME = EchoSpeechHost.app;

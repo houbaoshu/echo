@@ -350,7 +350,7 @@ extension AVAudioNode {
     private let captureResumeTimeout: Duration
     /// Every engine graph, for every VoiceAudio (dictation's included), is built and orphan-torn-down
     /// here, so at most one voice-processing engine is ever being set up at a time.
-    nonisolated private static let setupQueue = DispatchQueue(label: "local.chiyan.voice-audio-setup", qos: .userInitiated)
+    nonisolated private static let setupQueue = DispatchQueue(label: "io.github.houbaoshu.echo.voice-audio-setup", qos: .userInitiated)
 
     /// `build`, `restart`, `onConfigurationChange`, `currentRoute`, `isRunning` and `schedule`
     /// exist for tests; the defaults are the real engine, devices and configuration-change policy.

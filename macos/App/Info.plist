@@ -3,7 +3,7 @@
 <plist version="1.0"><dict>
     <key>CFBundleDevelopmentRegion</key><string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleExecutable</key><string>Echo</string>
-    <key>CFBundleIdentifier</key><string>local.chiyan.desktop-pet</string>
+    <key>CFBundleIdentifier</key><string>io.github.houbaoshu.echo</string>
     <key>CFBundleName</key><string>Echo</string>
     <key>CFBundleDisplayName</key><string>Echo</string>
     <key>CFBundlePackageType</key><string>APPL</string>

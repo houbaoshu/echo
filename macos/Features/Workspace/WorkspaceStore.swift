@@ -59,7 +59,7 @@ struct WorkspaceSnapshot: Codable {
     init(url: URL) { self.url = url }
     static var defaultURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("local.chiyan.desktop-pet/workspace.json")
+            .appendingPathComponent("io.github.houbaoshu.echo/workspace.json")
     }
     private func decode(_ url: URL) throws -> WorkspaceSnapshot {
         let result = try JSONDecoder().decode(WorkspaceSnapshot.self, from: Data(contentsOf: url))

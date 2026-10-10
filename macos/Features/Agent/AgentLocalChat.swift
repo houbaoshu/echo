@@ -15,7 +15,7 @@ struct LocalModelLocation: Sendable {
     /// Echo's own Models folder in Application Support, beside settings.json.
     static var app: LocalModelLocation {
         LocalModelLocation(models: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("local.chiyan.desktop-pet/Models", isDirectory: true))
+            .appendingPathComponent("io.github.houbaoshu.echo/Models", isDirectory: true))
     }
     /// Where an imported model goes.
     var installURL: URL { models.appendingPathComponent(Self.name, isDirectory: true) }
