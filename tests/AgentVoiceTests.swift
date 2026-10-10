@@ -3,13 +3,14 @@ import Testing
 import Foundation
 
 extension VoiceTests {
-    /// Speech while the Agent works steers the same run; a folder request and a project queue keep
-    /// voice input open; mute closes only input; Stop pauses submission until cleanup; Continue
+    /// Speech while the Agent works steers the same run; a call waiting for Finder and a project
+    /// queue keep voice input open; mute closes only input; Stop pauses submission until cleanup; Continue
     /// appends nothing; ending the call leaves the Agent running.
     @Test @MainActor static func agentVoiceTests() async throws {
         _ = NSApplication.shared
-        let f = AgentVoiceFixture()
-        defer { f.shutdown() }
+        let finder = HeldFinder()
+        let f = AgentVoiceFixture(finder: finder)
+        defer { finder.gate.open(); f.shutdown() }
         try await f.start()
         f.store.mainDraft = "保留草稿"
         f.speak("开始检查")
@@ -18,13 +19,13 @@ extension VoiceTests {
         try await f.puppet.waitForRequests(1)
         #expect(f.userTexts == ["开始检查"] && f.voice.snapshot.recognition == .listening,
               "Agent voice submits once and keeps recognition during the model request")
-        // The model asks for a folder the conversation does not have yet.
-        try await f.puppet.answer(.call(name: "list_files", arguments: #"{"path":"."}"#))
-        try await eventually("folder requested", timeout: .seconds(8)) { f.store.needsDirectory }
-        #expect(f.voice.status == "等待选择项目文件夹 · 可补充语音", "directory wait remains visible while voice input stays enabled")
+        // The model asks Finder where the person is, and Finder has not answered yet.
+        try await f.puppet.answer(.call(name: "finder_location", arguments: "{}"))
+        try await eventually("Finder is asked", timeout: .seconds(8)) { finder.gate.arrivals == 1 }
+        #expect(f.voice.status == "正在查看访达位置 · 可补充语音", "a waiting call stays visible while voice input stays enabled")
         f.speak("先回答问题", start: 300)
-        #expect(!f.store.needsDirectory && f.userTexts.last == "先回答问题" && !recognizer.cancelled && f.store.task?.runID == run,
-              "a directory-wait follow-up steers the same run")
+        #expect(f.userTexts.last == "先回答问题" && !recognizer.cancelled && f.store.task?.runID == run,
+              "a follow-up to a waiting call steers the same run")
         f.speak("补充一", start: 600); f.speak("补充二", start: 900); f.speak("补充二", start: 900)
         #expect(f.userTexts == ["开始检查", "先回答问题", "补充一", "补充二"] && f.store.task?.status == .running,
               "ordered voice follow-ups steer without cancellation or duplicate ASR finals")
@@ -37,7 +38,7 @@ extension VoiceTests {
         try await eventually("the unmuted call listens on a new recognizer") { f.voice.snapshot.recognition == .listening && f.recognizers.count == 2 }
         #expect(f.voice.snapshot.recognition == .listening && f.recognizers.count == 2,
               "unmute resumes input while the Agent is still running")
-        // Request 1 asked for the folder; the generation the follow-up superseded never reached
+        // Request 1 asked Finder; the generation the follow-up superseded never reached
         // the model. Request 2 takes the follow-ups so far and waits at the model; until then a
         // follow-up sent below could still join it, leaving nothing queued for Continue.
         try await eventually("request 2 has taken the earlier follow-ups and waits at the model") {
@@ -505,5 +506,14 @@ extension VoiceTests {
         #expect(f.workspace.retry(conversationID: f.conversation.id))
         try await eventually("continued", timeout: .seconds(8)) { !f.store.isGenerating }
         #expect(f.store.messages.filter { $0.role == .user }.count == users && f.store.responseMessage?.content == "继续后的回复")
+    }
+}
+
+/// Answers finder_location only when the test opens the gate; no test asks the real Finder.
+struct HeldFinder: FinderLocating {
+    let gate = ScriptGate()
+    func locate() async -> FinderLocation {
+        try? await gate.wait()
+        return .unavailable(.noFolder)
     }
 }

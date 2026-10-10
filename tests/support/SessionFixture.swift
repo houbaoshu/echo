@@ -16,7 +16,7 @@ import Testing
             let endpoint = AgentEndpoint(baseURL: baseURL, model: "fixture", apiKey: nil, apiProtocol: current())
             let transport = AgentTransport.make(for: endpoint)
             return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: ledger, budget: budget) }
-        })
+        }, finder: NoFinder())
     }
     static func harness(server: LoopbackModelServer, protocol apiProtocol: ModelAPIProtocol) -> AgentHarness {
         harness(baseURL: server.baseURL) { apiProtocol }

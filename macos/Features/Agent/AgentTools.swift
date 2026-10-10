@@ -12,15 +12,41 @@ import Synchronization
 /// The project folder a tool works in, as the conversation resolved it.
 enum AgentProjectRoot: Sendable, Equatable {
     case path(String)
-    /// The person closed the folder request without choosing one.
-    case declined
-    /// Newer user input arrived while the call waited; the call is not run.
+    /// The conversation has no project. Tools never ask for one: only the person adds it, in the UI.
+    case noProject
+    /// The conversation's project folder was moved or deleted.
+    case missing
+    /// Newer user input is pending; the call is not run.
     case superseded
 }
 
-/// Supplies the project folder, asking the person when the conversation has none.
+/// Supplies the folders the read tools work in.
 protocol AgentProjectAccess: Sendable {
+    /// The conversation's project. Never asks the person.
     func projectRoot() async throws -> AgentProjectRoot
+    /// This chat's Finder folder, once every finder_location call written before `call` in its
+    /// batch is done. A chat without one takes the folder Finder shows now. Never asks the person.
+    func finderRoot(call: GenerationID?) async throws -> AgentFinderRoot
+}
+
+/// The Finder side of a read.
+enum AgentFinderRoot: Sendable, Equatable {
+    case folder(String)
+    /// Nothing to read; the model sees this result.
+    case failed(String)
+    /// Newer user input is pending; the call is not run.
+    case superseded
+}
+
+/// Which folder a read tool works in, for the model's messages.
+enum AgentReadScope: Sendable {
+    case project, finder
+    var name: String {
+        switch self {
+        case .project: "the project"
+        case .finder: "the Finder folder"
+        }
+    }
 }
 
 /// Set while user input waits to enter the running turn. A tool that has not started returns
@@ -40,11 +66,26 @@ enum AgentToolResult {
         #"{"detail":"# + quoted(detail) + #","status":"# + quoted(status) + "}"
     }
     static let superseded = status("not_executed", "Superseded by follow-up instructions.")
-    static let directoryDeclined = status("not_executed", "Directory selection cancelled.")
     static let cancelledBefore = status("not_executed", "Cancelled before execution.")
     static let cancelledDuring = status("unknown", "Cancelled during execution; inspect workspace for effects.")
     static let unknownAfterInterruption = status("unknown", "Execution result unknown after interruption; inspect the workspace before acting.")
     static func failed(_ detail: String) -> String { status("failed", detail) }
+    static func finderFolderMissing(name: String) -> String {
+        failed("This chat's Finder folder, \(name), can no longer be found; it may have been moved or deleted. If the person asks, finder_location switches this chat to the folder Finder shows now.")
+    }
+    /// A result read from this chat's Finder folder, naming the folder so the model knows which it read.
+    static func naming(folder: String, in result: String) -> String {
+        guard var value = (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any] else { return result }
+        value["folder"] = folder
+        return object(value)
+    }
+    /// `nothing` says what did not happen: "read" or "run".
+    static func noProject(nothing: String) -> String {
+        "This conversation has no project folder, so nothing was \(nothing). Only the person can give a conversation a project, and only before its first message: ask them to start a new chat with the folder as its project (drag the folder onto the pet, choose New Chat on the project in the sidebar, or pick the folder with the project button of a new, empty chat) and ask there."
+    }
+    static func projectMissing(nothing: String) -> String {
+        "The conversation's project folder can no longer be found; it may have been moved or deleted, so nothing was \(nothing). Ask the person to locate it with Relocate Folder… on the project in the sidebar."
+    }
     static func object(_ value: [String: Any]) -> String {
         (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]))
             .map { String(decoding: $0, as: UTF8.self) } ?? status("failed", "unencodable result")
@@ -55,19 +96,39 @@ enum AgentToolResult {
     }
 }
 
-/// Shared by the read-only tools: supersession and the project folder.
+/// Shared by the read-only tools: supersession and the folder to read. `root` is the model's
+/// choice: "project", "finder" for this chat's Finder folder, or nil for the project when the chat
+/// has one, else the Finder folder. No read asks the person for a folder.
 struct AgentReadContext: Sendable {
     let access: any AgentProjectAccess
     let steering: AgentSteeringSignal
 
-    func run(_ body: @Sendable (String) -> String) async throws -> String {
+    func run(root raw: String?, call: GenerationID?, _ body: @Sendable (String, AgentReadScope) -> String) async throws -> String {
         if steering.isPending { return AgentToolResult.superseded }
-        switch try await access.projectRoot() {
-        case .declined: return AgentToolResult.directoryDeclined
+        let choice: AgentReadScope?
+        switch raw {
+        case nil: choice = nil
+        case "finder": choice = .finder
+        case "project": choice = .project
+        case let other?: return AgentToolResult.failed(#"root must be "finder" or "project"; received: \#(other)"#)
+        }
+        if choice != .finder {
+            switch try await access.projectRoot() {
+            case .path(let root):
+                try Task.checkCancellation()
+                return body(root, .project)
+            case .missing: return AgentToolResult.failed(AgentToolResult.projectMissing(nothing: "read"))
+            case .superseded: return AgentToolResult.superseded
+            // Without a project, a read that names no root reads the chat's Finder folder.
+            case .noProject: if choice == .project { return AgentToolResult.failed(AgentToolResult.noProject(nothing: "read")) }
+            }
+        }
+        switch try await access.finderRoot(call: call) {
         case .superseded: return AgentToolResult.superseded
-        case .path(let root):
+        case .failed(let result): return result
+        case .folder(let folder):
             try Task.checkCancellation()
-            return body(root)
+            return AgentToolResult.naming(folder: FileManager.default.displayName(atPath: folder), in: body(folder, .finder))
         }
     }
 }
@@ -85,9 +146,9 @@ enum AgentToolPath {
         return parts.joined(separator: "/")
     }
 
-    static func message(_ failure: ProjectPath.Failure, path: String) -> String {
+    static func message(_ failure: ProjectPath.Failure, path: String, scope: AgentReadScope = .project) -> String {
         switch failure {
-        case .outsideProject: "path must stay inside the project: \(path)"
+        case .outsideProject: "path must stay inside \(scope.name): \(path)"
         case .system(ENOENT): "no such file or directory: \(path)"
         case .system(ELOOP): "symbolic links are not followed: \(path)"
         case .system(ENOTDIR): "not a directory: \(path)"
@@ -104,24 +165,26 @@ struct ListFilesTool: Tool {
 
     @Generable
     struct Input {
-        @Guide(description: "Directory relative to the project root; . for the root")
+        @Guide(description: "Directory relative to the root; . for the root")
         var path: String
+        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project; omit for the project when the chat has one, else the Finder folder"#)
+        var root: String?
     }
 
     var parameters: GenerationSchema { Input.generationSchema }
 
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         guard let input = try? Input(arguments) else {
-            return AgentToolResult.failed("invalid arguments for list_files; expected {\"path\": string}. Received: \(arguments.jsonString)")
+            return AgentToolResult.failed("invalid arguments for list_files; expected {\"path\": string, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)")
         }
-        return try await context.run { root in Self.list(root: root, path: input.path) }
+        return try await context.run(root: input.root, call: arguments.id) { root, scope in Self.list(root: root, path: input.path, scope: scope) }
     }
 
-    static func list(root: String, path raw: String) -> String {
-        guard let path = AgentToolPath.normalize(raw) else { return AgentToolResult.failed(AgentToolPath.message(.outsideProject, path: raw)) }
+    static func list(root: String, path raw: String, scope: AgentReadScope = .project) -> String {
+        guard let path = AgentToolPath.normalize(raw) else { return AgentToolResult.failed(AgentToolPath.message(.outsideProject, path: raw, scope: scope)) }
         let fd: Int32
         do { fd = try ProjectPath.open(root: root, path: path, directory: true) }
-        catch { return AgentToolResult.failed(AgentToolPath.message(error, path: raw)) }
+        catch { return AgentToolResult.failed(AgentToolPath.message(error, path: raw, scope: scope)) }
         guard let directory = fdopendir(fd) else { close(fd); return AgentToolResult.failed("cannot list \(raw)") }
         defer { closedir(directory) }
         var files: [String] = []
@@ -154,35 +217,40 @@ struct ReadFileTool: Tool {
 
     @Generable
     struct Input {
-        @Guide(description: "File path relative to the project root")
+        @Guide(description: "File path relative to the root")
         var path: String
         @Guide(description: "First line to read, 1-based; omit to start at line 1")
         var start_line: Int?
+        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project; omit for the project when the chat has one, else the Finder folder"#)
+        var root: String?
     }
 
     var parameters: GenerationSchema { Input.generationSchema }
 
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         guard let input = try? Input(arguments) else {
-            return AgentToolResult.failed("invalid arguments for read_file; expected {\"path\": string, \"start_line\"?: integer}. Received: \(arguments.jsonString)")
+            return AgentToolResult.failed("invalid arguments for read_file; expected {\"path\": string, \"start_line\"?: integer, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)")
         }
-        return try await context.run { root in
-            Self.read(root: root, path: input.path, startLine: input.start_line ?? 1)
+        return try await context.run(root: input.root, call: arguments.id) { root, scope in
+            Self.read(root: root, path: input.path, startLine: input.start_line ?? 1, scope: scope)
         }
     }
 
-    static func read(root: String, path raw: String, startLine: Int) -> String {
+    static func read(root: String, path raw: String, startLine: Int, scope: AgentReadScope = .project) -> String {
         guard let path = AgentToolPath.normalize(raw), !path.isEmpty else {
-            return AgentToolResult.failed(AgentToolPath.message(.outsideProject, path: raw))
+            return AgentToolResult.failed(AgentToolPath.message(.outsideProject, path: raw, scope: scope))
         }
         guard startLine >= 1 else { return AgentToolResult.failed("start_line must be at least 1") }
         let fd: Int32
         do { fd = try ProjectPath.open(root: root, path: path, directory: false) }
-        catch { return AgentToolResult.failed(AgentToolPath.message(error, path: raw)) }
+        catch { return AgentToolResult.failed(AgentToolPath.message(error, path: raw, scope: scope)) }
         defer { close(fd) }
         var info = stat()
         guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return AgentToolResult.failed("not a regular file: \(raw)") }
-        guard info.st_size <= maxFileBytes else { return AgentToolResult.failed("file exceeds 4 MiB: \(raw); use bash tools when available") }
+        // bash does not work in the Finder folder, so only the project's files point to it.
+        guard info.st_size <= maxFileBytes else {
+            return AgentToolResult.failed("file exceeds 4 MiB: \(raw)" + (scope == .project ? "; use bash tools when available" : ""))
+        }
         var data = Data(count: Int(info.st_size))
         var total = 0
         while total < data.count {
@@ -240,3 +308,27 @@ struct BashTool: Tool {
     }
 }
 
+
+/// Finds Finder's location for `finder_location`. Nil when newer input supersedes the call.
+protocol AgentFinderAccess: Sendable {
+    /// `call` links the call to the one the harness saw dispatched, as for bash.
+    func locate(call: GenerationID?) async throws -> FinderLocation?
+}
+
+/// Points this chat's Finder folder at the folder in Finder's frontmost window and names it as
+/// Finder shows it. Its path stays with Echo.
+struct FinderLocationTool: Tool {
+    let name = "finder_location"
+    let description = "Switch this chat's Finder folder to the folder shown in Finder's frontmost window"
+    let access: any AgentFinderAccess
+
+    @Generable
+    struct Input {}
+
+    var parameters: GenerationSchema { Input.generationSchema }
+
+    // No arguments to read: whatever the model sent, the call asks Finder.
+    @concurrent func call(arguments: GeneratedContent) async throws -> String {
+        try await access.locate(call: arguments.id)?.toolResult ?? AgentToolResult.superseded
+    }
+}

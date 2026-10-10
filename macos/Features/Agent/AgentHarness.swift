@@ -35,15 +35,19 @@ struct NativeAgentState: Codable {
     var pendingInputs: [Input] = []
     /// The assistant message shown for each response entry, by entry ID.
     var replies: [String: UUID] = [:]
+    /// This chat's Finder folder: the canonical path the read tools use as their Finder root. Set by
+    /// the first read of Finder's side and replaced only by finder_location. Not a project.
+    var finderFolder: String?
 
     init() {}
-    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies }
+    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies, finderFolder }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         entries = Array(try values.decode(Transcript.self, forKey: .transcript))
         turns = try values.decode([Turn].self, forKey: .turns)
         pendingInputs = try values.decode([Input].self, forKey: .pendingInputs)
         replies = try values.decode([String: UUID].self, forKey: .replies)
+        finderFolder = try values.decodeIfPresent(String.self, forKey: .finderFolder)
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -51,6 +55,7 @@ struct NativeAgentState: Codable {
         try values.encode(turns, forKey: .turns)
         try values.encode(pendingInputs, forKey: .pendingInputs)
         try values.encode(replies, forKey: .replies)
+        try values.encodeIfPresent(finderFolder, forKey: .finderFolder)
     }
 
     /// Continue is offered for input that never reached the model and for a last turn that did not complete.
@@ -76,8 +81,7 @@ enum AgentTurnEnding: Equatable {
     /// Streams into the conversation's `AssistantReplyStream`; `final` settles the operation.
     func harnessStream(operation: UInt64, text: String, toolCall: Bool, final: Bool)
     func harnessStatus(_ summary: String)
-    func harnessNeedsDirectory(_ needed: Bool)
-    func harnessProjectDirectory() -> URL?
+    func harnessProjectDirectory() -> AgentProjectRoot
     /// Holds `path` for this conversation until its turn ends; `ready` runs once no other
     /// conversation holds it, possibly at once.
     func harnessAcquireLease(_ path: String, ready: @escaping () -> Void)
@@ -101,10 +105,13 @@ enum AgentInstructions {
     nonisolated static func text(tools: [String]) -> String {
         var parts = ["You are a helpful assistant in a persistent conversation. Answer ordinary questions directly."]
         if tools.contains("list_files") || tools.contains("read_file") {
-            parts.append("When a question depends on the files of the conversation's project, inspect them with list_files and read_file. Paths are relative to the project folder; use . for its root. If no folder is selected yet, the person is asked to choose one when you call a tool.")
+            parts.append("When the person asks about the files of the conversation's project, inspect them with list_files and read_file, passing root \"project\". Paths are relative to the project folder; use . for its root. If the conversation has no project folder, the tools say so; only the person can add one.")
+        }
+        if tools.contains("finder_location") {
+            parts.append("When the person asks about the place they are viewing in Finder, list_files and read_file can read it directly. They read this chat's Finder folder: the folder Finder showed the first time this chat read from Finder. It stays the same while the person browses elsewhere in Finder. finder_location switches this chat's Finder folder to the one Finder shows now, for when the person asks to switch, such as \"look at the folder I'm in now\". Paths are relative to the Finder folder, . is its root, and only what is inside it can be read. When the chat has a project, list_files and read_file read the project unless root is \"finder\". The person can see which folder they are in; its name is context for you.")
         }
         if tools.contains("bash") {
-            parts.append("When a task needs local inspection or changes, use the bash tool, one call at a time. A command runs in a fresh zsh process (/bin/zsh, no startup files) in the conversation's selected working directory. Use zsh syntax: quote glob patterns meant for other programs, since an unmatched glob is an error, and unquoted parameters are not split into words. Shell state does not persist, but filesystem changes do. The directory is an initial working location, not an access boundary.")
+            parts.append("When a task needs local inspection or changes, use the bash tool, one call at a time. A command runs in a fresh zsh process (/bin/zsh, no startup files) in the conversation's project folder; without one, no command runs. Use zsh syntax: quote glob patterns meant for other programs, since an unmatched glob is an error, and unquoted parameters are not split into words. Shell state does not persist, but filesystem changes do. The directory is an initial working location, not an access boundary.")
         }
         parts.append("You may explain what you are doing alongside a tool call. Finish the turn with a useful text reply and no tool call.")
         parts.append("Use the actual tool results to decide what to do next. Do not claim that an action happened when its result says it was not executed. When a result is unknown or interrupted, inspect the current state before relying on it.")
@@ -168,17 +175,27 @@ enum AgentInstructions {
     private var commandWaiters: [CheckedContinuation<Void, Never>] = []
     private var operations: [String: UInt64] = [:]
     private var nextOperation: UInt64 = 0
-    private var directoryWaiters: [UUID: CheckedContinuation<AgentProjectRoot, any Error>] = [:]
+    private let finder: any FinderLocating
+    /// finder_location calls waiting for Finder. Nil answers a superseded call.
+    private var finderWaiters: [UUID: CheckedContinuation<FinderLocation?, any Error>] = [:]
+    /// The Finder lookup under way, which every caller asking at the same time shares.
+    private var finderLookup: Task<FinderLocation, Never>?
+    /// Each batch's calls in the order the model wrote them, and the finder_location calls that
+    /// are done, so a read waits for the finder_location calls written before it.
+    private var batchCalls: [Int: [(key: String, tool: String)]] = [:]
+    private var finderDone: Set<String> = []
+    private var finderDoneWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
     private var cleanupWaiters: [() -> Void] = []
     private var storageFailure: String?
 
     init(resolveModel: @escaping @MainActor () throws -> ModelFactory, local: LocalChatService? = nil,
          localOnly: @escaping @MainActor () -> Bool = { false },
-         runner: any CommandRunning = RustCommandRunner()) {
+         runner: any CommandRunning = RustCommandRunner(), finder: any FinderLocating = AppleEventFinderLocator.shared) {
         self.resolveModel = resolveModel
         self.local = local
         self.localOnly = localOnly
         self.runner = runner
+        self.finder = finder
     }
 
     /// Reads the model settings saved when each turn starts. `ECHO_LOCAL_CHAT=always` sends every
@@ -224,7 +241,7 @@ enum AgentInstructions {
         state.pendingInputs.append(.init(messageID: messageID, text: text))
         guard isRunning else { return }
         steering.set(true)
-        resumeDirectoryWaiters(.success(.superseded))
+        resumeFinderWaiters(.success(nil))
         resumeLease(granted: false)
     }
 
@@ -250,14 +267,10 @@ enum AgentInstructions {
     func stop() {
         guard isRunning else { return }
         stopRequested = true
-        resumeDirectoryWaiters(.failure(CancellationError()))
+        resumeFinderWaiters(.failure(CancellationError()))
+        resumeFinderDoneWaiters(.failure(CancellationError()))
         resumeLease(granted: nil)
         turn?.cancel()
-    }
-
-    func provideDirectory(_ url: URL?) {
-        guard !directoryWaiters.isEmpty else { return }
-        resumeDirectoryWaiters(.success(url.map { .path($0.path) } ?? .declined))
     }
 
     /// Stops the turn and calls `afterCleanup` once nothing runs any more.
@@ -533,7 +546,9 @@ enum AgentInstructions {
             }()
         }
         steering.set(false)
-        resumeDirectoryWaiters(.failure(CancellationError()))
+        resumeFinderWaiters(.failure(CancellationError()))
+        resumeFinderDoneWaiters(.failure(CancellationError()))
+        batchCalls = [:]; finderDone = []
         runningPrompt = nil; live = []; checkpointed = []; dispatched = []
         callKeys = [:]; started = []; finishedOutputs = [:]; callDirectories = [:]; leases = []
         bashOrder = [:]; bashDone = []
@@ -541,7 +556,6 @@ enum AgentInstructions {
         let responses = Set(state.entries.compactMap { if case .response(let response) = $0 { response.id } else { nil } })
         state.replies = state.replies.filter { responses.contains($0.key) }
         project()
-        host?.harnessNeedsDirectory(false)
         // Idle before the conversation hears the ending, so a listener may start the next turn at once.
         turn = nil
         let waiters = cleanupWaiters; cleanupWaiters = []
@@ -577,6 +591,9 @@ enum AgentInstructions {
         if let batch = Int(key.prefix { $0 != ":" }), bashOrder[batch] == nil, case .toolCalls(let calls) = history[batch] {
             bashOrder[batch] = calls.filter { $0.toolName == "bash" }.map { "\(batch):\($0.id)" }
         }
+        if let batch = Int(key.prefix { $0 != ":" }), batchCalls[batch] == nil, case .toolCalls(let calls) = history[batch] {
+            batchCalls[batch] = calls.map { ("\(batch):\($0.id)", $0.toolName) }
+        }
         // Stream snapshots trail the transcript by one event; the session's own history shows the
         // call now. Its generation finished, so everything up to it can be saved.
         let base = state.entries.count + 1
@@ -605,27 +622,108 @@ enum AgentInstructions {
         }
     }
 
-    /// `ask` requests a folder even when the conversation has one: its folder was found moved.
-    fileprivate func resolveDirectory(ask: Bool = false) async throws -> AgentProjectRoot {
-        if steering.isPending { return .superseded }
-        if !ask, let url = host?.harnessProjectDirectory() { return .path(url.path) }
+    /// The conversation's project as it is now. A tool never asks for one: only the person gives
+    /// a conversation its project, in the UI.
+    fileprivate func projectRoot() throws -> AgentProjectRoot {
         guard isRunning, !stopRequested else { throw CancellationError() }
-        host?.harnessNeedsDirectory(true)
+        if steering.isPending { return .superseded }
+        return host?.harnessProjectDirectory() ?? .noProject
+    }
+
+    /// One finder_location call: it points this chat's Finder folder at the folder Finder shows
+    /// now; a call that finds none leaves the chat's folder as it was. The folder's path goes to the
+    /// call's record, never to the model.
+    fileprivate func locateFinder(call identity: GenerationID?) async throws -> FinderLocation? {
+        defer { if let key = identity.flatMap({ callKeys[$0] }) { finishFinderCall(key) } }
+        guard isRunning, !stopRequested else { throw CancellationError() }
+        if steering.isPending { return nil }
+        let location = try await lookUpFinder()
+        if case .folder(let path)? = location {
+            state.finderFolder = path
+            if let key = identity.flatMap({ callKeys[$0] }) { callDirectories[key] = path; project() }
+        }
+        return location
+    }
+
+    /// Asks Finder where its frontmost window is. Callers asking at the same time share one lookup.
+    /// Stop and newer input answer a caller at once (nil for newer input); the Apple Event already
+    /// sent runs to its end and its result is dropped.
+    private func lookUpFinder() async throws -> FinderLocation? {
+        let lookup = finderLookup ?? Task { [finder] in await finder.locate() }
+        finderLookup = lookup
         let id = UUID()
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
-                else { directoryWaiters[id] = continuation }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<FinderLocation?, any Error>) in
+                if Task.isCancelled { continuation.resume(throwing: CancellationError()); return }
+                finderWaiters[id] = continuation
+                Task { [weak self] in
+                    let location = await lookup.value
+                    guard let self else { return }
+                    if self.finderLookup == lookup { self.finderLookup = nil }
+                    self.finderWaiters.removeValue(forKey: id)?.resume(returning: location)
+                }
             }
         } onCancel: {
-            Task { @MainActor [weak self] in self?.resumeDirectoryWaiter(id, .failure(CancellationError())) }
+            Task { @MainActor [weak self] in self?.finderWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError()) }
         }
     }
 
-    /// One bash call: its turn in the batch, the folder, this conversation's lease on it, a save
-    /// that records the call, then the command. Only `.completed` output reaches the model; a
-    /// moved folder asks again. A nil command is a call the tool could not read: it still takes
-    /// its turn, so the calls after it are not held up.
+    /// This chat's Finder folder for a read, after the finder_location calls written before it in
+    /// its batch are done. A chat without one takes the folder Finder shows now. A read of the
+    /// folder shows it on its card.
+    fileprivate func finderRoot(call identity: GenerationID?) async throws -> AgentFinderRoot {
+        guard isRunning, !stopRequested else { throw CancellationError() }
+        let key = identity.flatMap { callKeys[$0] }
+        if let key { try await waitForEarlierFinderCalls(key) }
+        if steering.isPending { return .superseded }
+        if state.finderFolder == nil {
+            switch try await lookUpFinder() {
+            case nil: return .superseded
+            case .folder(let path)?: if state.finderFolder == nil { state.finderFolder = path }
+            case let failure?: return .failed(failure.toolResult)
+            }
+        }
+        guard let folder = state.finderFolder else { return .superseded }
+        if let key { callDirectories[key] = folder; project() }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return .failed(AgentToolResult.finderFolderMissing(name: (folder as NSString).lastPathComponent))
+        }
+        return .folder(folder)
+    }
+
+    private func waitForEarlierFinderCalls(_ key: String) async throws {
+        while true {
+            guard let batch = Int(key.prefix { $0 != ":" }), let calls = batchCalls[batch],
+                  let position = calls.firstIndex(where: { $0.key == key }) else { return }
+            if calls[..<position].allSatisfy({ $0.tool != "finder_location" || finderDone.contains($0.key) }) { return }
+            let id = UUID()
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                    if Task.isCancelled { continuation.resume(throwing: CancellationError()); return }
+                    finderDoneWaiters[id] = continuation
+                }
+            } onCancel: {
+                Task { @MainActor [weak self] in self?.finderDoneWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError()) }
+            }
+        }
+    }
+
+    /// A finder_location call is done however it ended; the reads waiting look again.
+    private func finishFinderCall(_ key: String) {
+        finderDone.insert(key)
+        resumeFinderDoneWaiters(.success(()))
+    }
+
+    private func resumeFinderDoneWaiters(_ result: Result<Void, any Error>) {
+        let waiters = finderDoneWaiters; finderDoneWaiters = [:]
+        waiters.values.forEach { $0.resume(with: result) }
+    }
+
+    /// One bash call: its turn in the batch, the project folder, this conversation's lease on it, a
+    /// save that records the call, then the command. Only `.completed` output reaches the model.
+    /// Without a project folder, or with one that was moved, nothing runs. A nil command is a call
+    /// the tool could not read: it still takes its turn, so the calls after it are not held up.
     fileprivate func runBash(call identity: GenerationID?, command: String?) async throws -> String {
         guard isRunning else { throw CancellationError() }
         let key = identity.flatMap { callKeys[$0] }
@@ -637,45 +735,44 @@ enum AgentInstructions {
             return AgentToolResult.status("not_executed",
                 "command must not be empty. Reply directly or call one of the available tools with valid arguments.")
         }
-        var ask = false
-        while true {
-            try Task.checkCancellation()
-            // Once a save failed, nothing more runs this turn, not even the rest of a batch.
-            if storageFailure != nil || stopRequested { throw CancellationError() }
-            if steering.isPending { return AgentToolResult.superseded }
-            let directory: String
-            switch try await resolveDirectory(ask: ask) {
-            case .declined: return AgentToolResult.directoryDeclined
-            case .superseded: return AgentToolResult.superseded
-            case .path(let path):
-                guard let canonical = ExecutionService.canonicalPath(path) else { ask = true; continue }
-                directory = canonical
-            }
-            guard try await acquireLease(directory) else { return AgentToolResult.superseded }
-            if steering.isPending { return AgentToolResult.superseded }
-            if storageFailure != nil || stopRequested { throw CancellationError() }
-            // The call is saved before its command can run.
-            do { try host?.harnessSave() }
-            catch { storageFailure = error.localizedDescription; throw error }
-            if let key { started.insert(key); callDirectories[key] = directory; project() }
-            if !stopRequested { host?.harnessStatus(TaskStore.toolSummary(command)) }
-            runningCommands += 1
-            let outcome = await runner.run(command: command, directory: directory)
-            runningCommands -= 1
-            if runningCommands == 0 { commandWaiters.forEach { $0.resume() }; commandWaiters = [] }
-            switch outcome {
-            case .completed(let output):
-                if let key { finishedOutputs[key] = output; project() }
-                return output
-            case .cancelled:
-                throw CancellationError()
-            case .failed where outcome.invalidDirectory:
-                // The folder moved or was replaced: nothing ran; ask where to run it.
-                if let key { started.remove(key); callDirectories[key] = nil; project() }
-                ask = true
-            case .failed(_, let message):
-                throw AgentExecutionFailure(message: message)
-            }
+        try Task.checkCancellation()
+        // Once a save failed, nothing more runs this turn, not even the rest of a batch.
+        if storageFailure != nil || stopRequested { throw CancellationError() }
+        if steering.isPending { return AgentToolResult.superseded }
+        let missing = AgentToolResult.status("not_executed", AgentToolResult.projectMissing(nothing: "run"))
+        let directory: String
+        switch try projectRoot() {
+        case .noProject: return AgentToolResult.status("not_executed", AgentToolResult.noProject(nothing: "run"))
+        case .missing: return missing
+        case .superseded: return AgentToolResult.superseded
+        case .path(let path):
+            guard let canonical = ExecutionService.canonicalPath(path) else { return missing }
+            directory = canonical
+        }
+        guard try await acquireLease(directory) else { return AgentToolResult.superseded }
+        if steering.isPending { return AgentToolResult.superseded }
+        if storageFailure != nil || stopRequested { throw CancellationError() }
+        // The call is saved before its command can run.
+        do { try host?.harnessSave() }
+        catch { storageFailure = error.localizedDescription; throw error }
+        if let key { started.insert(key); callDirectories[key] = directory; project() }
+        if !stopRequested { host?.harnessStatus(TaskStore.toolSummary(command)) }
+        runningCommands += 1
+        let outcome = await runner.run(command: command, directory: directory)
+        runningCommands -= 1
+        if runningCommands == 0 { commandWaiters.forEach { $0.resume() }; commandWaiters = [] }
+        switch outcome {
+        case .completed(let output):
+            if let key { finishedOutputs[key] = output; project() }
+            return output
+        case .cancelled:
+            throw CancellationError()
+        case .failed where outcome.invalidDirectory:
+            // The folder moved or was replaced after the lookup: nothing ran.
+            if let key { started.remove(key); callDirectories[key] = nil; project() }
+            return missing
+        case .failed(_, let message):
+            throw AgentExecutionFailure(message: message)
         }
     }
 
@@ -736,21 +833,15 @@ enum AgentInstructions {
         if let granted { waiter.resume(returning: granted) } else { waiter.resume(throwing: CancellationError()) }
     }
 
-    private func resumeDirectoryWaiter(_ id: UUID, _ result: Result<AgentProjectRoot, any Error>) {
-        guard let waiter = directoryWaiters.removeValue(forKey: id) else { return }
-        if directoryWaiters.isEmpty { host?.harnessNeedsDirectory(false) }
-        waiter.resume(with: result)
-    }
-
-    private func resumeDirectoryWaiters(_ result: Result<AgentProjectRoot, any Error>) {
-        let waiters = directoryWaiters; directoryWaiters = [:]
-        if !waiters.isEmpty { host?.harnessNeedsDirectory(false) }
+    private func resumeFinderWaiters(_ result: Result<FinderLocation?, any Error>) {
+        let waiters = finderWaiters; finderWaiters = [:]
         waiters.values.forEach { $0.resume(with: result) }
     }
 
     private func tools() -> [any Tool] {
         let context = AgentReadContext(access: HarnessProjectAccess(harness: self), steering: steering)
-        return [ListFilesTool(context: context), ReadFileTool(context: context), BashTool(access: HarnessBashAccess(harness: self))]
+        return [ListFilesTool(context: context), ReadFileTool(context: context), BashTool(access: HarnessBashAccess(harness: self)),
+                FinderLocationTool(access: HarnessFinderAccess(harness: self))]
     }
 
     @concurrent private static func consume(
@@ -992,11 +1083,23 @@ private struct HarnessBashAccess: AgentBashAccess {
     }
 }
 
+private struct HarnessFinderAccess: AgentFinderAccess {
+    weak var harness: AgentHarness?
+    func locate(call: GenerationID?) async throws -> FinderLocation? {
+        guard let harness else { throw CancellationError() }
+        return try await harness.locateFinder(call: call)
+    }
+}
+
 private struct HarnessProjectAccess: AgentProjectAccess {
     weak var harness: AgentHarness?
     func projectRoot() async throws -> AgentProjectRoot {
         guard let harness else { throw CancellationError() }
-        return try await harness.resolveDirectory()
+        return try await harness.projectRoot()
+    }
+    func finderRoot(call: GenerationID?) async throws -> AgentFinderRoot {
+        guard let harness else { throw CancellationError() }
+        return try await harness.finderRoot(call: call)
     }
 }
 
@@ -1044,8 +1147,9 @@ private struct LocalChatProfile: LanguageModelSession.DynamicProfile {
 }
 
 extension AgentToolRecord {
-    /// What a card shows for a call: the command for bash, the path for the read tools.
-    /// Arguments as the model wrote them, so a call it got wrong shows what it actually sent.
+    /// What a card shows for a call: the command for bash, the path for the read tools, nothing
+    /// for finder_location, which takes no arguments. Otherwise the arguments as the model wrote
+    /// them, so a call it got wrong shows what it actually sent.
     static func display(_ call: Transcript.ToolCall) -> String {
         let text = AgentCallArguments.text(call)
         let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
@@ -1055,6 +1159,7 @@ extension AgentToolRecord {
             let path = object?["path"] as? String ?? text
             if let line = object?["start_line"] as? Int, line > 1 { return "\(path):\(line)" }
             return path
+        case "finder_location": return ""
         default: return text
         }
     }
@@ -1063,6 +1168,7 @@ extension AgentToolRecord {
         case "bash": TaskStore.toolSummary(display(call))
         case "list_files": String(localized: "正在列出文件 · \(String(display(call).prefix(60)))")
         case "read_file": String(localized: "正在读取文件 · \(String(display(call).prefix(60)))")
+        case "finder_location": String(localized: "正在查看访达位置")
         default: String(localized: "正在调用工具 · \(call.toolName)")
         }
     }

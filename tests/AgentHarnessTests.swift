@@ -1,4 +1,5 @@
 import Combine
+import CoreServices
 import Foundation
 import FoundationModels
 import Synchronization
@@ -20,14 +21,18 @@ import Testing
         let runner: FakeRunner
         private var observation: AnyCancellable?
         init(_ step: @escaping ScriptedAgentModel.Step, project: URL? = nil, snapshot: TaskStore.Snapshot? = nil,
-             runner: FakeRunner = FakeRunner()) {
+             runner: FakeRunner = FakeRunner(), finder: FakeFinder = FakeFinder()) {
             let model = ScriptedAgentModel(step: step)
             self.model = model
             self.project = project
             self.runner = runner
-            let harness = AgentHarness(resolveModel: { model.factory }, runner: runner)
+            let harness = AgentHarness(resolveModel: { model.factory }, runner: runner, finder: finder)
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
-            store.projectDirectory = { [unowned self] in self.project }
+            // As the workspace answers: a project whose folder is gone is missing.
+            store.projectDirectory = { [unowned self] in
+                guard let project = self.project else { return .noProject }
+                return FileManager.default.fileExists(atPath: project.path) ? .path(project.path) : .missing
+            }
             store.acquireDirectory = { [unowned self] path, ready in self.leases.append("acquire \(path)"); ready() }
             store.releaseDirectory = { [unowned self] in self.leases.append("release") }
             store.checkpoint = { [unowned self] state in
@@ -70,6 +75,35 @@ import Testing
             let outcome = await script(command, directory, index)
             state.withLock { $0.running -= 1 }
             return outcome
+        }
+    }
+
+    /// Stands in for Finder: no test sends it an Apple Event. Without a script, a call is a test failure.
+    final class FakeFinder: FinderLocating, Sendable {
+        private let script: @Sendable () async -> FinderLocation
+        private let state = Mutex((calls: 0, returned: 0))
+        init(_ script: (@Sendable () async -> FinderLocation)? = nil) {
+            self.script = script ?? {
+                Issue.record("finder_location asked Finder without a fake")
+                return .unavailable(.noFolder)
+            }
+        }
+        /// Answers each call with the next location, repeating the last.
+        static func answering(_ locations: [FinderLocation]) -> FakeFinder {
+            let next = Mutex(0)
+            return FakeFinder {
+                let index = next.withLock { index in defer { index += 1 }; return index }
+                return locations[min(index, locations.count - 1)]
+            }
+        }
+        var calls: Int { state.withLock { $0.calls } }
+        /// Calls whose lookup ran to its end, whether or not anyone still waited for it.
+        var returned: Int { state.withLock { $0.returned } }
+        func locate() async -> FinderLocation {
+            state.withLock { $0.calls += 1 }
+            let location = await script()
+            state.withLock { $0.returned += 1 }
+            return location
         }
     }
 
@@ -325,22 +359,6 @@ import Testing
         #expect(chat.model.requests.last?.kinds == ["instructions", "prompt", "response", "prompt"])
     }
 
-    @Test func inputWhileAToolWaitsSupersedesIt() async throws {
-        let chat = Chat { request, emit, index in
-            if index == 0 { await emit.call("read_file", #"{"path":"src/main.txt"}"#) }
-            else { try await emit.text("after \(request.toolOutputs.joined())") }
-        }
-        #expect(chat.store.send("read"))
-        try await eventually("folder requested") { chat.store.needsDirectory }
-        #expect(chat.store.task?.summary == "等待选择项目文件夹" && chat.store.tools.first?.state == .running)
-        #expect(chat.store.send("never mind"))
-        try await chat.idle()
-        #expect(!chat.store.needsDirectory && chat.store.tools.first?.state == .notExecuted)
-        #expect(chat.store.tools.first?.result == AgentToolResult.superseded)
-        let last = try #require(chat.model.requests.last)
-        #expect(last.kinds == ["instructions", "prompt", "toolCalls", "toolOutput", "prompt"] && last.userTexts == ["read", "never mind"])
-    }
-
     @Test func inputWhileAToolRunsKeepsItsResult() async throws {
         let root = try Self.project()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -368,31 +386,42 @@ import Testing
 
     // MARK: Project folder
 
-    @Test func toolsAskForAFolderAndAcceptADecline() async throws {
+    /// Without a project no tool asks for one: a read of Finder's side says Finder has no folder,
+    /// root "project" and bash say there is no project, and only the person adds one.
+    @Test func withoutAProjectNoToolAsksForAFolder() async throws {
+        let calls = [("list_files", #"{"path":"."}"#), ("read_file", #"{"path":"x.txt","root":"finder"}"#),
+                     ("list_files", #"{"path":".","root":"project"}"#), ("bash", #"{"command":"ls"}"#)]
+        let finder = FakeFinder { .unavailable(.noFolder) }
+        let chat = Chat(FinderRootTests.oneByOne(calls), finder: finder)
+        try await FinderRootTests.run(chat)
+        let results = chat.store.tools.map(\.result)
+        #expect(results == [FinderLocation.unavailable(.noFolder).toolResult, FinderLocation.unavailable(.noFolder).toolResult,
+                            AgentToolResult.failed(AgentToolResult.noProject(nothing: "read")),
+                            AgentToolResult.status("not_executed", AgentToolResult.noProject(nothing: "run"))])
+        #expect(finder.calls == 2, "Only the reads of Finder's side asked Finder")
+        #expect(chat.store.tools.map(\.state) == [.finished, .finished, .finished, .notExecuted])
+        #expect(chat.runner.runs.isEmpty && chat.store.task?.status == .completed)
+
+        // With a project, a read that names no root reads it as before.
         let root = try Self.project()
         defer { try? FileManager.default.removeItem(at: root) }
-        let chat = Chat { request, emit, index in
-            switch index {
-            case 0: await emit.call("list_files", #"{"path":"."}"#)
-            case 1: try await emit.text("listed \(request.toolOutputs.last ?? "")")
-            case 2: await emit.call("list_files", #"{"path":"."}"#, id: "call-2")
-            default: try await emit.text("declined \(request.toolOutputs.last ?? "")")
-            }
-        }
-        #expect(chat.store.send("files?"))
-        try await eventually("folder requested") { chat.store.needsDirectory }
-        chat.project = root
-        chat.store.provideDirectory(root)
-        try await chat.idle()
-        #expect(chat.store.tools.first?.result == #"{"files":[".env","src/"],"truncated":false}"#, "Dot files are listed; only .git is skipped")
+        let listed = Chat(FinderRootTests.oneByOne([("list_files", #"{"path":"."}"#)]), project: root)
+        try await FinderRootTests.run(listed)
+        #expect(listed.store.tools.first?.result == #"{"files":[".env","src/"],"truncated":false}"#, "Dot files are listed; only .git is skipped")
+    }
 
-        chat.project = nil
-        #expect(chat.store.send("again"))
-        try await eventually("folder requested again") { chat.store.needsDirectory }
-        chat.store.provideDirectory(nil)
-        try await chat.idle()
-        #expect(chat.store.tools.last?.state == .notExecuted && chat.store.tools.last?.result == AgentToolResult.directoryDeclined)
-        #expect(chat.store.task?.status == .completed)
+    /// A project whose folder was moved or deleted runs and reads nothing, and asks for nothing.
+    @Test func aMissingProjectFolderFailsWithoutAsking() async throws {
+        let root = try Self.project()
+        try FileManager.default.removeItem(at: root)
+        let calls = [("list_files", #"{"path":"."}"#), ("read_file", #"{"path":"x.txt","root":"project"}"#), ("bash", #"{"command":"ls"}"#)]
+        let chat = Chat(FinderRootTests.oneByOne(calls), project: root)
+        try await FinderRootTests.run(chat)
+        #expect(chat.store.tools.map(\.result) == [AgentToolResult.failed(AgentToolResult.projectMissing(nothing: "read")),
+                                                   AgentToolResult.failed(AgentToolResult.projectMissing(nothing: "read")),
+                                                   AgentToolResult.status("not_executed", AgentToolResult.projectMissing(nothing: "run"))])
+        #expect(AgentToolResult.projectMissing(nothing: "run").contains("Relocate Folder…"))
+        #expect(chat.runner.runs.isEmpty && chat.store.task?.status == .completed)
     }
 
     // MARK: Persistence gates and restore
@@ -597,6 +626,7 @@ import Testing
 
     struct FixedRoot: AgentProjectAccess {
         func projectRoot() async throws -> AgentProjectRoot { .path(FileManager.default.temporaryDirectory.path) }
+        func finderRoot(call: GenerationID?) async throws -> AgentFinderRoot { .failed(FinderLocation.unavailable(.noFolder).toolResult) }
     }
 }
 
@@ -851,23 +881,20 @@ import Testing
         #expect(chat.store.tools.first?.state == .notExecuted)
     }
 
-    @Test func aMovedFolderAsksWhereToRun() async throws {
-        let root = try AgentHarnessTests.project(), elsewhere = try AgentHarnessTests.project()
-        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: elsewhere) }
-        let runner = AgentHarnessTests.FakeRunner { _, _, index in
-            index == 0 ? .failed(code: "invalid_directory", message: "working directory changed") : .completed(#"{"stdout":"ok"}"#)
-        }
+    /// The folder moved between the lookup and the command: nothing ran, and nothing asks for a folder.
+    @Test func aFolderMovedUnderTheCommandRunsNothingMore() async throws {
+        let root = try AgentHarnessTests.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runner = AgentHarnessTests.FakeRunner { _, _, _ in .failed(code: "invalid_directory", message: "working directory changed") }
         let chat = Chat({ _, emit, index in
             if index == 0 { await emit.call("bash", #"{"command":"make"}"#) } else { try await emit.text("done") }
         }, project: root, runner: runner)
-        #expect(chat.store.send("make"))
-        try await eventually("asks for a folder") { chat.store.needsDirectory }
-        #expect(chat.store.tools.first?.state == .waiting, "Nothing ran in the moved folder")
-        chat.project = elsewhere
-        chat.store.provideDirectory(elsewhere)
-        try await chat.idle()
-        #expect(runner.runs.map(\.directory) == [Self.canonical(root), Self.canonical(elsewhere)])
-        #expect(chat.store.tools.first?.result == #"{"stdout":"ok"}"# && chat.store.task?.status == .completed)
+        try await FinderRootTests.run(chat, "make")
+        #expect(runner.runs.map(\.directory) == [Self.canonical(root)], "Run once, never retried elsewhere")
+        let record = try #require(chat.store.tools.first)
+        #expect(record.state == .notExecuted && record.directory == Self.canonical(root), "The card keeps the folder it tried")
+        #expect(record.result == AgentToolResult.status("not_executed", AgentToolResult.projectMissing(nothing: "run")))
+        #expect(chat.store.task?.status == .completed)
     }
 
     /// A batch runs in the order the model wrote it, although Foundation Models starts its calls
@@ -960,3 +987,500 @@ import Testing
     }
 }
 
+
+/// finder_location with a fake Finder: what the model sees, what the card keeps, and how Stop and
+/// newer input end a call that waits for Finder. No test here sends Finder an Apple Event.
+@MainActor @Suite(.serialized) struct FinderLocationToolTests {
+    typealias Chat = AgentHarnessTests.Chat
+    typealias FakeFinder = AgentHarnessTests.FakeFinder
+
+    /// A folder named `name`, by its canonical path.
+    static func folder(_ name: String) throws -> String {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("echo-finder-\(UUID())").appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return try #require(ExecutionService.canonicalPath(url.path))
+    }
+
+    static let asksFinder: ScriptedAgentModel.Step = { request, emit, index in
+        if index == 0 { await emit.call("finder_location", "{}") }
+        else { try await emit.text("answered \(request.userTexts.joined(separator: "+")) \(request.toolOutputs.joined())") }
+    }
+
+    struct NoAccess: AgentFinderAccess {
+        func locate(call: GenerationID?) async throws -> FinderLocation? { nil }
+    }
+
+    @MainActor final class Sender {
+        var store: TaskStore?
+        func send(_ text: String) { _ = store?.send(text) }
+    }
+
+    @Test func aFolderReachesTheModelByNameAndTheCardByPath() async throws {
+        let path = try Self.folder("资料")
+        defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+        let gate = ScriptGate()
+        let finder = FakeFinder { try? await gate.wait(); return .folder(path) }
+        let chat = Chat(Self.asksFinder, finder: finder)
+        #expect(chat.store.send("这个文件夹里是什么"))
+        try await eventually("asking Finder") { finder.calls == 1 }
+        #expect(chat.store.task?.summary == "正在查看访达位置" && chat.store.tools.first?.state == .running)
+        gate.open()
+        try await chat.idle()
+        let output = #"{"folder":"资料"}"#
+        #expect(chat.model.requests.last?.toolOutputs == [output], "The model gets the folder by the name Finder shows")
+        let record = try #require(chat.store.tools.first)
+        #expect(record.tool == "finder_location" && record.command == "" && record.state == .finished)
+        #expect(record.result == output && record.directory == path, "The path goes to the card alone")
+        #expect(chat.store.task?.status == .completed)
+
+        // Saved and reopened, the card still has the path.
+        let saved = try JSONDecoder().decode(TaskStore.Snapshot.self, from: JSONEncoder().encode(chat.store.snapshot))
+        let reopened = Chat({ _, emit, _ in try await emit.text("x") }, snapshot: saved)
+        #expect(reopened.store.tools.first?.directory == path && reopened.store.tools.first?.result == output)
+    }
+
+    @Test(arguments: [
+        (FinderLocation.unavailable(.noFolder), "unavailable", "not in a readable folder"),
+        (.unavailable(.promptUnanswered), "unavailable", "click Allow"),
+        (.unavailable(.error(-10000)), "unavailable", "error -10000"),
+        (.permissionDenied, "permission_denied", "Privacy & Security > Automation"),
+    ])
+    func noFolderEndsTheCallWithADetail(location: FinderLocation, status: String, detail: String) async throws {
+        let chat = Chat(Self.asksFinder, finder: FakeFinder { location })
+        #expect(chat.store.send("这里是哪里"))
+        try await chat.idle()
+        let output = try #require(chat.model.requests.last?.toolOutputs.first)
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: String])
+        #expect(json["status"] == status && json["detail"]?.contains(detail) == true && json.count == 2, "\(output)")
+        let record = try #require(chat.store.tools.first)
+        #expect(record.result == output && record.state == .finished && record.directory == nil, "No new state for a failure")
+        #expect(chat.store.task?.status == .completed)
+    }
+
+    @Test func noResultCarriesAnAbsolutePath() throws {
+        let path = try Self.folder("Projects")
+        defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+        let locations: [FinderLocation] = [.folder(path), .permissionDenied, .unavailable(.noFolder),
+                                           .unavailable(.promptUnanswered), .unavailable(.error(-1))]
+        for location in locations {
+            #expect(!location.toolResult.contains("/"), "\(location.toolResult)")
+        }
+        #expect(FinderLocation.folder(path).toolResult == #"{"folder":"Projects"}"#)
+    }
+
+    /// Input that is already waiting when the call comes up: the call does not ask Finder.
+    @Test func pendingInputSupersedesTheCall() async throws {
+        let sender = Sender()
+        let finder = FakeFinder { .permissionDenied }
+        let chat = Chat({ request, emit, index in
+            if index == 0 {
+                await sender.send("算了")
+                await emit.call("finder_location", "{}")
+            } else {
+                try await emit.text("answered \(request.userTexts.joined(separator: "+"))")
+            }
+        }, finder: finder)
+        sender.store = chat.store
+        #expect(chat.store.send("这里是哪里"))
+        try await chat.idle()
+        #expect(finder.calls == 0)
+        #expect(chat.store.tools.first?.state == .notExecuted && chat.store.tools.first?.result == AgentToolResult.superseded)
+        #expect(chat.assistantTexts.last == "answered 这里是哪里+算了")
+    }
+
+    /// Input that arrives while Finder has not answered: the call returns at once; Finder's answer,
+    /// when it comes, is dropped.
+    @Test func inputWhileFinderAnswersSupersedesTheCall() async throws {
+        let path = try Self.folder("Downloads")
+        defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+        let gate = ScriptGate()
+        let finder = FakeFinder { try? await gate.wait(); return .folder(path) }
+        let chat = Chat(Self.asksFinder, finder: finder)
+        #expect(chat.store.send("这里是哪里"))
+        try await eventually("asking Finder") { finder.calls == 1 }
+        #expect(chat.store.send("算了"))
+        try await chat.idle()
+        #expect(finder.returned == 0, "The turn did not wait for Finder")
+        let record = try #require(chat.store.tools.first)
+        #expect(record.state == .notExecuted && record.result == AgentToolResult.superseded && record.directory == nil)
+        #expect(chat.model.requests.last?.toolOutputs == [AgentToolResult.superseded])
+        gate.open()
+        try await eventually("Finder answers") { finder.returned == 1 }
+        await Task.yield()
+        #expect(chat.store.tools.first?.directory == nil && chat.store.tools.first?.result == AgentToolResult.superseded)
+    }
+
+    @Test func stopWhileFinderAnswersEndsTheCallAtOnce() async throws {
+        let path = try Self.folder("Downloads")
+        defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+        let gate = ScriptGate()
+        let finder = FakeFinder { try? await gate.wait(); return .folder(path) }
+        let chat = Chat(Self.asksFinder, finder: finder)
+        #expect(chat.store.send("这里是哪里"))
+        try await eventually("asking Finder") { finder.calls == 1 }
+        chat.store.stopTask()
+        try await chat.idle()
+        #expect(finder.returned == 0, "The turn did not wait for Finder")
+        #expect(chat.store.task?.status == .stopped)
+        let record = try #require(chat.store.tools.first)
+        #expect(record.state == .notExecuted && record.result == AgentToolResult.cancelledBefore && record.directory == nil,
+                "As the read tools end when stopped")
+        gate.open()
+        try await eventually("Finder answers") { finder.returned == 1 }
+        await Task.yield()
+        #expect(chat.store.tools.first?.directory == nil && chat.store.tools.first?.result == AgentToolResult.cancelledBefore)
+    }
+
+    @Test func instructionsMentionFinderOnlyWithTheTool() async throws {
+        let with = AgentInstructions.text(tools: ["list_files", "read_file", "bash", "finder_location"])
+        let finders = with.components(separatedBy: "\n\n").filter { $0.contains("finder_location") }
+        #expect(finders.count == 1, "One paragraph about Finder: \(finders)")
+        let finder = try #require(finders.first)
+        #expect(finder.hasPrefix("When the person asks about the place they are viewing in Finder, list_files and read_file can read it directly."))
+        #expect(finder.contains("the folder Finder showed the first time this chat read from Finder. It stays the same while the person browses elsewhere in Finder."))
+        #expect(finder.contains("finder_location switches this chat's Finder folder to the one Finder shows now, for when the person asks to switch"))
+        #expect(finder.contains("Paths are relative to the Finder folder, . is its root, and only what is inside it can be read."))
+        #expect(finder.contains(#"When the chat has a project, list_files and read_file read the project unless root is "finder"."#))
+        #expect(finder.contains("The person can see which folder they are in; its name is context for you."))
+        #expect(FinderLocationTool(access: Self.NoAccess()).description == "Switch this chat's Finder folder to the folder shown in Finder's frontmost window")
+        for word in ["must", "never", "always", "every reply", "Never", "Always", "Do not", "do not"] {
+            #expect(!finder.contains(word), "The Finder paragraph states facts, not orders: \(word)")
+        }
+        let without = AgentInstructions.text(tools: ["list_files", "read_file", "bash"])
+        #expect(!without.contains("finder_location") && !without.contains("Finder"))
+        for text in [with, without] {
+            #expect(text.contains(#"When the person asks about the files of the conversation's project, inspect them with list_files and read_file, passing root "project"."#))
+            #expect(!text.contains("choose") && text.contains("only the person can add one") && text.contains("without one, no command runs"),
+                    "No tool asks the person for a folder")
+        }
+
+        // Every cloud turn offers the tool, and so the paragraph.
+        let chat = Chat({ _, emit, _ in try await emit.text("hi") })
+        #expect(chat.store.send("hello"))
+        try await chat.idle()
+        let request = try #require(chat.model.requests.first)
+        let instructions = request.transcript.compactMap { entry -> String? in
+            if case .instructions(let instructions) = entry { AgentHarness.text(instructions.segments) } else { nil }
+        }.joined()
+        #expect(instructions.contains("finder_location switches this chat's Finder folder"))
+        #expect(request.enabledToolDefinitions.map(\.name).sorted() == ["bash", "finder_location", "list_files", "read_file"])
+    }
+}
+
+/// Apple Event errors and replies to `FinderLocation`, from descriptors built here: nothing is sent.
+@Suite struct FinderLocationMappingTests {
+    static func reply(errn: Int32? = nil, url: URL? = nil) -> NSAppleEventDescriptor {
+        let reply = NSAppleEventDescriptor.appleEvent(
+            withEventClass: AEEventClass(kCoreEventClass), eventID: AEEventID(kAEAnswer), targetDescriptor: nil,
+            returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
+        if let errn { reply.setParam(NSAppleEventDescriptor(int32: errn), forKeyword: AEKeyword(keyErrorNumber)) }
+        if let url { reply.setParam(NSAppleEventDescriptor(fileURL: url), forKeyword: AEKeyword(keyDirectObject)) }
+        return reply
+    }
+
+    @Test func errorsInTheReply() {
+        #expect(FinderLocation.classify(reply: Self.reply(errn: -1743)) == .permissionDenied)
+        #expect(FinderLocation.classify(reply: Self.reply(errn: -1708)) == .unavailable(.noFolder), "Recents, AirDrop, tags")
+        #expect(FinderLocation.classify(reply: Self.reply(errn: -1728)) == .unavailable(.noFolder), "No browser window")
+        #expect(FinderLocation.classify(reply: Self.reply(errn: -1700)) == .unavailable(.error(-1700)))
+        #expect(FinderLocation.classify(reply: Self.reply(errn: -1743, url: URL(fileURLWithPath: "/tmp"))) == .permissionDenied,
+                "errn is read before the result")
+        #expect(FinderLocation.classify(reply: Self.reply()) == .unavailable(.noFolder))
+    }
+
+    @Test func thrownErrors() {
+        #expect(FinderLocation.classify(thrown: NSError(domain: NSOSStatusErrorDomain, code: -1712)) == .unavailable(.promptUnanswered))
+        #expect(FinderLocation.classify(thrown: NSError(domain: NSOSStatusErrorDomain, code: -600)) == .unavailable(.noFolder),
+                "Finder not running")
+        #expect(FinderLocation.classify(thrown: NSError(domain: NSOSStatusErrorDomain, code: -609)) == .unavailable(.error(-609)))
+    }
+
+    @Test func aFolderIsReportedCanonicalOnceItOpens() throws {
+        #expect(FinderLocation.classify(reply: Self.reply(url: URL(fileURLWithPath: "/tmp"))) == .folder("/private/tmp"))
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("echo-finder-\(UUID())")
+        let closed = root.appendingPathComponent("closed")
+        try fm.createDirectory(at: closed, withIntermediateDirectories: true)
+        try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: closed.path)
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: closed.path)
+            try? fm.removeItem(at: root)
+        }
+        #expect(FinderLocation.classify(reply: Self.reply(url: closed)) == .unavailable(.noFolder), "A folder that cannot be opened")
+        #expect(FinderLocation.classify(reply: Self.reply(url: root.appendingPathComponent("gone"))) == .unavailable(.noFolder))
+    }
+
+    @Test func theEventAsksFinderForItsFrontWindowsTarget() {
+        let event = AppleEventFinderLocator.event()
+        #expect(event.eventClass == AEEventClass(kAECoreSuite) && event.eventID == AEEventID(kAEGetData))
+        let text = event.description
+        #expect(text.contains("'want':'brow'") && text.contains("'seld':'fvtg'") && text.contains("'rtyp':'furl'") && text.contains("'seld':1"),
+                "\(text)")
+        #expect(AppleEventFinderLocator.timeout == 60, "The permission prompt lasts as long as the send waits")
+    }
+}
+
+/// list_files and read_file in the chat's Finder folder: taken from Finder on the first read that
+/// needs it, saved with the chat, switched only by finder_location, read with the project's path
+/// checks, never asking for a folder. Finder is a fake.
+@MainActor @Suite(.serialized) struct FinderRootTests {
+    typealias Chat = AgentHarnessTests.Chat
+    typealias FakeFinder = AgentHarnessTests.FakeFinder
+    typealias Sender = FinderLocationToolTests.Sender
+
+    /// finder/ and second/ stand for Finder folders, project/ for the conversation's project.
+    struct Folders {
+        let base: String
+        let finder: String
+        let second: String
+        let project: URL
+        func remove() { try? FileManager.default.removeItem(atPath: base) }
+    }
+
+    static func folders() throws -> Folders {
+        let fm = FileManager.default
+        let url = fm.temporaryDirectory.appendingPathComponent("echo-finder-root-\(UUID())")
+        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        let base = try #require(ExecutionService.canonicalPath(url.path))
+        func write(_ path: String, _ text: String) throws {
+            let file = URL(fileURLWithPath: base).appendingPathComponent(path)
+            try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: file)
+        }
+        try write("finder/note.txt", "from finder")
+        try write("finder/sub/inner.txt", "inner")
+        try write("second/note.txt", "from second")
+        try write("project/note.txt", "from project")
+        try write("project/only-project.txt", "project only")
+        try write("outside/secret.txt", "secret")
+        try fm.createSymbolicLink(atPath: base + "/finder/link", withDestinationPath: base + "/outside")
+        try fm.createSymbolicLink(atPath: base + "/finder/file-link", withDestinationPath: base + "/outside/secret.txt")
+        return Folders(base: base, finder: base + "/finder", second: base + "/second", project: URL(fileURLWithPath: base + "/project"))
+    }
+
+    /// One call per model request, then a reply.
+    static func oneByOne(_ calls: [(String, String)]) -> ScriptedAgentModel.Step {
+        { _, emit, index in
+            if index < calls.count { await emit.call(calls[index].0, calls[index].1, id: "call-\(index)") }
+            else { try await emit.text("done") }
+        }
+    }
+
+    static func content(_ text: String) -> String { #"{"content":"\#(text)","start_line":1,"truncated":false}"# }
+    /// What a read of the chat's Finder folder returns: the content and the folder's name.
+    static func content(_ text: String, in folder: String) -> String {
+        #"{"content":"\#(text)","folder":"\#(folder)","start_line":1,"truncated":false}"#
+    }
+
+    /// Runs one turn to its end. No tool waits for a folder, so a turn that ends asked for none.
+    static func run(_ chat: Chat, _ text: String = "看看这里") async throws {
+        #expect(chat.store.send(text))
+        try await chat.idle()
+    }
+
+    /// Without a project, a read that names no root anchors the chat on the folder Finder shows,
+    /// asking Finder once, and reads it. Results name the folder; only the card has its path.
+    @Test func withoutAProjectAReadAnchorsTheChatOnFinder() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let finder = FakeFinder.answering([.folder(f.finder)])
+        let chat = Chat(Self.oneByOne([("read_file", #"{"path":"note.txt"}"#), ("list_files", #"{"path":"./sub/"}"#)]), finder: finder)
+        try await Self.run(chat)
+        #expect(chat.store.tools.map(\.result) == [Self.content("from finder", in: "finder"),
+                                                   #"{"files":["inner.txt"],"folder":"finder","truncated":false}"#])
+        #expect(finder.calls == 1, "Finder is asked once, when the chat has no folder yet")
+        #expect(chat.native.finderFolder == f.finder && chat.store.tools.map(\.directory) == [f.finder, f.finder])
+        #expect(chat.model.requests.last?.toolOutputs.contains { $0.contains(f.base) } == false, "No path reaches the model")
+        #expect(Chat({ _, emit, _ in try await emit.text("x") }).native.finderFolder == nil, "A new chat has no Finder folder")
+    }
+
+    /// The chat's Finder folder outlasts the turn and stays put while Finder moves into a
+    /// subfolder or to an unrelated folder; no read asks Finder again.
+    @Test func theFinderFolderStaysWhileFinderMoves() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let shown = Mutex(f.finder)
+        let finder = FakeFinder { .folder(shown.withLock { $0 }) }
+        let chat = Chat({ _, emit, index in
+            switch index {
+            case 0: await emit.call("read_file", #"{"path":"note.txt"}"#, id: "c0")
+            case 2: await emit.call("list_files", #"{"path":"sub"}"#, id: "c2")
+            case 4: await emit.call("read_file", #"{"path":"note.txt"}"#, id: "c4")
+            default: try await emit.text("done")
+            }
+        }, finder: finder)
+        try await Self.run(chat, "这里有什么")
+        shown.withLock { $0 = f.finder + "/sub" }
+        try await Self.run(chat, "看看 sub")
+        shown.withLock { $0 = f.second }
+        try await Self.run(chat, "再读一下 note")
+        #expect(chat.store.tools.map(\.result) == [Self.content("from finder", in: "finder"),
+                                                   #"{"files":["inner.txt"],"folder":"finder","truncated":false}"#,
+                                                   Self.content("from finder", in: "finder")])
+        #expect(finder.calls == 1 && chat.native.finderFolder == f.finder)
+    }
+
+    /// finder_location switches the chat's Finder folder to what Finder shows now; one that finds
+    /// no folder, or may not ask, leaves the folder as it was.
+    @Test func finderLocationSwitchesTheFolderOrKeepsIt() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let finder = FakeFinder.answering([.folder(f.finder), .folder(f.second), .unavailable(.noFolder), .permissionDenied])
+        let read = ("read_file", #"{"path":"note.txt"}"#), locate = ("finder_location", "{}")
+        let chat = Chat(Self.oneByOne([read, locate, read, locate, read, locate, read]), finder: finder)
+        try await Self.run(chat)
+        #expect(chat.store.tools.map(\.result) == [
+            Self.content("from finder", in: "finder"),
+            #"{"folder":"second"}"#, Self.content("from second", in: "second"),
+            FinderLocation.unavailable(.noFolder).toolResult, Self.content("from second", in: "second"),
+            FinderLocation.permissionDenied.toolResult, Self.content("from second", in: "second"),
+        ])
+        #expect(finder.calls == 4 && chat.native.finderFolder == f.second)
+    }
+
+    /// No Finder folder yet and Finder has none to give: the read says why, and asks for nothing.
+    @Test(arguments: [FinderLocation.unavailable(.noFolder), .permissionDenied, .unavailable(.promptUnanswered)])
+    func withoutAFolderFromFinderTheReadFails(failure: FinderLocation) async throws {
+        let chat = Chat(Self.oneByOne([("read_file", #"{"path":"note.txt"}"#), ("list_files", #"{"path":".","root":"finder"}"#)]),
+                        finder: FakeFinder { failure })
+        try await Self.run(chat)
+        #expect(chat.store.tools.map(\.result) == [failure.toolResult, failure.toolResult])
+        #expect(chat.store.tools.allSatisfy { $0.directory == nil } && chat.native.finderFolder == nil)
+        #expect(chat.store.task?.status == .completed)
+    }
+
+    /// The chat's Finder folder is saved with it: reopened, the chat reads the same folder without
+    /// asking Finder.
+    @Test func theFinderFolderIsSavedWithTheChat() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let chat = Chat(Self.oneByOne([("list_files", #"{"path":"."}"#)]), finder: .answering([.folder(f.finder)]))
+        try await Self.run(chat)
+        let saved = try JSONDecoder().decode(TaskStore.Snapshot.self, from: JSONEncoder().encode(chat.store.snapshot))
+        #expect(saved.native?.finderFolder == f.finder)
+        let reopened = Chat(Self.oneByOne([("read_file", #"{"path":"note.txt"}"#)]), snapshot: saved)
+        try await Self.run(reopened, "再看看")
+        #expect(reopened.store.tools.last?.result == Self.content("from finder", in: "finder"), "The default fake records any ask")
+    }
+
+    /// A Finder folder moved away after the chat took it: reads fail, naming it, and its card
+    /// still shows where it was.
+    @Test func aMovedFinderFolderFailsToRead() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let chat = Chat({ _, emit, index in
+            switch index {
+            case 0: await emit.call("read_file", #"{"path":"note.txt"}"#, id: "c0")
+            case 2: await emit.call("list_files", #"{"path":"."}"#, id: "c2")
+            default: try await emit.text("done")
+            }
+        }, finder: .answering([.folder(f.finder)]))
+        try await Self.run(chat, "这里有什么")
+        try FileManager.default.moveItem(atPath: f.finder, toPath: f.base + "/moved")
+        try await Self.run(chat, "再列一下")
+        let record = try #require(chat.store.tools.last)
+        #expect(record.result == AgentToolResult.finderFolderMissing(name: "finder") && record.directory == f.finder)
+        #expect(AgentToolResult.finderFolderMissing(name: "finder").contains("finder_location switches this chat to the folder Finder shows now"))
+    }
+
+    /// With a project, a read that names no root reads the project; root "finder" reads the chat's
+    /// Finder folder, and root "project" never asks Finder. No root falls back to the other.
+    @Test func withAProjectRootPicksTheFolder() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let finder = FakeFinder.answering([.folder(f.finder)])
+        let chat = Chat(Self.oneByOne([
+            ("read_file", #"{"path":"note.txt"}"#),
+            ("read_file", #"{"path":"note.txt","root":"project"}"#),
+            ("list_files", #"{"path":".","root":"project"}"#),
+            ("read_file", #"{"path":"note.txt","root":"finder"}"#),
+            ("read_file", #"{"path":"only-project.txt","root":"finder"}"#),
+        ]), project: f.project, finder: finder)
+        try await Self.run(chat)
+        let results = chat.store.tools.map(\.result)
+        #expect(Array(results.prefix(4)) == [
+            Self.content("from project"), Self.content("from project"),
+            #"{"files":["note.txt","only-project.txt"],"truncated":false}"#, Self.content("from finder", in: "finder"),
+        ])
+        #expect(results.last??.contains("no such file or directory: only-project.txt") == true,
+                "A path missing from the Finder folder is missing, even when the project has it: \(results.last as Any)")
+        #expect(finder.calls == 1, "Only root \"finder\" asked Finder")
+        #expect(chat.store.tools.map(\.directory) == [nil, nil, nil, f.finder, f.finder], "Project cards are as before")
+    }
+
+    /// Input that arrives during the turn does not change the chat's Finder folder.
+    @Test func followUpInputKeepsTheFinderFolder() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let sender = Sender()
+        let chat = Chat({ request, emit, index in
+            switch index {
+            case 0: await emit.call("finder_location", "{}", id: "c0")
+            case 1:
+                await sender.send("再读一下 note")
+                await emit.call("read_file", #"{"path":"note.txt"}"#, id: "c1")
+            case 2: await emit.call("read_file", #"{"path":"note.txt"}"#, id: "c2")
+            default: try await emit.text("answered \(request.userTexts.joined(separator: "+"))")
+            }
+        }, finder: FakeFinder { .folder(f.finder) })
+        sender.store = chat.store
+        try await Self.run(chat)
+        #expect(chat.store.tools.map(\.result) == [#"{"folder":"finder"}"#, AgentToolResult.superseded, Self.content("from finder", in: "finder")])
+        #expect(chat.assistantTexts.last == "answered 看看这里+再读一下 note")
+    }
+
+    /// A batch's read waits for the finder_location call written before it.
+    @Test func aReadAfterFinderLocationInOneBatchWaitsForIt() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let gate = ScriptGate()
+        let chat = Chat({ _, emit, index in
+            if index == 0 {
+                await emit.calls([("finder_location", "{}", "c0"), ("read_file", #"{"path":"note.txt"}"#, "c1")])
+            } else {
+                try await emit.text("done")
+            }
+        }, finder: FakeFinder { try? await gate.wait(); return .folder(f.finder) })
+        #expect(chat.store.send("这里有什么"))
+        try await eventually("asking Finder") { gate.arrivals == 1 }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(chat.store.tools.allSatisfy { $0.result == nil }, "The read has not run before Finder answers")
+        gate.open()
+        try await chat.idle()
+        #expect(chat.store.tools.map(\.result) == [#"{"folder":"finder"}"#, Self.content("from finder", in: "finder")])
+    }
+
+    @Test func theFinderFolderHasTheProjectsPathChecks() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let escapes = ["/etc/hosts", "../project/note.txt", "sub/../../outside/secret.txt", "link/secret.txt", "file-link"]
+        let chat = Chat(Self.oneByOne([("finder_location", "{}")] + escapes.map { ("read_file", #"{"path":"\#($0)","root":"finder"}"#) }
+                                      + [("list_files", #"{"path":"link","root":"finder"}"#), ("list_files", #"{"path":"..","root":"finder"}"#)]),
+                        project: f.project, finder: FakeFinder { .folder(f.finder) })
+        try await Self.run(chat)
+        let results = chat.store.tools.dropFirst().map { $0.result ?? "" }
+        #expect(results.allSatisfy { $0.contains(#""status":"failed""#) && !$0.contains("secret\"") && !$0.contains("from project") }, "\(results)")
+        #expect(results[0].contains("path must stay inside the Finder folder: /etc/hosts"))
+        #expect(results[1].contains("path must stay inside the Finder folder") && results[6].contains("inside the Finder folder"))
+        // A link opened as a directory fails as not a directory (O_DIRECTORY | O_NOFOLLOW), as in the project.
+        #expect(results[3].contains("not a directory: link/secret.txt") && results[5].contains("not a directory: link"))
+        #expect(results[4].contains("symbolic links are not followed: file-link"))
+        #expect(ReadFileTool.read(root: f.project.path, path: "/etc/hosts", startLine: 1).contains("inside the project"),
+                "Project messages are unchanged")
+    }
+
+    @Test func rootTakesOnlyFinderOrProject() async throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let chat = Chat(Self.oneByOne([
+            ("finder_location", "{}"), ("read_file", #"{"path":"note.txt","root":"home"}"#),
+            ("list_files", #"{"path":".","root":"Finder"}"#), ("list_files", #"{"path":".","root":1}"#),
+        ]), finder: FakeFinder { .folder(f.finder) })
+        try await Self.run(chat)
+        let results = chat.store.tools.dropFirst().map { $0.result ?? "" }
+        #expect(results[0] == AgentToolResult.failed(#"root must be "finder" or "project"; received: home"#))
+        #expect(results[1] == AgentToolResult.failed(#"root must be "finder" or "project"; received: Finder"#))
+        #expect(results[2].contains("invalid arguments for list_files") && results[2].contains(#"\"root\"?"#))
+        #expect(chat.store.tools.dropFirst().allSatisfy { $0.directory == nil })
+    }
+}

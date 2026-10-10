@@ -13,13 +13,8 @@ extension EchoIntegrationScenarios {
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let note = project.appendingPathComponent("note.txt")
         try Data("before\n".utf8).write(to: note)
-        let work = f.workspace.newConversation()
+        let work = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
         try #require(work.store.send("acceptance-rwv"))
-        try await eventually("read/edit/verify directory gate", timeout: .seconds(8)) {
-          work.store.needsDirectory
-        }
-        #expect(try String(contentsOf: note, encoding: .utf8) == "before\n")
-        f.workspace.provideDirectory(project, conversationID: work.id)
         try await eventually("read/edit/verify completion", timeout: .seconds(8)) { !work.store.isGenerating }
         #expect(work.store.task?.status == .completed)
         #expect(work.store.tools.count == 3 && work.store.tools.allSatisfy { $0.result != nil })

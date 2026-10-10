@@ -8,7 +8,7 @@ import Foundation
     let puppet = PuppetModel()
     let harness: AgentHarness
     /// Other conversations get an Agent whose requests are never answered.
-    var harnessFactory: () -> AgentHarness = { AgentHarness(resolveModel: { PuppetModel().factory }) }
+    var harnessFactory: () -> AgentHarness = { AgentHarness(resolveModel: { PuppetModel().factory }, finder: NoFinder()) }
     var recognizers: [FakeRecognizer] = []
     var synths: [FakeSynthesizer] = []
     var finishDrain: CheckedContinuation<Void, Never>?
@@ -23,9 +23,10 @@ import Foundation
     lazy var workspace = WorkspaceStore(initialStore: store, voice: voice, harnessFactory: { [unowned self] in harnessFactory() })
     lazy var conversation = workspace.selected!
     lazy var settings = SettingsStore(secrets: FakeSecrets())
-    init(harness: AgentHarness? = nil) {
+    /// `finder` answers the fixture's own Agent when it asks Finder; nothing here asks the real Finder.
+    init(harness: AgentHarness? = nil, finder: any FinderLocating = NoFinder()) {
         let puppet = puppet
-        self.harness = harness ?? AgentHarness(resolveModel: { puppet.factory })
+        self.harness = harness ?? AgentHarness(resolveModel: { puppet.factory }, finder: finder)
     }
     /// User messages of the fixture's conversation, in order.
     var userTexts: [String] { store.messages.filter { $0.role == .user }.map(\.content) }

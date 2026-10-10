@@ -561,8 +561,9 @@ struct WorkspaceSnapshot: Codable {
         let id = conversation.id
         conversation.store.sessionID = id
         conversation.store.projectDirectory = { [weak self, weak conversation] in
-            guard let self, let project = self.projects.first(where: { $0.id == conversation?.projectID }), project.isAvailable else { return nil }
-            return URL(fileURLWithPath: project.path).resolvingSymlinksInPath().standardizedFileURL
+            guard let self, let project = self.projects.first(where: { $0.id == conversation?.projectID }) else { return .noProject }
+            guard project.isAvailable else { return .missing }
+            return .path(URL(fileURLWithPath: project.path).resolvingSymlinksInPath().standardizedFileURL.path)
         }
         conversation.store.checkpoint = { [weak self] state in
             guard let self else { throw CocoaError(.fileWriteUnknown) }
@@ -773,31 +774,6 @@ struct WorkspaceSnapshot: Codable {
         guard selectedID == conversationID, canAssociateProject(conversationID: conversationID),
               (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return false }
         return associateProject(addProject(url: url), conversationID: conversationID)
-    }
-    func provideDirectory(_ url: URL?, conversationID: UUID) {
-        guard let conversation = conversation(id: conversationID), conversation.store.needsDirectory else { return }
-        if let url {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-                persistenceNotice = String(localized: "所选文件夹不可用，请重新选择。"); return
-            }
-            guard !saveBlocked else {
-                persistenceNotice = Self.saveBlockedNotice; conversation.store.stopTask(); return
-            }
-            let previousProject = conversation.projectID, knownProjects = Set(projects.map(\.id))
-            conversation.projectID = addProject(url: url)
-            synchronizeFileBrowser()
-            // Persist the binding before letting the pending call proceed.
-            do { try persistence?.save(snapshot) }
-            catch {
-                // A call that will not run leaves no unsaved binding behind.
-                conversation.projectID = previousProject
-                projects.removeAll { !knownProjects.contains($0.id) }
-                synchronizeFileBrowser()
-                persistenceNotice = error.localizedDescription; conversation.store.stopTask(); return
-            }
-        }
-        conversation.store.provideDirectory(url?.resolvingSymlinksInPath().standardizedFileURL)
     }
 
     func prepareForTermination() async {

@@ -3,7 +3,7 @@ import Testing
 
 extension EchoIntegrationScenarios {
   @Suite(.serialized) @MainActor struct AgentVoiceIntegrationTests {
-    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses], ["tool", "model", "directory", "queue", "stop"])
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses], ["tool", "model", "queue", "stop"])
     static func voiceRouting(apiProtocol: ModelAPIProtocol, scenario: String) async throws {
       try await withSession { session in
         let makeHarness = { AgentFixture.harness(server: session.server, protocol: apiProtocol) }
@@ -15,15 +15,13 @@ extension EchoIntegrationScenarios {
         try await f.start()
         let owner = f.conversation.id
         var holder: WorkspaceConversation?
-        if scenario != "directory" {
-          let projectID = f.workspace.addProject(url: project)
-          f.workspace.associateProject(projectID, conversationID: owner)
-          if scenario == "queue" {
-            holder = f.workspace.newConversation(projectID: projectID)
-            holder!.store.send("cancel-tool")
-            try await eventually("queue holder starts", timeout: .seconds(8)) {
-              holder!.store.tools.first?.state == .running
-            }
+        let projectID = f.workspace.addProject(url: project)
+        f.workspace.associateProject(projectID, conversationID: owner)
+        if scenario == "queue" {
+          holder = f.workspace.newConversation(projectID: projectID)
+          holder!.store.send("cancel-tool")
+          try await eventually("queue holder starts", timeout: .seconds(8)) {
+            holder!.store.tools.first?.state == .running
           }
         }
         f.speak(
@@ -35,11 +33,6 @@ extension EchoIntegrationScenarios {
         case "model":
           // The fixture holds the request until it is released: the model request is under way.
           try await eventually("the model request is held", timeout: .seconds(8)) { session.server.slowModel.arrivals == 1 }
-        case "directory":
-          try await eventually("voice waits for directory", timeout: .seconds(8)) { f.store.needsDirectory }
-          #expect(
-            f.voice.status.contains("等待选择项目文件夹") && f.synths.isEmpty,
-            "directory pause does not speak assistant explanation")
         case "queue":
           try await eventually("voice waits for project", timeout: .seconds(8)) { f.store.waitingForProject }
           #expect(f.voice.status == "等待项目空闲… · 可补充语音", "project queue exposes live voice input")

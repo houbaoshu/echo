@@ -215,12 +215,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         return text
     }
     private(set) var tools: [AgentToolRecord] = []
-    private(set) var needsDirectory = false
     private(set) var waitingForProject = false
     private var agentStored: Bool?
     @ObservationIgnored private var storageFailure: String?
     @ObservationIgnored var sessionID = UUID()
-    @ObservationIgnored var projectDirectory: (() -> URL?)?
+    @ObservationIgnored var projectDirectory: (() -> AgentProjectRoot)?
     @ObservationIgnored var checkpoint: ((Snapshot) throws -> Void)?
     @ObservationIgnored var acquireDirectory: ((String, @escaping () -> Void) -> Void)?
     @ObservationIgnored var cancelDirectoryWait: (() -> Void)?
@@ -337,7 +336,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     func stopTask() {
         guard isGenerating, task?.status != .stopping, let harness else { return }
         task?.status = .stopping; task?.summary = String(localized: "正在停止…")
-        needsDirectory = false; waitingForProject = false
+        waitingForProject = false
         cancelDirectoryWait?(); harness.stop()
     }
     // Project convention: dismissing a surface never cancels its running turn.
@@ -402,13 +401,6 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         storageFailure = failure; notice = failure
         return failure
     }
-    func provideDirectory(_ url: URL?) {
-        guard needsDirectory, task?.status == .running else { return }
-        guard let harness else { return }
-        needsDirectory = false; task?.summary = url == nil ? String(localized: "正在取消未执行的调用…") : String(localized: "正在准备工具…")
-        harness.provideDirectory(url)
-    }
-
     // MARK: - Turns
 
     private func beginTurn(text: String?) -> Bool {
@@ -435,7 +427,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         var message = ConversationMessage(role: .user, content: text)
         message.steering = .queued; messages.append(message)
         harness.enqueue(messageID: message.id, text: text)
-        needsDirectory = false; waitingForProject = false
+        waitingForProject = false
         onUserAction?()
         return saveTurn()
     }
@@ -463,13 +455,7 @@ extension TaskStore: AgentHarnessHost {
         cardProgress = summary
         task?.summary = summary
     }
-    func harnessNeedsDirectory(_ needed: Bool) {
-        guard !retired else { return }
-        let value = needed && task?.status == .running
-        if needsDirectory != value { needsDirectory = value }
-        if value { task?.summary = String(localized: "等待选择项目文件夹"); cardProgress = String(localized: "等待选择项目文件夹") }
-    }
-    func harnessProjectDirectory() -> URL? { projectDirectory?() }
+    func harnessProjectDirectory() -> AgentProjectRoot { projectDirectory?() ?? .noProject }
     func harnessAcquireLease(_ path: String, ready: @escaping () -> Void) {
         if let acquireDirectory { acquireDirectory(path, ready) } else { ready() }
     }
@@ -491,7 +477,7 @@ extension TaskStore: AgentHarnessHost {
     }
     func harnessFinish(_ ending: AgentTurnEnding) {
         guard !retired, isGenerating, let runID = task?.runID else { return }
-        needsDirectory = false; waitingForProject = false
+        waitingForProject = false
         returnQueuedFollowUps()
         let stoppedSummary = harness?.continuable == true ? String(localized: "已停止 · 可继续处理") : String(localized: "已停止")
         var event: TaskLifecycleEvent

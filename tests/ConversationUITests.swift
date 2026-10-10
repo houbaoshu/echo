@@ -741,11 +741,11 @@ private struct ComposerHeightHost: View {
         let project = FileManager.default.temporaryDirectory.appendingPathComponent("echo-stopping-\(UUID())")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         print("Stopping test project: \(project.path)")
+        // The chat gets its project before its first message, as the composer's project button gives it.
+        XCTAssertTrue(workspace.associateProject(workspace.addProject(url: project), conversationID: conversation.id))
         _ = agentStore.send("generate")
         try await puppet.answer(.call(name: "bash", arguments: #"{"command":"sleep 60"}"#))
-        try await eventually("the command asks for a folder") { agentStore.needsDirectory }
-        workspace.provideDirectory(project, conversationID: conversation.id)
-        try await eventually("the command runs") { agentStore.tools.first?.state == .running && !agentStore.needsDirectory }
+        try await eventually("the command runs") { agentStore.tools.first?.state == .running }
         agentStore.mainDraft = "steer"
         try await eventually("The draft can be sent", layingOut: window.contentView) { node("conversation.send")?.isAccessibilityEnabled?() == true }
         XCTAssertTrue(node("conversation.send")?.isAccessibilityEnabled?() == true)
@@ -2360,10 +2360,10 @@ private struct ComposerHeightHost: View {
                      "An interrupted Agent task keeps its status row: \(agentBroken)")
     }
 
-    /// The Agent tool UI as the core drives it today: text beside a call stays in the chat,
-    /// the call waits for a folder with the three ways out, runs, and restores in each of
-    /// its terminal states; an unfinished Agent turn offers 继续处理 and a finished one does not.
-    func testAgentToolCardsDirectoryRowAndContinue() async throws {
+    /// The Agent tool UI as the core drives it today: text beside a call stays in the chat, the
+    /// call runs in the chat's project, and restores in each of its terminal states; an
+    /// unfinished Agent turn offers 继续处理 and a finished one does not.
+    func testAgentToolCardsAndContinue() async throws {
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let dictation = DictationController()
         defer { voice.shutdown(); dictation.shutdown() }
@@ -2386,33 +2386,19 @@ private struct ComposerHeightHost: View {
         let store = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { runner.gate.open(); workspace.shutdown() }
-        // 关联项目 lists available projects and is disabled without one.
-        _ = workspace.addProject(url: FileManager.default.temporaryDirectory)
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent("echo-probe-project-\(UUID())")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        print("Tool card test project: \(project.path)")
+        XCTAssertTrue(workspace.associateProject(workspace.addProject(url: project), conversationID: try XCTUnwrap(workspace.selected?.id)))
         store.send("看看项目")
         let proposal = PuppetStream()
         try await puppet.answer(.stream(proposal))
         proposal.send("我先检查文件。"); proposal.call("bash", #"{"command":"printf probe"}"#); proposal.finish()
-        try await eventually("the call waits for a folder") { store.needsDirectory }
-        XCTAssertTrue(store.tools.map(\.state) == [.waiting], "\(store.tools.map(\.state))")
-        let waiting = try await texts(of: store, workspace: workspace, showing: "待执行 · printf probe")
-        XCTAssertTrue(waiting.contains { $0.contains("我先检查文件。") }, "Text beside the call stays in the chat: \(waiting)")
-        XCTAssertTrue(waiting.contains { $0.contains("待执行 · printf probe") }, "The pending call shows its command: \(waiting)")
-        XCTAssertTrue(waiting.contains { $0.contains("等待选择项目文件夹") }, "The task row says why it waits: \(waiting)")
-        for control in ["需要项目文件夹才能继续", "选择文件夹…", "取消执行"] {
-            XCTAssertTrue(waiting.contains { $0.contains(control) }, "The folder row offers \(control): \(waiting)")
-        }
-        // The 关联项目 menu is enabled only with an available project. Its title is not reachable
-        // through this accessibility walk (reading accessibilityTitle on SwiftUI nodes aborts the
-        // test process), so only its enabling condition is pinned here.
-        XCTAssertTrue(workspace.projects.contains { $0.isAvailable })
-        let project = FileManager.default.temporaryDirectory.appendingPathComponent("echo-probe-project-\(UUID())")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        print("Tool card test project: \(project.path)")
-        workspace.provideDirectory(project, conversationID: try XCTUnwrap(workspace.selected?.id))
-        try await eventually("the command runs") { !store.needsDirectory && store.tools.first?.directory != nil }
+        try await eventually("the command runs") { store.tools.first?.directory != nil }
         XCTAssertTrue(store.tools.first?.state == .running && store.tools.first?.directory == ExecutionService.canonicalPath(project.path),
                       "\(String(describing: store.tools.first))")
         let running = try await texts(of: store, workspace: workspace, showing: "执行中 · printf probe")
+        XCTAssertTrue(running.contains { $0.contains("我先检查文件。") }, "Text beside the call stays in the chat: \(running)")
         XCTAssertTrue(running.contains { $0.contains("执行中 · printf probe") }, "The call shows it is running: \(running)")
         XCTAssertTrue(running.contains { $0.contains("正在运行命令 · printf probe") }, "The task row names the step: \(running)")
 
@@ -2465,9 +2451,9 @@ private struct ComposerHeightHost: View {
     }
 
     /// The native engine's read-only tools in the same UI: text beside the call stays in the
-    /// chat, the call names what it reads, the folder row asks for a project, and declining
-    /// leaves the call not run while the turn still ends with a reply.
-    func testNativeReadToolCardsAndFolderRow() async throws {
+    /// chat and the call names what it reads. Without a project, and with no folder from Finder,
+    /// the read fails at once, asking for no folder, and the turn still ends with a reply.
+    func testNativeReadToolCards() async throws {
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let dictation = DictationController()
         defer { voice.shutdown(); dictation.shutdown() }
@@ -2479,7 +2465,7 @@ private struct ComposerHeightHost: View {
                 try await emit.text("目录没有列出")
             }
         }
-        let store = TaskStore(harness: AgentHarness(resolveModel: { model.factory }))
+        let store = TaskStore(harness: AgentHarness(resolveModel: { model.factory }, finder: NoFinder()))
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
         defer { workspace.shutdown() }
         /// What a fresh chat view publishes once it draws `marker`, which each check expects.
@@ -2497,19 +2483,12 @@ private struct ComposerHeightHost: View {
             return accessibilityText(in: view)
         }
         XCTAssertTrue(store.send("看看目录"))
-        try await eventually("folder requested") { store.needsDirectory }
-        let waiting = try await texts(showing: "执行中 · 列出 .")
-        XCTAssertTrue(waiting.contains { $0.contains("我先看看目录。") }, "Text beside the call stays in the chat: \(waiting)")
-        XCTAssertTrue(waiting.contains { $0.contains("执行中 · 列出 .") }, "The call says what it reads: \(waiting)")
-        XCTAssertTrue(waiting.contains { $0.contains("等待选择项目文件夹") }, "The task row says why it waits: \(waiting)")
-        for control in ["需要项目文件夹才能继续", "选择文件夹…", "取消执行"] {
-            XCTAssertTrue(waiting.contains { $0.contains(control) }, "The folder row offers \(control): \(waiting)")
-        }
-        workspace.provideDirectory(nil, conversationID: try XCTUnwrap(workspace.selected?.id))
         try await eventually("turn ends") { !store.isGenerating }
-        let done = try await texts(showing: "未执行 · 列出 .")
-        XCTAssertTrue(done.contains { $0.contains("未执行 · 列出 .") }, "Declining leaves the call not run: \(done)")
-        XCTAssertTrue(done.contains { $0.contains("目录没有列出") } && !done.contains { $0.contains("需要项目文件夹才能继续") }, "\(done)")
+        XCTAssertEqual(store.tools.first?.result, FinderLocation.unavailable(.noFolder).toolResult)
+        let done = try await texts(showing: "执行结束 · 列出 .")
+        XCTAssertTrue(done.contains { $0.contains("我先看看目录。") }, "Text beside the call stays in the chat: \(done)")
+        XCTAssertTrue(done.contains { $0.contains("执行结束 · 列出 .") }, "The call says what it reads: \(done)")
+        XCTAssertTrue(done.contains { $0.contains("目录没有列出") }, "\(done)")
     }
 
     /// The chat shows the reply while the model writes it. An Agent session's messages come

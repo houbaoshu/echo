@@ -262,7 +262,7 @@ import Testing
         let runner = HeldRunner()
         let puppet = PuppetModel()
         let chat = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
-        chat.projectDirectory = { root }
+        chat.projectDirectory = { .path(root.path) }
         var saved: [TaskStore.Snapshot] = []
         chat.checkpoint = { saved.append($0) }
         defer { chat.shutdown() }

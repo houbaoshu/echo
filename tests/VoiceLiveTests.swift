@@ -67,7 +67,7 @@ struct VoiceLiveTests {
         guard store.send(transcript) else { throw SettingsError("Agent 未接收转写。") }
         let deadline = ContinuousClock.now.advanced(by: .seconds(65))
         while store.isGenerating {
-            guard !store.needsDirectory else { throw SettingsError("语音探针意外请求了工具，未执行命令。") }
+            guard store.tools.isEmpty else { throw SettingsError("语音探针意外请求了工具，未执行命令。") }
             guard ContinuousClock.now < deadline else { throw SettingsError("Agent 回复超时。") }
             try await Task.sleep(for: .milliseconds(25))
         }

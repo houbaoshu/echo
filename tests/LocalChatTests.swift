@@ -322,7 +322,7 @@ import Testing
             let harness = AgentHarness(resolveModel: { try source.make() }, local: LocalChatService(backend: backend),
                                        localOnly: { source.localOnly })
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
-            store.projectDirectory = { project }
+            store.projectDirectory = { project.map { .path($0.path) } ?? .noProject }
             store.acquireDirectory = { _, ready in ready() }
             store.checkpoint = { [unowned self] in self.saved.append($0) }
             observation = store.lifecycle.sink { [unowned self] event in

@@ -555,10 +555,11 @@ import FoundationModels
         try await eventually("the stream reaches the card") { quick.store.cardSummary.contains("读取内容") }
         #expect(quick.store.cardSummary.hasPrefix("第一段，正在读取内容"), "Streamed text reaches the compact card")
         opening.call("read_file", #"{"path":"README"}"#); opening.finish()
-        try await eventually("the tool asks for a folder") { quick.store.needsDirectory }
+        // Without a project, and with no folder from Finder, the read fails at once, never waiting for a folder.
+        try await eventually("the read ends") { quick.store.tools.first?.result != nil }
         let streamedAt = cards.lastIndex { $0.hasPrefix("第一段，") }
         #expect(streamedAt.map { cards[$0...].contains("正在读取文件 · README") } == true, "Tool progress replaces the earlier stream: \(cards)")
-        quick.store.provideDirectory(nil)
+        #expect(quick.store.tools.first?.result == FinderLocation.unavailable(.noFolder).toolResult)
         let long = PuppetStream()
         try await quickModel.answer(.stream(long))
         try await long.send([String(repeating: "开头内容", count: 100), "最后的新内容", "……", "……"])

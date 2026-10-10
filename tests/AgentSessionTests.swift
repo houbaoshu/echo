@@ -18,7 +18,7 @@ extension EchoIntegrationScenarios {
       let chat = try #require(workspace.selected)
       #expect(chat.store.send("hello"))
       try await eventually("direct answer", timeout: .seconds(8)) { !chat.store.isGenerating }
-      #expect(chat.store.task?.status == .completed && chat.store.tools.isEmpty && !chat.store.needsDirectory)
+      #expect(chat.store.task?.status == .completed && chat.store.tools.isEmpty)
       #expect(chat.store.messages.filter { $0.role == .assistant }.count == 1)
       #expect(chat.store.messages.last?.content == "最终回复：hello")
       #expect(chat.store.responseMessage == chat.store.messages.last && chat.store.task?.summary == "已完成")
@@ -429,62 +429,18 @@ extension EchoIntegrationScenarios {
     }
     // MARK: Tool scenarios
 
-    @Test static func bindingSaveFailure() async throws {
-      try await withSession { f in
-        let temp = f.root
-
-        let factory = { f.harness() }
-        // A binding that cannot be saved is rolled back and its pending call never runs.
-        let bindPersistence = WorkspacePersistence(
-          url: temp.appendingPathComponent("bind-failure/workspace.json"))
-        let bindWorkspace = WorkspaceStore(persistence: bindPersistence, harnessFactory: factory)
-        defer { bindWorkspace.shutdown() }
-        let unbound = try #require(bindWorkspace.selected)
-        unbound.store.send("tool")
-        try await eventually("bind failure directory pause", timeout: .seconds(8)) { unbound.store.needsDirectory }
-        let bindTarget = temp.appendingPathComponent("bind-target")
-        try FileManager.default.createDirectory(at: bindTarget, withIntermediateDirectories: true)
-        let bindRoot = bindPersistence.url.deletingLastPathComponent().path
-        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: bindRoot)
-        bindWorkspace.provideDirectory(bindTarget, conversationID: unbound.id)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bindRoot)
-        #expect(
-          unbound.projectID == nil && bindWorkspace.projects.isEmpty
-            && bindWorkspace.persistenceNotice != nil,
-          "A failed binding save leaves no unsaved project association")
-        try await eventually("bind failure stops", timeout: .seconds(8)) { !unbound.store.isGenerating }
-        #expect(
-          unbound.store.task?.status == .stopped
-            && !FileManager.default.fileExists(
-              atPath: bindTarget.appendingPathComponent("trace").path)
-        )
-        bindWorkspace.shutdown()
-
-      }
-    }
     @Test static func directoryQueueSteeringStopRetry() async throws {
       try await withSession { f in
         let temp = f.root
         let workspace = f.workspace
-        let persistence = f.persistence
         let chat = try #require(workspace.selected)
         try #require(chat.store.send("hello"))
         try await eventually("seed unbound conversation", timeout: .seconds(8)) { !chat.store.isGenerating }
-        let first = workspace.newConversation()
-        first.store.send("slow-tool")
-        try await eventually("directory pause", timeout: .seconds(8)) { first.store.needsDirectory }
-        #expect(
-          !workspace.canAssociateProject(conversationID: first.id),
-          "Ordinary picker stays fixed during directory wait")
-        #expect(first.store.tools.count == 1 && first.store.tools[0].result == nil)
+        // Only the person gives a conversation its project; a tool never asks for one.
         let project = temp.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        workspace.provideDirectory(project, conversationID: first.id)
-        #expect(workspace.fileBrowser.location?.projectID == first.projectID)
-        #expect(
-          persistence.load().0?.conversations.first { $0.id == first.id }?.projectID
-            == first.projectID,
-          "Directory exception saves association before tool execution")
+        let first = workspace.newConversation(projectID: workspace.addProject(url: project))
+        first.store.send("slow-tool")
         try await eventually("first tool starts", timeout: .seconds(8)) { first.store.tools.first?.state == .running }
         // The command now waits for the release file, so everything below happens while it runs.
         try await eventually("the slow command is running", timeout: .seconds(8)) { SlowTool.started(in: project) }
@@ -532,12 +488,12 @@ extension EchoIntegrationScenarios {
         try await eventually("model steering", timeout: .seconds(8)) { !modelSteer.store.isGenerating }
         #expect(modelSteer.store.tools.first?.state == .notExecuted)
 
-        let cancelled = workspace.newConversation()
-        cancelled.store.send("tool")
-        try await eventually("cancel directory", timeout: .seconds(8)) { cancelled.store.needsDirectory }
-        workspace.provideDirectory(nil, conversationID: cancelled.id)
-        try await eventually("directory cancelled", timeout: .seconds(8)) { !cancelled.store.isGenerating }
-        #expect(cancelled.store.tools.first?.state == .notExecuted)
+        // Without a project the command does not run and nothing waits for a folder.
+        let unbound = workspace.newConversation()
+        unbound.store.send("tool")
+        try await eventually("the unbound call ends", timeout: .seconds(8)) { !unbound.store.isGenerating }
+        #expect(unbound.store.tools.first?.state == .notExecuted
+                && unbound.store.tools.first?.result?.contains("no project folder") == true)
 
         let stop = workspace.newConversation(projectID: projectID)
         stop.store.send("cancel-tool")
@@ -713,7 +669,7 @@ extension EchoIntegrationScenarios {
         crashRecovery.shutdown()
 
         // Invalidate a directory while a proposal is queued. The bridge's final
-        // gate must re-enter directory selection, not fail or run in a moved cwd.
+        // gate must not run in a moved cwd; the call says the folder is gone.
         let invalidHolder = workspace.newConversation(projectID: parallelID)
         invalidHolder.store.send("cancel-tool")
         try await eventually("invalid holder", timeout: .seconds(8)) { invalidHolder.store.tools.first?.state == .running }
@@ -723,12 +679,13 @@ extension EchoIntegrationScenarios {
         let moved = temp.appendingPathComponent("moved-project")
         try FileManager.default.moveItem(at: parallelPath, to: moved)
         invalidHolder.store.stopTask()
-        try await eventually("invalid directory pauses", timeout: .seconds(8)) { invalidWaiter.store.needsDirectory }
-        workspace.provideDirectory(moved, conversationID: invalidWaiter.id)
-        try await eventually("new directory resumes", timeout: .seconds(8)) { !invalidWaiter.store.isGenerating }
+        try await eventually("the moved folder ends the call", timeout: .seconds(8)) { !invalidWaiter.store.isGenerating }
         #expect(
           invalidWaiter.store.task?.status == .completed,
           "\(invalidWaiter.store.task?.summary ?? "missing task")")
+        #expect(invalidWaiter.store.tools.first?.state == .notExecuted
+                && invalidWaiter.store.tools.first?.result?.contains("can no longer be found") == true,
+                "\(String(describing: invalidWaiter.store.tools.first))")
 
       }
     }

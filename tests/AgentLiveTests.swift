@@ -3,9 +3,9 @@ import Foundation
 /// Opt-in real service acceptance. Uses saved credentials only in memory and
 /// synthetic conversations with disposable projects, never the user's history.
 @MainActor struct AgentLiveTests {
-    static func wait(_ store: TaskStore, directoryPause: Bool = false) async throws {
+    static func wait(_ store: TaskStore) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(180))
-        while store.isGenerating && !(directoryPause && store.needsDirectory) {
+        while store.isGenerating {
             guard ContinuousClock.now < deadline else { throw SettingsError("实网 Agent 验收超时。") }
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -34,18 +34,15 @@ import Foundation
                 try await NativeConnectionTester().test(configuration: config, key: key)
                 let chat = workspace.selected!
                 chat.store.send("请只回复：链路已接通。不要使用工具。")
-                try await wait(chat.store, directoryPause: true)
+                try await wait(chat.store)
                 guard chat.store.task?.status == .completed, chat.store.tools.isEmpty else {
                     throw SettingsError("普通聊天未完成或意外请求工具。")
                 }
-                let work = workspace.newConversation()
-                work.store.send("这是临时目录中的文件测试。只操作当前工作目录的 note.txt。请依次使用三次独立 bash 调用：1. cat note.txt；2. 将内容 before 改为 after，写入 after 加换行；3. cat note.txt 验证。每次等待真实工具结果后再决定下一步，最后用中文简短报告结果。不要访问其他路径。")
-                try await wait(work.store, directoryPause: true)
-                guard work.store.needsDirectory else { throw SettingsError("首次工具调用没有暂停选择目录。") }
                 let project = root.appendingPathComponent("\(api.rawValue)/project")
                 try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
                 try Data("before\n".utf8).write(to: project.appendingPathComponent("note.txt"))
-                workspace.provideDirectory(project, conversationID: work.id)
+                let work = workspace.newConversation(projectID: workspace.addProject(url: project))
+                work.store.send("这是临时目录中的文件测试。只操作当前工作目录的 note.txt。请依次使用三次独立 bash 调用：1. cat note.txt；2. 将内容 before 改为 after，写入 after 加换行；3. cat note.txt 验证。每次等待真实工具结果后再决定下一步，最后用中文简短报告结果。不要访问其他路径。")
                 try await wait(work.store)
                 let file = try String(contentsOf: project.appendingPathComponent("note.txt"), encoding: .utf8)
                 guard work.store.task?.status == .completed, work.store.tools.count >= 3,

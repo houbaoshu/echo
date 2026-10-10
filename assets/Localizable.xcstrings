@@ -670,16 +670,6 @@
         }
       }
     },
-    "关联项目" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Link Project"
-          }
-        }
-      }
-    },
     "关联项目|悬停提示" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -933,16 +923,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unlink project"
-          }
-        }
-      }
-    },
-    "取消执行" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancel"
           }
         }
       }
@@ -1577,16 +1557,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "My Pets"
-          }
-        }
-      }
-    },
-    "所选文件夹不可用，请重新选择。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "That folder isn’t available. Choose another one."
           }
         }
       }
@@ -2471,16 +2441,6 @@
         }
       }
     },
-    "正在准备工具…" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Preparing tools…"
-          }
-        }
-      }
-    },
     "正在准备播报…" : {
       "localizations" : {
         "en" : {
@@ -2507,16 +2467,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Listing files · %@"
-          }
-        }
-      }
-    },
-    "正在取消未执行的调用…" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Canceling pending tool calls…"
           }
         }
       }
@@ -2587,6 +2537,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Speaking"
+          }
+        }
+      }
+    },
+    "正在查看访达位置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Viewing Finder location"
           }
         }
       }
@@ -2978,16 +2938,6 @@
         }
       }
     },
-    "等待选择项目文件夹" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for project folder"
-          }
-        }
-      }
-    },
     "等待项目空闲…" : {
       "localizations" : {
         "en" : {
@@ -3321,6 +3271,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This version of the settings file isn’t supported, so it was left as is. Move settings.json, then restart Echo."
+          }
+        }
+      }
+    },
+    "访达位置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finder location"
           }
         }
       }
@@ -4151,16 +4111,6 @@
         }
       }
     },
-    "选择文件夹…" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choose Folder…"
-          }
-        }
-      }
-    },
     "选择项目" : {
       "localizations" : {
         "en" : {
@@ -4344,16 +4294,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hide Sidebar"
-          }
-        }
-      }
-    },
-    "需要项目文件夹才能继续" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choose a project folder to continue"
           }
         }
       }

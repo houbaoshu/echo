@@ -273,10 +273,15 @@ final class PuppetModel: Sendable {
     }
 }
 
+/// Finder with no folder to show. Test harnesses use it, so no test sends Finder an Apple Event.
+struct NoFinder: FinderLocating {
+    func locate() async -> FinderLocation { .unavailable(.noFolder) }
+}
+
 /// A native Agent session whose model never answers: stores that only need to be Agent sessions.
 @MainActor func idleAgent() -> AgentHarness {
     let puppet = PuppetModel()
-    return AgentHarness(resolveModel: { puppet.factory })
+    return AgentHarness(resolveModel: { puppet.factory }, finder: NoFinder())
 }
 
 /// Native Agent sessions for a workspace's conversations, each answered by its own puppet model,
@@ -288,7 +293,7 @@ final class PuppetModel: Sendable {
         { [self] in
             let model = PuppetModel()
             models.append(model)
-            return AgentHarness(resolveModel: { model.factory })
+            return AgentHarness(resolveModel: { model.factory }, finder: NoFinder())
         }
     }
     /// Model requests across every conversation.

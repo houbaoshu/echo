@@ -76,21 +76,18 @@ extension NSFont {
 @MainActor enum WorkspaceActions {
     /// `asSheet: false` runs a standalone dialog, e.g. from the pet, whose panels cannot host a sheet.
     /// A standalone dialog brings the app forward itself.
-    /// `cancelled` runs when the panel closes without a folder, for callers that must release a
-    /// waiting task instead of leaving it paused.
-    static func chooseFolder(asSheet: Bool = true, cancelled: (() -> Void)? = nil,
-                             completion: @escaping (URL) -> Void) {
+    static func chooseFolder(asSheet: Bool = true, completion: @escaping (URL) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.allowsMultipleSelection = false; panel.prompt = String(localized: "选择文件夹")
         if asSheet, let window = NSApp.keyWindow {
             panel.beginSheetModal(for: window) { response in
-                if response == .OK, let url = panel.url { completion(url) } else { cancelled?() }
+                if response == .OK, let url = panel.url { completion(url) }
             }
             return
         }
         NSApp.activate()
-        if panel.runModal() == .OK, let url = panel.url { completion(url) } else { cancelled?() }
+        if panel.runModal() == .OK, let url = panel.url { completion(url) }
     }
     /// The folders a drag carries, one per item, or nil when any item is something else: a file,
     /// a package such as an app or an .xcodeproj, or anything that is not a file at all. The pet
@@ -606,25 +603,6 @@ struct ConversationView: View {
                 if let notice = store.notice ?? store.agentLoadError {
                     Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.warning).textSelection(.enabled)
                 }
-                if store.needsDirectory, let workspace {
-                    HStack {
-                        Text("需要项目文件夹才能继续").font(WorkspaceStyle.caption)
-                        Menu("关联项目") {
-                            ForEach(workspace.projects.filter(workspace.isAvailable)) { project in
-                                Button(project.name) { workspace.provideDirectory(URL(fileURLWithPath: project.path), conversationID: conversationID) }
-                            }
-                        }.disabled(workspace.projects.filter(workspace.isAvailable).isEmpty)
-                        Button("选择文件夹…") {
-                            // Cancelling has to reach the store too, or the paused tool call keeps waiting.
-                            WorkspaceActions.chooseFolder(cancelled: {
-                                workspace.provideDirectory(nil, conversationID: conversationID)
-                            }) { url in
-                                workspace.provideDirectory(url, conversationID: conversationID)
-                            }
-                        }
-                        Button("取消执行") { workspace.provideDirectory(nil, conversationID: conversationID) }
-                    }
-                }
                 if let workspace, workspace.canAssociateProject(conversationID: conversationID) {
                     ConversationProjectPicker(workspace: workspace, conversationID: conversationID)
                 }
@@ -886,7 +864,9 @@ struct AgentToolView: View {
     var body: some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 8) {
-                Text(tool.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                if !tool.command.isEmpty {
+                    Text(tool.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                }
                 if let directory = tool.directory { Text(directory).font(.caption).foregroundStyle(.secondary) }
                 if let result = tool.result {
                     if let data = result.data(using: .utf8),
@@ -914,9 +894,19 @@ struct AgentToolView: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
         } label: {
-            Label("\(tool.state.label) · \(action)\(tool.command.prefix(90))", systemImage: icon)
-                .font(.caption).lineLimit(2)
+            Group {
+                if let finderTitle { Label(finderTitle, systemImage: icon) }
+                else { Label("\(tool.state.label) · \(action)\(tool.command.prefix(90))", systemImage: icon) }
+            }.font(.caption).lineLimit(2)
         }.padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+    /// finder_location has no arguments to show. The folder's name is in the result; a call that
+    /// found none ends at what it looked at.
+    private var finderTitle: String? {
+        guard tool.tool == "finder_location" else { return nil }
+        struct Found: Decodable { var folder: String }
+        let folder = tool.result.flatMap { try? JSONDecoder().decode(Found.self, from: Data($0.utf8)) }?.folder
+        return ([tool.state.label, String(localized: "访达位置")] + (folder.map { [$0] } ?? [])).joined(separator: " · ")
     }
     /// Bash cards show the command alone, as they always have; other tools say what they did.
     private var action: String {
@@ -932,6 +922,7 @@ struct AgentToolView: View {
         case nil: "terminal"
         case "list_files": "folder"
         case "read_file": "doc.text"
+        case "finder_location": "macwindow"
         default: "wrench.and.screwdriver"
         }
     }
