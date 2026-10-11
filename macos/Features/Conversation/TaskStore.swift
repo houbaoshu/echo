@@ -155,6 +155,13 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         var old: String
         var new: String
     }
+    /// For a write call that left a record of its change, whether the person can undo it, did, or
+    /// tried and could not. Nil for every other card, and for changes made before undo existed.
+    var undo: Undo?
+    enum Undo: Codable, Equatable {
+        case available, undone
+        case refused(AgentUndoRefusal)
+    }
     /// Raw values are what archives store; what a card shows is `label`.
     enum State: String, Codable, Sendable {
         case waiting = "待执行", running = "执行中", finished = "执行结束", notExecuted = "未执行", unknown = "执行结果未知"
@@ -171,12 +178,13 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             }
         }
     }
-    private enum CodingKeys: String, CodingKey { case callID, entryID, turnID, afterMessageID, command, result, state, directory, tool, edit }
+    private enum CodingKeys: String, CodingKey { case callID, entryID, turnID, afterMessageID, command, result, state, directory, tool, edit, undo }
     init(callID: String, entryID: UInt64, turnID: UInt64, afterMessageID: UUID? = nil, command: String,
-         result: String? = nil, state: State = .waiting, directory: String? = nil, tool: String? = nil, edit: Edit? = nil) {
+         result: String? = nil, state: State = .waiting, directory: String? = nil, tool: String? = nil, edit: Edit? = nil,
+         undo: Undo? = nil) {
         self.callID = callID; self.entryID = entryID; self.turnID = turnID; self.afterMessageID = afterMessageID
         self.command = command; self.result = result; self.state = state; self.directory = directory; self.tool = tool
-        self.edit = edit
+        self.edit = edit; self.undo = undo
     }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -189,6 +197,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         directory = try values.decodeIfPresent(String.self, forKey: .directory)
         tool = try values.decodeIfPresent(String.self, forKey: .tool)
         edit = try values.decodeIfPresent(Edit.self, forKey: .edit)
+        undo = try? values.decodeIfPresent(Undo.self, forKey: .undo)
         // A state this build does not know is worked out again from the record, so the
         // conversation still loads.
         state = try values.decodeIfPresent(String.self, forKey: .state).flatMap(State.init(rawValue:))
@@ -226,6 +235,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         return text
     }
     private(set) var tools: [AgentToolRecord] = []
+    /// Cards whose change is being undone. No turn starts meanwhile.
+    private(set) var undoingTools: Set<String> = []
     private var agentStored: Bool?
     @ObservationIgnored private var storageFailure: String?
     @ObservationIgnored var sessionID = UUID()
@@ -239,6 +250,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     private var retired = false
     @ObservationIgnored private var responseMessageID: UUID?
     @ObservationIgnored var onUserAction: (() -> Void)?
+    /// An undo changed files in the project or the Finder folder.
+    @ObservationIgnored var onFilesChanged: (() -> Void)?
     @ObservationIgnored var onVisibilityChange: ((Bool) -> Void)?
 
     struct Snapshot: Codable {
@@ -312,9 +325,33 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var canRetry: Bool {
         guard let harness else { return false }
         return !retired && agentLoadError == nil && [.failed, .stopped, .interrupted].contains(task?.status) && harness.continuable
+            && undoingTools.isEmpty
     }
     var isGenerating: Bool { task?.status == .running || task?.status == .stopping }
-    var canSubmit: Bool { harness != nil && !retired && task?.status != .stopping && agentLoadError == nil }
+    var canSubmit: Bool { harness != nil && !retired && task?.status != .stopping && agentLoadError == nil && undoingTools.isEmpty }
+
+    /// Whether `tool`'s card shows Undo: a finished write whose record lets it be undone, not yet undone.
+    func offersUndo(_ tool: AgentToolRecord) -> Bool {
+        guard tool.state == .finished, let undo = tool.undo else { return false }
+        return undo != .undone
+    }
+    /// Whether Undo on `tool`'s card can be clicked now: never while a turn runs.
+    func canUndo(_ tool: AgentToolRecord) -> Bool {
+        guard let harness else { return false }
+        return offersUndo(tool) && !retired && agentLoadError == nil && !isGenerating && !harness.isRunning && !undoingTools.contains(tool.id)
+    }
+    /// Undoes the change of the write call on card `toolID`. The card says how it went and keeps it.
+    func undo(_ toolID: String) {
+        guard let harness, let tool = tools.first(where: { $0.id == toolID }), canUndo(tool) else { return }
+        undoingTools.insert(toolID)
+        Task {
+            let refusal = await harness.undo(toolID: toolID)
+            undoingTools.remove(toolID)
+            guard !retired else { return }
+            if let refusal, let index = tools.firstIndex(where: { $0.id == toolID }) { tools[index].undo = .refused(refusal) }
+            if refusal == nil { onFilesChanged?() }
+        }
+    }
     var responseMessage: ConversationMessage? { messages.first { $0.id == responseMessageID } }
 
     func toggleFollowUp() { isFollowUpExpanded.toggle() }

@@ -39,9 +39,12 @@ struct NativeAgentState: Codable {
     /// This chat's Finder folder: the canonical path the read tools use as their Finder root. Set by
     /// the first read of Finder's side and replaced only by finder_location. Not a project.
     var finderFolder: String?
+    /// Changes the person undid since the model last heard: one line each, told to the model at the
+    /// start of the next message it gets from the person.
+    var undoNotices: [String] = []
 
     init() {}
-    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies, finderFolder }
+    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies, finderFolder, undoNotices }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         entries = Array(try values.decode(Transcript.self, forKey: .transcript))
@@ -49,6 +52,7 @@ struct NativeAgentState: Codable {
         pendingInputs = try values.decode([Input].self, forKey: .pendingInputs)
         replies = try values.decode([String: UUID].self, forKey: .replies)
         finderFolder = try values.decodeIfPresent(String.self, forKey: .finderFolder)
+        undoNotices = try values.decodeIfPresent([String].self, forKey: .undoNotices) ?? []
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -57,6 +61,7 @@ struct NativeAgentState: Codable {
         try values.encode(pendingInputs, forKey: .pendingInputs)
         try values.encode(replies, forKey: .replies)
         try values.encodeIfPresent(finderFolder, forKey: .finderFolder)
+        if !undoNotices.isEmpty { try values.encode(undoNotices, forKey: .undoNotices) }
     }
 
     /// Continue is offered for input that never reached the model and for a last turn that did not complete.
@@ -184,6 +189,11 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     private var finishedOutputs: [String: String] = [:]
     private let writePolicy: AgentWritePolicy
     private let writeHooks: AgentWriteHooks
+    private let trash: AgentTrash
+    /// Write calls this turn that left a record their card can undo from.
+    private var undoableCalls: Set<String> = []
+    /// Undos under way. A turn must not start meanwhile: an undo amends the transcript when it ends.
+    private(set) var undoing = 0
     /// Writes whose change is under way, and the turn waiting for them to end before it settles.
     private var writesInFlight = 0
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
@@ -209,13 +219,14 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     init(resolveModel: @escaping @MainActor () throws -> ModelFactory, local: LocalChatService? = nil,
          localOnly: @escaping @MainActor () -> Bool = { false },
          finder: any FinderLocating = AppleEventFinderLocator.shared, writePolicy: AgentWritePolicy = AgentWritePolicy(),
-         writeHooks: AgentWriteHooks = AgentWriteHooks()) {
+         writeHooks: AgentWriteHooks = AgentWriteHooks(), trash: AgentTrash = .system) {
         self.resolveModel = resolveModel
         self.local = local
         self.localOnly = localOnly
         self.finder = finder
         self.writePolicy = writePolicy
         self.writeHooks = writeHooks
+        self.trash = trash
     }
 
     /// Reads the model settings saved when each turn starts. `ECHO_LOCAL_CHAT=always` sends every
@@ -276,7 +287,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
 
     /// Starts a turn with the pending input, or continues the last turn when there is none.
     @discardableResult func begin() -> Bool {
-        guard !isRunning else { return false }
+        guard !isRunning, undoing == 0 else { return false }
         stopRequested = false; storageFailure = nil
         steering.set(false)
         turnSerial += 1
@@ -292,6 +303,44 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         resumeTurnWaiters(.failure(CancellationError()))
         interruptPrepares(CancellationError())
         turn?.cancel()
+    }
+
+    /// Undoes the change of the write call whose card is `toolID`, between turns: off the main
+    /// actor, from the call's record, only while the file still has what the call wrote. Once it is
+    /// undone, the call's result tells the model so in every later request. Nil when it was undone.
+    func undo(toolID: String) async -> AgentUndoRefusal? {
+        guard !isRunning, outputIndex(of: toolID) != nil, let directory = host?.harnessBackupDirectory() else { return .backupMissing }
+        undoing += 1
+        defer { undoing -= 1 }
+        let policy = writePolicy, trash = trash
+        let refusal = await Task.detached { () -> AgentUndoRefusal? in
+            guard let (record, folder) = AgentBackupStore(directory: directory).find(toolRecord: toolID) else { return .backupMissing }
+            return AgentFileUndo.undo(record, copy: folder, policy: policy, trash: trash)
+        }.value
+        guard refusal == nil else { return refusal }
+        // No turn starts while an undo runs, so the transcript is as it was. The call's result says
+        // so where it stands, and the next message the model gets says so where the model is now:
+        // a note in an earlier result alone does not outweigh the model's own later reply.
+        if let index = outputIndex(of: toolID), case .toolOutput(var amended) = state.entries[index] {
+            let result = Self.text(amended.segments)
+            amended.segments = [.text(.init(content: AgentToolResult.undone(result)))]
+            state.entries[index] = .toolOutput(amended)
+            state.undoNotices.append(AgentToolResult.undoNoticeLine(tool: amended.toolName, result: result))
+        }
+        project()
+        // A failed save leaves the note in memory; the conversation's next save writes it.
+        try? host?.harnessSave()
+        return nil
+    }
+
+    /// Where the result of the call whose card is `toolID` ("turn:entry:call ID") is in the transcript.
+    private func outputIndex(of toolID: String) -> Int? {
+        let parts = toolID.split(separator: ":", maxSplits: 2).map(String.init)
+        guard parts.count == 3, let entry = Int(parts[1]), state.entries.indices.contains(entry),
+              case .toolCalls(let calls) = state.entries[entry], calls.contains(where: { $0.id == parts[2] }) else { return nil }
+        return state.entries.indices.dropFirst(entry + 1).first { index in
+            if case .toolOutput(let output) = state.entries[index] { output.id == parts[2] } else { false }
+        }
     }
 
     // MARK: Turn
@@ -340,7 +389,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         var formatErrors = 0
         while true {
             // What this request starts from, restored if it goes to the local model instead.
-            let before = (entries: state.entries, pendingInputs: state.pendingInputs)
+            let before = (entries: state.entries, pendingInputs: state.pendingInputs, undoNotices: state.undoNotices)
             let resuming = if case .resume = next { true } else { false }
             // Input that enters the transcript is no longer pending; the UI drops its "待处理".
             var history = state.entries
@@ -354,8 +403,12 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 state.pendingInputs = []
                 for input in inputs.dropLast() { history.append(.prompt(Self.userPrompt(input))) }
                 let last = inputs.last!
-                userPrompt = Self.userPrompt(last)
-                promptText = last.text; metadata = [AgentPromptKey.message: last.messageID.uuidString]
+                // The cloud model hears of undone changes before the person's next words. The local
+                // model has no tools, so it is not told.
+                let notice = route.isLocal ? "" : AgentToolResult.undoNotice(state.undoNotices)
+                if !route.isLocal { state.undoNotices = [] }
+                userPrompt = Self.userPrompt(last, prefix: notice)
+                promptText = notice + last.text; metadata = [AgentPromptKey.message: last.messageID.uuidString]
             case .resume:
                 promptText = ""; metadata = [AgentPromptMarker.continueKey: true]
                 marker = Transcript.Prompt(metadata: metadata, segments: [])
@@ -489,6 +542,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                         case .ready:
                             state.entries = before.entries
                             state.pendingInputs = before.pendingInputs + state.pendingInputs
+                            state.undoNotices = before.undoNotices
                             route = .local(local)
                             continue
                         case .missing:
@@ -563,7 +617,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         resumeTurnWaiters(.failure(CancellationError()))
         batchCalls = [:]; doneCalls = []
         runningPrompt = nil; live = []; checkpointed = []; dispatched = []
-        callKeys = [:]; callDirectories = [:]; finishedOutputs = [:]
+        callKeys = [:]; callDirectories = [:]; finishedOutputs = [:]; undoableCalls = []
         let responses = Set(state.entries.compactMap { if case .response(let response) = $0 { response.id } else { nil } })
         state.replies = state.replies.filter { responses.contains($0.key) }
         project()
@@ -804,16 +858,22 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         writesInFlight += 1
         let output = await Task.detached {
             AgentFileWriter.commit(plan, hooks: hooks) { original in
-                guard let directory, let chat else { throw CocoaError(.fileWriteNoPermission) }
+                guard let directory, let chat else {
+                    // Without a folder of records a new file is still created; it has no undo.
+                    if original == nil { return }
+                    throw CocoaError(.fileWriteNoPermission)
+                }
                 try AgentBackupStore(directory: directory).save(original, record: .init(
-                    path: original.path, root: root, rootKind: scope == .finder ? "finder" : "project", relativePath: plan.path,
-                    chat: chat, toolRecord: record, tool: tool, savedAt: Date(), mode: Int(original.mode), size: original.data.count,
-                    created: Date(timeIntervalSince1970: TimeInterval(original.created.tv_sec) + TimeInterval(original.created.tv_nsec) / 1e9),
-                    attributes: original.attributes))
+                    path: root + "/" + plan.path, root: root, rootKind: scope == .finder ? "finder" : "project", relativePath: plan.path,
+                    chat: chat, toolRecord: record, tool: tool, savedAt: Date(), original: original, action: plan.action, written: plan.content))
             }
         }.value
         let result = named(output)
-        if let key { finishedOutputs[key] = result; project() }
+        if let key {
+            finishedOutputs[key] = result
+            if directory != nil, chat != nil, AgentToolRecord.state(forResult: result, tool: tool) == .finished { undoableCalls.insert(key) }
+            project()
+        }
         writesInFlight -= 1
         if writesInFlight == 0 { let waiters = writeWaiters; writeWaiters = []; waiters.forEach { $0.resume() } }
         return result
@@ -934,6 +994,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                     if let output = finishedOutputs[callKey] {
                         record.result = output; record.state = AgentToolRecord.state(forResult: output, tool: record.tool)
                     }
+                    if undoableCalls.contains(callKey), record.undo == nil { record.undo = .available }
                     tools.append(record)
                 }
             case .toolOutput(let output):
@@ -941,6 +1002,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 let result = Self.text(output.segments)
                 tools[position].result = result
                 tools[position].state = AgentToolRecord.state(forResult: result, tool: tools[position].tool)
+                if AgentToolResult.isUndone(result) { tools[position].undo = .undone }
             default:
                 continue
             }
@@ -969,8 +1031,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
 
     // MARK: Transcript helpers
 
-    private nonisolated static func userPrompt(_ input: NativeAgentState.Input) -> Transcript.Prompt {
-        Transcript.Prompt(metadata: [AgentPromptKey.message: input.messageID.uuidString], segments: [.text(.init(content: input.text))])
+    private nonisolated static func userPrompt(_ input: NativeAgentState.Input, prefix: String = "") -> Transcript.Prompt {
+        Transcript.Prompt(metadata: [AgentPromptKey.message: input.messageID.uuidString], segments: [.text(.init(content: prefix + input.text))])
     }
 
     nonisolated static func text(_ segments: [Transcript.Segment]) -> String {

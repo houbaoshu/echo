@@ -508,10 +508,10 @@ struct ConversationView: View {
                             if message.role == .assistant { Spacer(minLength: 0) }
                         }.id(message.id)
                         ForEach(tools[message.id] ?? []) { tool in
-                            AgentToolView(tool: tool).id("tool.\(tool.turnID).\(tool.id)")
+                            toolCard(tool).id("tool.\(tool.turnID).\(tool.id)")
                         }
                     }
-                    ForEach(tools[nil] ?? []) { tool in AgentToolView(tool: tool) }
+                    ForEach(tools[nil] ?? []) { tool in toolCard(tool) }
                     // What is being said, in the place what was said will keep. A spoken
                     // follow-up becomes a message in `store.messages`, which is drawn above
                     // the stream, so the words wait here rather than below the reply — being
@@ -830,6 +830,9 @@ struct ConversationView: View {
                 if dictation.conversationID == conversationID { dictation.cancel() }
             }
     }
+    private func toolCard(_ tool: AgentToolRecord) -> AgentToolView {
+        AgentToolView(tool: tool, undo: store.offersUndo(tool) ? { store.undo(tool.id) } : nil, canUndo: store.canUndo(tool))
+    }
     private func performPrimary() {
         guard presentation.primaryEnabled else { return }
         switch presentation.primary {
@@ -861,12 +864,35 @@ private extension View {
 
 struct AgentToolView: View {
     let tool: AgentToolRecord
+    /// Undo on a write card: shown when set, clickable when `canUndo`.
+    let undo: (() -> Void)?
+    let canUndo: Bool
     @State private var isExpanded: Bool
-    init(tool: AgentToolRecord, expanded: Bool = false) {
+    init(tool: AgentToolRecord, expanded: Bool = false, undo: (() -> Void)? = nil, canUndo: Bool = false) {
         self.tool = tool
+        self.undo = undo
+        self.canUndo = canUndo
         _isExpanded = State(initialValue: expanded)
     }
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                disclosure
+                if let undo {
+                    Button("撤销", action: undo).controlSize(.small).disabled(!canUndo)
+                        .accessibilityIdentifier("tool.undo")
+                }
+            }
+            if case .refused(let reason) = tool.undo {
+                Text(reason.message).font(.caption).foregroundStyle(.secondary)
+            }
+        }.padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+    /// The card's state as its label says it; an undone change says so instead.
+    private var stateLabel: String {
+        tool.undo == .undone ? String(localized: "已撤销") : tool.state.label
+    }
+    private var disclosure: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 8) {
                 if !tool.command.isEmpty {
@@ -908,9 +934,9 @@ struct AgentToolView: View {
         } label: {
             Group {
                 if let finderTitle { Label(finderTitle, systemImage: icon) }
-                else { Label("\(tool.state.label) · \(action)\(tool.command.prefix(90))", systemImage: icon) }
+                else { Label("\(stateLabel) · \(action)\(tool.command.prefix(90))", systemImage: icon) }
             }.font(.caption).lineLimit(2)
-        }.padding(12).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+        }
     }
     /// finder_location has no arguments to show. The folder's name is in the result; a call that
     /// found none ends at what it looked at.
@@ -943,7 +969,7 @@ struct AgentToolView: View {
         }
     }
     private func resultSummary(_ json: [String: Any]) -> String {
-        var parts = [tool.state.label]
+        var parts = [stateLabel]
         switch json["action"] as? String {
         case "created": parts.append(String(localized: "新建"))
         case "overwritten": parts.append(String(localized: "覆盖"))
@@ -1268,6 +1294,25 @@ struct NativeComposer: NSViewRepresentable {
             ForEach(records) { AgentToolView(tool: $0, expanded: true) }
         }.padding()
     }.frame(width: 520, height: 1120)
+}
+
+#Preview("工具卡片 · 撤销") {
+    let edit = AgentToolRecord.Edit(old: "- 周三下午三点开会", new: "- 周四上午十点开会")
+    let records: [AgentToolRecord] = [
+        .init(callID: "1", entryID: 1, turnID: 1, command: "notes.txt",
+              result: #"{"action":"edited","bytes":2051,"path":"notes.txt"}"#, state: .finished, tool: "edit_file", edit: edit, undo: .available),
+        .init(callID: "2", entryID: 1, turnID: 1, command: "drafts/plan.md",
+              result: AgentToolResult.undone(#"{"action":"created","bytes":412,"path":"drafts/plan.md"}"#), state: .finished,
+              tool: "write_file", undo: .undone),
+        .init(callID: "3", entryID: 1, turnID: 1, command: "notes.txt",
+              result: #"{"action":"overwritten","bytes":2048,"path":"notes.txt"}"#, state: .finished, tool: "write_file",
+              undo: .refused(.changed)),
+    ]
+    VStack(alignment: .leading, spacing: 8) {
+        ForEach(records) { record in
+            AgentToolView(tool: record, undo: record.undo == .undone ? nil : {}, canUndo: true)
+        }
+    }.padding().frame(width: 520)
 }
 
 #Preview("工具卡片 · 写入 · 折叠") {

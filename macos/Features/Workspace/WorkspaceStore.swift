@@ -585,6 +585,7 @@ struct WorkspaceSnapshot: Codable {
             }
         }
         conversation.store.onUserAction = { [weak self] in self?.didUse(id) }
+        conversation.store.onFilesChanged = { [weak self, weak conversation] in self?.fileBrowser.refresh(projectID: conversation?.projectID) }
         conversation.store.onVisibilityChange = { [weak self] visible in self?.isMainWindowVisible = visible }
         lifecycleObservations[id] = conversation.store.lifecycle.sink { [weak self] event in
             guard let self, let target = self.conversation(id: id) else { return }

@@ -897,6 +897,26 @@
         }
       }
     },
+    "原来的位置现在不是普通文件，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because the item in the file’s place is no longer a regular file."
+          }
+        }
+      }
+    },
+    "原来的位置现在是符号链接，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because a symbolic link is now in the file’s place."
+          }
+        }
+      }
+    },
     "原语音密钥尚未读取，请重新填写后保存。" : {
       "localizations" : {
         "en" : {
@@ -1361,6 +1381,16 @@
         }
       }
     },
+    "已撤销" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Undone"
+          }
+        }
+      }
+    },
     "已收起" : {
       "localizations" : {
         "en" : {
@@ -1641,6 +1671,16 @@
         }
       }
     },
+    "找不到这次改动的备份，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because the backup of this change is missing."
+          }
+        }
+      }
+    },
     "拷贝路径" : {
       "localizations" : {
         "en" : {
@@ -1771,12 +1811,32 @@
         }
       }
     },
+    "文件在写入之后又被改过，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because the file has changed since it was written."
+          }
+        }
+      }
+    },
     "文件夹不可用或已被替换。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "This folder is unavailable or was replaced."
+          }
+        }
+      }
+    },
+    "文件已不在原来的位置，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because the file is no longer where it was written."
           }
         }
       }
@@ -2807,6 +2867,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No microphone is available."
+          }
+        }
+      }
+    },
+    "没有撤销：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo: %@"
           }
         }
       }
@@ -4057,6 +4127,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This turn already has a reply or ran tools, so the local model can’t continue it."
+          }
+        }
+      }
+    },
+    "这个位置只能读取，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because this location is read-only."
           }
         }
       }

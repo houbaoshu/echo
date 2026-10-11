@@ -11,8 +11,8 @@ import FoundationModels
             try await Task.sleep(for: .milliseconds(50))
         }
     }
-    /// Direct answer, a read-only look at a project, a file edited and one created there, and a chat
-    /// saved with a bash call continued:
+    /// Direct answer, a read-only look at a project, a file edited and one created there, both
+    /// changes undone and the model aware of it, and a chat saved with a bash call continued:
     /// the service takes the old call back although the turn no longer offers bash.
     static func run(protocols: [ModelAPIProtocol]) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
@@ -25,11 +25,17 @@ import FoundationModels
             var config = saved; config.apiProtocol = api
             print("START: \(api.title) tool capability, direct answer, project reads and writes, saved bash history"); fflush(nil)
             let endpoint = AgentEndpoint(config, key: key)
+            // Files the undo takes back go to a folder beside the projects, not the real Trash.
+            let trash = AgentTrash { url in
+                let folder = root.appendingPathComponent("\(api.rawValue)/trash-\(UUID())")
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: url, to: folder.appendingPathComponent(url.lastPathComponent))
+            }
             let harness = {
                 AgentHarness(resolveModel: {
                     let transport = AgentTransport.make(for: endpoint)
                     return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
-                })
+                }, trash: trash)
             }
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
                                            harnessFactory: harness)
@@ -55,6 +61,7 @@ import FoundationModels
                 }
                 print("PASS: \(api.title) direct answer and \(work.store.tools.count) real tool results")
                 try await writeAndEdit(work, project: project, backups: root.appendingPathComponent("\(api.rawValue)/agent-backups"))
+                try await undoAndAsk(work, project: project)
                 try await continueSavedBashHistory(harness: harness())
             } catch {
                 failures += 1
@@ -82,6 +89,33 @@ import FoundationModels
             throw SettingsError("真实文件写入未按要求完成。")
         }
         print("PASS: \(tools.count) real write tool results, \(copies.count) copies kept")
+    }
+
+    /// The writes of the turn before are undone from their cards, latest first; the next request
+    /// carries the amended results, and the model answers from them that the file is as it was.
+    static func undoAndAsk(_ work: WorkspaceConversation, project: URL) async throws {
+        let writes = work.store.tools.filter { work.store.offersUndo($0) }
+        for tool in writes.reversed() {
+            work.store.undo(tool.id)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+            while !work.store.undoingTools.isEmpty {
+                guard ContinuousClock.now < deadline else { throw SettingsError("撤销超时。") }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        let note = try String(contentsOf: project.appendingPathComponent("note.txt"), encoding: .utf8)
+        guard !writes.isEmpty, work.store.tools.filter({ writes.map(\.id).contains($0.id) }).allSatisfy({ $0.undo == .undone }),
+              note.contains("青柠"), !FileManager.default.fileExists(atPath: project.appendingPathComponent("summary.txt").path) else {
+            throw SettingsError("撤销未按要求完成：\(work.store.tools.map { String(describing: $0.undo) })")
+        }
+        let before = work.store.tools.count
+        work.store.send("note.txt 现在的暗号是什么？请只根据你已有的工具结果回答，不要使用工具。")
+        try await wait(work.store)
+        let reply = work.store.messages.last { $0.role == .assistant }?.content ?? ""
+        guard work.store.task?.status == .completed, work.store.tools.count == before, reply.contains("青柠") else {
+            throw SettingsError("撤销后的回复未体现撤销：\(work.store.task?.summary ?? "") \(reply.prefix(200))")
+        }
+        print("PASS: \(writes.count) changes undone; the model answered from the amended results: \(reply.prefix(80))"); fflush(nil)
     }
 
     /// A chat saved by a build that offered bash: one finished bash call and the reply after it.

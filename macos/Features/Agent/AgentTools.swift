@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import FoundationModels
@@ -101,6 +102,32 @@ enum AgentToolResult {
     }
     static func projectMissing(nothing: String) -> String {
         "The conversation's project folder can no longer be found; it may have been moved or deleted, so nothing was \(nothing). Ask the person to locate it with Relocate Folder… on the project in the sidebar."
+    }
+    /// A write's result once the person undid its change, as later requests show it to the model.
+    static func undone(_ result: String) -> String {
+        guard var value = (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any] else { return result }
+        value["undone"] = value["action"] as? String == "created"
+            ? "After this call, the person undid it: the file it created was moved to the Trash, so it no longer exists. Anything read from it after this call predates the undo."
+            : "After this call, the person undid it: the file was put back as it was before this call, so it no longer has what this call wrote. Anything read from it after this call predates the undo."
+        return object(value)
+    }
+    /// One undone change, for the notice the model gets with the person's next message.
+    static func undoNoticeLine(tool: String, result: String) -> String {
+        let value = (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any]
+        let path = value?["path"] as? String ?? "a file"
+        return value?["action"] as? String == "created"
+            ? "\(path): the file your \(tool) call created was moved to the Trash."
+            : "\(path): put back as it was before your \(tool) call."
+    }
+    /// What precedes the person's next message once they undid changes: from Echo, not from them.
+    static func undoNotice(_ lines: [String]) -> String {
+        guard !lines.isEmpty else { return "" }
+        return "[Echo: after your last reply, the person used Undo in Echo on these changes, which no longer hold. "
+            + lines.joined(separator: " ")
+            + " Earlier tool results and replies that show these changes predate the undo.]\n\n"
+    }
+    static func isUndone(_ result: String) -> Bool {
+        ((try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any])?["undone"] != nil
     }
     static func object(_ value: [String: Any]) -> String {
         (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]))
@@ -478,6 +505,14 @@ struct AgentWritePolicy: Sendable {
     }
 }
 
+/// What describes a file besides its bytes, as a write carries it over and an undo puts it back.
+struct AgentFileDescription: Sendable {
+    let mode: mode_t
+    /// Extended attributes by name.
+    let attributes: [String: Data]
+    let created: timespec
+}
+
 /// The file a write replaces, as it was before: its bytes and what describes it.
 struct AgentOriginalFile: Sendable {
     let data: Data
@@ -491,6 +526,8 @@ struct AgentOriginalFile: Sendable {
     let device: dev_t
     let inode: ino_t
     let modified: timespec
+
+    var description: AgentFileDescription { .init(mode: mode, attributes: attributes, created: created) }
 }
 
 /// Points in a write where tests hold it. Each runs on the thread doing the work, never the main actor.
@@ -583,11 +620,12 @@ enum AgentFileWriter {
                              original: original, content: content, action: action))
     }
 
-    /// Keeps a copy of the original, then puts the new content in place, carrying over the
-    /// original's permission bits, extended attributes and creation date. The folders and the
-    /// target are checked again: a target that changed since it was read is left as it is.
+    /// Keeps a copy of the original, or for a new file a record that it is new, then puts the new
+    /// content in place, carrying over the original's permission bits, extended attributes and
+    /// creation date. The folders and the target are checked again: a target that changed since it
+    /// was read is left as it is. `backup` gets nil for a new file.
     static func commit(_ plan: Plan, hooks: AgentWriteHooks = AgentWriteHooks(),
-                       backup: (AgentOriginalFile) throws -> Void) -> String {
+                       backup: (AgentOriginalFile?) throws -> Void) -> String {
         let raw = plan.raw
         func failure(_ code: Int32) -> String { AgentToolResult.failed(AgentToolPath.message(.system(code), path: raw, scope: plan.scope)) }
         let (opened, reached) = openFolders(root: plan.root, plan.folders)
@@ -604,6 +642,9 @@ enum AgentFileWriter {
             catch { return AgentToolResult.failed("could not keep a copy of the original, so nothing was written: \(raw) (\(error.localizedDescription))") }
         } else if found || reached < plan.firstMissing {
             return changed
+        } else {
+            do { try backup(nil) }
+            catch { return AgentToolResult.failed("could not keep a record of the new file, so nothing was written: \(raw) (\(error.localizedDescription))") }
         }
         hooks.beforeReplacing()
         for folder in plan.folders[reached...] {
@@ -612,7 +653,7 @@ enum AgentFileWriter {
             guard next >= 0 else { return failure(errno) }
             close(fd); fd = next
         }
-        switch replace(in: fd, name: plan.name, with: plan.content, like: plan.original) {
+        switch replace(in: fd, name: plan.name, with: plan.content, like: plan.original?.description, skipping: attributesNotCarried) {
         case .none: break
         case .system(let code): return failure(code)
         case .attribute(let name, let code):
@@ -625,7 +666,7 @@ enum AgentFileWriter {
     /// them; what it throws ends the call with nothing done.
     static func write(root: String, path raw: String, change: AgentWriteRequest.Change, scope: AgentReadScope = .project,
                       hooks: AgentWriteHooks = AgentWriteHooks(), beforeChange: () throws -> Void,
-                      backup: (AgentOriginalFile) throws -> Void) throws -> String {
+                      backup: (AgentOriginalFile?) throws -> Void) throws -> String {
         switch prepare(root: root, path: raw, change: change, scope: scope, hooks: hooks) {
         case .failure(let failure): return failure.result
         case .success(let plan):
@@ -634,9 +675,14 @@ enum AgentFileWriter {
         }
     }
 
+    /// What a write keeps of the content it wrote, so an undo can tell whether the file still has it.
+    static func fingerprint(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// The deepest of `folders` that opens under `root`, and how many opened. A failure other than a
     /// missing folder has no descriptor.
-    private static func openFolders(root: String, _ folders: [String]) -> (opened: (fd: Int32?, code: Int32), reached: Int) {
+    static func openFolders(root: String, _ folders: [String]) -> (opened: (fd: Int32?, code: Int32), reached: Int) {
         var fd = open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else { return ((nil, errno), 0) }
         for (index, folder) in folders.enumerated() {
@@ -679,11 +725,11 @@ enum AgentFileWriter {
         }
     }
 
-    private struct Errno: Error { let code: Int32 }
+    struct Errno: Error { let code: Int32 }
 
     /// The file and what describes it. The file is checked again once open, since it may have been
     /// replaced after it was looked at. Reading a file that is not downloaded yet waits for it.
-    private static func read(_ directory: Int32, _ name: String, path: String) -> Result<AgentOriginalFile, Errno> {
+    static func read(_ directory: Int32, _ name: String, path: String) -> Result<AgentOriginalFile, Errno> {
         let file = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard file >= 0 else { return .failure(Errno(code: errno)) }
         defer { close(file) }
@@ -723,11 +769,13 @@ enum AgentFileWriter {
         return result
     }
 
-    private enum ReplaceFailure { case none, system(Int32), attribute(String, Int32) }
+    enum ReplaceFailure { case none, system(Int32), attribute(String, Int32) }
 
-    /// Writes `content` to a temporary file in `directory`, gives it what describes `original`, then
-    /// renames it over `name`. A new file gets 0644 less the umask, never an executable bit.
-    private static func replace(in directory: Int32, name: String, with content: Data, like original: AgentOriginalFile?) -> ReplaceFailure {
+    /// Writes `content` to a temporary file in `directory`, gives it what describes `original` but
+    /// the attributes `skipping` names, then renames it over `name`. A new file gets 0644 less the
+    /// umask, never an executable bit.
+    static func replace(in directory: Int32, name: String, with content: Data, like original: AgentFileDescription?,
+                        skipping: Set<String>) -> ReplaceFailure {
         let temporary = ".echo-write-\(UUID().uuidString)"
         let file = openat(directory, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
         guard file >= 0 else { return .system(errno) }
@@ -741,7 +789,7 @@ enum AgentFileWriter {
         }
         if let original {
             guard fchmod(file, original.mode) == 0 else { return fail(.system(errno)) }
-            for (attribute, value) in original.attributes.sorted(by: { $0.key < $1.key }) where !attributesNotCarried.contains(attribute) {
+            for (attribute, value) in original.attributes.sorted(by: { $0.key < $1.key }) where !skipping.contains(attribute) {
                 let set = value.withUnsafeBytes { fsetxattr(file, attribute, $0.baseAddress, value.count, 0, 0) }
                 guard set == 0 else { return fail(.attribute(attribute, errno)) }
             }
@@ -762,9 +810,10 @@ enum AgentFileWriter {
     }
 }
 
-/// Copies of the files the write tools replace, one folder per copy in this chat's folder: the
-/// original's bytes and a record of where it came from and what described it, written last, so a
-/// folder with a record holds a whole copy. A later build restores files from these.
+/// Records of the write tools' changes, one folder per change in this chat's folder: for a file
+/// replaced, the original's bytes; for every change, a record of where it was, what described the
+/// original, and the fingerprint of what was written, written last, so a folder with a record is
+/// whole. Undo restores files from these.
 struct AgentBackupStore {
     struct Record: Codable, Equatable {
         /// Where the file was, absolute.
@@ -779,12 +828,44 @@ struct AgentBackupStore {
         var toolRecord: String
         var tool: String
         var savedAt: Date
-        /// The original's permission bits and size.
-        var mode: Int
-        var size: Int
-        /// The original's creation date and extended attributes, all of them, as it had them.
-        var created: Date
-        var attributes: [String: Data]
+        /// The original's permission bits and size; none for a new file.
+        var mode: Int?
+        var size: Int?
+        /// The original's creation date and extended attributes, all of them, as it had them; none
+        /// for a new file. `created` is to the second, `createdTime` exact.
+        var created: Date?
+        var attributes: [String: Data]?
+        /// What the call did: "created", "overwritten" or "edited". Records kept before undo existed
+        /// have none of the fields from here on, and their changes cannot be undone.
+        var action: String?
+        /// `AgentFileWriter.fingerprint` of the content the call wrote.
+        var written: String?
+        var createdTime: FileTime?
+
+        struct FileTime: Codable, Equatable {
+            var seconds: Int
+            var nanoseconds: Int
+            init(_ time: Darwin.timespec) { seconds = time.tv_sec; nanoseconds = time.tv_nsec }
+            var value: Darwin.timespec { .init(tv_sec: seconds, tv_nsec: nanoseconds) }
+        }
+
+        init(path: String, root: String, rootKind: String, relativePath: String, chat: UUID, toolRecord: String, tool: String,
+             savedAt: Date, original: AgentOriginalFile?, action: String, written: Data) {
+            self.path = path; self.root = root; self.rootKind = rootKind; self.relativePath = relativePath
+            self.chat = chat; self.toolRecord = toolRecord; self.tool = tool; self.savedAt = savedAt
+            self.action = action; self.written = AgentFileWriter.fingerprint(written)
+            if let original {
+                mode = Int(original.mode); size = original.data.count; attributes = original.attributes
+                created = Date(timeIntervalSince1970: TimeInterval(original.created.tv_sec) + TimeInterval(original.created.tv_nsec) / 1e9)
+                createdTime = FileTime(original.created)
+            }
+        }
+
+        /// What described the original, for an undo to put back.
+        var original: AgentFileDescription? {
+            guard let mode, let createdTime else { return nil }
+            return .init(mode: mode_t(mode), attributes: attributes ?? [:], created: createdTime.value)
+        }
     }
     static let recordName = "backup.json"
     static let originalName = "original"
@@ -792,15 +873,17 @@ struct AgentBackupStore {
     /// This chat's folder of copies.
     let directory: URL
 
-    /// Keeps a copy of `original`. Returns the copy's folder.
-    @discardableResult func save(_ original: AgentOriginalFile, record: Record) throws -> URL {
+    /// Keeps a record of a change, with a copy of `original` when it replaced a file. Returns the record's folder.
+    @discardableResult func save(_ original: AgentOriginalFile?, record: Record) throws -> URL {
         let fm = FileManager.default
         let stamp = Int(record.savedAt.timeIntervalSince1970 * 1000)
         let folder = directory.appendingPathComponent("\(stamp)-\(UUID().uuidString)")
         try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         do {
-            guard fm.createFile(atPath: folder.appendingPathComponent(Self.originalName).path, contents: original.data,
-                                attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
+            if let original {
+                guard fm.createFile(atPath: folder.appendingPathComponent(Self.originalName).path, contents: original.data,
+                                    attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
+            }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             encoder.dateEncodingStrategy = .iso8601
@@ -810,5 +893,129 @@ struct AgentBackupStore {
             throw error
         }
         return folder
+    }
+
+    /// The newest record of the change `toolRecord` names, and its folder.
+    func find(toolRecord: String) -> (record: Record, folder: URL)? {
+        let folders = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return folders.sorted { $0.lastPathComponent > $1.lastPathComponent }.lazy.compactMap { folder in
+            (try? Data(contentsOf: folder.appendingPathComponent(Self.recordName)))
+                .flatMap { try? decoder.decode(Record.self, from: $0) }
+                .flatMap { $0.toolRecord == toolRecord ? ($0, folder) : nil }
+        }.first
+    }
+}
+
+/// Moves a file a write created to the Trash when its change is undone.
+struct AgentTrash: Sendable {
+    let move: @Sendable (URL) throws -> Void
+    static let system = AgentTrash { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
+}
+
+/// Why a change was not undone. Raw values are what archives store.
+enum AgentUndoRefusal: Codable, Equatable, Sendable {
+    /// The file no longer has what the call wrote.
+    case changed
+    case missing
+    case symbolicLink
+    case notFile
+    /// The location can only be read, as for the write tools.
+    case readOnly
+    case backupMissing
+    /// The system refused; the reason as it said it.
+    case failed(String)
+
+    var message: String {
+        switch self {
+        case .changed: String(localized: "文件在写入之后又被改过，没有撤销。")
+        case .missing: String(localized: "文件已不在原来的位置，没有撤销。")
+        case .symbolicLink: String(localized: "原来的位置现在是符号链接，没有撤销。")
+        case .notFile: String(localized: "原来的位置现在不是普通文件，没有撤销。")
+        case .readOnly: String(localized: "这个位置只能读取，没有撤销。")
+        case .backupMissing: String(localized: "找不到这次改动的备份，没有撤销。")
+        case .failed(let reason): String(localized: "没有撤销：\(reason)")
+        }
+    }
+}
+
+/// Puts a file back as it was before one write call, while it still has exactly what that call
+/// wrote: a replaced file gets its original bytes, permission bits, extended attributes and
+/// creation date back, through a temporary file renamed over it, as a write does; a new file goes
+/// to the Trash, and the folders made for it stay. The path is checked as a write checks it, from
+/// the root's descriptor without following symbolic links. Runs off the main actor: reading the file
+/// can wait for it to download.
+enum AgentFileUndo {
+    /// Attributes an undo does not put back: the system's own record of which app wrote the file
+    /// and which apps may open it. The original's text encoding comes back with its bytes.
+    static let attributesNotRestored: Set<String> = ["com.apple.provenance", "com.apple.macl"]
+
+    /// Nil when the change was undone.
+    static func undo(_ record: AgentBackupStore.Record, copy folder: URL, policy: AgentWritePolicy = AgentWritePolicy(),
+                     trash: AgentTrash = .system) -> AgentUndoRefusal? {
+        guard let written = record.written, let action = record.action else { return .backupMissing }
+        let scope: AgentReadScope = record.rootKind == "finder" ? .finder : .project
+        guard policy.refusal(folder: record.root, scope: scope) == nil, let path = AgentToolPath.normalize(record.relativePath) else { return .readOnly }
+        let parts = path.split(separator: "/")
+        guard AgentWritePolicy.refusal(path: parts, raw: path) == nil else { return .readOnly }
+        let folders = parts.dropLast().map(String.init), name = String(parts.last!)
+
+        var fd = open(record.root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { return refusal(errno, in: AT_FDCWD, record.root) }
+        defer { close(fd) }
+        for folder in folders {
+            let next = openat(fd, folder, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard next >= 0 else { return refusal(errno, in: fd, folder) }
+            close(fd); fd = next
+        }
+        var info = stat()
+        guard fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { return refusal(errno, in: fd, name) }
+        switch info.st_mode & S_IFMT {
+        case S_IFLNK: return .symbolicLink
+        case S_IFREG: break
+        default: return .notFile
+        }
+        // Echo never writes an executable file or one over 4 MiB, so such a file was changed since.
+        guard info.st_mode & 0o111 == 0, info.st_size <= AgentFileWriter.maxFileBytes else { return .changed }
+        let current: AgentOriginalFile
+        switch AgentFileWriter.read(fd, name, path: record.root + "/" + path) {
+        case .success(let file): current = file
+        case .failure(let error): return refusal(error.code, in: fd, name)
+        }
+        guard current.device == info.st_dev, current.inode == info.st_ino,
+              AgentFileWriter.fingerprint(current.data) == written else { return .changed }
+
+        if action == "created" {
+            do { try trash.move(URL(fileURLWithPath: record.root).appendingPathComponent(path)) }
+            catch { return .failed(error.localizedDescription) }
+            return nil
+        }
+        guard let original = record.original,
+              let data = try? Data(contentsOf: folder.appendingPathComponent(AgentBackupStore.originalName)),
+              data.count == record.size else { return .backupMissing }
+        switch AgentFileWriter.replace(in: fd, name: name, with: data, like: original, skipping: attributesNotRestored) {
+        case .none: return nil
+        case .system(let code): return .failed(String(cString: strerror(code)))
+        case .attribute(let attribute, let code): return .failed("\(attribute): \(String(cString: strerror(code)))")
+        }
+    }
+
+    /// Why `name` in `directory` could not be opened, from what is there now.
+    private static func refusal(_ code: Int32, in directory: Int32, _ name: String) -> AgentUndoRefusal {
+        var info = stat()
+        if fstatat(directory, name, &info, AT_SYMLINK_NOFOLLOW) == 0 {
+            switch info.st_mode & S_IFMT {
+            case S_IFLNK: return .symbolicLink
+            // A file where a folder was: the path no longer leads to it.
+            case S_IFDIR: break
+            default: if code == ENOTDIR { return .missing }
+            }
+        }
+        switch code {
+        case ENOENT: return .missing
+        case ELOOP: return .symbolicLink
+        default: return .failed(String(cString: strerror(code)))
+        }
     }
 }

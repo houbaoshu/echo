@@ -15,17 +15,20 @@ import Testing
         var project: URL?
         /// This chat's folder of copies of replaced files, in a temporary folder of its own.
         let backups = FileManager.default.temporaryDirectory.appendingPathComponent("echo-backups-\(UUID())")
+        /// Stands in for the Trash, so an undo in a test never fills the real one.
+        let trash = FileManager.default.temporaryDirectory.appendingPathComponent("echo-trash-\(UUID())")
         var saved: [TaskStore.Snapshot] = []
         var saveFailure: ((TaskStore.Snapshot) -> Bool)?
         var events: [String] = []
         private var observation: AnyCancellable?
         init(_ step: @escaping ScriptedAgentModel.Step, project: URL? = nil, snapshot: TaskStore.Snapshot? = nil,
              finder: FakeFinder = FakeFinder(), writePolicy: AgentWritePolicy = AgentWritePolicy(),
-             writeHooks: AgentWriteHooks = AgentWriteHooks()) {
+             writeHooks: AgentWriteHooks = AgentWriteHooks(), trash: AgentTrash? = nil) {
             let model = ScriptedAgentModel(step: step)
             self.model = model
             self.project = project
-            let harness = AgentHarness(resolveModel: { model.factory }, finder: finder, writePolicy: writePolicy, writeHooks: writeHooks)
+            let harness = AgentHarness(resolveModel: { model.factory }, finder: finder, writePolicy: writePolicy, writeHooks: writeHooks,
+                                       trash: trash ?? AgentTrash.into(self.trash))
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.backupDirectory = backups
             // As the workspace answers: a project whose folder is gone is missing.
@@ -1358,13 +1361,15 @@ import Testing
         var result: String
         var saved = false
         var backups: [AgentOriginalFile] = []
+        /// Records kept of new files, which have no original to copy.
+        var newFiles = 0
     }
 
     static func run(_ f: Folders, _ path: String, _ change: AgentWriteRequest.Change, backupFails: Bool = false) throws -> Run {
         var run = Run(result: "")
         run.result = try AgentFileWriter.write(root: f.root, path: path, change: change, beforeChange: { run.saved = true }, backup: { original in
             if backupFails { throw CocoaError(.fileWriteOutOfSpace) }
-            run.backups.append(original)
+            if let original { run.backups.append(original) } else { run.newFiles += 1 }
         })
         return run
     }
@@ -1374,7 +1379,8 @@ import Testing
         defer { f.remove() }
         let created = try Self.run(f, "./a/b/new.txt", .replace("hello"))
         #expect(created.result == #"{"action":"created","bytes":5,"path":"a/b/new.txt"}"#)
-        #expect(f.text("a/b/new.txt") == "hello" && created.saved && created.backups.isEmpty, "A new file needs no copy")
+        #expect(f.text("a/b/new.txt") == "hello" && created.saved && created.backups.isEmpty && created.newFiles == 1,
+                "A new file needs no copy, only a record")
         let umask = { let old = Darwin.umask(0); Darwin.umask(old); return Int(old) }()
         #expect(f.mode("a/b/new.txt") == 0o644 & ~umask, "A new file is never executable")
 
@@ -1420,7 +1426,7 @@ import Testing
         for (path, change, expected) in cases {
             let run = try Self.run(f, path, change)
             #expect(run.result.contains(#""status":"failed""#) && run.result.contains(expected), "\(path): \(run.result)")
-            #expect(!run.saved && run.backups.isEmpty, "\(path): nothing was saved or copied")
+            #expect(!run.saved && run.backups.isEmpty && run.newFiles == 0, "\(path): nothing was saved or copied")
         }
         #expect(f.contents() == before, "A failed edit changes nothing")
     }
@@ -1464,7 +1470,7 @@ import Testing
             for change in [AgentWriteRequest.Change.replace("x"), .edit(old: "x", new: "y")] {
                 let run = try Self.run(f, path, change)
                 #expect(run.result.contains(#""status":"failed""#) && run.result.contains(expected), "\(path): \(run.result)")
-                #expect(!run.saved && run.backups.isEmpty, "\(path): refused before anything was saved")
+                #expect(!run.saved && run.backups.isEmpty && run.newFiles == 0, "\(path): refused before anything was saved")
             }
         }
         let big = String(repeating: "b", count: AgentFileWriter.maxFileBytes + 1)
@@ -1483,11 +1489,12 @@ import Testing
             #expect(run.result.contains("could not keep a copy of the original, so nothing was written: kept.txt"), "\(run.result)")
         }
         #expect(f.contents() == before)
-        // A new file has nothing to copy.
-        #expect(try Self.run(f, "fresh.txt", .replace("x"), backupFails: true).result.contains(#""action":"created""#))
+        // A new file has nothing to copy, but without its record it is not created either.
+        #expect(try Self.run(f, "fresh.txt", .replace("x"), backupFails: true).result
+                    .contains("could not keep a record of the new file, so nothing was written: fresh.txt"))
+        #expect(f.contents() == before)
 
         // The save before the change failed: the error ends the call and the disk is as it was.
-        try FileManager.default.removeItem(atPath: f.root + "/fresh.txt")
         for (path, change) in [("kept.txt", AgentWriteRequest.Change.replace("new")), ("new/dir/file.txt", .replace("x"))] {
             #expect(throws: CocoaError.self) {
                 try AgentFileWriter.write(root: f.root, path: path, change: change,
@@ -1597,12 +1604,13 @@ import Testing
     static func text(_ root: URL, _ path: String) -> String? { try? String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) }
 
     /// The copies in a chat's backup folder: each record with the original's bytes.
-    static func backups(_ chat: Chat) throws -> [(record: AgentBackupStore.Record, original: Data)] {
+    /// The records in a chat's backup folder, oldest first: each with the original's bytes, or nil for a new file.
+    static func backups(_ chat: Chat) throws -> [(record: AgentBackupStore.Record, original: Data?)] {
         let fm = FileManager.default
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         return try (fm.contentsOfDirectory(at: chat.backups, includingPropertiesForKeys: nil)).sorted { $0.path < $1.path }.map { folder in
             (try decoder.decode(AgentBackupStore.Record.self, from: Data(contentsOf: folder.appendingPathComponent(AgentBackupStore.recordName))),
-             try Data(contentsOf: folder.appendingPathComponent(AgentBackupStore.originalName)))
+             try? Data(contentsOf: folder.appendingPathComponent(AgentBackupStore.originalName)))
         }
     }
 
@@ -1641,9 +1649,12 @@ import Testing
                 == "正在修改文件 · notes.txt")
 
         let backups = try Self.backups(chat)
-        #expect(backups.count == 1, "Only the edit replaced a file")
-        let backup = try #require(backups.first)
-        #expect(backup.original == Data("alpha\n".utf8))
+        #expect(backups.map(\.original) == [nil, Data("alpha\n".utf8)], "Only the edit replaced a file; the new file has a record alone")
+        let created = try #require(backups.first).record
+        #expect(created.action == "created" && created.toolRecord == tools[0].id && created.mode == nil && created.attributes == nil)
+        #expect(created.written == AgentFileWriter.fingerprint(Data("# 计划\n".utf8)) && created.relativePath == "drafts/plan.md")
+        let backup = try #require(backups.last)
+        #expect(backup.record.action == "edited" && backup.record.written == AgentFileWriter.fingerprint(Data("beta\n".utf8)))
         #expect(backup.record.path == root.path + "/notes.txt" && backup.record.root == root.path && backup.record.rootKind == "project")
         #expect(backup.record.relativePath == "notes.txt" && backup.record.tool == "edit_file" && backup.record.size == 6)
         #expect(backup.record.chat == chat.store.sessionID && backup.record.toolRecord == tools[1].id, "The copy names its chat and its card")
@@ -1663,7 +1674,7 @@ import Testing
                                                   #"{"action":"edited","bytes":9,"folder":"finder","path":"note.txt"}"#])
         #expect(chat.store.tools.allSatisfy { $0.directory == f.finder }, "The card keeps the folder's path")
         #expect(try String(contentsOfFile: f.finder + "/note.txt", encoding: .utf8) == "to finder")
-        #expect(try Self.backups(chat).first?.record.rootKind == "finder")
+        #expect(try Self.backups(chat).map(\.record.rootKind) == ["finder", "finder"])
     }
 
     /// A home folder of its own for the folders that can only be read, so a write that wrongly goes
@@ -1787,10 +1798,14 @@ import Testing
             let results = chat.store.tools.map { $0.result ?? "" }
             #expect(results[0].contains("could not keep a copy of the original, so nothing was written: notes.txt"), "\(results)")
             #expect(results[1].contains("could not keep a copy of the original, so nothing was written: notes.txt"))
-            #expect(results[2].contains(#""action":"created""#), "A new file needs no copy")
-            #expect(chat.store.tools.map(\.state) == [.notWritten, .notWritten, .finished])
             #expect(chat.store.task?.status == .completed)
         }
+        // A chat that keeps no records still creates new files, which then have no undo.
+        #expect(unset.store.tools[2].result?.contains(#""action":"created""#) == true)
+        #expect(unset.store.tools.map(\.state) == [.notWritten, .notWritten, .finished] && unset.store.tools[2].undo == nil)
+        // A record that cannot be kept stops a new file too.
+        #expect(blocked.store.tools[2].result?.contains("could not keep a record of the new file, so nothing was written: fresh.txt") == true)
+        #expect(blocked.store.tools.map(\.state) == [.notWritten, .notWritten, .notWritten])
         #expect(Self.text(root, "notes.txt") == "alpha\n")
     }
 
@@ -2049,7 +2064,7 @@ import Testing
     }
 
     /// Through the workspace: the copies live beside the saved chats and go with their chat, and a
-    /// file the Agent creates shows in the file browser once the turn ends.
+    /// file the Agent creates shows in the file browser once the turn ends, and leaves it when undone.
     @Test func backupsLiveWithTheWorkspaceAndTheFileTreeShowsNewFiles() async throws {
         let fm = FileManager.default
         let base = URL(fileURLWithPath: try #require(ProjectPath.canonical(fm.temporaryDirectory.path)))
@@ -2063,7 +2078,9 @@ import Testing
             ("write_file", #"{"path":"new.txt","content":"created by Echo"}"#),
             ("edit_file", #"{"path":"old.txt","old_text":"alpha","new_text":"beta"}"#),
         ]))
-        let ws = WorkspaceStore(persistence: persistence, harnessFactory: { AgentHarness(resolveModel: { model.factory }, finder: NoFinder()) })
+        let ws = WorkspaceStore(persistence: persistence, harnessFactory: {
+            AgentHarness(resolveModel: { model.factory }, finder: NoFinder(), trash: .into(base.appendingPathComponent("trash")))
+        })
         defer { ws.shutdown() }
         let chat = try #require(ws.selected)
         #expect(ws.associateProject(ws.addProject(url: project), conversationID: chat.id))
@@ -2077,9 +2094,315 @@ import Testing
         try await eventually("turn ends") { !chat.store.isGenerating }
         #expect(chat.store.task?.status == .completed)
         try await eventually("the new file shows in the tree") { rootNames() == ["new.txt", "old.txt"] }
-        let copies = try fm.contentsOfDirectory(at: persistence.backupDirectory(chat.id), includingPropertiesForKeys: nil)
-        #expect(copies.count == 1 && (try? Data(contentsOf: copies[0].appendingPathComponent(AgentBackupStore.originalName))) == Data("alpha".utf8))
+        let records = try fm.contentsOfDirectory(at: persistence.backupDirectory(chat.id), includingPropertiesForKeys: nil)
+        #expect(records.count == 2 && records.compactMap { try? Data(contentsOf: $0.appendingPathComponent(AgentBackupStore.originalName)) } == [Data("alpha".utf8)])
+        // Undoing the new file takes it out of the tree.
+        chat.store.undo(chat.store.tools[0].id)
+        try await eventually("the undone file leaves the tree") { rootNames() == ["old.txt"] }
+        #expect(chat.store.tools[0].undo == .undone)
         ws.deleteConversation(chat.id)
         #expect(!fm.fileExists(atPath: persistence.backupDirectory(chat.id).path), "Deleting the chat deletes its copies")
+    }
+}
+
+extension AgentTrash {
+    /// Moves files into `folder` instead of the Trash, keeping their names.
+    static func into(_ folder: URL) -> AgentTrash {
+        AgentTrash { url in
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: url, to: folder.appendingPathComponent(url.lastPathComponent))
+        }
+    }
+}
+
+/// Undo on write cards: each change comes off on its own, only while the file still has what the
+/// call wrote; the card and the model's context say so, and both survive reopening.
+@MainActor @Suite(.serialized) struct WriteUndoTests {
+    typealias Chat = AgentHarnessTests.Chat
+
+    /// A chat that ran `calls` one by one in a turn, in a project holding `files`.
+    static func chat(_ calls: [(String, String)], files: [String: String] = ["notes.txt": "alpha\n"],
+                     trash: AgentTrash? = nil) async throws -> (chat: Chat, root: URL) {
+        let root = try WriteToolHarnessTests.project(files)
+        let chat = Chat(FinderRootTests.oneByOne(calls), project: root, trash: trash)
+        try await FinderRootTests.run(chat, "改文件")
+        #expect(chat.store.tools.allSatisfy { $0.state == .finished && $0.undo == .available }, "\(chat.store.tools.map(\.result))")
+        return (chat, root)
+    }
+    static func remove(_ chat: Chat, _ root: URL) {
+        for url in [root, chat.backups, chat.trash] { try? FileManager.default.removeItem(at: url) }
+    }
+
+    /// Undoes card `index` and waits for the outcome.
+    @discardableResult static func undo(_ chat: Chat, _ index: Int) async throws -> AgentToolRecord.Undo? {
+        let id = chat.store.tools[index].id
+        chat.store.undo(id)
+        try await eventually("undo ends") { chat.store.undoingTools.isEmpty }
+        return chat.store.tools.first { $0.id == id }?.undo
+    }
+
+    static func text(_ root: URL, _ path: String) -> String? { WriteToolHarnessTests.text(root, path) }
+
+    @Test func eachKindOfChangeComesOff() async throws {
+        let (chat, root) = try await Self.chat([
+            ("write_file", #"{"path":"a/b/new.txt","content":"hi"}"#),
+            ("write_file", #"{"path":"notes.txt","content":"replaced"}"#),
+            ("edit_file", #"{"path":"other.txt","old_text":"two","new_text":"2"}"#),
+        ], files: ["notes.txt": "alpha\n", "other.txt": "one two\n"])
+        defer { Self.remove(chat, root) }
+        var refreshes = 0
+        chat.store.onFilesChanged = { refreshes += 1 }
+        #expect(chat.store.tools.allSatisfy { chat.store.offersUndo($0) && chat.store.canUndo($0) })
+
+        #expect(try await Self.undo(chat, 0) == .undone)
+        #expect(Self.text(root, "a/b/new.txt") == nil && (try? String(contentsOf: chat.trash.appendingPathComponent("new.txt"), encoding: .utf8)) == "hi",
+                "The new file went to the Trash")
+        var isFolder: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("a/b").path, isDirectory: &isFolder) && isFolder.boolValue,
+                "The folders made for it stay")
+        #expect(try await Self.undo(chat, 1) == .undone && Self.text(root, "notes.txt") == "alpha\n")
+        #expect(try await Self.undo(chat, 2) == .undone && Self.text(root, "other.txt") == "one two\n")
+        #expect(refreshes == 3, "The file browser reads the folder again after each undo")
+        #expect(chat.store.tools.allSatisfy { !chat.store.offersUndo($0) }, "An undone card has no button: there is no redo")
+        #expect(try WriteToolHarnessTests.backups(chat).count == 3, "The records stay")
+        #expect(!(FileManager.default.subpaths(atPath: root.path) ?? []).contains { $0.contains(".echo-write-") }, "No temporary file is left")
+        // Undo on an undone card does nothing more.
+        chat.store.undo(chat.store.tools[1].id)
+        #expect(chat.store.undoingTools.isEmpty)
+    }
+
+    /// The model hears of the undo through the call's result, in every later request, and through a
+    /// notice before the person's next message, where it is now.
+    @Test func theNextRequestSaysTheChangeWasUndone() async throws {
+        let (chat, root) = try await Self.chat([
+            ("write_file", #"{"path":"new.txt","content":"hi"}"#),
+            ("edit_file", #"{"path":"notes.txt","old_text":"alpha","new_text":"beta"}"#),
+        ])
+        defer { Self.remove(chat, root) }
+        let before = chat.store.tools.compactMap(\.result)
+        try await Self.undo(chat, 0)
+        try await Self.undo(chat, 1)
+        try await FinderRootTests.run(chat, "现在呢？")
+        let outputs = try #require(chat.model.requests.last).toolOutputs
+        #expect(outputs == [AgentToolResult.undone(before[0]), AgentToolResult.undone(before[1])])
+        let notes = try outputs.map { try #require((try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])?["undone"] as? String) }
+        #expect(notes[0].contains("the file it created was moved to the Trash") && notes[1].contains("put back as it was before this call"))
+        #expect(outputs.allSatisfy { $0.contains(#""action":"#) }, "What the call did stays as it was")
+        #expect(chat.native.entries.toolOutputs == outputs, "The saved transcript carries the note")
+        let notice = AgentToolResult.undoNotice([
+            "new.txt: the file your write_file call created was moved to the Trash.",
+            "notes.txt: put back as it was before your edit_file call.",
+        ])
+        #expect(try #require(chat.model.requests.last).userTexts.last == notice + "现在呢？", "The notice comes first, in the same message")
+        #expect(notice.hasPrefix("[Echo: after your last reply, the person used Undo in Echo"))
+        #expect(chat.native.undoNotices.isEmpty && chat.userTexts.last == "现在呢？", "Told once; the chat shows what the person wrote")
+        try await FinderRootTests.run(chat, "再问一次")
+        #expect(try #require(chat.model.requests.last).userTexts.suffix(2) == [notice + "现在呢？", "再问一次"], "Not repeated")
+    }
+
+    /// A file that is no longer exactly what the call wrote is left as it is, and the card says why.
+    @Test func aFileChangedSinceIsLeftAlone() async throws {
+        let names = ["changed", "deleted", "linked", "folder", "executable"]
+        var files = Dictionary(uniqueKeysWithValues: names.map { ("\($0).txt", "original") })
+        files["outside/linked.txt"] = "mine"
+        let (chat, root) = try await Self.chat(names.map { ("write_file", #"{"path":"\#($0).txt","content":"mine"}"#) }
+                                               + [("write_file", #"{"path":"sub/new.txt","content":"mine"}"#)], files: files)
+        defer { Self.remove(chat, root) }
+        let fm = FileManager.default
+        let path = { (name: String) in root.appendingPathComponent(name).path }
+        try Data("someone else's".utf8).write(to: root.appendingPathComponent("changed.txt"))
+        try fm.removeItem(atPath: path("deleted.txt"))
+        // A link to a file that has exactly what the call wrote: following it would undo through it.
+        try fm.removeItem(atPath: path("linked.txt"))
+        try fm.createSymbolicLink(atPath: path("linked.txt"), withDestinationPath: path("outside/linked.txt"))
+        try fm.removeItem(atPath: path("folder.txt"))
+        try fm.createDirectory(atPath: path("folder.txt"), withIntermediateDirectories: false)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("executable.txt"))
+        // A folder on the way replaced by a link to where the file now is.
+        try fm.moveItem(atPath: path("sub"), toPath: path("moved"))
+        try fm.createSymbolicLink(atPath: path("sub"), withDestinationPath: path("moved"))
+
+        var outcomes: [AgentToolRecord.Undo?] = []
+        for index in chat.store.tools.indices { outcomes.append(try await Self.undo(chat, index)) }
+        #expect(outcomes == [.refused(.changed), .refused(.missing), .refused(.symbolicLink), .refused(.notFile), .refused(.changed),
+                             .refused(.symbolicLink)])
+        #expect(Self.text(root, "changed.txt") == "someone else's" && !fm.fileExists(atPath: path("deleted.txt")))
+        #expect((try? fm.destinationOfSymbolicLink(atPath: path("linked.txt"))) == path("outside/linked.txt") && Self.text(root, "outside/linked.txt") == "mine")
+        #expect(Self.text(root, "moved/new.txt") == "mine" && (try? fm.contentsOfDirectory(atPath: chat.trash.path)) == nil, "Nothing went to the Trash")
+        #expect(Self.text(root, "executable.txt") == "mine" && (try? fm.attributesOfItem(atPath: path("executable.txt")))?[.posixPermissions] as? Int == 0o755)
+        #expect(chat.store.tools.allSatisfy { chat.store.offersUndo($0) && $0.result.map(AgentToolResult.isUndone) == false },
+                "The button stays, and the model is told nothing")
+        #expect(AgentUndoRefusal.changed.message == "文件在写入之后又被改过，没有撤销。")
+        #expect(AgentUndoRefusal.symbolicLink.message == "原来的位置现在是符号链接，没有撤销。")
+    }
+
+    /// Changes to one file come off from the latest back: an earlier one waits until the later is undone.
+    @Test func onlyTheLatestChangeComesOff() async throws {
+        let (chat, root) = try await Self.chat([
+            ("write_file", #"{"path":"notes.txt","content":"v1"}"#),
+            ("edit_file", #"{"path":"notes.txt","old_text":"v1","new_text":"v2"}"#),
+            ("write_file", #"{"path":"new.txt","content":"a"}"#),
+            ("edit_file", #"{"path":"new.txt","old_text":"a","new_text":"b"}"#),
+        ])
+        defer { Self.remove(chat, root) }
+        #expect(try await Self.undo(chat, 0) == .refused(.changed) && Self.text(root, "notes.txt") == "v2")
+        #expect(try await Self.undo(chat, 2) == .refused(.changed) && Self.text(root, "new.txt") == "b")
+        #expect(try await Self.undo(chat, 1) == .undone && Self.text(root, "notes.txt") == "v1")
+        #expect(try await Self.undo(chat, 0) == .undone && Self.text(root, "notes.txt") == "alpha\n")
+        #expect(try await Self.undo(chat, 3) == .undone && Self.text(root, "new.txt") == "a")
+        #expect(try await Self.undo(chat, 2) == .undone && Self.text(root, "new.txt") == nil)
+    }
+
+    /// What the card says of an undo is saved with the chat and there when it is opened again.
+    @Test func undoStatesSurviveReopening() async throws {
+        let (chat, root) = try await Self.chat([
+            ("write_file", #"{"path":"new.txt","content":"hi"}"#),
+            ("edit_file", #"{"path":"notes.txt","old_text":"alpha","new_text":"beta"}"#),
+            ("write_file", #"{"path":"third.txt","content":"x"}"#),
+        ])
+        defer { Self.remove(chat, root) }
+        try await Self.undo(chat, 0)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("notes.txt"))
+        try await Self.undo(chat, 1)
+        #expect(chat.saved.last?.native?.entries.toolOutputs.first.map(AgentToolResult.isUndone) == true, "The undo saved the chat")
+        #expect(chat.saved.last?.native?.undoNotices == ["new.txt: the file your write_file call created was moved to the Trash."],
+                "The notice waits for the next message, saved")
+        let saved = try JSONDecoder().decode(TaskStore.Snapshot.self, from: JSONEncoder().encode(chat.store.snapshot))
+        let reopened = Chat({ _, emit, _ in try await emit.text("ok") }, snapshot: saved)
+        defer { try? FileManager.default.removeItem(at: reopened.backups) }
+        #expect(reopened.store.tools.map(\.undo) == [.undone, .refused(.missing), .available])
+        #expect(reopened.store.tools.map { reopened.store.offersUndo($0) } == [false, true, true])
+        #expect(reopened.store.tools[0].result.map(AgentToolResult.isUndone) == true)
+        #expect(reopened.native.undoNotices.count == 1)
+    }
+
+    /// While a turn runs, nothing can be undone; while an undo runs, no turn starts.
+    @Test func undoAndTurnsDoNotOverlap() async throws {
+        let root = try WriteToolHarnessTests.project()
+        let gate = AsyncGate()
+        let hold = WriteToolHarnessTests.Hold()
+        let chat = Chat({ _, emit, index in
+            switch index {
+            case 0: await emit.call("write_file", #"{"path":"new.txt","content":"hi"}"#, id: "w")
+            case 1: try await emit.text("done")
+            default: await gate.wait(); try await emit.text("later")
+            }
+        }, project: root, trash: AgentTrash { url in hold.wait(); try AgentTrash.into(FileManager.default.temporaryDirectory.appendingPathComponent("echo-trash-\(UUID())")).move(url) })
+        defer { Self.remove(chat, root) }
+        try await FinderRootTests.run(chat, "写")
+        let tool = chat.store.tools[0]
+        #expect(chat.store.send("再说点"))
+        #expect(chat.store.offersUndo(tool) && !chat.store.canUndo(tool), "The button shows but cannot be clicked")
+        chat.store.undo(tool.id)
+        #expect(chat.store.undoingTools.isEmpty && Self.text(root, "new.txt") == "hi")
+        gate.open()
+        try await chat.idle()
+        #expect(chat.store.canUndo(chat.store.tools[0]))
+
+        chat.store.undo(tool.id)
+        try await eventually("undo under way") { hold.arrivals == 1 }
+        #expect(!chat.store.canSubmit && !chat.store.send("现在") && !chat.store.canUndo(chat.store.tools[0]), "No turn starts during an undo")
+        hold.release()
+        try await eventually("undo ends") { chat.store.undoingTools.isEmpty }
+        #expect(chat.store.tools[0].undo == .undone && chat.store.canSubmit)
+    }
+
+    /// An overwrite or edit undone puts back the original's permission bits, extended attributes,
+    /// text encoding among them, and creation date to the nanosecond, through a new file.
+    @Test func undoPutsBackWhatDescribedTheFile() throws {
+        let f = try AgentWriteToolTests.folders()
+        defer { f.remove() }
+        let store = AgentBackupStore(directory: URL(fileURLWithPath: f.base + "/backups"))
+        let created = Date(timeIntervalSince1970: 978_307_200.25)
+        for (index, (path, change)) in [("written.txt", AgentWriteRequest.Change.replace("新内容")), ("edited.txt", .edit(old: "old", new: "new"))].enumerated() {
+            try f.file(path, "old text", mode: 0o640)
+            let full = f.root + "/" + path
+            var values = URLResourceValues()
+            values.tagNames = ["红色"]
+            values.creationDate = created
+            var url = URL(fileURLWithPath: full)
+            try url.setResourceValues(values)
+            try AgentWriteToolTests.setAttribute(full, "org.example.note", "keep me")
+            try AgentWriteToolTests.setAttribute(full, "com.apple.TextEncoding", "MACINTOSH;0")
+            let finderInfo = AgentWriteToolTests.attribute(full, "com.apple.FinderInfo")
+            let content = Data((index == 0 ? "新内容" : "new text").utf8)
+            let result = try AgentFileWriter.write(root: f.root, path: path, change: change, beforeChange: {}) { original in
+                try store.save(original, record: .init(path: full, root: f.root, rootKind: "project", relativePath: path, chat: UUID(),
+                                                       toolRecord: "1:\(index):c", tool: "write_file", savedAt: Date(), original: original,
+                                                       action: index == 0 ? "overwritten" : "edited", written: content))
+            }
+            #expect(result.contains(#""action""#) && FileManager.default.contents(atPath: full) == content)
+            // Changed since in what describes it, not in its content.
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: full)
+            values = URLResourceValues(); values.tagNames = ["蓝色"]; values.creationDate = Date(timeIntervalSince1970: 0)
+            url = URL(fileURLWithPath: full)
+            try url.setResourceValues(values)
+            removexattr(full, "org.example.note", XATTR_NOFOLLOW)
+            let inode = try FileManager.default.attributesOfItem(atPath: full)[.systemFileNumber] as? Int
+
+            let (record, folder) = try #require(store.find(toolRecord: "1:\(index):c"))
+            #expect(AgentFileUndo.undo(record, copy: folder, policy: AgentWritePolicy(home: "/nonexistent")) == nil)
+            #expect(f.text(path) == "old text" && f.mode(path) == 0o640, "\(path)")
+            let after = try URL(fileURLWithPath: full).resourceValues(forKeys: [.tagNamesKey, .creationDateKey])
+            #expect(after.tagNames == ["红色"] && after.creationDate == created, "\(path): \(String(describing: after.creationDate?.timeIntervalSince1970))")
+            #expect(AgentWriteToolTests.attribute(full, "com.apple.FinderInfo") == finderInfo)
+            #expect(AgentWriteToolTests.attribute(full, "org.example.note") == Data("keep me".utf8))
+            #expect(AgentWriteToolTests.attribute(full, "com.apple.TextEncoding") == Data("MACINTOSH;0".utf8), "The encoding comes back with the bytes")
+            #expect(try FileManager.default.attributesOfItem(atPath: full)[.systemFileNumber] as? Int != inode, "Put back through a new file")
+        }
+        #expect(!(FileManager.default.subpaths(atPath: f.root) ?? []).contains { $0.contains(".echo-write-") })
+    }
+
+    /// A location the write tools can only read is not undone in either; nor is a change from a
+    /// build that kept no fingerprint, whose card has no button.
+    @Test func readOnlyPlacesAndOlderRecordsAreNotUndone() throws {
+        let f = try AgentWriteToolTests.folders()
+        defer { f.remove() }
+        try f.file("notes.txt", "mine")
+        let directory = URL(fileURLWithPath: f.base + "/backups")
+        let store = AgentBackupStore(directory: directory)
+        let original = AgentOriginalFile(data: Data("before".utf8), mode: 0o644, path: f.root + "/notes.txt", attributes: [:],
+                                         created: timespec(), device: 0, inode: 0, modified: timespec())
+        try store.save(original, record: .init(path: f.root + "/notes.txt", root: f.root, rootKind: "finder", relativePath: "notes.txt",
+                                               chat: UUID(), toolRecord: "1:1:a", tool: "write_file", savedAt: Date(), original: original,
+                                               action: "overwritten", written: Data("mine".utf8)))
+        let (record, folder) = try #require(store.find(toolRecord: "1:1:a"))
+        // The root is the home folder itself, or inside a hidden folder.
+        #expect(AgentFileUndo.undo(record, copy: folder, policy: AgentWritePolicy(home: f.root)) == .readOnly)
+        var hidden = record; hidden.relativePath = ".git/notes.txt"
+        #expect(AgentFileUndo.undo(hidden, copy: folder, policy: AgentWritePolicy(home: "/nonexistent")) == .readOnly)
+        #expect(f.text("notes.txt") == "mine")
+
+        // A record kept before undo existed: no action, no fingerprint.
+        var older = record; older.action = nil; older.written = nil
+        #expect(AgentFileUndo.undo(older, copy: folder, policy: AgentWritePolicy(home: "/nonexistent")) == .backupMissing)
+        #expect(f.text("notes.txt") == "mine")
+        let card = #"{"callID":"e","entryID":1,"turnID":1,"command":"a.txt","result":"{\"action\":\"edited\",\"bytes\":1,\"path\":\"a.txt\"}","state":"执行结束","tool":"edit_file"}"#
+        let decoded = try JSONDecoder().decode(AgentToolRecord.self, from: Data(card.utf8))
+        #expect(decoded.state == .finished && decoded.undo == nil && !TaskStore().offersUndo(decoded))
+        // And with a fingerprint the same record undoes.
+        #expect(AgentFileUndo.undo(record, copy: folder, policy: AgentWritePolicy(home: "/nonexistent")) == nil && f.text("notes.txt") == "before")
+    }
+}
+
+/// Holds async callers until opened.
+final class AsyncGate: Sendable {
+    private let state = Mutex<(open: Bool, waiters: [CheckedContinuation<Void, Never>])>((false, []))
+    func wait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let open = state.withLock { state in
+                if !state.open { state.waiters.append(continuation) }
+                return state.open
+            }
+            if open { continuation.resume() }
+        }
+    }
+    func open() {
+        let waiters = state.withLock { state in
+            state.open = true
+            defer { state.waiters = [] }
+            return state.waiters
+        }
+        waiters.forEach { $0.resume() }
     }
 }
