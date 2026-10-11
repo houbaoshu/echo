@@ -644,9 +644,6 @@ import FoundationModels
               && ws.selectedID == quick.id, "A quick message starts in the chosen project without changing the selection")
         #expect(ws.sendQuickMessage("未知项目", projectID: UUID()) && ws.activity?.projectID == nil,
               "A quick message ignores a project that no longer exists")
-        #expect(TaskStore.toolSummary("ls -la\necho done") == "正在运行命令 · ls -la"
-              && TaskStore.toolSummary(String(repeating: "a", count: 70)) == "正在运行命令 · " + String(repeating: "a", count: 60) + "…"
-              && TaskStore.toolSummary("  ") == "正在运行命令", "Tool steps are short single-line summaries")
     }
 
     @Test @MainActor static func projectAssociationTests() async throws {

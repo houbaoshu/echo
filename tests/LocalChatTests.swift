@@ -48,7 +48,6 @@ import Testing
         let backend: FakeBackend
         let service: LocalChatService
         let store: TaskStore
-        let runner = AgentHarnessTests.FakeRunner()
         var saved: [TaskStore.Snapshot] = []
         private let cloud = CloudCounter()
         var cloudRequests: Int { cloud.count }
@@ -59,7 +58,7 @@ import Testing
             self.service = service
             let cloud = cloud
             let harness = AgentHarness(resolveModel: { cloud.count += 1; throw SettingsError("no cloud model") },
-                                       local: service, localOnly: { true }, runner: runner)
+                                       local: service, localOnly: { true })
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.checkpoint = { [unowned self] in self.saved.append($0) }
         }
@@ -99,7 +98,6 @@ import Testing
             #expect(AgentHarness.text(instructions.segments) == LocalChatContext.instructions)
         }
         #expect(requests.last?.kinds == ["instructions", "prompt", "response", "prompt"])
-        #expect(!ExecutionService.coreStarted && chat.runner.runs.isEmpty, "Local chat never starts the execution core")
 
         // A restart restores the replies.
         let saved = try #require(chat.saved.last)
@@ -323,7 +321,6 @@ import Testing
                                        localOnly: { source.localOnly })
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.projectDirectory = { project.map { .path($0.path) } ?? .noProject }
-            store.acquireDirectory = { _, ready in ready() }
             store.checkpoint = { [unowned self] in self.saved.append($0) }
             observation = store.lifecycle.sink { [unowned self] event in
                 switch event {

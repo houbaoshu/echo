@@ -12,7 +12,7 @@ final class AppIntegrationTests: XCTestCase {
     }
 
     /// The Agent needs no bundled prompt: the packaged app assembles its own instructions and
-    /// resolves the saved model for a turn without any request, and starts no execution core.
+    /// resolves the saved model for a turn without any request.
     @MainActor func testAgentAssemblesWithoutABundledPrompt() throws {
         let settings = SettingsStore(secrets: TestBootstrap.Secrets())
         settings.selectProvider(.ollama)
@@ -24,12 +24,10 @@ final class AppIntegrationTests: XCTestCase {
         XCTAssertTrue(endpoint.isLoopback)
         let instructions = AgentInstructions.text(tools: ["list_files", "read_file"])
         XCTAssertTrue(instructions.contains("list_files") && instructions.contains("read_file"))
-        XCTAssertTrue(AgentInstructions.text(tools: ["list_files", "read_file", "bash"]).contains("use the bash tool"))
         let harness = AgentHarness(settings: settings)
         let store = TaskStore(harness: harness)
         defer { store.shutdown() }
         XCTAssertTrue(store.canSubmit && !harness.isRunning)
-        XCTAssertFalse(ExecutionService.coreStarted)
     }
 
     /// The real local model through the conversation: streaming, thinking off, Stop, and unloading.
@@ -86,7 +84,6 @@ final class AppIntegrationTests: XCTestCase {
         try await idle(120)
         XCTAssertEqual(store.task?.status, .completed, store.task?.summary ?? "")
         print("LOCAL-MODEL after stop: \(store.messages.last?.content ?? "")")
-        XCTAssertFalse(ExecutionService.coreStarted)
 
         let loaded = Self.footprintMB()
         XCTAssertTrue(backend.isLoaded)

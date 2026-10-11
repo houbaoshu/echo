@@ -80,13 +80,12 @@ private struct TestStopped: Error, CustomStringConvertible {
     func resetSpringLoading() {}
 }
 
-/// A command that ignores Stop until the test lets it finish, like one whose cleanup is still pending.
-private final class HeldRunner: CommandRunning {
+/// Finder that answers only once the test opens `gate`.
+private final class HeldFinder: FinderLocating {
     let gate = ScriptGate()
-    func run(command: String, directory: String) async -> CommandOutcome {
-        let gate = gate
-        await Task.detached { try? await gate.wait() }.value
-        return .cancelled
+    func locate() async -> FinderLocation {
+        try? await gate.wait()
+        return .unavailable(.noFolder)
     }
 }
 
@@ -717,8 +716,9 @@ private struct ComposerHeightHost: View {
     }
 
     func testStoppingAndDictationEscape() async throws {
-        let puppet = PuppetModel(), runner = HeldRunner()
-        let agentStore = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
+        // The model never answers, so the task runs until it is stopped.
+        let puppet = PuppetModel()
+        let agentStore = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, finder: NoFinder()))
         let recognizer = ComposerRecognizer()
         let dictation = DictationController(audio: ComposerAudio(), recognizer: { _ in recognizer }, permission: { true })
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
@@ -729,7 +729,7 @@ private struct ComposerHeightHost: View {
         let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(), windowOverride: window,
                                         settings: SettingsStore(secrets: ComposerSecrets()))
         main.present()
-        defer { runner.gate.open(); main.shutdown(); workspace.shutdown() }
+        defer { main.shutdown(); workspace.shutdown() }
         func node(_ id: String) -> AnyObject? { findAccessibility(id, in: window.contentView!) }
         /// The recording's recogniser is running, so `receive` is this recording's callback.
         func recognizing() async throws {
@@ -737,15 +737,8 @@ private struct ComposerHeightHost: View {
                 node("dictation.cancel")?.isAccessibilityEnabled?() == true && recognizer.pending != nil
             }
         }
-        // A command is running whose cleanup outlasts Stop, so the task stays stopping.
-        let project = FileManager.default.temporaryDirectory.appendingPathComponent("echo-stopping-\(UUID())")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        print("Stopping test project: \(project.path)")
-        // The chat gets its project before its first message, as the composer's project button gives it.
-        XCTAssertTrue(workspace.associateProject(workspace.addProject(url: project), conversationID: conversation.id))
         _ = agentStore.send("generate")
-        try await puppet.answer(.call(name: "bash", arguments: #"{"command":"sleep 60"}"#))
-        try await eventually("the command runs") { agentStore.tools.first?.state == .running }
+        try await puppet.waitForRequests(1)
         agentStore.mainDraft = "steer"
         try await eventually("The draft can be sent", layingOut: window.contentView) { node("conversation.send")?.isAccessibilityEnabled?() == true }
         XCTAssertTrue(node("conversation.send")?.isAccessibilityEnabled?() == true)
@@ -753,13 +746,10 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(node("conversation.send")?.accessibilityPerformPress?() == true)
         XCTAssertTrue(agentStore.messages.last { $0.role == .user }?.content == "steer" && agentStore.mainDraft.isEmpty,
                      "Sending while the Agent runs steers it: \(agentStore.messages.map(\.content))")
-        XCTAssertTrue(main.handleEscape(), "Escape dispatches the existing Agent Stop action")
-        XCTAssertTrue(agentStore.task?.status == .stopping)
-        XCTAssertTrue(!main.handleEscape(), "Escape does not repeat Stop while cleanup is pending")
         let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: conversation.id)
         voice.updateSnapshot { $0.session = .active(owner); $0.recognition = .listening }
         try await eventually("The composer switches to Live Voice", layingOut: window.contentView) { node("voice.end")?.isAccessibilityEnabled?() == true }
-        XCTAssertTrue(node("conversation.stop") == nil, "Live Voice hides Stop even while an Agent task is stopping")
+        XCTAssertTrue(node("conversation.stop") == nil, "Live Voice hides Stop while an Agent task runs")
         XCTAssertTrue(node("voice.end")?.isAccessibilityEnabled?() == true)
         XCTAssertTrue(node("voice.end")?.accessibilityPerformPress?() == true)
         XCTAssertTrue(!voice.isActive)
@@ -771,12 +761,17 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(node("conversation.stop") == nil)
         recognizer.emit("丢弃")
         window.makeFirstResponder(nil)
+        // Stop ends a turn within a few hops, so what holds while it stops is checked before any:
+        // the window answers Escape synchronously through handleEscape.
+        agentStore.stopTask()
+        XCTAssertTrue(agentStore.task?.status == .stopping)
+        XCTAssertTrue(!main.handleEscape(), "Escape does not repeat Stop while stopping")
         window.cancelOperation(nil)
-        // A check that Escape does nothing: the window answers it synchronously through
-        // handleEscape, so one main-queue turn covers anything it queues.
-        await nextMainTurn()
         XCTAssertTrue(dictation.isActive && agentStore.mainDraft == "原草稿" && agentStore.task?.status == .stopping,
                      "Escape neither cancels dictation nor repeats Stop while stopping: \(dictation.isActive), \(agentStore.mainDraft), \(String(describing: agentStore.task?.status))")
+        try await eventually("The Agent stops") { agentStore.task?.status == .stopped }
+        XCTAssertTrue(dictation.isActive && agentStore.mainDraft == "原草稿\nsteer",
+                     "The recording outlasts the Stop; the queued follow-up goes back to the draft: \(agentStore.mainDraft)")
         XCTAssertTrue(node("dictation.cancel")?.accessibilityPerformPress?() == true)
         try await eventually("Cancelling hands focus back to the composer", layingOut: window.contentView) { window.firstResponder is ComposerTextView }
         XCTAssertTrue(window.firstResponder is ComposerTextView, "Explicit cancel restores composer focus")
@@ -787,7 +782,7 @@ private struct ComposerHeightHost: View {
         try await eventually("The recording is finalizing", layingOut: window.contentView) { node("dictation.finish")?.isAccessibilityEnabled?() == false }
         XCTAssertTrue(!main.handleEscape() && dictation.isActive, "Escape preserves finalizing dictation")
         XCTAssertTrue(node("dictation.cancel")?.accessibilityPerformPress?() == true)
-        XCTAssertTrue(!dictation.isActive && agentStore.mainDraft == "原草稿")
+        XCTAssertTrue(!dictation.isActive && agentStore.mainDraft == "原草稿\nsteer")
         try await eventually("Cancelling hands focus back to the composer again", layingOut: window.contentView) { window.firstResponder is ComposerTextView }
 
         // Keep native marked text mounted even while the recording preview covers it.
@@ -811,6 +806,13 @@ private struct ComposerHeightHost: View {
         try await eventually("The held-back transcript follows the confirmed candidate", layingOut: window.contentView) { editor.string.hasSuffix("\n追加转写") }
         XCTAssertTrue(editor.string.contains("你") && editor.string.hasSuffix("\n追加转写") && agentStore.mainDraft == editor.string,
                      "Candidate confirmation preserves both IME text and appended transcript")
+
+        // Escape stops a running turn.
+        XCTAssertTrue(agentStore.send("again"))
+        try await puppet.waitForRequests(2)
+        XCTAssertTrue(main.handleEscape(), "Escape dispatches the existing Agent Stop action")
+        XCTAssertTrue(agentStore.task?.status == .stopping)
+        try await eventually("The Agent stops again") { agentStore.task?.status == .stopped }
     }
 
     func testComposerActionMatrix() async throws {
@@ -2382,25 +2384,20 @@ private struct ComposerHeightHost: View {
             return accessibilityText(in: view)
         }
 
-        let puppet = PuppetModel(), runner = HeldRunner()
-        let store = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
+        // Finder answers only when the test lets it, so the finder_location call keeps running.
+        let puppet = PuppetModel(), finder = HeldFinder()
+        let store = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, finder: finder))
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
-        defer { runner.gate.open(); workspace.shutdown() }
-        let project = FileManager.default.temporaryDirectory.appendingPathComponent("echo-probe-project-\(UUID())")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        print("Tool card test project: \(project.path)")
-        XCTAssertTrue(workspace.associateProject(workspace.addProject(url: project), conversationID: try XCTUnwrap(workspace.selected?.id)))
-        store.send("看看项目")
+        defer { finder.gate.open(); workspace.shutdown() }
+        store.send("看看访达")
         let proposal = PuppetStream()
         try await puppet.answer(.stream(proposal))
-        proposal.send("我先检查文件。"); proposal.call("bash", #"{"command":"printf probe"}"#); proposal.finish()
-        try await eventually("the command runs") { store.tools.first?.directory != nil }
-        XCTAssertTrue(store.tools.first?.state == .running && store.tools.first?.directory == ExecutionService.canonicalPath(project.path),
-                      "\(String(describing: store.tools.first))")
-        let running = try await texts(of: store, workspace: workspace, showing: "执行中 · printf probe")
+        proposal.send("我先检查文件。"); proposal.call("finder_location", "{}"); proposal.finish()
+        try await eventually("the call runs") { finder.gate.arrivals == 1 && store.tools.first?.state == .running }
+        let running = try await texts(of: store, workspace: workspace, showing: "执行中 · 访达位置")
         XCTAssertTrue(running.contains { $0.contains("我先检查文件。") }, "Text beside the call stays in the chat: \(running)")
-        XCTAssertTrue(running.contains { $0.contains("执行中 · printf probe") }, "The call shows it is running: \(running)")
-        XCTAssertTrue(running.contains { $0.contains("正在运行命令 · printf probe") }, "The task row names the step: \(running)")
+        XCTAssertTrue(running.contains { $0.contains("执行中 · 访达位置") }, "The call shows it is running: \(running)")
+        XCTAssertTrue(running.contains { $0.contains("正在查看访达位置") }, "The task row names the step: \(running)")
 
         // Saved conversations: one turn that ran four commands — finished, not run, cut off, and
         // one the app quit during — and one turn that never finished.

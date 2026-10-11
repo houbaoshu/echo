@@ -137,29 +137,30 @@ final class LoopbackModelServer: @unchecked Sendable {
             return
         }
         if text.contains("slow-model") { slowModel.pass() }
-        var command: Any?
-        if text.contains("tool"), results.isEmpty {
-            command = "printf 'one\\n' >> trace; printf '工具输出 🌱'; printf 'diagnostic' >&2"
-            if text.contains("slow-tool") { command = SlowTool.command }
-            if text.contains("cancel-tool") { command = "printf 'started\\n' >> trace; sleep 15; printf 'forbidden\\n' >> trace" }
-        }
-        if text.contains("acceptance-quit-tool"), results.isEmpty {
-            command = "echo $$ > shell.pid; sleep 15 & echo $! > child.pid; printf 'started\\n' >> trace; wait; printf 'forbidden\\n' >> trace"
-        }
-        if text.contains("multi-tool"), results.count == 1 { command = "printf 'second\\n' >> trace; printf 'second result'" }
-        if text.contains("acceptance-rwv") || text.contains("acceptance-history") {
-            let expected = ["before\n", "", "after\n"]
+        // The tool the model calls, if any, and its arguments.
+        let listProject: [String: Any] = ["path": ".", "root": "project"]
+        var call: (name: String, arguments: [String: Any])?
+        if text.contains("tool"), results.isEmpty { call = ("list_files", listProject) }
+        if text.contains("multi-tool"), results.count == 1 { call = ("list_files", listProject) }
+        if text.contains("acceptance-reads") || text.contains("acceptance-history") {
+            // Three reads of the project, each checked against what the project holds.
+            let calls: [[String: Any]] = [listProject, ["path": "note.txt", "root": "project"],
+                                          ["path": "note.txt", "start_line": 2, "root": "project"]]
+            let expected: [[String: Any]] = [["files": ["note.txt"]], ["content": "first\nsecond", "start_line": 1],
+                                             ["content": "second", "start_line": 2]]
             guard results.count <= 3, body["stream"] as? Bool == true,
                   !responses || body["store"] as? Bool == false else { throw FixtureError("Invalid acceptance request") }
             for (index, item) in results.enumerated() {
                 let raw = item["output"] as? String ?? item["content"] as? String ?? "{}"
-                let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
-                guard result?["stdout"] as? String == expected[index], result?["exit_code"] as? Int == 0 else { throw FixtureError("Tool result differs from executed file operation") }
+                let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] ?? [:]
+                guard expected[index].allSatisfy({ key, value in (result[key] as? NSObject)?.isEqual(value) == true }) else {
+                    throw FixtureError("Tool result differs from the project's files")
+                }
             }
-            let commands = ["cat note.txt", "printf 'after\\n' > note.txt", "test \"$(cat note.txt)\" = after && cat note.txt"]
-            command = results.count < 3 ? commands[results.count] : nil
+            call = nil
+            if results.count < 3 { call = (results.count == 0 ? "list_files" : "read_file", calls[results.count]) }
             if text.contains("acceptance-history") {
-                guard results.count == 3 else { throw FixtureError("Lost restored tool history") }; command = nil
+                guard results.count == 3 else { throw FixtureError("Lost restored tool history") }; call = nil
             }
         }
         if text.contains("tool capability test") {
@@ -169,23 +170,19 @@ final class LoopbackModelServer: @unchecked Sendable {
                 _ = write(fd, "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n" + body)
                 return
             }
-            if model.hasPrefix("probe-delay:") { probeDelay.pass() }
-            if model.hasPrefix("probe:") || model.hasPrefix("probe-delay:") {
-                let path = String(model.split(separator: ":", maxSplits: 1)[1])
-                command = "printf forbidden > '" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
-            }
-            if model == "probe-text-only" { command = nil }
-            if model == "probe-malformed" { command = 17 }
+            if model == "probe-delay" { probeDelay.pass() }
+            if model == "probe" || model == "probe-delay" { call = ("list_files", ["path": "."]) }
+            if model == "probe-text-only" { call = nil }
+            if model == "probe-malformed" { call = ("list_files", ["path": 17]) }
         }
         var reply = "最终回复：" + (results.isEmpty ? text : "已读取真实工具结果")
-        if text.contains("markdown-stream"), command == nil { reply = "## 结果\n\n- **第一项**通过\n- 运行 `swift test`\n- 第三项\n- 第四项完成" }
-        if text.contains("skip") { command = nil }
+        if text.contains("markdown-stream"), call == nil { reply = "## 结果\n\n- **第一项**通过\n- 运行 `swift test`\n- 第三项\n- 第四项完成" }
+        if text.contains("skip") { call = nil }
         // Invalid model output, every time: no text and no call, or a call to a tool that does not exist.
-        var toolName = "bash"
-        if conversation.contains("empty-reply") { command = nil; reply = "" }
-        if conversation.contains("invalid-tool") { command = "printf invalid"; toolName = "python" }
-        var arguments = try command.map { try json(["command": $0]) }
-        // The native engine's read-only project tools.
+        if conversation.contains("empty-reply") { call = nil; reply = "" }
+        if conversation.contains("invalid-tool") { call = ("python", ["command": "printf invalid"]) }
+        var toolName = call?.name ?? ""
+        var arguments = try call.map { try json($0.arguments) }
         if results.isEmpty, text.contains("list-files") { toolName = "list_files"; arguments = try json(["path": "."]) }
         if results.isEmpty, text.contains("read-file") { toolName = "read_file"; arguments = try json(["path": "src/note.txt"]) }
         let calling = arguments != nil
@@ -193,7 +190,7 @@ final class LoopbackModelServer: @unchecked Sendable {
         if responses {
             var output: [[String: Any]] = arguments.map { [["type": "function_call", "call_id": "call-1", "name": toolName, "arguments": $0]] }
                 ?? [["type": "message", "id": "msg-test", "role": "assistant", "content": [["type": "output_text", "text": reply]]]]
-            if text.contains("acceptance-rwv"), command != nil {
+            if text.contains("acceptance-reads"), call != nil {
                 output.insert(["type": "reasoning", "id": "rs-acceptance-\(results.count)", "summary": [], "encrypted_content": "acceptance-opaque-reasoning"], at: 0)
             }
             value = ["id": "resp-test", "status": "completed", "output": output]
@@ -284,20 +281,6 @@ final class FixtureHold: @unchecked Sendable {
         let arrival = arrived
         while !open && arrival > allowed { condition.wait() }
         condition.unlock()
-    }
-}
-
-/// The command the fixture model asks for on "slow-tool": it writes "started" to `trace` in its
-/// directory, waits until the test drops the release file there (10 s at most), then writes
-/// "done". The test waits for `started` before it acts on the running command.
-enum SlowTool {
-    static let releaseFile = "slow-tool.release"
-    static let command = "printf 'started\\n' >> trace; n=0; while [ ! -e \(releaseFile) ] && [ $n -lt 1000 ]; do sleep 0.01; n=$((n+1)); done; printf 'done\\n' >> trace"
-    static func started(in directory: URL) -> Bool {
-        (try? String(contentsOf: directory.appendingPathComponent("trace"), encoding: .utf8))?.contains("started") == true
-    }
-    static func release(in directory: URL) throws {
-        try Data().write(to: directory.appendingPathComponent(releaseFile))
     }
 }
 

@@ -1,4 +1,0 @@
-module EchoExecBridge {
-    header "echo_exec.h"
-    export *
-}

@@ -36,9 +36,6 @@
             reference = "container:TestPlans/EchoAppTests.xctestplan">
          </TestPlanReference>
          <TestPlanReference
-            reference = "container:TestPlans/EchoSanitizers.xctestplan">
-         </TestPlanReference>
-         <TestPlanReference
             reference = "container:TestPlans/EchoLiveTests.xctestplan">
          </TestPlanReference>
       </TestPlans>

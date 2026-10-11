@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 
 /// Opt-in real service acceptance. Uses saved credentials only in memory and
 /// synthetic conversations with disposable projects, never the user's history.
@@ -10,8 +11,8 @@ import Foundation
             try await Task.sleep(for: .milliseconds(50))
         }
     }
-    /// Direct answer, read/edit/verify with three bash calls, and a real coding task: failing tests
-    /// to find, fix and confirm.
+    /// Direct answer, a read-only look at a project, and a chat saved with a bash call continued:
+    /// the service takes the old call back although the turn no longer offers bash.
     static func run(protocols: [ModelAPIProtocol]) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
         let (saved, key) = try settings.savedModelCredentials()
@@ -21,15 +22,16 @@ import Foundation
         var failures = 0
         for api in protocols {
             var config = saved; config.apiProtocol = api
-            print("START: \(api.title) tool capability, direct answer, read/edit/verify, coding task"); fflush(nil)
+            print("START: \(api.title) tool capability, direct answer, project reads, saved bash history"); fflush(nil)
             let endpoint = AgentEndpoint(config, key: key)
-            let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
-                harnessFactory: {
-                    AgentHarness(resolveModel: {
-                        let transport = AgentTransport.make(for: endpoint)
-                        return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
-                    })
+            let harness = {
+                AgentHarness(resolveModel: {
+                    let transport = AgentTransport.make(for: endpoint)
+                    return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
                 })
+            }
+            let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
+                                           harnessFactory: harness)
             do {
                 try await NativeConnectionTester().test(configuration: config, key: key)
                 let chat = workspace.selected!
@@ -40,17 +42,18 @@ import Foundation
                 }
                 let project = root.appendingPathComponent("\(api.rawValue)/project")
                 try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-                try Data("before\n".utf8).write(to: project.appendingPathComponent("note.txt"))
+                try Data("今天的暗号是青柠。\n".utf8).write(to: project.appendingPathComponent("note.txt"))
                 let work = workspace.newConversation(projectID: workspace.addProject(url: project))
-                work.store.send("这是临时目录中的文件测试。只操作当前工作目录的 note.txt。请依次使用三次独立 bash 调用：1. cat note.txt；2. 将内容 before 改为 after，写入 after 加换行；3. cat note.txt 验证。每次等待真实工具结果后再决定下一步，最后用中文简短报告结果。不要访问其他路径。")
+                work.store.send("这是临时目录中的文件测试。请先列出项目根目录，再读取 note.txt，等待真实工具结果后用中文简短说出暗号。不要访问其他路径。")
                 try await wait(work.store)
-                let file = try String(contentsOf: project.appendingPathComponent("note.txt"), encoding: .utf8)
-                guard work.store.task?.status == .completed, work.store.tools.count >= 3,
-                      work.store.tools.allSatisfy({ $0.result != nil }), file == "after\n" else {
-                    throw SettingsError("真实文件读改验未按要求完成。")
+                let reply = work.store.messages.last { $0.role == .assistant }?.content ?? ""
+                guard work.store.task?.status == .completed, work.store.tools.contains(where: { $0.tool == "list_files" }),
+                      work.store.tools.contains(where: { $0.tool == "read_file" && $0.result?.contains("青柠") == true }),
+                      work.store.tools.allSatisfy({ $0.result != nil }), reply.contains("青柠") else {
+                    throw SettingsError("真实文件读取未按要求完成。")
                 }
-                print("PASS: \(api.title) direct answer and \(work.store.tools.count) real tool results, final file verified")
-                try await fixFailingTests(workspace: workspace, root: root.appendingPathComponent("\(api.rawValue)/calc"))
+                print("PASS: \(api.title) direct answer and \(work.store.tools.count) real tool results")
+                try await continueSavedBashHistory(harness: harness())
             } catch {
                 failures += 1
                 print("FAIL: \(api.title): \(error is SettingsError ? error.localizedDescription : "请检查服务的协议支持或连接。")")
@@ -61,36 +64,33 @@ import Foundation
         guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过实网验收；日志不包含密钥或已有会话。") }
     }
 
-    /// A small Python project whose `add` is wrong: the model must find it, fix it without
-    /// touching `mul`, and run the tests itself at the end.
-    static func fixFailingTests(workspace: WorkspaceStore, root: URL) async throws {
-        let files = [
-            "README.md": "# calc\n\nA tiny arithmetic helper library. Run tests with `python3 -m unittest`.\n",
-            "calc/__init__.py": "",
-            "calc/ops.py": "def add(a, b):\n    \"\"\"Return the sum of a and b.\"\"\"\n    return a - b\n\n\ndef mul(a, b):\n    \"\"\"Return the product of a and b.\"\"\"\n    return a * b\n",
-            "tests/__init__.py": "",
-            "tests/test_ops.py": "import unittest\n\nfrom calc.ops import add, mul\n\n\nclass OpsTest(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n    def test_mul(self):\n        self.assertEqual(mul(2, 3), 6)\n",
+    /// A chat saved by a build that offered bash: one finished bash call and the reply after it.
+    /// A new message goes to the service with that call and its result in the history.
+    static func continueSavedBashHistory(harness: AgentHarness) async throws {
+        let user = ConversationMessage(role: .user, content: "看看当前目录有什么。")
+        let answer = ConversationMessage(role: .assistant, content: "当前目录里只有 lime-notes.txt。")
+        let call = Transcript.ToolCall(id: "call_saved_bash", toolName: "bash", arguments: try GeneratedContent(json: #"{"command":"ls"}"#))
+        let output = #"{"stdout":"lime-notes.txt\n","stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}"#
+        var native = NativeAgentState()
+        native.entries = [
+            .prompt(Transcript.Prompt(metadata: [AgentPromptKey.message: user.id.uuidString], segments: [.text(.init(content: user.content))])),
+            .toolCalls(Transcript.ToolCalls(id: "calls_saved_bash", [call])),
+            .toolOutput(.init(id: call.id, toolName: "bash", segments: [.text(.init(content: output))])),
+            .response(Transcript.Response(id: "reply_saved_bash", assetIDs: [], segments: [.text(.init(content: answer.content))])),
         ]
-        for (path, text) in files {
-            let url = root.appendingPathComponent(path)
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data(text.utf8).write(to: url)
+        native.replies = ["reply_saved_bash": answer.id]
+        native.turns = [.init(start: 0, outcome: .completed)]
+        let store = TaskStore(snapshot: .init(
+            task: ActivityTask(id: UUID(), runID: UUID(), title: user.content, summary: "已完成", status: .completed),
+            messages: [user, answer], mainDraft: "", followUpDraft: "", activityDismissed: false, activitiesCollapsed: false,
+            tools: [], native: native), harness: harness)
+        defer { store.shutdown() }
+        store.send("刚才那条命令列出的文件叫什么？请直接回答，不要使用工具。")
+        try await wait(store)
+        let reply = store.messages.last { $0.role == .assistant }?.content ?? ""
+        guard store.task?.status == .completed, store.tools.count == 1, store.tools.first?.tool == nil, reply.contains("lime-notes") else {
+            throw SettingsError("带 bash 记录的旧聊天未能继续：\(store.task?.summary ?? "")")
         }
-        let chat = workspace.newConversation(projectID: workspace.addProject(url: root))
-        chat.store.send("这个项目的测试现在跑不过，帮我找到原因并修好，最后确认测试通过。")
-        try await wait(chat.store)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        process.arguments = ["-m", "unittest"]
-        process.currentDirectoryURL = root
-        process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
-        try process.run(); process.waitUntilExit()
-        let ops = try String(contentsOf: root.appendingPathComponent("calc/ops.py"), encoding: .utf8)
-        let lastCommand = chat.store.tools.last(where: { $0.tool == nil })?.command ?? ""
-        guard chat.store.task?.status == .completed, process.terminationStatus == 0, ops.contains("return a * b"),
-              lastCommand.contains("unittest") || lastCommand.contains("pytest") else {
-            throw SettingsError("真实编程任务未完成：测试未通过、改动越界或最后未运行测试。")
-        }
-        print("PASS: native coding task fixed the failing test with \(chat.store.tools.count) tool calls and confirmed it"); fflush(nil)
+        print("PASS: a chat saved with a bash call continued with the read-only tools"); fflush(nil)
     }
 }

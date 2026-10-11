@@ -309,7 +309,6 @@ struct WorkspaceSnapshot: Codable {
     // Keep display timestamps fixed for this app session. Persist actual interaction
     // times separately so only the next launch applies the new order.
     private var pendingRecency: [UUID: Date] = [:]
-    private let directoryScheduler = AgentDirectoryScheduler()
 
     /// A saved workspace always has the Agent engine: a conversation without it would save its
     /// native history away.
@@ -577,10 +576,6 @@ struct WorkspaceSnapshot: Codable {
                 self.persistedSessionIDs.insert(id)
             }
         }
-        let scheduler = directoryScheduler
-        conversation.store.acquireDirectory = { path, ready in scheduler.acquire(path, owner: id, ready: ready) }
-        conversation.store.cancelDirectoryWait = { scheduler.cancelWait(id) }
-        conversation.store.releaseDirectory = { scheduler.release(id) }
         conversation.store.onUserAction = { [weak self] in self?.didUse(id) }
         conversation.store.onVisibilityChange = { [weak self] visible in self?.isMainWindowVisible = visible }
         lifecycleObservations[id] = conversation.store.lifecycle.sink { [weak self] event in
@@ -785,7 +780,6 @@ struct WorkspaceSnapshot: Codable {
         }
         flush()
         stores.forEach { $0.shutdown() }
-        await ExecutionService.waitForShutdown()
     }
     private func scheduleSave() {
         guard !shuttingDown else { return }

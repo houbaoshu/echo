@@ -255,7 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         companion?.mainController?.prepareForTermination()
         Task { @MainActor in
             await workspace.prepareForTermination()
-            if acceptanceWorkspace != nil { print("PASS: AppKit termination acknowledged command cleanup and saved history"); fflush(nil) }
+            if acceptanceWorkspace != nil { print("PASS: AppKit termination stopped the turn and saved history"); fflush(nil) }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

@@ -8,13 +8,13 @@ MACOSX_DEPLOYMENT_TARGET = 27.0
 SWIFT_VERSION = 6
 PRODUCT_NAME = $(TARGET_NAME)
 
-// EchoRuntime and EchoExecBridge are declared by their module.modulemap files.
-SWIFT_INCLUDE_PATHS = $(PROJECT_DIR)/runtime/include $(PROJECT_DIR)/exec-bridge/include
+// EchoRuntime is declared by its module.modulemap file.
+SWIFT_INCLUDE_PATHS = $(PROJECT_DIR)/runtime/include
 ECHO_CARGO_TARGET_DIR = $(OBJROOT)/EchoCargo
 // EchoRustTests runs cargo test (debug profile) here, one subdirectory per package, so
 // test builds never touch the release libraries above and survive between runs.
 ECHO_CARGO_TEST_TARGET_DIR = $(OBJROOT)/EchoCargoTests
-OTHER_LDFLAGS = "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_runtime.a" "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_exec.a"
+OTHER_LDFLAGS = "$(ECHO_CARGO_TARGET_DIR)/aarch64-apple-darwin/release/libecho_runtime.a"
 
 // macos/App/Info.plist is complete and hand-maintained; Xcode must not synthesize
 // keys on top of it. INFOPLIST_FILE itself is per target.
@@ -23,8 +23,9 @@ GENERATE_INFOPLIST_FILE = NO
 // Cargo reads its cache and the adjacent path dependency outside Xcode outputs.
 ENABLE_USER_SCRIPT_SANDBOXING = NO
 
-// The app has never been sandboxed and must not become so: it runs zsh in a
-// user-chosen project directory. The macOS App template turns these on.
+// The app has never been sandboxed and must not become so: the Agent reads
+// user-chosen project folders and the folder Finder shows. The macOS App
+// template turns these on.
 ENABLE_APP_SANDBOX = NO
 ENABLE_USER_SELECTED_FILES = NO
 REGISTER_APP_GROUPS = NO

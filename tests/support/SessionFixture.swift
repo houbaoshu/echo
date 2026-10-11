@@ -3,11 +3,6 @@ import Testing
 
 @Suite(.serialized) enum EchoIntegrationScenarios {}
 
-/// Waits until every command the execution core started has finished its cleanup.
-@MainActor func waitForAgentShutdown() async throws {
-    try await eventually("Command cleanup finishes", timeout: .seconds(8)) { ExecutionService.activeCommands == 0 }
-}
-
 /// Harnesses for the loopback model server. Each turn resolves the protocol, as settings are
 /// read at each turn.
 @MainActor enum AgentFixture {
@@ -42,10 +37,7 @@ import Testing
     func close() async throws {
         workspace.shutdown()
         defer { try? FileManager.default.removeItem(at: root) }
-        var serverError: (any Error)?
-        do { try server.stop() } catch { serverError = error }
-        try await waitForAgentShutdown()
-        if let serverError { throw serverError }
+        try server.stop()
     }
 }
 

@@ -67,7 +67,6 @@ enum AgentToolResult {
     }
     static let superseded = status("not_executed", "Superseded by follow-up instructions.")
     static let cancelledBefore = status("not_executed", "Cancelled before execution.")
-    static let cancelledDuring = status("unknown", "Cancelled during execution; inspect workspace for effects.")
     static let unknownAfterInterruption = status("unknown", "Execution result unknown after interruption; inspect the workspace before acting.")
     static func failed(_ detail: String) -> String { status("failed", detail) }
     static func finderFolderMissing(name: String) -> String {
@@ -79,13 +78,8 @@ enum AgentToolResult {
         value["folder"] = folder
         return object(value)
     }
-    /// `nothing` says what did not happen: "read" or "run".
-    static func noProject(nothing: String) -> String {
-        "This conversation has no project folder, so nothing was \(nothing). Only the person can give a conversation a project, and only before its first message: ask them to start a new chat with the folder as its project (drag the folder onto the pet, choose New Chat on the project in the sidebar, or pick the folder with the project button of a new, empty chat) and ask there."
-    }
-    static func projectMissing(nothing: String) -> String {
-        "The conversation's project folder can no longer be found; it may have been moved or deleted, so nothing was \(nothing). Ask the person to locate it with Relocate Folder… on the project in the sidebar."
-    }
+    static let noProject = "This conversation has no project folder, so nothing was read. Only the person can give a conversation a project, and only before its first message: ask them to start a new chat with the folder as its project (drag the folder onto the pet, choose New Chat on the project in the sidebar, or pick the folder with the project button of a new, empty chat) and ask there."
+    static let projectMissing = "The conversation's project folder can no longer be found; it may have been moved or deleted, so nothing was read. Ask the person to locate it with Relocate Folder… on the project in the sidebar."
     static func object(_ value: [String: Any]) -> String {
         (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]))
             .map { String(decoding: $0, as: UTF8.self) } ?? status("failed", "unencodable result")
@@ -117,10 +111,10 @@ struct AgentReadContext: Sendable {
             case .path(let root):
                 try Task.checkCancellation()
                 return body(root, .project)
-            case .missing: return AgentToolResult.failed(AgentToolResult.projectMissing(nothing: "read"))
+            case .missing: return AgentToolResult.failed(AgentToolResult.projectMissing)
             case .superseded: return AgentToolResult.superseded
             // Without a project, a read that names no root reads the chat's Finder folder.
-            case .noProject: if choice == .project { return AgentToolResult.failed(AgentToolResult.noProject(nothing: "read")) }
+            case .noProject: if choice == .project { return AgentToolResult.failed(AgentToolResult.noProject) }
             }
         }
         switch try await access.finderRoot(call: call) {
@@ -160,7 +154,8 @@ enum AgentToolPath {
 
 struct ListFilesTool: Tool {
     let name = "list_files"
-    let description = "List a workspace directory; use . for the root"
+    static let toolDescription = "List a workspace directory; use . for the root"
+    let description = toolDescription
     let context: AgentReadContext
 
     @Generable
@@ -247,10 +242,7 @@ struct ReadFileTool: Tool {
         defer { close(fd) }
         var info = stat()
         guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return AgentToolResult.failed("not a regular file: \(raw)") }
-        // bash does not work in the Finder folder, so only the project's files point to it.
-        guard info.st_size <= maxFileBytes else {
-            return AgentToolResult.failed("file exceeds 4 MiB: \(raw)" + (scope == .project ? "; use bash tools when available" : ""))
-        }
+        guard info.st_size <= maxFileBytes else { return AgentToolResult.failed("file exceeds 4 MiB: \(raw)") }
         var data = Data(count: Int(info.st_size))
         var total = 0
         while total < data.count {
@@ -278,40 +270,11 @@ struct ReadFileTool: Tool {
     }
 }
 
-/// Runs bash calls for the conversation: folder, directory lease, save, then the command.
-protocol AgentBashAccess: Sendable {
-    /// `call` is the identity of the call's arguments. `Tool.call` is not told which transcript
-    /// call it serves; this identity links it to the call the harness saw dispatched, also when
-    /// two calls carry identical arguments (`NativeBashTests.identicalCallsRunOneAtATimeAsThemselves`).
-    /// `command` is nil when the call carries none; it still takes its place in the batch's order.
-    func run(call: GenerationID?, command: String?) async throws -> String
-}
-
-/// The shell tool, named and shaped exactly as mini-agent-rs's `bash`; commands run in zsh.
-struct BashTool: Tool {
-    let name = "bash"
-    static let toolDescription = "Execute a command in a fresh zsh process"
-    let description = toolDescription
-    let access: any AgentBashAccess
-
-    @Generable
-    struct Input {
-        var command: String
-    }
-
-    var parameters: GenerationSchema { Input.generationSchema }
-
-    @concurrent func call(arguments: GeneratedContent) async throws -> String {
-        let command = (try? Input(arguments))?.command
-        let usable = command.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-        return try await access.run(call: arguments.id, command: usable)
-    }
-}
-
-
 /// Finds Finder's location for `finder_location`. Nil when newer input supersedes the call.
 protocol AgentFinderAccess: Sendable {
-    /// `call` links the call to the one the harness saw dispatched, as for bash.
+    /// `call` is the identity of the call's arguments. `Tool.call` is not told which transcript
+    /// call it serves; this identity links it to the call the harness saw dispatched, also when
+    /// two calls carry identical arguments (`FinderLocationToolTests.identicalCallsAreToldApart`).
     func locate(call: GenerationID?) async throws -> FinderLocation?
 }
 

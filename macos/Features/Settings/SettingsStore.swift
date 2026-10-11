@@ -429,7 +429,7 @@ protocol ConnectionTesting: Sendable {
             testing = true
             task = Task { [weak self] in
                 var result: String; var success = false
-                do { try await tester.test(configuration: configuration, key: key); result = String(localized: "连接成功，指定协议已返回有效的 bash 工具调用。"); success = true }
+                do { try await tester.test(configuration: configuration, key: key); result = String(localized: "连接成功，指定协议已返回有效的工具调用。"); success = true }
                 catch is CancellationError { return }
                 catch let error as SettingsError { result = error.message }
                 catch let error as URLError where error.code == .timedOut { result = String(localized: "连接超时，请检查服务地址与网络后重试。") }

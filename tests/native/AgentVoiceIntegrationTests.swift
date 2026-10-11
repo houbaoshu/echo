@@ -3,7 +3,9 @@ import Testing
 
 extension EchoIntegrationScenarios {
   @Suite(.serialized) @MainActor struct AgentVoiceIntegrationTests {
-    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses], ["tool", "model", "queue", "stop"])
+    /// Voice input while the model request is held: follow-ups steer the turn, or voice Stop
+    /// ends it, and ASR keeps listening throughout.
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses], ["model", "stop"])
     static func voiceRouting(apiProtocol: ModelAPIProtocol, scenario: String) async throws {
       try await withSession { session in
         let makeHarness = { AgentFixture.harness(server: session.server, protocol: apiProtocol) }
@@ -14,40 +16,11 @@ extension EchoIntegrationScenarios {
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         try await f.start()
         let owner = f.conversation.id
-        var holder: WorkspaceConversation?
-        let projectID = f.workspace.addProject(url: project)
-        f.workspace.associateProject(projectID, conversationID: owner)
-        if scenario == "queue" {
-          holder = f.workspace.newConversation(projectID: projectID)
-          holder!.store.send("cancel-tool")
-          try await eventually("queue holder starts", timeout: .seconds(8)) {
-            holder!.store.tools.first?.state == .running
-          }
-        }
-        f.speak(
-          scenario == "model"
-            ? "slow-model tool"
-            : scenario == "tool" ? "slow-tool" : scenario == "stop" ? "cancel-tool" : "tool")
+        f.workspace.associateProject(f.workspace.addProject(url: project), conversationID: owner)
+        f.speak("slow-model tool")
         let run = f.store.task!.runID
-        switch scenario {
-        case "model":
-          // The fixture holds the request until it is released: the model request is under way.
-          try await eventually("the model request is held", timeout: .seconds(8)) { session.server.slowModel.arrivals == 1 }
-        case "queue":
-          try await eventually("voice waits for project", timeout: .seconds(8)) { f.store.waitingForProject }
-          #expect(f.voice.status == "等待项目空闲… · 可补充语音", "project queue exposes live voice input")
-        default:
-          try await eventually("voice command starts", timeout: .seconds(8)) {
-            f.store.tools.first?.state == .running
-          }
-          if scenario == "tool" {
-            // The command waits for the release file, so the follow-ups below arrive while it runs.
-            try await eventually("the slow command is running", timeout: .seconds(8)) { SlowTool.started(in: project) }
-          }
-          #expect(
-            f.voice.status.contains("正在运行命令") && f.synths.isEmpty,
-            "running command remains audible-input only")
-        }
+        // The fixture holds the request until it is released: the model request is under way.
+        try await eventually("the model request is held", timeout: .seconds(8)) { session.server.slowModel.arrivals == 1 }
         #expect(
           f.voice.snapshot.recognition == .listening,
           "ASR remains active through \(scenario) / \(apiProtocol)")
@@ -56,24 +29,20 @@ extension EchoIntegrationScenarios {
           #expect(
             f.store.task?.status == .stopping && !f.store.canSubmit
               && f.voice.snapshot.recognition == .off(.stopping),
-            "voice Stop gates the real command cleanup")
+            "voice Stop gates the turn's end")
           try await eventually("voice Stop acknowledged", timeout: .seconds(8)) {
             !f.store.isGenerating && f.voice.snapshot.recognition == .listening
           }
           #expect(
-            f.store.task?.status == .stopped && f.synths.isEmpty,
-            "cancelled tools never produce spoken finals")
-          // A Stop can land before the command wrote its first line; either way it never finishes.
-          let trace = (try? String(contentsOf: project.appendingPathComponent("trace"), encoding: .utf8)) ?? ""
-          #expect(!trace.contains("forbidden"), "voice Stop cleans up the command process group")
+            f.store.task?.status == .stopped && f.synths.isEmpty && f.store.tools.isEmpty,
+            "a stopped turn never produces a spoken final")
         } else {
-          f.speak("skip old proposal; keep existing execution results", start: 300)
+          f.speak("skip old proposal; keep existing results", start: 300)
           f.speak("skip; also explain the result", start: 600)
           #expect(
             f.store.task?.runID == run && f.store.task?.status == .running,
             "voice steering does not cancel/restart the turn")
-          if scenario == "model" { session.server.slowModel.release() }
-          if scenario == "tool" { try SlowTool.release(in: project) }
+          session.server.slowModel.release()
           try await eventually("voice final", timeout: .seconds(8)) {
             !f.store.isGenerating && f.synths.first?.chunks.isEmpty == false
           }
@@ -87,23 +56,9 @@ extension EchoIntegrationScenarios {
                 f.store.messages.last(where: { $0.role == .assistant })!.content
               ],
             "real Core speaks exactly the final reply for \(scenario) / \(apiProtocol)")
-          if scenario == "tool" {
-            let trace = try String(
-              contentsOf: project.appendingPathComponent("trace"), encoding: .utf8)
-            #expect(
-              trace == "started\ndone\n" && f.store.tools.first?.result?.contains("stdout") == true,
-              "voice follow-up lets the running bash finish and preserves its real result")
-          } else {
-            #expect(
-              f.store.tools.first?.state == .notExecuted,
-              "voice steering prevents the obsolete tool proposal")
-          }
-          if scenario == "queue" {
-            #expect(
-              holder!.store.isGenerating && f.workspace.selectedID == holder!.id
-                && f.voice.conversationID == owner,
-              "queued voice stays with its owner while another session holds the project")
-          }
+          #expect(
+            f.store.tools.first?.state == .notExecuted,
+            "voice steering prevents the obsolete tool proposal")
         }
       }
     }

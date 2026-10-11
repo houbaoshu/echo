@@ -215,15 +215,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         return text
     }
     private(set) var tools: [AgentToolRecord] = []
-    private(set) var waitingForProject = false
     private var agentStored: Bool?
     @ObservationIgnored private var storageFailure: String?
     @ObservationIgnored var sessionID = UUID()
     @ObservationIgnored var projectDirectory: (() -> AgentProjectRoot)?
     @ObservationIgnored var checkpoint: ((Snapshot) throws -> Void)?
-    @ObservationIgnored var acquireDirectory: ((String, @escaping () -> Void) -> Void)?
-    @ObservationIgnored var cancelDirectoryWait: (() -> Void)?
-    @ObservationIgnored var releaseDirectory: (() -> Void)?
     var agentLoadError: String?
     /// The Agent engine; nil only for a conversation that cannot send.
     private let harness: AgentHarness?
@@ -304,13 +300,6 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         guard let harness else { return false }
         return !retired && agentLoadError == nil && [.failed, .stopped, .interrupted].contains(task?.status) && harness.continuable
     }
-    /// A short, single-line step for the pet card and voice status.
-    nonisolated static func toolSummary(_ command: String) -> String {
-        let line = command.split(whereSeparator: \.isNewline).first.map(String.init) ?? command
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        let preview = trimmed.count > 60 ? String(trimmed.prefix(60)) + "…" : trimmed
-        return preview.isEmpty ? String(localized: "正在运行命令") : String(localized: "正在运行命令 · \(preview)")
-    }
     var isGenerating: Bool { task?.status == .running || task?.status == .stopping }
     var canSubmit: Bool { harness != nil && !retired && task?.status != .stopping && agentLoadError == nil }
     var responseMessage: ConversationMessage? { messages.first { $0.id == responseMessageID } }
@@ -336,8 +325,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     func stopTask() {
         guard isGenerating, task?.status != .stopping, let harness else { return }
         task?.status = .stopping; task?.summary = String(localized: "正在停止…")
-        waitingForProject = false
-        cancelDirectoryWait?(); harness.stop()
+        harness.stop()
     }
     // Project convention: dismissing a surface never cancels its running turn.
     func closeActivity() { activityDismissed = true; isFollowUpExpanded = false; markSeen() }
@@ -358,7 +346,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         retired = true
         if isGenerating { task?.status = .interrupted }
         lifecycle.send(.retired)
-        harness?.close(afterCleanup: releaseDirectory ?? {})
+        harness?.stop()
         onUserAction = nil; onVisibilityChange = nil
     }
 
@@ -366,7 +354,6 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         do { try checkpoint?(snapshot); return true }
         catch {
             let failure = recordSaveFailure(error)
-            cancelDirectoryWait?()
             task?.summary = failure
             if isGenerating { task?.status = .stopping; harness?.stop() }
             else { task?.status = .failed }
@@ -427,7 +414,6 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         var message = ConversationMessage(role: .user, content: text)
         message.steering = .queued; messages.append(message)
         harness.enqueue(messageID: message.id, text: text)
-        waitingForProject = false
         onUserAction?()
         return saveTurn()
     }
@@ -456,16 +442,6 @@ extension TaskStore: AgentHarnessHost {
         task?.summary = summary
     }
     func harnessProjectDirectory() -> AgentProjectRoot { projectDirectory?() ?? .noProject }
-    func harnessAcquireLease(_ path: String, ready: @escaping () -> Void) {
-        if let acquireDirectory { acquireDirectory(path, ready) } else { ready() }
-    }
-    func harnessCancelLeaseWait() { cancelDirectoryWait?() }
-    func harnessWaitingForProject(_ waiting: Bool) {
-        guard !retired else { return }
-        let value = waiting && task?.status == .running
-        if waitingForProject != value { waitingForProject = value }
-        if value { task?.summary = String(localized: "等待项目空闲…"); cardProgress = String(localized: "等待项目空闲…") }
-    }
     func harnessSave() throws {
         guard !retired else { throw CancellationError() }
         do { try checkpoint?(snapshot) }
@@ -477,7 +453,6 @@ extension TaskStore: AgentHarnessHost {
     }
     func harnessFinish(_ ending: AgentTurnEnding) {
         guard !retired, isGenerating, let runID = task?.runID else { return }
-        waitingForProject = false
         returnQueuedFollowUps()
         let stoppedSummary = harness?.continuable == true ? String(localized: "已停止 · 可继续处理") : String(localized: "已停止")
         var event: TaskLifecycleEvent
@@ -503,8 +478,6 @@ extension TaskStore: AgentHarnessHost {
             replyStream.abandon()
             task?.status = .failed; task?.summary = storageFailure; event = .reply(runID, .failed(storageFailure))
         }
-        // The turn's directory leases end with it, before anyone is told.
-        releaseDirectory?()
         // Before the save, so what is saved is what is shown.
         let materialized = appendEndingWithoutReply()
         // The ending joins the saved conversation before anyone is told.

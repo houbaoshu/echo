@@ -55,9 +55,7 @@ enum FinderLocation: Sendable, Equatable {
     /// The folder once it opens; one that does not (EPERM, say) is no folder to report. A protected
     /// folder need not prompt for access: on the probe machine none did.
     static func opening(_ path: String) -> FinderLocation {
-        guard let resolved = realpath(path, nil) else { return .unavailable(.noFolder) }
-        defer { free(resolved) }
-        let canonical = String(cString: resolved)
+        guard let canonical = ProjectPath.canonical(path) else { return .unavailable(.noFolder) }
         let fd = open(canonical, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { return .unavailable(.noFolder) }
         close(fd)

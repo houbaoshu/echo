@@ -124,8 +124,8 @@ extension EchoIntegrationScenarios {
     }
 
     /// A missing or corrupt history sidecar blocks sending and retrying, is never replaced by
-    /// saving, and unblocks once restored. `seed` is "hello" for chat, "tool" once the engine
-    /// executes commands; `modelContext` checks the restored model context.
+    /// saving, and unblocks once restored. `seed` is "hello" for chat, "tool" for a turn that
+    /// reads the project; `modelContext` checks the restored model context.
     static func historyReadRecovery(
       _ f: SessionFixture, seed: String,
       modelContext: (_ recovered: TaskStore, _ expected: TaskStore.Snapshot) -> Void
@@ -319,7 +319,6 @@ extension EchoIntegrationScenarios {
         try await eventually("read file", timeout: .seconds(8)) { !reader.store.isGenerating }
         #expect(reader.store.tools.last?.tool == "read_file" && reader.store.tools.last?.command == "src/note.txt")
         #expect(reader.store.tools.last?.result == #"{"content":"fixture text","start_line":1,"truncated":false}"#)
-        #expect(ExecutionService.activeCommands == 0, "Reading runs no command")
       }
     }
 
@@ -373,10 +372,8 @@ extension EchoIntegrationScenarios {
 
     @Test static func connectionCapabilities() async throws {
       try await withSession { f in
-        let temp = f.root
         let port = String(f.server.port)
         let tester: any ConnectionTesting = NativeConnectionTester()
-        let forbidden = temp.appendingPathComponent("probe-must-not-execute")
         // The tool_choice of each request one test sends, and the failure it reports.
         func run(_ config: ModelConfiguration) async -> (choices: [String], failure: String?) {
           let before = f.server.requests.count
@@ -390,23 +387,21 @@ extension EchoIntegrationScenarios {
           return (choices, failure)
         }
         for api in ModelAPIProtocol.allCases {
-          var config = ModelConfiguration(
-            baseURL: "http://127.0.0.1:\(port)",
-            model: "probe:\(forbidden.path)", apiProtocol: api)
+          var config = ModelConfiguration(baseURL: "http://127.0.0.1:\(port)", model: "probe", apiProtocol: api)
           var result = await run(config)
           #expect(result.choices == ["auto"] && result.failure == nil, "One unforced request; a call passes")
           for model in ["probe-text-only", "probe-malformed"] {
             config.model = model
             result = await run(config)
             #expect(result.choices == ["auto"])
-            #expect(result.failure?.hasPrefix("未收到有效的 bash 工具调用") == true, "Invalid tool capability must fail: \(model)")
+            #expect(result.failure?.hasPrefix("未收到有效的工具调用") == true, "Invalid tool capability must fail: \(model)")
           }
           config.model = "probe-unauthorized"
           result = await run(config)
           #expect(result.choices == ["auto"])
           #expect(result.failure?.hasPrefix("模型请求失败") == true && result.failure?.contains("secret-provider-body") == false,
                   "A provider error reports the request failure, never the provider's body")
-          config.model = "probe-delay:\(forbidden.path)"
+          config.model = "probe-delay"
           let heldBefore = f.server.probeDelay.arrivals
           let cancelling = Task { [config] in
             try await tester.test(configuration: config, key: "synthetic-key")
@@ -421,15 +416,14 @@ extension EchoIntegrationScenarios {
           // Answer the abandoned request now, as the delay used to, rather than when the server stops.
           f.server.probeDelay.release()
         }
-        try await waitForAgentShutdown()
-        #expect(
-          !FileManager.default.fileExists(atPath: forbidden.path),
-          "Connection probe executed a command")
       }
     }
     // MARK: Tool scenarios
 
-    @Test static func directoryQueueSteeringStopRetry() async throws {
+    /// While a turn runs, its project cannot be detached, relocated or removed, and its completion
+    /// leaves the file browser of the conversation on screen alone. Input sent during a model
+    /// request supersedes the call that request proposes; without a project a read says so.
+    @Test static func projectRulesAndSteeringDuringATurn() async throws {
       try await withSession { f in
         let temp = f.root
         let workspace = f.workspace
@@ -440,76 +434,36 @@ extension EchoIntegrationScenarios {
         let project = temp.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let first = workspace.newConversation(projectID: workspace.addProject(url: project))
-        first.store.send("slow-tool")
-        try await eventually("first tool starts", timeout: .seconds(8)) { first.store.tools.first?.state == .running }
-        // The command now waits for the release file, so everything below happens while it runs.
-        try await eventually("the slow command is running", timeout: .seconds(8)) { SlowTool.started(in: project) }
+        let heldBefore = f.server.slowModel.arrivals
+        first.store.send("slow-model tool")
+        // The fixture holds the request until it is released: the model request is under way.
+        try await eventually("the model request is held", timeout: .seconds(8)) { f.server.slowModel.arrivals > heldBefore }
         let projectID = try #require(first.projectID)
         #expect(!workspace.associateProject(nil, conversationID: first.id))
         workspace.relocateProject(projectID, to: temp)
         #expect(workspace.projects.first { $0.id == projectID }?.path == project.path)
         workspace.removeProject(projectID)
         #expect(first.projectID == projectID)
-        let second = workspace.newConversation(projectID: projectID)
-        second.store.send("tool")
-        try await eventually("same directory queues", timeout: .seconds(8)) { second.store.waitingForProject }
-        second.store.send("skip queued call")
-        try await eventually("queued steering", timeout: .seconds(8)) { !second.store.isGenerating }
-        #expect(second.store.tools.first?.state == .notExecuted)
-        // Accepted steering leaves no caption behind: only a still-queued follow-up keeps one.
-        #expect(second.store.messages.last(where: { $0.role == .user })?.steering == nil)
-        first.store.send("follow up during execution")
+        first.store.send("skip old model call")
         first.store.hideMainWindow()
         first.store.closeActivity()
         workspace.select(chat.id)
-        #expect(first.store.tools.first?.state == .running, "The follow-up arrived while the command ran")
-        try SlowTool.release(in: project)
+        f.server.slowModel.release()
         try await eventually("first finishes", timeout: .seconds(8)) { !first.store.isGenerating }
         #expect(first.store.task?.status == .completed)
+        #expect(first.store.tools.first?.state == .notExecuted)
+        // Accepted steering leaves no caption behind: only a still-queued follow-up keeps one.
         #expect(first.store.messages.last(where: { $0.role == .user })?.steering == nil)
-        let firstTrace = try String(
-          contentsOf: project.appendingPathComponent("trace"), encoding: .utf8)
-        #expect(firstTrace == "started\ndone\n")
         #expect(
           workspace.selectedID == chat.id && workspace.fileBrowser.location == nil,
           "Another project's completion cannot change selected file root")
-        workspace.select(first.id)
-        workspace.fileBrowser.openFile("trace")
-        try await eventually("trace preview", timeout: .seconds(8)) { workspace.fileBrowser.state.preview == .text(firstTrace) }
-        workspace.fileBrowser.returnToDirectory()
 
-        let modelSteer = workspace.newConversation(projectID: projectID)
-        let heldBefore = f.server.slowModel.arrivals
-        modelSteer.store.send("slow-model tool")
-        // The fixture holds the request until it is released: the model request is under way.
-        try await eventually("the model request is held", timeout: .seconds(8)) { f.server.slowModel.arrivals > heldBefore }
-        modelSteer.store.send("skip old model call")
-        f.server.slowModel.release()
-        try await eventually("model steering", timeout: .seconds(8)) { !modelSteer.store.isGenerating }
-        #expect(modelSteer.store.tools.first?.state == .notExecuted)
-
-        // Without a project the command does not run and nothing waits for a folder.
+        // Without a project the read says so, and nothing waits for a folder.
         let unbound = workspace.newConversation()
         unbound.store.send("tool")
         try await eventually("the unbound call ends", timeout: .seconds(8)) { !unbound.store.isGenerating }
-        #expect(unbound.store.tools.first?.state == .notExecuted
+        #expect(unbound.store.task?.status == .completed
                 && unbound.store.tools.first?.result?.contains("no project folder") == true)
-
-        let stop = workspace.newConversation(projectID: projectID)
-        stop.store.send("cancel-tool")
-        try await eventually("cancellable command starts", timeout: .seconds(8)) { stop.store.tools.first?.state == .running }
-        stop.store.stopTask()
-        #expect(stop.store.task?.status == .stopping && !stop.store.send("must wait"))
-        try await eventually("cleanup acknowledged", timeout: .seconds(8)) { !stop.store.isGenerating }
-        #expect(stop.store.task?.status == .stopped && stop.store.tools.first?.state == .unknown)
-        let userCount = stop.store.messages.filter { $0.role == .user }.count
-        #expect(stop.store.retry())
-        try await eventually("continue", timeout: .seconds(8)) { !stop.store.isGenerating }
-        #expect(stop.store.messages.filter { $0.role == .user }.count == userCount)
-        let stoppedTrace = try String(
-          contentsOf: project.appendingPathComponent("trace"), encoding: .utf8)
-        #expect(!stoppedTrace.contains("forbidden"))
-
       }
     }
     @Test static func responsesToolsAndAtomicHistory() async throws {
@@ -520,6 +474,8 @@ extension EchoIntegrationScenarios {
         let factory = { f.harness() }
         let project = temp.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        // Its name is in the listing the model gets, and must not reach the manifest.
+        try Data().write(to: project.appendingPathComponent("listed-only.txt"))
         let projectID = workspace.addProject(url: project)
         let selected = workspace.newConversation(projectID: projectID)
         workspace.select(selected.id)
@@ -527,13 +483,8 @@ extension EchoIntegrationScenarios {
         let responses = workspace.newConversation(projectID: projectID)
         responses.store.send("tool")
         try await eventually("responses tools", timeout: .seconds(8)) { !responses.store.isGenerating }
-        try await eventually("agent refreshes loaded directory", timeout: .seconds(8)) {
-          if case .loaded(let files) = workspace.fileBrowser.state.directories[""] {
-            return files.contains { $0.name == "trace" }
-          }
-          return false
-        }
         #expect(responses.store.task?.status == .completed && responses.store.tools.count == 1)
+        #expect(responses.store.tools.first?.result?.contains("listed-only.txt") == true)
         #expect(responses.store.messages.last?.content.contains("真实工具结果") == true)
         #expect(responses.store.responseMessage == responses.store.messages.last)
         #expect(
@@ -550,7 +501,7 @@ extension EchoIntegrationScenarios {
         #expect(multiple.store.tools.allSatisfy { $0.result != nil })
         workspace.flush()
         let manifest = try String(contentsOf: persistence.url, encoding: .utf8)
-        #expect(!manifest.contains("工具输出") && !manifest.contains("agentHistory"))
+        #expect(!manifest.contains("listed-only") && !manifest.contains("agentHistory"))
         let recovered = WorkspaceStore(persistence: persistence, harnessFactory: factory)
         defer { recovered.shutdown() }
         let restored = (try #require(recovered.conversation(id: responses.id)))
@@ -584,19 +535,8 @@ extension EchoIntegrationScenarios {
         let project = temp.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         let projectID = workspace.addProject(url: project)
-        // A critical write failure prevents the proposal from ever executing.
-        let failed = workspace.newConversation(projectID: projectID)
-        failed.store.checkpoint = { state in
-          if !(state.tools ?? []).isEmpty { throw CocoaError(.fileWriteNoPermission) }
-        }
-        failed.store.send("tool")
-        try await eventually("storage failure stops", timeout: .seconds(8)) { !failed.store.isGenerating }
-        #expect(
-          failed.store.task?.status == .failed && failed.store.notice?.contains("保存失败") == true)
-        #expect(failed.store.tools.first?.state != .finished)
-
-        // A completed tool result must survive Stop, but cannot feed a new
-        // model request until Swift has successfully saved that result.
+        // A tool result cannot feed a new model request until Swift has saved it.
+        try Data().write(to: project.appendingPathComponent("unsaved-result-marker.txt"))
         let resultFailure = workspace.newConversation(projectID: projectID)
         resultFailure.store.checkpoint = { state in
           if state.tools?.contains(where: { $0.result != nil }) == true {
@@ -605,87 +545,11 @@ extension EchoIntegrationScenarios {
         }
         resultFailure.store.send("tool")
         try await eventually("result save failure stops", timeout: .seconds(8)) { !resultFailure.store.isGenerating }
-        #expect(resultFailure.store.task?.status == .failed)
-        #expect(resultFailure.store.tools.first?.result?.contains("stdout") == true)
+        #expect(resultFailure.store.task?.status == .failed && resultFailure.store.notice?.contains("保存失败") == true)
         #expect(resultFailure.store.responseMessage == nil)
         #expect(
-          !f.server.requests.contains { String(decoding: $0, as: UTF8.self).contains("stdout") },
+          !f.server.requests.contains { String(decoding: $0, as: UTF8.self).contains("unsaved-result-marker") },
           "An unsaved result must never reach the next model request")
-
-      }
-    }
-    @Test static func leasesCleanupAndCrashRecovery() async throws {
-      try await withSession { f in
-        let temp = f.root
-        let workspace = f.workspace
-
-        let factory = { f.harness() }
-        let project = temp.appendingPathComponent("project")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        let projectID = workspace.addProject(url: project)
-        // Distinct real paths proceed while another directory is leased. A
-        // symlink alias, however, must queue behind the original owner.
-        let parallelPath = temp.appendingPathComponent("parallel")
-        try FileManager.default.createDirectory(at: parallelPath, withIntermediateDirectories: true)
-        let parallelID = workspace.addProject(url: parallelPath)
-        let holder = workspace.newConversation(projectID: projectID)
-        holder.store.send("cancel-tool")
-        try await eventually("lease held", timeout: .seconds(8)) { holder.store.tools.first?.state == .running }
-        let crashPersistence = WorkspacePersistence(
-          url: temp.appendingPathComponent("crash/workspace.json"))
-        var crashSnapshot = workspace.snapshot
-        crashSnapshot.conversations = crashSnapshot.conversations.filter { $0.id == holder.id }
-        crashSnapshot.drafts = []
-        try crashPersistence.save(crashSnapshot)
-        let alias = temp.appendingPathComponent("alias")
-        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: project)
-        #expect(workspace.addProject(url: alias) == projectID)
-        let queued = workspace.newConversation(projectID: projectID)
-        queued.store.send("tool")
-        try await eventually("alias queue", timeout: .seconds(8)) { queued.store.waitingForProject }
-        let parallel = workspace.newConversation(projectID: parallelID)
-        parallel.store.send("tool")
-        try await eventually("different directory completes", timeout: .seconds(8)) { !parallel.store.isGenerating }
-        #expect(holder.store.isGenerating && queued.store.waitingForProject)
-        queued.store.stopTask()
-        try await eventually("queue stop", timeout: .seconds(8)) { !queued.store.isGenerating }
-        #expect(queued.store.tools.first?.state == .notExecuted)
-        let afterDelete = workspace.newConversation(projectID: projectID)
-        afterDelete.store.send("tool")
-        try await eventually("delete waiter", timeout: .seconds(8)) { afterDelete.store.waitingForProject }
-        workspace.deleteConversation(holder.id)
-        try await eventually("delete releases after cleanup", timeout: .seconds(8)) { !afterDelete.store.isGenerating }
-        #expect(afterDelete.store.task?.status == .completed)
-
-        let crashRecovery = WorkspaceStore(persistence: crashPersistence, harnessFactory: factory)
-        defer { crashRecovery.shutdown() }
-        let interrupted = (try #require(crashRecovery.conversation(id: holder.id)))
-        #expect(interrupted.store.task?.status == .interrupted)
-        #expect(interrupted.store.tools.first?.state == .unknown)
-        #expect(interrupted.store.retry())
-        try await eventually("unknown result recovery", timeout: .seconds(8)) { !interrupted.store.isGenerating }
-        #expect(interrupted.store.tools.first?.result?.contains("unknown") == true)
-        #expect(interrupted.store.tools.count == 1)
-        crashRecovery.shutdown()
-
-        // Invalidate a directory while a proposal is queued. The bridge's final
-        // gate must not run in a moved cwd; the call says the folder is gone.
-        let invalidHolder = workspace.newConversation(projectID: parallelID)
-        invalidHolder.store.send("cancel-tool")
-        try await eventually("invalid holder", timeout: .seconds(8)) { invalidHolder.store.tools.first?.state == .running }
-        let invalidWaiter = workspace.newConversation(projectID: parallelID)
-        invalidWaiter.store.send("tool")
-        try await eventually("invalid waiter", timeout: .seconds(8)) { invalidWaiter.store.waitingForProject }
-        let moved = temp.appendingPathComponent("moved-project")
-        try FileManager.default.moveItem(at: parallelPath, to: moved)
-        invalidHolder.store.stopTask()
-        try await eventually("the moved folder ends the call", timeout: .seconds(8)) { !invalidWaiter.store.isGenerating }
-        #expect(
-          invalidWaiter.store.task?.status == .completed,
-          "\(invalidWaiter.store.task?.summary ?? "missing task")")
-        #expect(invalidWaiter.store.tools.first?.state == .notExecuted
-                && invalidWaiter.store.tools.first?.result?.contains("can no longer be found") == true,
-                "\(String(describing: invalidWaiter.store.tools.first))")
 
       }
     }

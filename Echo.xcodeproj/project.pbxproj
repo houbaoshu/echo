@@ -43,7 +43,6 @@
 		5B7C35523FF9FBEB0850E76E /* AgentLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12300000000000000000F00 /* AgentLiveTests.swift */; };
 		62B9BFB9095B17879C439924 /* tests/support/NativeMemorySecrets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7385F3E986D8793A4584EE31 /* tests/support/NativeMemorySecrets.swift */; };
 		67E3BE61ADD66DEBB9546F63 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
-		6817F4D9EBEF250F3A26ED4F /* tests/native/CABITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70EFE33F996D835481AF1A0E /* tests/native/CABITests.swift */; };
 		6D9FE29A4E0E07342425F117 /* tests/fixtures/speech/zh-CN.wav in Resources */ = {isa = PBXBuildFile; fileRef = D5E5E6CFBA9A83634534A68F /* tests/fixtures/speech/zh-CN.wav */; };
 		75548D3C52D3DD19C3BD3ECB /* tests/support/NativeMemorySecrets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7385F3E986D8793A4584EE31 /* tests/support/NativeMemorySecrets.swift */; };
 		775CBE322F97683D29D5475B /* tests/support/LoopbackModelServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D99CD76EFF731DB92DDFA79A /* tests/support/LoopbackModelServer.swift */; };
@@ -52,9 +51,7 @@
 		7B9DB9B13EF850739CAB6C75 /* tests/support/LoopbackModelServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D99CD76EFF731DB92DDFA79A /* tests/support/LoopbackModelServer.swift */; };
 		81FFE00A82930E806C58AD0A /* tests/native/PerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3C5FB9B86C9EE63938C7854 /* tests/native/PerformanceTests.swift */; };
 		82EA4910FA0A21C0579F3E29 /* macos/Features/Agent/AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA68E8426039B5A782DA9770 /* macos/Features/Agent/AgentTools.swift */; };
-		F1D3A0C2B4E5967A8C0D1E2F /* macos/Features/Agent/FinderLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D3A0C2B4E5967A8C0D1E30 /* macos/Features/Agent/FinderLocation.swift */; };
 		830373170115C92C8D7D60E3 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
-		837321AFF82528C3A8EAB2F5 /* tests/ExecBridgeMemory.c in Sources */ = {isa = PBXBuildFile; fileRef = 7EC0845D8753AC831E0E60BC /* tests/ExecBridgeMemory.c */; };
 		85B5BEAB4EAFE9F730967F9B /* tests/hosts/main.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD5CA30C697920C91E817DFD /* tests/hosts/main.swift */; };
 		9039DBA18EB1F36EF387F630 /* tests/tools/CoreAudioProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A54F78A48D702464CB4A47 /* tests/tools/CoreAudioProbe.swift */; };
 		906831DF4830EF6F47CA3556 /* tests/hosts/main.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD5CA30C697920C91E817DFD /* tests/hosts/main.swift */; };
@@ -98,7 +95,6 @@
 		E11400000000000000000B02 /* ProjectFileBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11400000000000000000F02 /* ProjectFileBrowserTests.swift */; };
 		E11500000000000000000B00 /* ConversationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11500000000000000000F00 /* ConversationUITests.swift */; };
 		E11600000000000000000B00 /* tests/RuntimeCargoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11600000000000000000F00 /* tests/RuntimeCargoTests.swift */; };
-		E11600000000000000000B01 /* tests/ExecBridgeCargoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11600000000000000000F01 /* tests/ExecBridgeCargoTests.swift */; };
 		E11600000000000000000B02 /* tests/support/CargoTestRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11600000000000000000F02 /* tests/support/CargoTestRun.swift */; };
 		E12000000000000000000B00 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12000000000000000000F00 /* main.swift */; };
 		E12100000000000000000B00 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12000000000000000000F00 /* main.swift */; };
@@ -111,12 +107,11 @@
 		EA00F9556CAAB30BC2B7D398 /* tests/native/RuntimeIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE960C7BBE6919DA1C1553E7 /* tests/native/RuntimeIntegrationTests.swift */; };
 		EE2B5A483F67D04C0F2A9F6A /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
 		EE3E2F85DDBFEEDEDD7B89FC /* tests/fixtures/speech/paused.wav in Resources */ = {isa = PBXBuildFile; fileRef = 9B8E739899162095ABA722F3 /* tests/fixtures/speech/paused.wav */; };
+		F1D3A0C2B4E5967A8C0D1E2F /* macos/Features/Agent/FinderLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D3A0C2B4E5967A8C0D1E30 /* macos/Features/Agent/FinderLocation.swift */; };
 		F1DA05F3182E450B41CD433D /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
 		F20000000000000000000003 /* CoreAILM in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000002 /* CoreAILM */; };
 		F20000000000000000000011 /* macos/Features/Agent/AgentLocalChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000010 /* macos/Features/Agent/AgentLocalChat.swift */; };
 		F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* tests/LocalChatTests.swift */; };
-		F26EAD91B663BB2BCD833522 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
-		F68549B4E6629AA6F02A9CDC /* macos/Features/Agent/ExecutionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1724D95EA440B9705DD87F8B /* macos/Features/Agent/ExecutionService.swift */; };
 		F7EF4AB9C967C47A9F18B500 /* tests/native/EchoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3FF57E62DA09C501023D462 /* tests/native/EchoUITests.swift */; };
 		FC6EBE592730BDB220A9F612 /* VoiceLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12400000000000000000F00 /* VoiceLiveTests.swift */; };
 		FCF779D250617E9855A786C5 /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
@@ -166,13 +161,6 @@
 			proxyType = 1;
 			remoteGlobalIDString = 74679465BC618EAAE681B8A8;
 			remoteInfo = EchoLiveHost;
-		};
-		BE09CD65A8420556AA94AD9B /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E0000000000000000000000F /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E000000000000000000000A0;
-			remoteInfo = RustCore;
 		};
 		E000000000000000000000C0 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -228,7 +216,6 @@
 /* Begin PBXFileReference section */
 		017854AC34F5C611DA191769 /* tests/tools/SwiftUIOutlineListReentrancy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/tools/SwiftUIOutlineListReentrancy.swift; sourceTree = "<group>"; };
 		0A943A0226E44527A68563F2 /* tests/AgentHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentHarnessTests.swift; sourceTree = "<group>"; };
-		1724D95EA440B9705DD87F8B /* macos/Features/Agent/ExecutionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/ExecutionService.swift; sourceTree = "<group>"; };
 		196B5603E13823B0BEE17FD8 /* EchoFrameworkRepros */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; path = EchoFrameworkRepros; sourceTree = BUILT_PRODUCTS_DIR; };
 		1E53D6C44AD40EA364F6E230 /* tests/fixtures/speech/en-US.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "tests/fixtures/speech/en-US.wav"; sourceTree = "<group>"; };
 		207D388F6D0AE8A1D34DD1DB /* tests/native/PresentationRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/PresentationRules.swift; sourceTree = "<group>"; };
@@ -244,13 +231,10 @@
 		474D9F2D95791491A7B3D4E6 /* tests/AgentModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentModelTests.swift; sourceTree = "<group>"; };
 		4FAB991673380E8FF8B32862 /* tests/fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; path = tests/fixtures; sourceTree = "<group>"; };
 		539299A1350B5EF348BB36A5 /* EchoSpeechHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = EchoSpeechHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		5A407C27DB7ECAE4527DA014 /* EchoCABITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoCABITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/ScriptedAgentModel.swift; sourceTree = "<group>"; };
 		6BF4D83C4FDB9149833754EA /* tests/support/AgentVoiceFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/AgentVoiceFixture.swift; sourceTree = "<group>"; };
-		70EFE33F996D835481AF1A0E /* tests/native/CABITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/CABITests.swift; sourceTree = "<group>"; };
 		73026C88846F78AF31164388 /* tests/native/AgentVoiceIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/AgentVoiceIntegrationTests.swift; sourceTree = "<group>"; };
 		7385F3E986D8793A4584EE31 /* tests/support/NativeMemorySecrets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/NativeMemorySecrets.swift; sourceTree = "<group>"; };
-		7EC0845D8753AC831E0E60BC /* tests/ExecBridgeMemory.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = tests/ExecBridgeMemory.c; sourceTree = "<group>"; };
 		7F5AC5D3C6E9200922133731 /* tests/native/AppIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/AppIntegrationTests.swift; sourceTree = "<group>"; };
 		89D5CB17C33E07630F4519C6 /* tests/support/VoiceFakes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/VoiceFakes.swift; sourceTree = "<group>"; };
 		9B8E739899162095ABA722F3 /* tests/fixtures/speech/paused.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = tests/fixtures/speech/paused.wav; sourceTree = "<group>"; };
@@ -299,7 +283,6 @@
 		E11500000000000000000F00 /* ConversationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ConversationUITests.swift; path = tests/ConversationUITests.swift; sourceTree = "<group>"; };
 		E116000000000000000000FF /* EchoRustTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EchoRustTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E11600000000000000000F00 /* tests/RuntimeCargoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/RuntimeCargoTests.swift; sourceTree = "<group>"; };
-		E11600000000000000000F01 /* tests/ExecBridgeCargoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/ExecBridgeCargoTests.swift; sourceTree = "<group>"; };
 		E11600000000000000000F02 /* tests/support/CargoTestRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/CargoTestRun.swift; sourceTree = "<group>"; };
 		E11600000000000000000F03 /* tests/support/EchoRustTests-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "tests/support/EchoRustTests-Info.plist"; sourceTree = "<group>"; };
 		E120000000000000000000FF /* KeychainProbe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KeychainProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -468,7 +451,6 @@
 				E11200000000000000000F00 /* AgentSessionTests.swift */,
 				E11000000000000000000F02 /* AgentConnectionTester.swift */,
 				E11000000000000000000F03 /* TaskStore.swift */,
-				1724D95EA440B9705DD87F8B /* macos/Features/Agent/ExecutionService.swift */,
 				CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */,
 				3526F0A888174738325FD582 /* macos/Features/Agent/AgentLanguageModels.swift */,
 				EA68E8426039B5A782DA9770 /* macos/Features/Agent/AgentTools.swift */,
@@ -515,7 +497,6 @@
 				E116000000000000000000FF /* EchoRustTests.xctest */,
 				E2DD4E7379914193D6F68337 /* EchoAppIntegrationTests.xctest */,
 				E2D88B0EC8C4D64A02775E4A /* EchoUITests.xctest */,
-				5A407C27DB7ECAE4527DA014 /* EchoCABITests.xctest */,
 				304DB495A0C2573A6D5628CD /* EchoPerformanceTests.xctest */,
 				3A89A1D5930BC209601F6678 /* EchoLiveHost.app */,
 				A5C8CF99E608551A486FC246 /* EchoLiveTests.xctest */,
@@ -536,9 +517,7 @@
 				E90000000000000000000004 /* fixtures */,
 				E90000000000000000000006 /* hosts */,
 				E90000000000000000000007 /* tools */,
-				7EC0845D8753AC831E0E60BC /* tests/ExecBridgeMemory.c */,
 				E11600000000000000000F00 /* tests/RuntimeCargoTests.swift */,
-				E11600000000000000000F01 /* tests/ExecBridgeCargoTests.swift */,
 			);
 			name = tests;
 			sourceTree = "<group>";
@@ -551,7 +530,6 @@
 				73026C88846F78AF31164388 /* tests/native/AgentVoiceIntegrationTests.swift */,
 				DE960C7BBE6919DA1C1553E7 /* tests/native/RuntimeIntegrationTests.swift */,
 				217FBCD630BAAD4A12C88F95 /* tests/native/HistoryIntegrationTests.swift */,
-				70EFE33F996D835481AF1A0E /* tests/native/CABITests.swift */,
 				A3C5FB9B86C9EE63938C7854 /* tests/native/PerformanceTests.swift */,
 				AC2342CC6EB3F55C38085D3E /* tests/native/LiveTests.swift */,
 				E6DAA41743D56B6467CB43F9 /* tests/native/SpeechDeviceTests.swift */,
@@ -778,22 +756,6 @@
 			productReference = 260CE96ECC2D0471B1EC0859 /* EchoFixtureServer */;
 			productType = "com.apple.product-type.tool";
 		};
-		D195CA55926718EBFE5327CD /* EchoCABITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 3520EF9078A9455D970D3C11 /* Build configuration list for PBXNativeTarget "EchoCABITests" */;
-			buildPhases = (
-				A63B539E6599A77F3DB2E41F /* Sources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				33EBA7A9F21211F0F4980636 /* PBXTargetDependency */,
-			);
-			name = EchoCABITests;
-			productName = EchoCABITests;
-			productReference = 5A407C27DB7ECAE4527DA014 /* EchoCABITests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
 		E0000000000000000000002F /* Echo */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E000000000000000000000B1 /* Build configuration list for PBXNativeTarget "Echo" */;
@@ -1004,7 +966,6 @@
 				E116000000000000000000AA /* EchoRustTests */,
 				622BCBC3AA8DF672AAC38174 /* EchoAppIntegrationTests */,
 				03A21A103EBCD69617CCBCC0 /* EchoUITests */,
-				D195CA55926718EBFE5327CD /* EchoCABITests */,
 				18AB32E222622174A43F9273 /* EchoPerformanceTests */,
 				74679465BC618EAAE681B8A8 /* EchoLiveHost */,
 				130F86779B6F28C656B0525F /* EchoLiveTests */,
@@ -1140,14 +1101,6 @@
 				9039DBA18EB1F36EF387F630 /* tests/tools/CoreAudioProbe.swift in Sources */,
 			);
 		};
-		A63B539E6599A77F3DB2E41F /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			files = (
-				837321AFF82528C3A8EAB2F5 /* tests/ExecBridgeMemory.c in Sources */,
-				6817F4D9EBEF250F3A26ED4F /* tests/native/CABITests.swift in Sources */,
-				F26EAD91B663BB2BCD833522 /* tests/support/EchoTestResources.swift in Sources */,
-			);
-		};
 		B5870623A45FF6CB9D8594B1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
@@ -1163,7 +1116,6 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				E90000000000000000005A11 /* tests/support/Waiting.swift in Sources */,
-				F68549B4E6629AA6F02A9CDC /* macos/Features/Agent/ExecutionService.swift in Sources */,
 				0BB27615F70BEF3BF486FD84 /* macos/Features/ProjectBrowser/ProjectPathAccess.swift in Sources */,
 				26BC95D8A7B3E4F129E9AD9F /* macos/Features/Agent/AgentLanguageModels.swift in Sources */,
 				82EA4910FA0A21C0579F3E29 /* macos/Features/Agent/AgentTools.swift in Sources */,
@@ -1241,7 +1193,6 @@
 			isa = PBXSourcesBuildPhase;
 			files = (
 				E11600000000000000000B00 /* tests/RuntimeCargoTests.swift in Sources */,
-				E11600000000000000000B01 /* tests/ExecBridgeCargoTests.swift in Sources */,
 				E11600000000000000000B02 /* tests/support/CargoTestRun.swift in Sources */,
 			);
 		};
@@ -1283,11 +1234,6 @@
 			isa = PBXTargetDependency;
 			target = 74679465BC618EAAE681B8A8 /* EchoLiveHost */;
 			targetProxy = AF025F75908AAE477C8807E3 /* PBXContainerItemProxy */;
-		};
-		33EBA7A9F21211F0F4980636 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E000000000000000000000A0 /* RustCore */;
-			targetProxy = BE09CD65A8420556AA94AD9B /* PBXContainerItemProxy */;
 		};
 		4F9B3F55797D4BB3F767383A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1508,26 +1454,6 @@
 			};
 			name = Debug;
 		};
-		8B87AB235CA9125555A96483 /* Release configuration for PBXNativeTarget "EchoCABITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ENABLE_ADDRESS_SANITIZER = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-framework",
-					Security,
-					"-framework",
-					SystemConfiguration,
-					"-framework",
-					CoreFoundation,
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoCABITests;
-				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-			};
-			name = Release;
-		};
 		9788B781B99A0B90CF97B22F /* Release configuration for PBXNativeTarget "EchoFixtureServer" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1558,26 +1484,6 @@
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Echo.app/Contents/MacOS/Echo";
 			};
 			name = Release;
-		};
-		B6A5B949E41FD4DD831F77AE /* Debug configuration for PBXNativeTarget "EchoCABITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ENABLE_ADDRESS_SANITIZER = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/exec-bridge/include";
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-framework",
-					Security,
-					"-framework",
-					SystemConfiguration,
-					"-framework",
-					CoreFoundation,
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = io.github.houbaoshu.echo.EchoCABITests;
-				SWIFT_OBJC_BRIDGING_HEADER = tests/support/CABIMemory.h;
-			};
-			name = Debug;
 		};
 		E000000000000000000000D0 /* Debug configuration for PBXProject "Echo" */ = {
 			isa = XCBuildConfiguration;
@@ -1841,14 +1747,6 @@
 			buildConfigurations = (
 				A004261E9F0A551F0585E969 /* Debug configuration for PBXNativeTarget "EchoPerformanceTests" */,
 				3968FD165DAF48DE95710AC1 /* Release configuration for PBXNativeTarget "EchoPerformanceTests" */,
-			);
-			defaultConfigurationName = Release;
-		};
-		3520EF9078A9455D970D3C11 /* Build configuration list for PBXNativeTarget "EchoCABITests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				B6A5B949E41FD4DD831F77AE /* Debug configuration for PBXNativeTarget "EchoCABITests" */,
-				8B87AB235CA9125555A96483 /* Release configuration for PBXNativeTarget "EchoCABITests" */,
 			);
 			defaultConfigurationName = Release;
 		};

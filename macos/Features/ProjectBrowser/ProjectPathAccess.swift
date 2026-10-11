@@ -29,4 +29,12 @@ enum ProjectPath {
         }
         return fd
     }
+
+    /// `path` fully resolved, as `realpath` gives it; nil when it does not resolve. URL's own
+    /// resolution keeps `/var` for `/private/var`.
+    static func canonical(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
 }

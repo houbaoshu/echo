@@ -221,7 +221,8 @@ import Testing
         case noReply
         /// The model is streaming a reply it has not finished.
         case cutOffReply
-        /// The model finished a reply and a bash call after it; the command is running.
+        /// The model finished a reply and a tool call after it; the call ran and the next request is
+        /// under way.
         case replyBeforeCall
         var testDescription: String { rawValue }
     }
@@ -232,15 +233,6 @@ import Testing
         /// A normal quit stops running turns and waits for them before it saves, as `stop` does.
         case crash
         var testDescription: String { rawValue }
-    }
-    /// Runs every command until the turn is stopped, or fails it once `failCommand` opens.
-    final class HeldRunner: CommandRunning, Sendable {
-        let failCommand = ScriptGate()
-        var runs: Int { failCommand.arrivals }
-        func run(command: String, directory: String) async -> CommandOutcome {
-            do { try await failCommand.wait(); return .failed(code: "spawn_failed", message: "boom") }
-            catch { return .cancelled }
-        }
     }
     /// One line per message: role, content (∅ when empty), status, steering, and the error if any.
     static func rows(_ messages: [ConversationMessage]) -> [String] {
@@ -259,9 +251,8 @@ import Testing
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-chat-\(UUID())").resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let runner = HeldRunner()
         let puppet = PuppetModel()
-        let chat = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, runner: runner))
+        let chat = TaskStore(harness: AgentHarness(resolveModel: { puppet.factory }, finder: NoFinder()))
         chat.projectDirectory = { .path(root.path) }
         var saved: [TaskStore.Snapshot] = []
         chat.checkpoint = { saved.append($0) }
@@ -279,11 +270,11 @@ import Testing
         case .replyBeforeCall:
             try await puppet.answer(.stream(stream))
             try await stream.send(["A", "B"])
-            stream.call("bash", #"{"command":"hold"}"#); stream.finish()
-            try await eventually("the command runs") { runner.runs == 1 && chat.tools.first?.state == .running }
+            stream.call("list_files", #"{"path":"."}"#); stream.finish()
+            try await puppet.waitForRequests(2)
         }
-        // The model is held on its first request, or the command is, so nothing takes the
-        // follow-up until the turn ends.
+        // The model is held on its latest request, so nothing takes the follow-up until the turn ends.
+        let heldRequests = progress == .replyBeforeCall ? 2 : 1
         try #require(chat.send("follow up") && chat.messages.last?.steering == .queued)
 
         switch ending {
@@ -292,14 +283,14 @@ import Testing
             switch progress {
             case .noReply: try await puppet.answer(.fail(AgentModelError(message: "boom")))
             case .cutOffReply: stream.fail(AgentModelError(message: "boom"))
-            case .replyBeforeCall: runner.failCommand.open()
+            case .replyBeforeCall: try await puppet.answer(.fail(AgentModelError(message: "boom")))
             }
         case .crash: break
         }
         if ending != .crash {
-            try await eventually("the turn ends, or a request takes the follow-up") { !chat.isGenerating || puppet.requests.count > 1 }
+            try await eventually("the turn ends, or a request takes the follow-up") { !chat.isGenerating || puppet.requests.count > heldRequests }
         }
-        try #require(puppet.requests.count == 1, "No model request took the follow-up")
+        try #require(puppet.requests.count == heldRequests, "No model request took the follow-up")
 
         // A reply cut off mid-stream is dropped; one finished before a tool call stays and ends
         // the conversation, so only a turn that ends on its user message gets an ending message.
@@ -332,7 +323,7 @@ import Testing
         try #require(reopened.retry())
         try await reopenedModel.waitForRequests(1)
         let continued = reopenedModel.requests[0]
-        let toolResult = ending == .crash ? AgentToolResult.unknownAfterInterruption : AgentToolResult.cancelledDuring
+        let toolResult = #"{"files":[],"truncated":false}"#
         #expect(continued.kinds == ["instructions", "prompt"] + (progress == .replyBeforeCall ? ["response", "toolCalls", "toolOutput"] : []) + ["continue"]
                 && continued.userTexts == ["Hello"]
                 && continued.replies == (progress == .replyBeforeCall ? ["AB"] : [])
@@ -348,9 +339,10 @@ import Testing
         // Continue while open, after a Stop or a failure, sends the same.
         guard ending != .crash else { return }
         try #require(chat.retry())
-        try await puppet.waitForRequests(2)
-        #expect(puppet.requests[1].kinds == continued.kinds && puppet.requests[1].userTexts == continued.userTexts
-                && puppet.requests[1].replies == continued.replies && puppet.requests[1].toolOutputs == continued.toolOutputs,
+        try await puppet.waitForRequests(heldRequests + 1)
+        let continuedOpen = puppet.requests[heldRequests]
+        #expect(continuedOpen.kinds == continued.kinds && continuedOpen.userTexts == continued.userTexts
+                && continuedOpen.replies == continued.replies && continuedOpen.toolOutputs == continued.toolOutputs,
                 "Continue while open sends what Continue after reopening sends")
         #expect(rows(chat.messages) == runningRows && chat.mainDraft == "follow up")
         try await puppet.reply("answer")

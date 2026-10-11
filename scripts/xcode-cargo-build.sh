@@ -1,6 +1,6 @@
 #!/bin/zsh
 emulate -R zsh
-# Build the Rust static libraries the app target links against.
+# Build the Rust static library the app target links against.
 #
 # cargo runs through cargo-isolated.sh, which finds it and keeps Xcode's build
 # environment away from it; EchoRustTests runs cargo test through the same script.

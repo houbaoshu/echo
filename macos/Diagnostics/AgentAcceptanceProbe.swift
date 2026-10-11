@@ -2,8 +2,7 @@ import AppKit
 
 /// System-only acceptance of an already built, relocated App. Business history
 /// assertions belong to EchoIntegrationTests; this checks the independent process
-/// and the ordinary AppKit termination path with real child processes of the
-/// execution core.
+/// and the ordinary AppKit termination path while a turn waits for the model.
 @MainActor enum AgentAcceptanceProbe {
     static func wait(_ label: String, _ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(15))
@@ -32,16 +31,11 @@ import AppKit
                 })
             })
         register(workspace)
-        let project = root.appendingPathComponent("process-audit")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        let projectID = workspace.addProject(url: project)
-        let work = workspace.newConversation(projectID: projectID)
-        guard work.store.send("acceptance-quit-tool") else { throw SettingsError("未能创建验收任务。") }
-        try await wait("真实子进程启动") {
-            work.store.tools.first?.state == .running
-                && FileManager.default.fileExists(atPath: project.appendingPathComponent("child.pid").path)
-        }
-        print("PASS: relocated bundle loaded pet and the Agent from empty cwd; requesting AppKit quit during bash")
+        let work = workspace.newConversation()
+        // The fixture holds this request until it stops, so the turn is still running at the quit.
+        guard work.store.send("acceptance-quit slow-model") else { throw SettingsError("未能创建验收任务。") }
+        try await wait("本轮开始") { work.store.task?.status == .running }
+        print("PASS: relocated bundle loaded pet and the Agent from empty cwd; requesting AppKit quit during a turn")
         fflush(nil)
     }
 }

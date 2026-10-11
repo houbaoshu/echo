@@ -2211,12 +2211,12 @@
         }
       }
     },
-    "未收到有效的 bash 工具调用，请检查模型、额度及 %@ 工具调用支持。" : {
+    "未收到有效的工具调用，请检查模型、额度及 %@ 工具调用支持。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Didn’t get a valid bash tool call. Check the model, your quota, and whether the model supports %@ tool calling."
+            "value" : "Didn’t get a valid tool call. Check the model, your quota, and whether the model supports %@ tool calling."
           }
         }
       }
@@ -2651,26 +2651,6 @@
         }
       }
     },
-    "正在运行命令" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Running command"
-          }
-        }
-      }
-    },
-    "正在运行命令 · %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Running command · %@"
-          }
-        }
-      }
-    },
     "正在连接" : {
       "localizations" : {
         "en" : {
@@ -2934,16 +2914,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Timed out waiting for the final transcript. The recognized text was kept."
-          }
-        }
-      }
-    },
-    "等待项目空闲…" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for project…"
           }
         }
       }
@@ -4031,7 +4001,7 @@
         }
       }
     },
-    "连接成功，指定协议已返回有效的 bash 工具调用。" : {
+    "连接成功，指定协议已返回有效的工具调用。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {

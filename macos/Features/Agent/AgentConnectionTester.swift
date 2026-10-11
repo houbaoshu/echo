@@ -1,10 +1,10 @@
 import Foundation
 import FoundationModels
 
-/// The Agent connection test: Echo's own adapter asks for one call to a probe tool with bash's
-/// name and schema. The call itself is the result; the probe never runs anything. Like an
-/// ordinary turn it leaves the choice to the model: a forced call is not something Echo uses,
-/// and some services reject it (DeepSeek in thinking mode answers HTTP 400).
+/// The Agent connection test: Echo's own adapter asks for one call to a probe tool with
+/// list_files's name, description and schema. The call itself is the result; the probe never
+/// reads anything. Like an ordinary turn it leaves the choice to the model: a forced call is not
+/// something Echo uses, and some services reject it (DeepSeek in thinking mode answers HTTP 400).
 struct NativeConnectionTester: ConnectionTesting {
     @MainActor func test(configuration: ModelConfiguration, key: String) async throws {
         let configuration = try configuration.validated()
@@ -15,7 +15,7 @@ struct NativeConnectionTester: ConnectionTesting {
                                       ledger: GenerationLedger(), budget: GenerationBudget(limit: 1))
         let session = LanguageModelSession(profile: ProbeProfile(model: model), history: [])
         let title = configuration.apiProtocol.title
-        let noValidCall = SettingsError(localized: "未收到有效的 bash 工具调用，请检查模型、额度及 \(title) 工具调用支持。")
+        let noValidCall = SettingsError(localized: "未收到有效的工具调用，请检查模型、额度及 \(title) 工具调用支持。")
         do {
             _ = try await Self.respond(session)
             throw noValidCall
@@ -34,7 +34,7 @@ struct NativeConnectionTester: ConnectionTesting {
     }
 
     @concurrent private static func respond(_ session: LanguageModelSession) async throws -> String {
-        try await session.respond(to: "This is a tool capability test. Return exactly one bash tool call with command: printf 'ECHO_TOOL_PROBE'. Do not answer with text. The host will inspect the call without executing it.").content
+        try await session.respond(to: "This is a tool capability test. Return exactly one list_files tool call with path: \".\". Do not answer with text. The host will inspect the call without executing it.").content
     }
 
     struct ProbeProfile: LanguageModelSession.DynamicProfile {
@@ -48,14 +48,14 @@ struct NativeConnectionTester: ConnectionTesting {
         }
     }
 
-    /// Named and shaped like bash; ends the probe as soon as it is called.
+    /// Named and shaped like list_files; ends the probe as soon as it is called.
     struct ProbeTool: Tool {
         enum Outcome: Error, Equatable { case called, invalid }
-        let name = "bash"
-        let description = BashTool.toolDescription
-        var parameters: GenerationSchema { BashTool.Input.generationSchema }
+        let name = "list_files"
+        let description = ListFilesTool.toolDescription
+        var parameters: GenerationSchema { ListFilesTool.Input.generationSchema }
         func call(arguments: GeneratedContent) async throws -> String {
-            guard let input = try? BashTool.Input(arguments), !input.command.isEmpty else { throw Outcome.invalid }
+            guard let input = try? ListFilesTool.Input(arguments), !input.path.isEmpty else { throw Outcome.invalid }
             throw Outcome.called
         }
     }

@@ -11,14 +11,12 @@ extension EchoIntegrationScenarios {
         f.protocolName = api
         let project = f.root.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        let note = project.appendingPathComponent("note.txt")
-        try Data("before\n".utf8).write(to: note)
+        try Data("first\nsecond\n".utf8).write(to: project.appendingPathComponent("note.txt"))
         let work = f.workspace.newConversation(projectID: f.workspace.addProject(url: project))
-        try #require(work.store.send("acceptance-rwv"))
-        try await eventually("read/edit/verify completion", timeout: .seconds(8)) { !work.store.isGenerating }
+        try #require(work.store.send("acceptance-reads"))
+        try await eventually("three reads complete", timeout: .seconds(8)) { !work.store.isGenerating }
         #expect(work.store.task?.status == .completed)
-        #expect(work.store.tools.count == 3 && work.store.tools.allSatisfy { $0.result != nil })
-        #expect(try String(contentsOf: note, encoding: .utf8) == "after\n")
+        #expect(work.store.tools.map(\.tool) == ["list_files", "read_file", "read_file"] && work.store.tools.allSatisfy { $0.result != nil })
         f.protocolName = api == .responses ? .chatCompletions : .responses
         try #require(work.store.send("acceptance-history"))
         try await eventually("protocol switch preserves tools", timeout: .seconds(8)) {
@@ -39,15 +37,14 @@ extension EchoIntegrationScenarios {
       }
     }
 
-    /// The native sidecar: every executed command's real output is in the transcript and on its
-    /// record, Responses reasoning keeps its opaque signature, and nothing is left pending.
+    /// The native sidecar: every read's real result is in the transcript and on its record,
+    /// Responses reasoning keeps its opaque signature, and nothing is left pending.
     private static func verifyNative(_ state: TaskStore.Snapshot, api: ModelAPIProtocol) throws {
       let native = try #require(state.native)
       #expect(native.pendingInputs.isEmpty && native.turns.allSatisfy { $0.outcome == .completed })
       let outputs = native.entries.toolOutputs
-      let stdout = try outputs.map { try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])["stdout"] as? String }
-      #expect(stdout == ["before\n", "", "after\n"])
-      #expect(outputs.allSatisfy { $0.hasPrefix(#"{"stdout":"#) }, "The model saw mini-agent-rs's CommandOutput format")
+      #expect(outputs == [#"{"files":["note.txt"],"truncated":false}"#, #"{"content":"first\nsecond","start_line":1,"truncated":false}"#,
+                          #"{"content":"second","start_line":2,"truncated":false}"#])
       #expect(state.tools?.map(\.result) == outputs.map(Optional.some))
       let signatures = native.entries.compactMap { entry -> Data? in
         if case .reasoning(let reasoning) = entry { reasoning.signature } else { nil }
