@@ -11,7 +11,8 @@ import FoundationModels
             try await Task.sleep(for: .milliseconds(50))
         }
     }
-    /// Direct answer, a read-only look at a project, and a chat saved with a bash call continued:
+    /// Direct answer, a read-only look at a project, a file edited and one created there, and a chat
+    /// saved with a bash call continued:
     /// the service takes the old call back although the turn no longer offers bash.
     static func run(protocols: [ModelAPIProtocol]) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
@@ -22,7 +23,7 @@ import FoundationModels
         var failures = 0
         for api in protocols {
             var config = saved; config.apiProtocol = api
-            print("START: \(api.title) tool capability, direct answer, project reads, saved bash history"); fflush(nil)
+            print("START: \(api.title) tool capability, direct answer, project reads and writes, saved bash history"); fflush(nil)
             let endpoint = AgentEndpoint(config, key: key)
             let harness = {
                 AgentHarness(resolveModel: {
@@ -53,6 +54,7 @@ import FoundationModels
                     throw SettingsError("真实文件读取未按要求完成。")
                 }
                 print("PASS: \(api.title) direct answer and \(work.store.tools.count) real tool results")
+                try await writeAndEdit(work, project: project, backups: root.appendingPathComponent("\(api.rawValue)/agent-backups"))
                 try await continueSavedBashHistory(harness: harness())
             } catch {
                 failures += 1
@@ -62,6 +64,24 @@ import FoundationModels
             fflush(nil)
         }
         guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过实网验收；日志不包含密钥或已有会话。") }
+    }
+
+    /// In the project just read: the service edits note.txt and creates summary.txt with real
+    /// tool calls; the edit leaves a copy of the original beside the workspace's chats.
+    static func writeAndEdit(_ work: WorkspaceConversation, project: URL, backups: URL) async throws {
+        let before = work.store.tools.count
+        work.store.send("请用 edit_file 把 note.txt 里的“青柠”改成“柚子”，再用 write_file 新建 summary.txt，内容写一句话说明暗号已改。不要访问其他路径。")
+        try await wait(work.store)
+        let tools = work.store.tools.dropFirst(before)
+        let note = try String(contentsOf: project.appendingPathComponent("note.txt"), encoding: .utf8)
+        let copies = (try? FileManager.default.subpathsOfDirectory(atPath: backups.path))?.filter { $0.hasSuffix(AgentBackupStore.originalName) } ?? []
+        guard work.store.task?.status == .completed, tools.contains(where: { $0.tool == "edit_file" && $0.result?.contains(#""action":"edited""#) == true }),
+              tools.contains(where: { $0.tool == "write_file" && $0.result?.contains(#""action":"created""#) == true }),
+              note.contains("柚子"), !note.contains("青柠"), FileManager.default.fileExists(atPath: project.appendingPathComponent("summary.txt").path),
+              !copies.isEmpty else {
+            throw SettingsError("真实文件写入未按要求完成。")
+        }
+        print("PASS: \(tools.count) real write tool results, \(copies.count) copies kept")
     }
 
     /// A chat saved by a build that offered bash: one finished bash call and the reply after it.

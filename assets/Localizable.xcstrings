@@ -613,6 +613,16 @@
         }
       }
     },
+    "修改" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit"
+          }
+        }
+      }
+    },
     "停止回复" : {
       "localizations" : {
         "en" : {
@@ -733,6 +743,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mute microphone"
+          }
+        }
+      }
+    },
+    "写入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Write"
           }
         }
       }
@@ -1217,6 +1237,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The saved API key isn’t valid. Enter it again in Settings."
+          }
+        }
+      }
+    },
+    "已修改" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "edited"
           }
         }
       }
@@ -1711,6 +1741,26 @@
         }
       }
     },
+    "改前" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Before"
+          }
+        }
+      }
+    },
+    "改后" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "After"
+          }
+        }
+      }
+    },
     "文件" : {
       "localizations" : {
         "en" : {
@@ -1791,6 +1841,16 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "新对话"
+          }
+        }
+      }
+    },
+    "新建" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "created"
           }
         }
       }
@@ -2191,6 +2251,16 @@
         }
       }
     },
+    "未写入" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not written"
+          }
+        }
+      }
+    },
     "未导入" : {
       "localizations" : {
         "en" : {
@@ -2421,6 +2491,16 @@
         }
       }
     },
+    "正在修改文件 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editing file · %@"
+          }
+        }
+      }
+    },
     "正在停止" : {
       "localizations" : {
         "en" : {
@@ -2437,6 +2517,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Stopping…"
+          }
+        }
+      }
+    },
+    "正在写入文件 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Writing file · %@"
           }
         }
       }
@@ -3181,6 +3271,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Custom (Compatible API)"
+          }
+        }
+      }
+    },
+    "覆盖" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "overwritten"
           }
         }
       }

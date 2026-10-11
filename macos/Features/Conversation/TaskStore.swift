@@ -142,16 +142,24 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var entryID: UInt64
     var turnID: UInt64
     var afterMessageID: UUID?
-    /// For bash, the command; for other tools, what the card shows of the call.
+    /// For bash, the command; for other tools, what the card shows of the call: the path for the read and write tools.
     var command: String
     var result: String?
     var state = State.waiting
     var directory: String?
     /// The tool's name; nil for bash, the only tool before the native engine.
     var tool: String?
+    /// For edit_file, the passage the call replaces and its replacement, cut short when long.
+    var edit: Edit?
+    struct Edit: Codable, Equatable {
+        var old: String
+        var new: String
+    }
     /// Raw values are what archives store; what a card shows is `label`.
     enum State: String, Codable, Sendable {
         case waiting = "待执行", running = "执行中", finished = "执行结束", notExecuted = "未执行", unknown = "执行结果未知"
+        /// A write tool that ended without changing anything: refused, or failed before the change.
+        case notWritten = "未写入"
         var label: String {
             switch self {
             case .waiting: String(localized: "待执行")
@@ -159,14 +167,16 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             case .finished: String(localized: "执行结束")
             case .notExecuted: String(localized: "未执行")
             case .unknown: String(localized: "执行结果未知")
+            case .notWritten: String(localized: "未写入")
             }
         }
     }
-    private enum CodingKeys: String, CodingKey { case callID, entryID, turnID, afterMessageID, command, result, state, directory, tool }
+    private enum CodingKeys: String, CodingKey { case callID, entryID, turnID, afterMessageID, command, result, state, directory, tool, edit }
     init(callID: String, entryID: UInt64, turnID: UInt64, afterMessageID: UUID? = nil, command: String,
-         result: String? = nil, state: State = .waiting, directory: String? = nil, tool: String? = nil) {
+         result: String? = nil, state: State = .waiting, directory: String? = nil, tool: String? = nil, edit: Edit? = nil) {
         self.callID = callID; self.entryID = entryID; self.turnID = turnID; self.afterMessageID = afterMessageID
         self.command = command; self.result = result; self.state = state; self.directory = directory; self.tool = tool
+        self.edit = edit
     }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -178,10 +188,11 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         result = try values.decodeIfPresent(String.self, forKey: .result)
         directory = try values.decodeIfPresent(String.self, forKey: .directory)
         tool = try values.decodeIfPresent(String.self, forKey: .tool)
+        edit = try values.decodeIfPresent(Edit.self, forKey: .edit)
         // A state this build does not know is worked out again from the record, so the
         // conversation still loads.
         state = try values.decodeIfPresent(String.self, forKey: .state).flatMap(State.init(rawValue:))
-            ?? result.map(Self.state(forResult:)) ?? .unknown
+            ?? result.map { Self.state(forResult: $0, tool: tool) } ?? .unknown
     }
 }
 
@@ -219,6 +230,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     @ObservationIgnored private var storageFailure: String?
     @ObservationIgnored var sessionID = UUID()
     @ObservationIgnored var projectDirectory: (() -> AgentProjectRoot)?
+    /// This conversation's folder of copies of the files the Agent replaced; nil keeps none.
+    @ObservationIgnored var backupDirectory: URL?
     @ObservationIgnored var checkpoint: ((Snapshot) throws -> Void)?
     var agentLoadError: String?
     /// The Agent engine; nil only for a conversation that cannot send.
@@ -442,6 +455,8 @@ extension TaskStore: AgentHarnessHost {
         task?.summary = summary
     }
     func harnessProjectDirectory() -> AgentProjectRoot { projectDirectory?() ?? .noProject }
+    func harnessBackupDirectory() -> URL? { backupDirectory }
+    var harnessChatID: UUID { sessionID }
     func harnessSave() throws {
         guard !retired else { throw CancellationError() }
         do { try checkpoint?(snapshot) }

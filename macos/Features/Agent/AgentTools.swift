@@ -3,8 +3,8 @@ import Foundation
 import FoundationModels
 import Synchronization
 
-// Pure Swift tools for the native Agent. They read the conversation's project without starting
-// any process. Names, descriptions and limits follow mini-agent-rs `tools.rs` / `tdd.rs`.
+// Pure Swift tools for the native Agent. They read, and write text files in, the conversation's
+// project or this chat's Finder folder without starting any process. Names, descriptions and limits follow mini-agent-rs `tools.rs` / `tdd.rs`.
 // Arguments are decoded by the tool itself, so a schema mismatch becomes model-visible output
 // instead of aborting the turn: a typed `Arguments` would have to decode before the tool runs.
 // `AgentReadToolTests.argumentsAreDecodedByTheTool` covers the model-visible failure.
@@ -20,13 +20,22 @@ enum AgentProjectRoot: Sendable, Equatable {
     case superseded
 }
 
-/// Supplies the folders the read tools work in.
+/// Supplies the folders the read tools work in, and their place in their batch.
 protocol AgentProjectAccess: Sendable {
     /// The conversation's project. Never asks the person.
     func projectRoot() async throws -> AgentProjectRoot
-    /// This chat's Finder folder, once every finder_location call written before `call` in its
-    /// batch is done. A chat without one takes the folder Finder shows now. Never asks the person.
+    /// This chat's Finder folder. A chat without one takes the folder Finder shows now. Never asks
+    /// the person.
     func finderRoot(call: GenerationID?) async throws -> AgentFinderRoot
+    /// Returns once every finder_location and write call written before `call` in its batch is done.
+    func waitForTurn(call: GenerationID?) async throws
+    /// `call` is done, however it ended; the write calls after it may go.
+    func finished(call: GenerationID?) async
+}
+
+extension AgentProjectAccess {
+    func waitForTurn(call: GenerationID?) async throws {}
+    func finished(call: GenerationID?) async {}
 }
 
 /// The Finder side of a read.
@@ -38,7 +47,7 @@ enum AgentFinderRoot: Sendable, Equatable {
     case superseded
 }
 
-/// Which folder a read tool works in, for the model's messages.
+/// Which folder a tool works in, for the model's messages.
 enum AgentReadScope: Sendable {
     case project, finder
     var name: String {
@@ -47,6 +56,12 @@ enum AgentReadScope: Sendable {
         case .finder: "the Finder folder"
         }
     }
+}
+
+/// The folder a call works in, or the result that ends it without one.
+enum AgentRootResolution: Sendable {
+    case folder(String, AgentReadScope)
+    case result(String)
 }
 
 /// Set while user input waits to enter the running turn. A tool that has not started returns
@@ -78,8 +93,15 @@ enum AgentToolResult {
         value["folder"] = folder
         return object(value)
     }
-    static let noProject = "This conversation has no project folder, so nothing was read. Only the person can give a conversation a project, and only before its first message: ask them to start a new chat with the folder as its project (drag the folder onto the pet, choose New Chat on the project in the sidebar, or pick the folder with the project button of a new, empty chat) and ask there."
-    static let projectMissing = "The conversation's project folder can no longer be found; it may have been moved or deleted, so nothing was read. Ask the person to locate it with Relocate Folder… on the project in the sidebar."
+    static let noProject = noProject(nothing: "read")
+    static let projectMissing = projectMissing(nothing: "read")
+    /// `nothing` says what did not happen: "read" or "written".
+    static func noProject(nothing: String) -> String {
+        "This conversation has no project folder, so nothing was \(nothing). Only the person can give a conversation a project, and only before its first message: ask them to start a new chat with the folder as its project (drag the folder onto the pet, choose New Chat on the project in the sidebar, or pick the folder with the project button of a new, empty chat) and ask there."
+    }
+    static func projectMissing(nothing: String) -> String {
+        "The conversation's project folder can no longer be found; it may have been moved or deleted, so nothing was \(nothing). Ask the person to locate it with Relocate Folder… on the project in the sidebar."
+    }
     static func object(_ value: [String: Any]) -> String {
         (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]))
             .map { String(decoding: $0, as: UTF8.self) } ?? status("failed", "unencodable result")
@@ -90,39 +112,66 @@ enum AgentToolResult {
     }
 }
 
-/// Shared by the read-only tools: supersession and the folder to read. `root` is the model's
-/// choice: "project", "finder" for this chat's Finder folder, or nil for the project when the chat
-/// has one, else the Finder folder. No read asks the person for a folder.
+/// Shared by the read tools: their place in the batch, supersession and the folder to read.
+/// `root` is the model's choice: "project", "finder" for this chat's Finder folder, or nil for the
+/// project when the chat has one, else the Finder folder. No tool asks the person for a folder.
 struct AgentReadContext: Sendable {
     let access: any AgentProjectAccess
     let steering: AgentSteeringSignal
 
+    /// Runs a call in its place in its batch: after the finder_location and write calls written
+    /// before it. A call whose arguments the tool cannot read takes its place too, so a write after
+    /// it is not held up.
+    func ordered(call: GenerationID?, _ body: () async throws -> String) async throws -> String {
+        do {
+            try await access.waitForTurn(call: call)
+            let result = try await body()
+            await access.finished(call: call)
+            return result
+        } catch {
+            await access.finished(call: call)
+            throw error
+        }
+    }
+
     func run(root raw: String?, call: GenerationID?, _ body: @Sendable (String, AgentReadScope) -> String) async throws -> String {
-        if steering.isPending { return AgentToolResult.superseded }
+        switch try await Self.resolve(root: raw, call: call, access: access, steering: steering, nothing: "read") {
+        case .result(let result): return result
+        case .folder(let root, .project): return body(root, .project)
+        case .folder(let folder, .finder):
+            return AgentToolResult.naming(folder: FileManager.default.displayName(atPath: folder), in: body(folder, .finder))
+        }
+    }
+
+    /// The folder `root` names for this call, as the read and write tools share it. `nothing` says
+    /// what a call that ends here did not do: "read" or "written".
+    static func resolve(root raw: String?, call: GenerationID?, access: any AgentProjectAccess,
+                        steering: AgentSteeringSignal, nothing: String) async throws -> AgentRootResolution {
+        if steering.isPending { return .result(AgentToolResult.superseded) }
         let choice: AgentReadScope?
         switch raw {
         case nil: choice = nil
         case "finder": choice = .finder
         case "project": choice = .project
-        case let other?: return AgentToolResult.failed(#"root must be "finder" or "project"; received: \#(other)"#)
+        case let other?: return .result(AgentToolResult.failed(#"root must be "finder" or "project"; received: \#(other)"#))
         }
         if choice != .finder {
             switch try await access.projectRoot() {
             case .path(let root):
                 try Task.checkCancellation()
-                return body(root, .project)
-            case .missing: return AgentToolResult.failed(AgentToolResult.projectMissing)
-            case .superseded: return AgentToolResult.superseded
-            // Without a project, a read that names no root reads the chat's Finder folder.
-            case .noProject: if choice == .project { return AgentToolResult.failed(AgentToolResult.noProject) }
+                return .folder(root, .project)
+            case .missing: return .result(AgentToolResult.failed(AgentToolResult.projectMissing(nothing: nothing)))
+            case .superseded: return .result(AgentToolResult.superseded)
+            // Without a project, a call that names no root works in the chat's Finder folder.
+            case .noProject: if choice == .project { return .result(AgentToolResult.failed(AgentToolResult.noProject(nothing: nothing))) }
             }
         }
         switch try await access.finderRoot(call: call) {
-        case .superseded: return AgentToolResult.superseded
-        case .failed(let result): return result
+        case .superseded: return .result(AgentToolResult.superseded)
+        case .failed(let result): return .result(result)
         case .folder(let folder):
             try Task.checkCancellation()
-            return AgentToolResult.naming(folder: FileManager.default.displayName(atPath: folder), in: body(folder, .finder))
+            return .folder(folder, .finder)
         }
     }
 }
@@ -169,10 +218,12 @@ struct ListFilesTool: Tool {
     var parameters: GenerationSchema { Input.generationSchema }
 
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
-        guard let input = try? Input(arguments) else {
-            return AgentToolResult.failed("invalid arguments for list_files; expected {\"path\": string, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)")
+        try await context.ordered(call: arguments.id) {
+            guard let input = try? Input(arguments) else {
+                return AgentToolResult.failed("invalid arguments for list_files; expected {\"path\": string, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)")
+            }
+            return try await context.run(root: input.root, call: arguments.id) { root, scope in Self.list(root: root, path: input.path, scope: scope) }
         }
-        return try await context.run(root: input.root, call: arguments.id) { root, scope in Self.list(root: root, path: input.path, scope: scope) }
     }
 
     static func list(root: String, path raw: String, scope: AgentReadScope = .project) -> String {
@@ -223,11 +274,13 @@ struct ReadFileTool: Tool {
     var parameters: GenerationSchema { Input.generationSchema }
 
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
-        guard let input = try? Input(arguments) else {
-            return AgentToolResult.failed("invalid arguments for read_file; expected {\"path\": string, \"start_line\"?: integer, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)")
-        }
-        return try await context.run(root: input.root, call: arguments.id) { root, scope in
-            Self.read(root: root, path: input.path, startLine: input.start_line ?? 1, scope: scope)
+        try await context.ordered(call: arguments.id) {
+            guard let input = try? Input(arguments) else {
+                return AgentToolResult.failed("invalid arguments for read_file; expected {\"path\": string, \"start_line\"?: integer, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)")
+            }
+            return try await context.run(root: input.root, call: arguments.id) { root, scope in
+                Self.read(root: root, path: input.path, startLine: input.start_line ?? 1, scope: scope)
+            }
         }
     }
 
@@ -293,5 +346,469 @@ struct FinderLocationTool: Tool {
     // No arguments to read: whatever the model sent, the call asks Finder.
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         try await access.locate(call: arguments.id)?.toolResult ?? AgentToolResult.superseded
+    }
+}
+
+// MARK: Write tools
+
+/// What a write call asks for. The harness runs it in its turn: after every call written before it
+/// in its batch, with the call saved before anything on disk changes.
+struct AgentWriteRequest: Sendable {
+    enum Change: Sendable {
+        /// write_file: the whole new content.
+        case replace(String)
+        /// edit_file: one exact passage and what replaces it.
+        case edit(old: String, new: String)
+    }
+    var path: String
+    var root: String?
+    var change: Change
+}
+
+/// Arguments a write tool could not read; the call still takes its turn, with this as its result.
+struct AgentInvalidArguments: Error {
+    let result: String
+}
+
+/// Runs write calls for the conversation.
+protocol AgentWriteAccess: Sendable {
+    /// `call` links the call to the one the harness saw dispatched, as for finder_location.
+    func write(call: GenerationID?, _ request: Result<AgentWriteRequest, AgentInvalidArguments>) async throws -> String
+}
+
+struct WriteFileTool: Tool {
+    let name = "write_file"
+    let description = "Create a UTF-8 text file in the workspace, or replace one in full"
+    let access: any AgentWriteAccess
+
+    @Generable
+    struct Input {
+        @Guide(description: "File path relative to the root; missing folders on the way are created")
+        var path: String
+        @Guide(description: "The file's whole new content")
+        var content: String
+        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project; omit for the project when the chat has one, else the Finder folder"#)
+        var root: String?
+    }
+
+    var parameters: GenerationSchema { Input.generationSchema }
+
+    @concurrent func call(arguments: GeneratedContent) async throws -> String {
+        guard let input = try? Input(arguments) else {
+            return try await access.write(call: arguments.id, .failure(.init(result: AgentToolResult.failed(
+                "invalid arguments for write_file; expected {\"path\": string, \"content\": string, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)"))))
+        }
+        return try await access.write(call: arguments.id, .success(.init(path: input.path, root: input.root, change: .replace(input.content))))
+    }
+}
+
+struct EditFileTool: Tool {
+    let name = "edit_file"
+    let description = "Replace one exact passage of a UTF-8 text file in the workspace"
+    let access: any AgentWriteAccess
+
+    @Generable
+    struct Input {
+        @Guide(description: "File path relative to the root")
+        var path: String
+        @Guide(description: "The passage to replace, exactly as it appears in the file; it must appear exactly once")
+        var old_text: String
+        @Guide(description: "The text that replaces it")
+        var new_text: String
+        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project; omit for the project when the chat has one, else the Finder folder"#)
+        var root: String?
+    }
+
+    var parameters: GenerationSchema { Input.generationSchema }
+
+    @concurrent func call(arguments: GeneratedContent) async throws -> String {
+        guard let input = try? Input(arguments) else {
+            return try await access.write(call: arguments.id, .failure(.init(result: AgentToolResult.failed(
+                "invalid arguments for edit_file; expected {\"path\": string, \"old_text\": string, \"new_text\": string, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)"))))
+        }
+        return try await access.write(call: arguments.id, .success(.init(path: input.path, root: input.root,
+                                                                        change: .edit(old: input.old_text, new: input.new_text))))
+    }
+}
+
+/// Where the write tools may not write. Echo runs no code, so a write must not become a way to run
+/// code through the person's hands: folders whose files the system or the person's tools load on
+/// their own can only be read, and files that run when opened are never written.
+struct AgentWritePolicy: Sendable {
+    /// The person's home folder, canonical.
+    let home: String
+
+    init(home: String = ProjectPath.canonical(NSHomeDirectory()) ?? NSHomeDirectory()) {
+        self.home = home
+    }
+
+    /// Why nothing may be written in `folder`, a canonical path, or nil when writing is allowed.
+    func refusal(folder: String, scope: AgentReadScope) -> String? {
+        let parts = folder.split(separator: "/")
+        let name = FileManager.default.displayName(atPath: folder)
+        let subject = scope == .finder ? "This chat's Finder folder, \(name)," : "The conversation's project folder, \(name),"
+        let ask = scope == .finder
+            ? "Ask the person to open a more specific folder in Finder, then call finder_location."
+            : "Ask the person for a more specific folder to work in."
+        if parts.contains(where: Self.isApplication) {
+            return "\(subject) is inside an application bundle (.app), so nothing was written. \(ask)"
+        }
+        let library = home + "/Library"
+        let cloud = [library + "/Mobile Documents/", library + "/CloudStorage/"]
+        let readOnly = folder == home || home.hasPrefix(folder == "/" ? "/" : folder + "/")
+            || ((folder == library || folder.hasPrefix(library + "/")) && !cloud.contains { folder.hasPrefix($0) })
+            || parts.contains { $0.hasPrefix(".") }
+        guard readOnly else { return nil }
+        return "\(subject) can only be read: nothing is written in the home folder itself, the folders above it, hidden folders, or ~/Library outside iCloud Drive and cloud storage folders. Nothing was written. \(ask)"
+    }
+
+    /// Why nothing may be written at `parts`, a normalized relative path, or nil.
+    static func refusal(path parts: [Substring], raw: String) -> String? {
+        if parts.isEmpty { return "path must name a file: \(raw)" }
+        if parts.contains(where: { $0.hasPrefix(".") }) { return "hidden files and folders are not written: \(raw)" }
+        if parts.contains(where: isApplication) { return "nothing inside an application bundle (.app) is written: \(raw)" }
+        if (parts.last.map { ($0 as NSString).pathExtension.lowercased() }) == "terminal" {
+            return "Terminal settings files (.terminal) are not written, since opening one runs the commands it holds: \(raw)"
+        }
+        return nil
+    }
+
+    private static func isApplication(_ part: Substring) -> Bool {
+        (part as NSString).pathExtension.lowercased() == "app"
+    }
+}
+
+/// The file a write replaces, as it was before: its bytes and what describes it.
+struct AgentOriginalFile: Sendable {
+    let data: Data
+    let mode: mode_t
+    /// Where it is, absolute; for the backup's record only, never for the model.
+    let path: String
+    /// Every extended attribute it had, by name: Finder tags, Finder info, where it came from, and so on.
+    let attributes: [String: Data]
+    let created: timespec
+    /// What identifies it on disk, to tell whether it is still the same file when the write goes in.
+    let device: dev_t
+    let inode: ino_t
+    let modified: timespec
+}
+
+/// Points in a write where tests hold it. Each runs on the thread doing the work, never the main actor.
+struct AgentWriteHooks: Sendable {
+    /// Before the original is read: reading can wait for a file to download, as in iCloud Drive.
+    var beforeReading: @Sendable () -> Void = {}
+    /// After the copy is kept, before anything in the folder changes.
+    var beforeReplacing: @Sendable () -> Void = {}
+}
+
+/// write_file and edit_file on disk, in two steps that each run off the main actor. `prepare`
+/// checks everything and reads the original, changing nothing; `commit` keeps a copy of the
+/// original, then writes the new content to a temporary file beside the target that replaces it,
+/// so an interrupted write leaves the old content or the new, never part of either. Every component
+/// is opened with `O_NOFOLLOW` from the root's descriptor, in both steps.
+enum AgentFileWriter {
+    static let maxFileBytes = ReadFileTool.maxFileBytes
+    /// Extended attributes a replaced file does not pass on. TextEncoding describes the old bytes,
+    /// which are gone; provenance and macl are the system's own record of which app wrote the file and
+    /// which apps may open it, so the new file gets the system's, not copies.
+    static let attributesNotCarried: Set<String> = ["com.apple.TextEncoding", "com.apple.provenance", "com.apple.macl"]
+
+    /// A write checked and read, with nothing changed yet.
+    struct Plan: Sendable {
+        let root: String
+        let path: String
+        let raw: String
+        let scope: AgentReadScope
+        /// The folders on the way; those from `firstMissing` on do not exist yet.
+        let folders: [String]
+        let firstMissing: Int
+        let name: String
+        let original: AgentOriginalFile?
+        let content: Data
+        let action: String
+    }
+
+    /// Checks, reads, and works out the new content. A failure is the call's result.
+    static func prepare(root: String, path raw: String, change: AgentWriteRequest.Change, scope: AgentReadScope = .project,
+                        hooks: AgentWriteHooks = AgentWriteHooks()) -> Result<Plan, AgentInvalidArguments> {
+        func failed(_ detail: String) -> Result<Plan, AgentInvalidArguments> { .failure(.init(result: AgentToolResult.failed(detail))) }
+        func failure(_ code: Int32) -> Result<Plan, AgentInvalidArguments> { failed(AgentToolPath.message(.system(code), path: raw, scope: scope)) }
+        guard let path = AgentToolPath.normalize(raw) else { return failed(AgentToolPath.message(.outsideProject, path: raw, scope: scope)) }
+        let parts = path.split(separator: "/")
+        if let refusal = AgentWritePolicy.refusal(path: parts, raw: raw) { return failed(refusal) }
+        let folders = parts.dropLast().map(String.init), name = String(parts.last!)
+
+        // The folders that exist, opened one by one; the first missing one and those after it are created on commit.
+        let (opened, reached) = openFolders(root: root, folders)
+        guard let fd = opened.fd else { return failure(opened.code) }
+        defer { close(fd) }
+
+        var original: AgentOriginalFile?
+        if reached == folders.count {
+            var info = stat()
+            if fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) == 0 {
+                guard info.st_mode & S_IFMT != S_IFLNK else { return failure(ELOOP) }
+                guard info.st_mode & S_IFMT == S_IFREG else { return failed("not a regular file: \(raw)") }
+                guard info.st_mode & 0o111 == 0 else {
+                    return failed("executable files are not written, since what is written would run as a program: \(raw)")
+                }
+                guard info.st_size <= maxFileBytes else { return failed("file exceeds 4 MiB: \(raw)") }
+                hooks.beforeReading()
+                switch read(fd, name, path: root + "/" + path) {
+                case .success(let file): original = file
+                case .failure(let error): return failure(error.code)
+                }
+            } else if errno != ENOENT {
+                return failure(errno)
+            }
+        }
+
+        let content: Data
+        switch change {
+        case .replace(let text):
+            content = Data(text.utf8)
+        case .edit(let old, let new):
+            guard let original else { return failure(ENOENT) }
+            switch edited(original.data, old: old, new: new, raw: raw) {
+            case .success(let data): content = data
+            case .failure(let failure): return failed(failure.detail)
+            }
+        }
+        guard content.count <= maxFileBytes else { return failed("the file would exceed 4 MiB: \(raw)") }
+        let action = switch change {
+        case .edit: "edited"
+        case .replace: original == nil ? "created" : "overwritten"
+        }
+        return .success(Plan(root: root, path: path, raw: raw, scope: scope, folders: folders, firstMissing: reached, name: name,
+                             original: original, content: content, action: action))
+    }
+
+    /// Keeps a copy of the original, then puts the new content in place, carrying over the
+    /// original's permission bits, extended attributes and creation date. The folders and the
+    /// target are checked again: a target that changed since it was read is left as it is.
+    static func commit(_ plan: Plan, hooks: AgentWriteHooks = AgentWriteHooks(),
+                       backup: (AgentOriginalFile) throws -> Void) -> String {
+        let raw = plan.raw
+        func failure(_ code: Int32) -> String { AgentToolResult.failed(AgentToolPath.message(.system(code), path: raw, scope: plan.scope)) }
+        let (opened, reached) = openFolders(root: plan.root, plan.folders)
+        guard var fd = opened.fd else { return failure(opened.code) }
+        defer { close(fd) }
+        let changed = AgentToolResult.failed("\(raw) changed while it was being written, so nothing was written; read it again")
+        var info = stat()
+        let found = reached == plan.folders.count && fstatat(fd, plan.name, &info, AT_SYMLINK_NOFOLLOW) == 0
+        if let original = plan.original {
+            guard found, info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o111 == 0, info.st_dev == original.device,
+                  info.st_ino == original.inode, info.st_size == original.data.count,
+                  info.st_mtimespec.tv_sec == original.modified.tv_sec, info.st_mtimespec.tv_nsec == original.modified.tv_nsec else { return changed }
+            do { try backup(original) }
+            catch { return AgentToolResult.failed("could not keep a copy of the original, so nothing was written: \(raw) (\(error.localizedDescription))") }
+        } else if found || reached < plan.firstMissing {
+            return changed
+        }
+        hooks.beforeReplacing()
+        for folder in plan.folders[reached...] {
+            if mkdirat(fd, folder, 0o755) != 0, errno != EEXIST { return failure(errno) }
+            let next = openat(fd, folder, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard next >= 0 else { return failure(errno) }
+            close(fd); fd = next
+        }
+        switch replace(in: fd, name: plan.name, with: plan.content, like: plan.original) {
+        case .none: break
+        case .system(let code): return failure(code)
+        case .attribute(let name, let code):
+            return AgentToolResult.failed("could not carry the file's attribute \(name) over, so nothing was written: \(raw) (\(String(cString: strerror(code))))")
+        }
+        return AgentToolResult.object(["action": plan.action, "bytes": plan.content.count, "path": plan.path])
+    }
+
+    /// Both steps at once, for callers already off the main actor. `beforeChange` runs between
+    /// them; what it throws ends the call with nothing done.
+    static func write(root: String, path raw: String, change: AgentWriteRequest.Change, scope: AgentReadScope = .project,
+                      hooks: AgentWriteHooks = AgentWriteHooks(), beforeChange: () throws -> Void,
+                      backup: (AgentOriginalFile) throws -> Void) throws -> String {
+        switch prepare(root: root, path: raw, change: change, scope: scope, hooks: hooks) {
+        case .failure(let failure): return failure.result
+        case .success(let plan):
+            try beforeChange()
+            return commit(plan, hooks: hooks, backup: backup)
+        }
+    }
+
+    /// The deepest of `folders` that opens under `root`, and how many opened. A failure other than a
+    /// missing folder has no descriptor.
+    private static func openFolders(root: String, _ folders: [String]) -> (opened: (fd: Int32?, code: Int32), reached: Int) {
+        var fd = open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { return ((nil, errno), 0) }
+        for (index, folder) in folders.enumerated() {
+            let next = openat(fd, folder, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            if next < 0 {
+                let code = errno
+                guard code == ENOENT else { close(fd); return ((nil, code), index) }
+                return ((fd, 0), index)
+            }
+            close(fd); fd = next
+        }
+        return ((fd, 0), folders.count)
+    }
+
+    struct EditFailure: Error { let detail: String }
+
+    /// The file with `old`'s one occurrence replaced by `new`. Bytes are compared as they are, so
+    /// text that only looks the same, such as another Unicode normalization, does not match.
+    static func edited(_ data: Data, old: String, new: String, raw: String) -> Result<Data, EditFailure> {
+        guard String(validating: data, as: UTF8.self) != nil else {
+            return .failure(.init(detail: "not a UTF-8 text file, so it was not changed: \(raw)"))
+        }
+        guard !old.isEmpty else { return .failure(.init(detail: "old_text must not be empty")) }
+        let needle = Data(old.utf8)
+        var matches: [Range<Data.Index>] = []
+        var start = data.startIndex
+        while let found = data.range(of: needle, in: start..<data.endIndex) {
+            matches.append(found)
+            start = data.index(after: found.lowerBound)
+        }
+        switch matches.count {
+        case 0:
+            return .failure(.init(detail: "old_text was not found in \(raw), so nothing was changed; it must match the file exactly, including spaces and line breaks"))
+        case 1:
+            var result = data
+            result.replaceSubrange(matches[0], with: Data(new.utf8))
+            return .success(result)
+        default:
+            return .failure(.init(detail: "old_text appears \(matches.count) times in \(raw), so nothing was changed; it must appear exactly once, so include more of the text around it"))
+        }
+    }
+
+    private struct Errno: Error { let code: Int32 }
+
+    /// The file and what describes it. The file is checked again once open, since it may have been
+    /// replaced after it was looked at. Reading a file that is not downloaded yet waits for it.
+    private static func read(_ directory: Int32, _ name: String, path: String) -> Result<AgentOriginalFile, Errno> {
+        let file = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard file >= 0 else { return .failure(Errno(code: errno)) }
+        defer { close(file) }
+        var info = stat()
+        guard fstat(file, &info) == 0 else { return .failure(Errno(code: errno)) }
+        guard info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o111 == 0, info.st_size <= maxFileBytes else { return .failure(Errno(code: EPERM)) }
+        var data = Data(count: Int(info.st_size))
+        var total = 0
+        while total < data.count {
+            let count = data.withUnsafeMutableBytes { Darwin.read(file, $0.baseAddress!.advanced(by: total), $0.count - total) }
+            if count < 0, errno == EINTR { continue }
+            guard count >= 0 else { return .failure(Errno(code: errno)) }
+            guard count > 0 else { break }
+            total += count
+        }
+        guard let attributes = attributes(of: file) else { return .failure(Errno(code: errno)) }
+        return .success(AgentOriginalFile(data: data.prefix(total), mode: info.st_mode & 0o777, path: path, attributes: attributes,
+                                          created: info.st_birthtimespec, device: info.st_dev, inode: info.st_ino, modified: info.st_mtimespec))
+    }
+
+    /// Every extended attribute of an open file, or nil with errno set.
+    private static func attributes(of file: Int32) -> [String: Data]? {
+        let size = flistxattr(file, nil, 0, 0)
+        guard size >= 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: size)
+        guard flistxattr(file, &buffer, size, 0) == size else { return nil }
+        var result: [String: Data] = [:]
+        for raw in buffer.split(separator: 0) {
+            let name = String(decoding: raw.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            let length = fgetxattr(file, name, nil, 0, 0, 0)
+            guard length >= 0 else { return nil }
+            var value = Data(count: length)
+            let read = value.withUnsafeMutableBytes { fgetxattr(file, name, $0.baseAddress, length, 0, 0) }
+            guard read == length else { return nil }
+            result[name] = value
+        }
+        return result
+    }
+
+    private enum ReplaceFailure { case none, system(Int32), attribute(String, Int32) }
+
+    /// Writes `content` to a temporary file in `directory`, gives it what describes `original`, then
+    /// renames it over `name`. A new file gets 0644 less the umask, never an executable bit.
+    private static func replace(in directory: Int32, name: String, with content: Data, like original: AgentOriginalFile?) -> ReplaceFailure {
+        let temporary = ".echo-write-\(UUID().uuidString)"
+        let file = openat(directory, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
+        guard file >= 0 else { return .system(errno) }
+        func fail(_ failure: ReplaceFailure) -> ReplaceFailure { close(file); unlinkat(directory, temporary, 0); return failure }
+        var written = 0
+        while written < content.count {
+            let count = content.withUnsafeBytes { Darwin.write(file, $0.baseAddress!.advanced(by: written), content.count - written) }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { return fail(.system(count < 0 ? errno : EIO)) }
+            written += count
+        }
+        if let original {
+            guard fchmod(file, original.mode) == 0 else { return fail(.system(errno)) }
+            for (attribute, value) in original.attributes.sorted(by: { $0.key < $1.key }) where !attributesNotCarried.contains(attribute) {
+                let set = value.withUnsafeBytes { fsetxattr(file, attribute, $0.baseAddress, value.count, 0, 0) }
+                guard set == 0 else { return fail(.attribute(attribute, errno)) }
+            }
+            var list = attrlist()
+            list.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
+            list.commonattr = attrgroup_t(ATTR_CMN_CRTIME)
+            var created = original.created
+            guard fsetattrlist(file, &list, &created, MemoryLayout<timespec>.size, 0) == 0 else { return fail(.system(errno)) }
+        }
+        guard fsync(file) == 0 else { return fail(.system(errno)) }
+        close(file)
+        // A new file must not replace one that appeared meanwhile.
+        let renamed = original == nil
+            ? renameatx_np(directory, temporary, directory, name, UInt32(RENAME_EXCL))
+            : renameat(directory, temporary, directory, name)
+        guard renamed == 0 else { let code = errno; unlinkat(directory, temporary, 0); return .system(code) }
+        return .none
+    }
+}
+
+/// Copies of the files the write tools replace, one folder per copy in this chat's folder: the
+/// original's bytes and a record of where it came from and what described it, written last, so a
+/// folder with a record holds a whole copy. A later build restores files from these.
+struct AgentBackupStore {
+    struct Record: Codable, Equatable {
+        /// Where the file was, absolute.
+        var path: String
+        /// The project or Finder folder the call wrote in, absolute, and which of the two it was.
+        var root: String
+        var rootKind: String
+        /// The path the call named, relative to `root`.
+        var relativePath: String
+        var chat: UUID
+        /// The call's card: `AgentToolRecord.id`, which is "turn:entry:call ID".
+        var toolRecord: String
+        var tool: String
+        var savedAt: Date
+        /// The original's permission bits and size.
+        var mode: Int
+        var size: Int
+        /// The original's creation date and extended attributes, all of them, as it had them.
+        var created: Date
+        var attributes: [String: Data]
+    }
+    static let recordName = "backup.json"
+    static let originalName = "original"
+
+    /// This chat's folder of copies.
+    let directory: URL
+
+    /// Keeps a copy of `original`. Returns the copy's folder.
+    @discardableResult func save(_ original: AgentOriginalFile, record: Record) throws -> URL {
+        let fm = FileManager.default
+        let stamp = Int(record.savedAt.timeIntervalSince1970 * 1000)
+        let folder = directory.appendingPathComponent("\(stamp)-\(UUID().uuidString)")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        do {
+            guard fm.createFile(atPath: folder.appendingPathComponent(Self.originalName).path, contents: original.data,
+                                attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            encoder.dateEncodingStrategy = .iso8601
+            try encoder.encode(record).write(to: folder.appendingPathComponent(Self.recordName), options: .atomic)
+        } catch {
+            try? fm.removeItem(at: folder)
+            throw error
+        }
+        return folder
     }
 }

@@ -861,14 +861,26 @@ private extension View {
 
 struct AgentToolView: View {
     let tool: AgentToolRecord
+    @State private var isExpanded: Bool
+    init(tool: AgentToolRecord, expanded: Bool = false) {
+        self.tool = tool
+        _isExpanded = State(initialValue: expanded)
+    }
     var body: some View {
-        DisclosureGroup {
+        DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 8) {
                 if !tool.command.isEmpty {
                     Text(tool.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 if let directory = tool.directory { Text(directory).font(.caption).foregroundStyle(.secondary) }
-                if let result = tool.result {
+                if let edit = tool.edit {
+                    Text("改前").font(.caption).foregroundStyle(.secondary)
+                    Text(edit.old).font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
+                    Text("改后").font(.caption).foregroundStyle(.secondary)
+                    Text(edit.new).font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
+                }
+                // An unknown result is the model's note to itself; the person gets the card's own.
+                if let result = tool.result, tool.state != .unknown {
                     if let data = result.data(using: .utf8),
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                         Text(resultSummary(json)).font(.caption).foregroundStyle(.secondary)
@@ -889,7 +901,7 @@ struct AgentToolView: View {
                             Text(detail).font(.caption).textSelection(.enabled)
                         }
                     } else { Text(result).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
-                } else if tool.state == .unknown {
+                } else if tool.state == .unknown, tool.mayHaveChanged {
                     Text("中断前可能已产生修改；继续处理时需先检查现场。").font(.caption)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
@@ -914,6 +926,8 @@ struct AgentToolView: View {
         case nil: ""
         case "list_files": String(localized: "列出") + " "
         case "read_file": String(localized: "读取") + " "
+        case "write_file": String(localized: "写入") + " "
+        case "edit_file": String(localized: "修改") + " "
         case let name?: "\(name) "
         }
     }
@@ -923,11 +937,22 @@ struct AgentToolView: View {
         case "list_files": "folder"
         case "read_file": "doc.text"
         case "finder_location": "macwindow"
+        case "write_file": "square.and.pencil"
+        case "edit_file": "pencil.line"
         default: "wrench.and.screwdriver"
         }
     }
     private func resultSummary(_ json: [String: Any]) -> String {
         var parts = [tool.state.label]
+        switch json["action"] as? String {
+        case "created": parts.append(String(localized: "新建"))
+        case "overwritten": parts.append(String(localized: "覆盖"))
+        case "edited": parts.append(String(localized: "已修改"))
+        default: break
+        }
+        if json["action"] != nil, let bytes = json["bytes"] as? Int {
+            parts.append(Int64(bytes).formatted(.byteCount(style: .file)))
+        }
         if json["truncated"] as? Bool == true { parts.append(String(localized: "已截断")) }
         if let code = json["exit_code"] as? Int { parts.append(String(localized: "退出码 \(code)")) }
         if json["timed_out"] as? Bool == true { parts.append(String(localized: "超时")) }
@@ -1216,6 +1241,51 @@ struct NativeComposer: NSViewRepresentable {
             editor.breakUndoCoalescing()
         }
     }
+}
+
+#Preview("工具卡片 · 写入") {
+    let edit = AgentToolRecord.Edit(old: "- 周三下午三点开会", new: "- 周四上午十点开会\n- 会前把议程发给大家")
+    let records: [AgentToolRecord] = [
+        .init(callID: "1", entryID: 1, turnID: 1, command: "drafts/plan.md",
+              result: #"{"action":"created","bytes":412,"path":"drafts/plan.md"}"#, state: .finished, tool: "write_file"),
+        .init(callID: "2", entryID: 1, turnID: 1, command: "notes.txt",
+              result: #"{"action":"overwritten","bytes":2048,"folder":"资料","path":"notes.txt"}"#, state: .finished,
+              directory: "/Users/someone/Documents/资料", tool: "write_file"),
+        .init(callID: "3", entryID: 1, turnID: 1, command: "notes.txt",
+              result: #"{"action":"edited","bytes":2051,"path":"notes.txt"}"#, state: .finished, tool: "edit_file", edit: edit),
+        .init(callID: "4", entryID: 1, turnID: 1, command: ".zshrc",
+              result: AgentToolResult.failed("hidden files and folders are not written: .zshrc"), state: .notWritten, tool: "write_file"),
+        .init(callID: "5", entryID: 1, turnID: 1, command: "notes.txt",
+              result: AgentToolResult.failed("old_text was not found in notes.txt, so nothing was changed; it must match the file exactly, including spaces and line breaks"),
+              state: .notWritten, tool: "edit_file", edit: edit),
+        .init(callID: "6", entryID: 1, turnID: 1, command: "notes.txt",
+              result: AgentToolResult.unknownAfterInterruption, state: .unknown, tool: "edit_file", edit: edit),
+        .init(callID: "7", entryID: 1, turnID: 1, command: "missing.txt",
+              result: AgentToolResult.failed("no such file or directory: missing.txt"), state: .finished, tool: "read_file"),
+    ]
+    ScrollView {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(records) { AgentToolView(tool: $0, expanded: true) }
+        }.padding()
+    }.frame(width: 520, height: 1120)
+}
+
+#Preview("工具卡片 · 写入 · 折叠") {
+    let records: [AgentToolRecord] = [
+        .init(callID: "1", entryID: 1, turnID: 1, command: "drafts/plan.md",
+              result: #"{"action":"created","bytes":412,"path":"drafts/plan.md"}"#, state: .finished, tool: "write_file"),
+        .init(callID: "2", entryID: 1, turnID: 1, command: "notes.txt",
+              result: #"{"action":"edited","bytes":2051,"path":"notes.txt"}"#, state: .finished, tool: "edit_file"),
+        .init(callID: "3", entryID: 1, turnID: 1, command: ".zshrc",
+              result: AgentToolResult.failed("hidden files and folders are not written: .zshrc"), state: .notWritten, tool: "write_file"),
+        .init(callID: "4", entryID: 1, turnID: 1, command: "notes.txt",
+              result: AgentToolResult.failed("old_text was not found in notes.txt"), state: .notWritten, tool: "edit_file"),
+        .init(callID: "5", entryID: 1, turnID: 1, command: "missing.txt",
+              result: AgentToolResult.failed("no such file or directory: missing.txt"), state: .finished, tool: "read_file"),
+    ]
+    VStack(alignment: .leading, spacing: 8) {
+        ForEach(records) { AgentToolView(tool: $0) }
+    }.padding().frame(width: 520)
 }
 
 #Preview("聊天") {

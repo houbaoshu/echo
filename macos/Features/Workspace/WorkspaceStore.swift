@@ -90,6 +90,13 @@ struct WorkspaceSnapshot: Codable {
         do { try FileManager.default.removeItem(at: sessionURL(id)) }
         catch CocoaError.fileNoSuchFile {}
     }
+    /// Copies of the files each conversation's Agent replaced, one folder per conversation.
+    var backupsDirectory: URL { url.deletingLastPathComponent().appendingPathComponent("agent-backups") }
+    func backupDirectory(_ id: UUID) -> URL { backupsDirectory.appendingPathComponent(id.uuidString) }
+    func removeBackups(_ id: UUID) throws {
+        do { try FileManager.default.removeItem(at: backupDirectory(id)) }
+        catch CocoaError.fileNoSuchFile {}
+    }
     /// Deletes sidecars no manifest conversation references, such as those left by deletions before
     /// sessions were removed. Only call after the manifest itself loaded cleanly.
     func pruneSessions(keeping ids: Set<UUID>) {
@@ -564,6 +571,7 @@ struct WorkspaceSnapshot: Codable {
             guard project.isAvailable else { return .missing }
             return .path(URL(fileURLWithPath: project.path).resolvingSymlinksInPath().standardizedFileURL.path)
         }
+        conversation.store.backupDirectory = persistence?.backupDirectory(id)
         conversation.store.checkpoint = { [weak self] state in
             guard let self else { throw CocoaError(.fileWriteUnknown) }
             if self.saveBlocked { throw CocoaError(.fileWriteNoPermission) }
@@ -678,10 +686,11 @@ struct WorkspaceSnapshot: Codable {
         removePetActivity(id)
         if selectedID == id { selectedID = (conversations + drafts).max(by: { $0.lastUsed < $1.lastUsed })?.id }
         if conversations.isEmpty && drafts.isEmpty { _ = newConversation() }
-        // Remove the history sidecar only once neither the manifest nor its backup references it.
+        // Remove the history sidecar, and the copies of files its Agent replaced, only once neither
+        // the manifest nor its backup references it.
         guard flush(), let persistence else { return }
         persistedSessionIDs.remove(id)
-        do { try persistence.refreshBackup(); try persistence.removeSession(id) }
+        do { try persistence.refreshBackup(); try persistence.removeSession(id); try persistence.removeBackups(id) }
         catch { persistenceNotice = String(localized: "会话记录删除失败：\(error.localizedDescription)") }
     }
     /// The sidebar always lists everything. Searching is a separate surface — a palette
