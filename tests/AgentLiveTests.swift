@@ -12,7 +12,8 @@ import FoundationModels
         }
     }
     /// Direct answer, a read-only look at a project, a file edited and one created there, both
-    /// changes undone and the model aware of it, and a chat saved with a bash call continued:
+    /// changes undone and the model aware of it, a file outside any project attached and read, and
+    /// a chat saved with a bash call continued:
     /// the service takes the old call back although the turn no longer offers bash.
     static func run(protocols: [ModelAPIProtocol]) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
@@ -62,6 +63,7 @@ import FoundationModels
                 print("PASS: \(api.title) direct answer and \(work.store.tools.count) real tool results")
                 try await writeAndEdit(work, project: project, backups: root.appendingPathComponent("\(api.rawValue)/agent-backups"))
                 try await undoAndAsk(work, project: project)
+                try await readAttached(workspace, folder: root.appendingPathComponent("\(api.rawValue)/outside"))
                 try await continueSavedBashHistory(harness: harness())
             } catch {
                 failures += 1
@@ -116,6 +118,24 @@ import FoundationModels
             throw SettingsError("撤销后的回复未体现撤销：\(work.store.task?.summary ?? "") \(reply.prefix(200))")
         }
         print("PASS: \(writes.count) changes undone; the model answered from the amended results: \(reply.prefix(80))"); fflush(nil)
+    }
+
+    /// A new chat without a project, with a file from elsewhere attached to its message: the
+    /// service reads it with read_file by its name alone, and answers from what it read.
+    static func readAttached(_ workspace: WorkspaceStore, folder: URL) async throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("口令.md")
+        try Data("今天的口令是蓝莓。\n".utf8).write(to: file)
+        let chat = workspace.newConversation()
+        chat.store.send("请读取我附上的文件，用中文简短说出口令。不要访问其他路径。", attachments: ChatAttachment.adding([file], to: []))
+        try await wait(chat.store)
+        let reply = chat.store.messages.last { $0.role == .assistant }?.content ?? ""
+        let read = chat.store.tools.first { $0.tool == "read_file" && $0.result?.contains("蓝莓") == true }
+        guard chat.store.task?.status == .completed, let read, read.command == "口令.md",
+              read.directory == ProjectPath.canonical(file.path), reply.contains("蓝莓") else {
+            throw SettingsError("附加文件读取未按要求完成：\(chat.store.tools.map { "\($0.command) \($0.result?.prefix(120) ?? "")" }) \(reply.prefix(200))")
+        }
+        print("PASS: attached file read by name: \(reply.prefix(80))"); fflush(nil)
     }
 
     /// A chat saved by a build that offered bash: one finished bash call and the reply after it.

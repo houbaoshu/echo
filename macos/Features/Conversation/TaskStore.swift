@@ -32,6 +32,9 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
     var timestamp = Date()
     var errorMessage: String?
     var steering: Steering?
+    /// Files the person added with this message. The chat keeps them: the Agent can read them in
+    /// every later turn.
+    var attachments: [ChatAttachment] = []
     /// A follow-up sent while a turn runs, until the turn takes it. Accepted input carries no
     /// steering at all, and one the turn ends without goes back to the draft. Raw values are what
     /// archives store.
@@ -40,7 +43,7 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         var label: String { String(localized: "待处理") }
     }
 
-    private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, steering }
+    private enum CodingKeys: String, CodingKey { case id, role, content, status, timestamp, errorMessage, steering, attachments }
     init(role: Role, content: String, status: Status = .completed) {
         self.role = role; self.content = content; self.status = status
     }
@@ -54,6 +57,7 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         errorMessage = try values.decodeIfPresent(String.self, forKey: .errorMessage)
         // A value this build does not know reads as none.
         steering = try values.decodeIfPresent(String.self, forKey: .steering).flatMap(Steering.init(rawValue:))
+        attachments = try values.decodeIfPresent([ChatAttachment].self, forKey: .attachments) ?? []
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -61,6 +65,121 @@ struct ConversationMessage: Identifiable, Equatable, Codable, Sendable {
         try values.encode(content, forKey: .content); try values.encode(status, forKey: .status)
         try values.encode(timestamp, forKey: .timestamp); try values.encodeIfPresent(errorMessage, forKey: .errorMessage)
         try values.encodeIfPresent(steering, forKey: .steering)
+        if !attachments.isEmpty { try values.encode(attachments, forKey: .attachments) }
+    }
+}
+
+/// A file the person added to a chat, by its place on disk. The Agent reads it only through
+/// read_file, by the name the chat gives it; the path stays with Echo.
+struct ChatAttachment: Identifiable, Equatable, Codable, Sendable {
+    /// Why the file could not be read when it was added.
+    enum Problem: Equatable, Codable, Sendable {
+        /// macOS did not let Echo read it: the person said no to the system's prompt, or turned
+        /// Echo's access off in System Settings.
+        case denied
+        /// Anything else, as the system said it.
+        case unreadable(String)
+        var message: String {
+            switch self {
+            case .denied: String(localized: "macOS 没有允许 Echo 读取这个文件。可以在“系统设置 > 隐私与安全性 > 文件和文件夹”里打开。")
+            case .unreadable(let reason): String(localized: "无法读取这个文件：\(reason)")
+            }
+        }
+        init(errno code: Int32) {
+            self = code == EPERM ? .denied : .unreadable(String(cString: strerror(code)))
+        }
+    }
+    var id = UUID()
+    /// Absolute, resolved when the file was added.
+    var path: String
+    var problem: Problem?
+    /// The name the chat gave the file when it was sent, the one the model reads it by: "notes 2.md"
+    /// beside another notes.md. None in a draft, and in messages saved before names were shown.
+    var label: String?
+    var name: String { (path as NSString).lastPathComponent }
+    /// What a sent message shows: the model's name for the file.
+    var displayName: String { label ?? name }
+
+    init(path: String, problem: Problem? = nil) {
+        self.path = path; self.problem = problem
+    }
+
+    /// `existing` and then the files at `urls` that it does not hold yet, each once.
+    static func adding(_ urls: [URL], to existing: [ChatAttachment]) -> [ChatAttachment] {
+        var result = existing
+        for url in urls {
+            let path = ProjectPath.canonical(url.path) ?? url.standardizedFileURL.path
+            if !result.contains(where: { $0.path == path }) { result.append(ChatAttachment(path: path)) }
+        }
+        return result
+    }
+
+    /// How much of a file is read to tell text from anything else.
+    static let sniffLength = 8192
+
+    /// Whether `data`, the start of a file or all of it, is text: UTF-8 with no zero byte. A
+    /// character the cut splits at the end of a start still counts.
+    static func isText(_ data: Data, whole: Bool) -> Bool {
+        guard !data.contains(0) else { return false }
+        if String(validating: data, as: UTF8.self) != nil { return true }
+        guard !whole else { return false }
+        return (1...3).contains { cut in data.count >= cut && String(validating: data.dropLast(cut), as: UTF8.self) != nil }
+    }
+
+    /// What reading the start of a file found.
+    enum Inspection: Equatable, Sendable {
+        case text, binary
+        case unreadable(Problem)
+    }
+
+    /// Reads the start of the file to tell whether it is text. The same read is what makes macOS
+    /// ask for access while the person is adding the file rather than when the Agent first reads
+    /// it; the system's prompt holds the call until it is answered, so it never runs on the main actor.
+    @concurrent static func inspect(_ path: String) async -> Inspection {
+        let fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return .unreadable(Problem(errno: errno)) }
+        defer { close(fd) }
+        var data = Data(count: sniffLength)
+        var total = 0
+        while total < sniffLength {
+            let count = data.withUnsafeMutableBytes { read(fd, $0.baseAddress!.advanced(by: total), sniffLength - total) }
+            if count < 0, errno == EINTR { continue }
+            guard count >= 0 else { return .unreadable(Problem(errno: errno)) }
+            guard count > 0 else { break }
+            total += count
+        }
+        return isText(data.prefix(total), whole: total < sniffLength) ? .text : .binary
+    }
+
+    /// Adds the text files among `urls` to the draft `list` of `owner`. Each new file's start is
+    /// read first, one file after another, so files from one folder bring up at most one prompt:
+    /// text joins the draft, a file that could not be read joins it marked with why, and anything
+    /// else stays out, its name going to `refused`.
+    @MainActor static func add<Owner: AnyObject>(_ urls: [URL], to owner: Owner, _ list: ReferenceWritableKeyPath<Owner, [ChatAttachment]>,
+                                                 refused: @escaping @MainActor ([String]) -> Void = { _ in }) {
+        let before = owner[keyPath: list]
+        let candidates = adding(urls, to: before).dropFirst(before.count)
+        guard !candidates.isEmpty else { return }
+        Task { [weak owner] in
+            var binary: [String] = []
+            for var attachment in candidates {
+                switch await inspect(attachment.path) {
+                case .text: break
+                case .binary: binary.append(attachment.name); continue
+                case .unreadable(let problem): attachment.problem = problem
+                }
+                guard let owner else { return }
+                if !owner[keyPath: list].contains(where: { $0.path == attachment.path }) { owner[keyPath: list].append(attachment) }
+            }
+            if !binary.isEmpty { refused(binary) }
+        }
+    }
+
+    /// Says which files stayed out of a draft for not being text.
+    static func refusalNotice(_ names: [String]) -> String {
+        names.count == 1
+            ? String(localized: "“\(names[0])”不是文本文件，没有添加。")
+            : String(localized: "\(names.map { "“\($0)”" }.joined(separator: "、")) 不是文本文件，没有添加。")
     }
 }
 
@@ -219,6 +338,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     private static var completionClock: UInt64 = 0
     var hasUnseenCompletion: Bool { unseenCompletion != nil }
     var mainDraft = ""
+    /// Files added to the main draft, sent with it.
+    var mainAttachments: [ChatAttachment] = []
     var followUpDraft = ""
     var notice: String?
     let replyStream = AssistantReplyStream()
@@ -265,6 +386,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         var agentStored: Bool? = nil
         var loadError: String? = nil
         var native: NativeAgentState? = nil
+        var mainAttachments: [ChatAttachment]? = nil
     }
     /// Part of `WorkspaceStore.snapshot`, under the same rule: everything read here is an observed
     /// property, so changing it schedules a save. The exception is the Agent's transcript, which
@@ -275,7 +397,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
                  activityDismissed: activityDismissed, activitiesCollapsed: activitiesCollapsed,
                  tools: tools, agentStored: agentStored, loadError: agentLoadError,
                  // A blocked conversation has no history of its own to save.
-                 native: agentLoadError == nil ? harness?.persistentState : nil)
+                 native: agentLoadError == nil ? harness?.persistentState : nil,
+                 mainAttachments: mainAttachments.isEmpty ? nil : mainAttachments)
     }
     convenience init(snapshot: Snapshot, harness: AgentHarness?) {
         self.init(harness: harness)
@@ -290,6 +413,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         agentStored = snapshot.agentStored
         if harness != nil, task?.status == .completed { task?.summary = String(localized: "已完成") }
         mainDraft = snapshot.mainDraft
+        mainAttachments = snapshot.mainAttachments ?? []
         // The engine rebuilds messages and tools from its transcript, closing calls left without a result.
         harness?.restore(snapshot.native)
         for index in tools.indices where tools[index].result == nil { tools[index].state = .unknown }
@@ -360,13 +484,28 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         followUpDraft = ""
     }
     func sendMainMessage() {
-        guard send(mainDraft) else { return }
-        mainDraft = ""
+        guard send(mainDraft, attachments: mainAttachments) else { return }
+        mainDraft = ""; mainAttachments = []; attachmentNotice = nil
     }
-    @discardableResult func send(_ draft: String) -> Bool {
+    /// `attachments` go with the message; a message is its text, so files alone send nothing.
+    @discardableResult func send(_ draft: String, attachments: [ChatAttachment] = []) -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSubmit, !text.isEmpty else { return false }
-        return isGenerating ? steer(text) : beginTurn(text: text)
+        return isGenerating ? steer(text, attachments: attachments) : beginTurn(text: text, attachments: attachments)
+    }
+    /// Files that stayed out of the main draft for not being text, said beside the composer until
+    /// files are added again or a message is sent.
+    var attachmentNotice: String?
+    /// Adds files to the main draft.
+    func attachToMainDraft(_ urls: [URL]) {
+        attachmentNotice = nil
+        ChatAttachment.add(urls, to: self, \.mainAttachments) { [weak self] in self?.attachmentNotice = ChatAttachment.refusalNotice($0) }
+    }
+    func removeMainAttachment(_ id: UUID) { mainAttachments.removeAll { $0.id == id } }
+    /// The names the main draft's files would go by in this chat once sent, in order.
+    var mainAttachmentNames: [String] {
+        let paths = mainAttachments.map(\.path)
+        return harness?.attachmentNames(for: paths) ?? AttachedFile.names(for: paths, known: [])
     }
     @discardableResult func retry() -> Bool {
         guard !retired, canRetry else { return false }
@@ -430,7 +569,10 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         guard !queued.isEmpty else { return }
         harness?.withdraw(Set(queued.map(\.id)))
         messages.removeAll { $0.steering == .queued }
-        for message in queued { mainDraft.appendDraftLine(message.content) }
+        for message in queued {
+            mainDraft.appendDraftLine(message.content)
+            mainAttachments += message.attachments.filter { file in !mainAttachments.contains { $0.path == file.path } }
+        }
     }
     /// Keeps a failed save's message: once a save fails, nothing more runs this turn.
     private func recordSaveFailure(_ error: any Error) -> String {
@@ -440,16 +582,17 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     // MARK: - Turns
 
-    private func beginTurn(text: String?) -> Bool {
+    private func beginTurn(text: String?, attachments: [ChatAttachment] = []) -> Bool {
         guard let harness, !harness.isRunning else { return false }
         storageFailure = nil; notice = nil; responseMessageID = nil
         if task == nil { task = .init(id: UUID(), runID: UUID(), title: String((text ?? String(localized: "继续处理|任务标题", defaultValue: "继续处理")).prefix(80)), summary: "", status: .running) }
         cardReply = ""; cardProgress = ""
         task?.runID = UUID(); task?.status = .running; task?.summary = String(localized: "正在请求模型…")
         if let text {
-            let message = ConversationMessage(role: .user, content: text)
+            var message = ConversationMessage(role: .user, content: text)
+            let names = harness.enqueue(messageID: message.id, text: text, attachments: attachments.map(\.path))
+            message.attachments = Self.labeled(attachments, names)
             messages.append(message)
-            harness.enqueue(messageID: message.id, text: text)
         }
         activityDismissed = false; onUserAction?(); lifecycle.send(.started(task!.runID))
         // The input is saved before any model request can see it.
@@ -458,12 +601,21 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         return true
     }
 
+    /// `attachments` with the names the chat gave them.
+    private static func labeled(_ attachments: [ChatAttachment], _ names: [String]) -> [ChatAttachment] {
+        zip(attachments, names).map { attachment, name in
+            var labeled = attachment
+            labeled.label = name
+            return labeled
+        }
+    }
+
     /// Input sent while a turn runs goes before the turn's next model request.
-    private func steer(_ text: String) -> Bool {
+    private func steer(_ text: String, attachments: [ChatAttachment]) -> Bool {
         guard let harness else { return false }
         var message = ConversationMessage(role: .user, content: text)
-        message.steering = .queued; messages.append(message)
-        harness.enqueue(messageID: message.id, text: text)
+        let names = harness.enqueue(messageID: message.id, text: text, attachments: attachments.map(\.path))
+        message.steering = .queued; message.attachments = Self.labeled(attachments, names); messages.append(message)
         onUserAction?()
         return saveTurn()
     }

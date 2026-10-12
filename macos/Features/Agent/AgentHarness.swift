@@ -28,6 +28,11 @@ struct NativeAgentState: Codable {
     struct Input: Codable, Equatable {
         var messageID: UUID
         var text: String
+        /// Where the files the person added with this input are; none for most input.
+        var attachments: [String]?
+        /// The names those files go by in the chat, given when the input was queued. Input saved
+        /// before names were given has none; its files are named as they reach the transcript.
+        var names: [String]?
     }
     /// The model context without instructions, which each `respond` rebuilds from the profile.
     var entries: [Transcript.Entry] = []
@@ -42,9 +47,12 @@ struct NativeAgentState: Codable {
     /// Changes the person undid since the model last heard: one line each, told to the model at the
     /// start of the next message it gets from the person.
     var undoNotices: [String] = []
+    /// Every file the person added to this chat, from the input that brought it into the
+    /// transcript on. read_file reads them by name for the rest of the chat.
+    var attachments: [AttachedFile] = []
 
     init() {}
-    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies, finderFolder, undoNotices }
+    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies, finderFolder, undoNotices, attachments }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         entries = Array(try values.decode(Transcript.self, forKey: .transcript))
@@ -53,6 +61,7 @@ struct NativeAgentState: Codable {
         replies = try values.decode([String: UUID].self, forKey: .replies)
         finderFolder = try values.decodeIfPresent(String.self, forKey: .finderFolder)
         undoNotices = try values.decodeIfPresent([String].self, forKey: .undoNotices) ?? []
+        attachments = try values.decodeIfPresent([AttachedFile].self, forKey: .attachments) ?? []
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -62,11 +71,66 @@ struct NativeAgentState: Codable {
         try values.encode(replies, forKey: .replies)
         try values.encodeIfPresent(finderFolder, forKey: .finderFolder)
         if !undoNotices.isEmpty { try values.encode(undoNotices, forKey: .undoNotices) }
+        if !attachments.isEmpty { try values.encode(attachments, forKey: .attachments) }
+    }
+
+    /// The names the files at `paths` would go by in this chat, in order: a file the chat already
+    /// has, or input still pending carries, keeps its name; a new one gets one no other file has.
+    func names(for paths: [String]) -> [String] {
+        let pending = pendingInputs.flatMap { input in
+            zip(input.attachments ?? [], input.names ?? []).map { AttachedFile(name: $1, path: $0) }
+        }
+        return AttachedFile.names(for: paths, known: attachments + pending)
+    }
+
+    /// The files sent with `input` join the chat's attached files, by the names they were given
+    /// when it was queued, and those names come back in order. A file the chat has keeps its name.
+    mutating func attach(_ input: Input) -> [String] {
+        let paths = input.attachments ?? []
+        let given = input.names?.count == paths.count ? input.names! : AttachedFile.names(for: paths, known: attachments)
+        return zip(paths, given).map { path, name in
+            if let known = attachments.first(where: { $0.path == path }) { return known.name }
+            let unique = attachments.contains { $0.name == name } ? AttachedFile.name(for: path, taken: Set(attachments.map(\.name))) : name
+            attachments.append(AttachedFile(name: unique, path: path))
+            return unique
+        }
     }
 
     /// Continue is offered for input that never reached the model and for a last turn that did not complete.
     var continuable: Bool {
         !pendingInputs.isEmpty || (turns.last.map { $0.outcome != .completed } ?? false)
+    }
+}
+
+/// A file attached to the chat as the Agent knows it: by a name unique in the chat, which is all
+/// the model sees. Two files with the same name get Finder's "name 2.ext".
+struct AttachedFile: Codable, Equatable, Sendable {
+    var name: String
+    /// Absolute; for Echo and the card, never for the model.
+    var path: String
+
+    /// Names for the files at `paths`, given those the chat `known` already names: a known file
+    /// keeps its name, and a new one gets one no other file has, the earlier ones in `paths` included.
+    static func names(for paths: [String], known: [AttachedFile]) -> [String] {
+        var known = known
+        return paths.map { path in
+            if let file = known.first(where: { $0.path == path }) { return file.name }
+            let file = AttachedFile(name: name(for: path, taken: Set(known.map(\.name))), path: path)
+            known.append(file)
+            return file.name
+        }
+    }
+
+    static func name(for path: String, taken: Set<String>) -> String {
+        let name = (path as NSString).lastPathComponent
+        guard taken.contains(name) else { return name }
+        let stem = (name as NSString).deletingPathExtension, ext = (name as NSString).pathExtension
+        var number = 2
+        while true {
+            let candidate = ext.isEmpty || stem.isEmpty ? "\(name) \(number)" : "\(stem) \(number).\(ext)"
+            if !taken.contains(candidate) { return candidate }
+            number += 1
+        }
     }
 }
 
@@ -107,7 +171,8 @@ enum AgentPromptKey {
 
 enum AgentInstructions {
     /// Echo's own instructions, assembled from the tools a turn offers.
-    nonisolated static func text(tools: [String]) -> String {
+    /// `attachments` names the files the person added to the chat.
+    nonisolated static func text(tools: [String], attachments: [String] = []) -> String {
         var parts = ["You are a helpful assistant in a persistent conversation. Answer ordinary questions directly."]
         if tools.contains("list_files") || tools.contains("read_file") {
             parts.append("When the person asks about the files of the conversation's project, inspect them with list_files and read_file, passing root \"project\". Paths are relative to the project folder; use . for its root. If the conversation has no project folder, the tools say so; only the person can add one.")
@@ -119,6 +184,10 @@ enum AgentInstructions {
         }
         if writes {
             parts.append("write_file creates a UTF-8 text file or replaces one in full; edit_file replaces a passage that appears exactly once in an existing UTF-8 text file. They work in the same folders as list_files and read_file, with the same root and paths relative to that folder, and create folders missing on the way. A file they write is at most 4 MiB. Hidden files and folders (names starting with .), executable files, .terminal files and anything inside an application bundle (.app) are not written. The home folder itself, the folders above it, hidden folders, and ~/Library outside iCloud Drive and cloud storage folders can only be read. Before a file is replaced or edited, Echo keeps a copy of the original. No tool deletes, renames or moves files.")
+        }
+        if tools.contains("read_file"), !attachments.isEmpty {
+            let names = attachments.map { "\"\($0)\"" }.joined(separator: ", ")
+            parts.append("The person attached these files to this chat: \(names). read_file reads one with root \"attached\" and its name as the path. They can only be read: write_file and edit_file cannot change them, and list_files does not list them.")
         }
         parts.append("You may explain what you are doing alongside a tool call. Finish the turn with a useful text reply and no tool call.")
         parts.append("Use the actual tool results to decide what to do next. Do not claim that an action happened when its result says it was not executed. When a result is unknown or interrupted, inspect the current state before relying on it.")
@@ -189,6 +258,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     private var finishedOutputs: [String: String] = [:]
     private let writePolicy: AgentWritePolicy
     private let writeHooks: AgentWriteHooks
+    private let attachmentHooks: AgentAttachmentHooks
     private let trash: AgentTrash
     /// Write calls this turn that left a record their card can undo from.
     private var undoableCalls: Set<String> = []
@@ -219,13 +289,15 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     init(resolveModel: @escaping @MainActor () throws -> ModelFactory, local: LocalChatService? = nil,
          localOnly: @escaping @MainActor () -> Bool = { false },
          finder: any FinderLocating = AppleEventFinderLocator.shared, writePolicy: AgentWritePolicy = AgentWritePolicy(),
-         writeHooks: AgentWriteHooks = AgentWriteHooks(), trash: AgentTrash = .system) {
+         writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
+         trash: AgentTrash = .system) {
         self.resolveModel = resolveModel
         self.local = local
         self.localOnly = localOnly
         self.finder = finder
         self.writePolicy = writePolicy
         self.writeHooks = writeHooks
+        self.attachmentHooks = attachmentHooks
         self.trash = trash
     }
 
@@ -267,14 +339,22 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         project()
     }
 
-    /// Queues user input for the next turn, or for the running one.
-    func enqueue(messageID: UUID, text: String) {
-        state.pendingInputs.append(.init(messageID: messageID, text: text))
-        guard isRunning else { return }
+    /// Queues user input for the next turn, or for the running one. `attachments` are the paths of
+    /// the files sent with it; the chat keeps them once the input reaches the transcript.
+    /// Returns the names the files go by in the chat.
+    @discardableResult func enqueue(messageID: UUID, text: String, attachments: [String] = []) -> [String] {
+        let names = state.names(for: attachments)
+        state.pendingInputs.append(.init(messageID: messageID, text: text, attachments: attachments.isEmpty ? nil : attachments,
+                                         names: attachments.isEmpty ? nil : names))
+        guard isRunning else { return names }
         steering.set(true)
         resumeFinderWaiters(.success(nil))
         interruptPrepares(WriteSuperseded())
+        return names
     }
+
+    /// The names the files at `paths` would go by if they were sent now.
+    func attachmentNames(for paths: [String]) -> [String] { state.names(for: paths) }
 
     /// Takes back pending input between turns, so no later turn sends it. Returns what was taken
     /// back, in the order it was queued.
@@ -389,7 +469,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         var formatErrors = 0
         while true {
             // What this request starts from, restored if it goes to the local model instead.
-            let before = (entries: state.entries, pendingInputs: state.pendingInputs, undoNotices: state.undoNotices)
+            let before = (entries: state.entries, pendingInputs: state.pendingInputs, undoNotices: state.undoNotices,
+                          attachments: state.attachments)
             let resuming = if case .resume = next { true } else { false }
             // Input that enters the transcript is no longer pending; the UI drops its "待处理".
             var history = state.entries
@@ -401,14 +482,15 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 steering.set(false)
                 let inputs = state.pendingInputs
                 state.pendingInputs = []
-                for input in inputs.dropLast() { history.append(.prompt(Self.userPrompt(input))) }
+                for input in inputs.dropLast() { history.append(.prompt(Self.userPrompt(input, prefix: attached(input, local: route.isLocal)))) }
                 let last = inputs.last!
                 // The cloud model hears of undone changes before the person's next words. The local
                 // model has no tools, so it is not told.
                 let notice = route.isLocal ? "" : AgentToolResult.undoNotice(state.undoNotices)
                 if !route.isLocal { state.undoNotices = [] }
-                userPrompt = Self.userPrompt(last, prefix: notice)
-                promptText = notice + last.text; metadata = [AgentPromptKey.message: last.messageID.uuidString]
+                let prefix = notice + attached(last, local: route.isLocal)
+                userPrompt = Self.userPrompt(last, prefix: prefix)
+                promptText = prefix + last.text; metadata = [AgentPromptKey.message: last.messageID.uuidString]
             case .resume:
                 promptText = ""; metadata = [AgentPromptMarker.continueKey: true]
                 marker = Transcript.Prompt(metadata: metadata, segments: [])
@@ -429,7 +511,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             switch route {
             case .cloud(let factory):
                 session = LanguageModelSession(
-                    profile: AgentProfile(model: factory(ledger, budget), tools: tools(), harness: self), history: history)
+                    profile: AgentProfile(model: factory(ledger, budget), tools: tools(), attachments: state.attachments.map(\.name), harness: self),
+                    history: history)
             case .local(let service):
                 do {
                     // A continue is answered only for a message nothing was done for yet.
@@ -543,6 +626,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                             state.entries = before.entries
                             state.pendingInputs = before.pendingInputs + state.pendingInputs
                             state.undoNotices = before.undoNotices
+                            state.attachments = before.attachments
                             route = .local(local)
                             continue
                         case .missing:
@@ -558,6 +642,14 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 }
             }
         }
+    }
+
+    /// The files sent with `input` join the chat's attached files as it enters the transcript. The
+    /// cloud model is told their names in front of the person's words; the local model, which has
+    /// no tools to read them with, is not.
+    private func attached(_ input: NativeAgentState.Input, local: Bool) -> String {
+        let names = state.attach(input)
+        return local || names.isEmpty ? "" : AgentToolResult.attachedNotice(names)
     }
 
     /// A local turn whose model wrote no usable reply: what it wrote goes, the user's input stays.
@@ -747,6 +839,28 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             return .failed(AgentToolResult.finderFolderMissing(name: (folder as NSString).lastPathComponent))
         }
         return .folder(folder)
+    }
+
+    /// One read_file call on a file attached to the chat, by its name. The file is read on a thread
+    /// of its own: opening it can wait on the system's access prompt, and a Stop or newer input
+    /// ends the call at once while the read runs on. Its card shows the file's path.
+    fileprivate func readAttached(name raw: String, startLine: Int, call identity: GenerationID?) async throws -> String {
+        guard isRunning, !stopRequested else { throw CancellationError() }
+        if steering.isPending { return AgentToolResult.superseded }
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let file = state.attachments.first(where: { $0.name == name }) else {
+            return AgentToolResult.failed(AgentToolResult.notAttached(name: raw, attached: state.attachments.map(\.name)))
+        }
+        if let key = identity.flatMap({ callKeys[$0] }) { callDirectories[key] = file.path; project() }
+        let hooks = attachmentHooks
+        do {
+            return try await offMainUnlessInterrupted {
+                hooks.beforeOpening()
+                return ReadFileTool.read(attached: file, startLine: startLine)
+            }
+        } catch is WriteSuperseded {
+            return AgentToolResult.superseded
+        }
     }
 
     nonisolated static let writeTools: Set<String> = ["write_file", "edit_file"]
@@ -1155,6 +1269,10 @@ private struct HarnessProjectAccess: AgentProjectAccess {
     func finished(call: GenerationID?) async {
         await harness?.finished(call: call)
     }
+    func readAttached(name: String, startLine: Int, call: GenerationID?) async throws -> String {
+        guard let harness else { throw CancellationError() }
+        return try await harness.readAttached(name: name, startLine: startLine, call: call)
+    }
 }
 
 private struct HarnessWriteAccess: AgentWriteAccess {
@@ -1170,12 +1288,14 @@ private struct HarnessWriteAccess: AgentWriteAccess {
 private struct AgentProfile: LanguageModelSession.DynamicProfile {
     let model: any LanguageModel
     let tools: [any Tool]
+    /// The names of the files attached to the chat.
+    let attachments: [String]
     weak var harness: AgentHarness?
     @SessionProperty(\.history) var history
 
     var body: some DynamicProfile {
         Profile {
-            Instructions(AgentInstructions.text(tools: tools.map(\.name)))
+            Instructions(AgentInstructions.text(tools: tools.map(\.name), attachments: attachments))
             tools
         }
         .model(model)

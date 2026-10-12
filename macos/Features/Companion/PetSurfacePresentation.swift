@@ -40,6 +40,11 @@ struct PetSurfacePresentation: Equatable {
     static let canvasWidth: CGFloat = composerWidth + 2 * (gap + circle) + 2 * canvasInset
     /// The row plus the 8pt it clears the pet by on the reference, top and bottom.
     static let canvasHeight: CGFloat = 56
+    /// The draft's files sit in a row of chips between the pet and the composer, which moves down by this.
+    static let attachmentChipHeight: CGFloat = 24
+    static let attachmentRowHeight: CGFloat = attachmentChipHeight + 6
+    /// Where the row of chips starts below the top of the canvas: where the composer starts without it.
+    static let attachmentRowTop = (canvasHeight - circle) / 2
 
     let mode: Mode
     /// ✎ and the voice entry appear on hover, or while the workspace keeps the controls expanded
@@ -63,11 +68,16 @@ struct PetSurfacePresentation: Equatable {
     /// The pointer is on the draft's line, which opens the composer to show the draft. It is not
     /// `composerOpen`: the composer has no keyboard until it is clicked, and closes again on exit.
     let peeksComposer: Bool
+    /// The composer shows the files in its draft above it.
+    let showsAttachments: Bool
+    /// The canvas the controls draw in: one row, or the row and the draft's files above it.
+    var height: CGFloat { Self.canvasHeight + (showsAttachments ? Self.attachmentRowHeight : 0) }
 
     /// `connectedVoiceSession` is a Live Voice session that has already connected once, so its later
     /// recognition reconnects keep the voice bar. Without `peeksDraft` hovering the draft's line
-    /// leaves it as it is, e.g. after Escape closed the composer under the pointer.
-    init(hovered: Bool, composerOpen: Bool, draft: String,
+    /// leaves it as it is, e.g. after Escape closed the composer under the pointer. `attachments`
+    /// names the draft's files.
+    init(hovered: Bool, composerOpen: Bool, draft: String, attachments: [String] = [],
          activityCount: Int, activitiesCollapsed: Bool, unseenCompleted: Int,
          voice snapshot: VoiceSessionSnapshot, canStartVoice: Bool,
          runningTasks: Int = 0, composerSent: Bool = false, connectedVoiceSession: UUID? = nil,
@@ -93,7 +103,8 @@ struct PetSurfacePresentation: Equatable {
         if case .active = snapshot.session { muteEnabled = true } else { muteEnabled = false }
         self.canStartVoice = canStartVoice
         canSend = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        draftPreview = composerOpen ? nil : Self.preview(of: draft)
+        // A draft of files alone shows their names on its line.
+        draftPreview = composerOpen ? nil : Self.preview(of: draft) ?? (attachments.isEmpty ? nil : attachments.joined(separator: ", "))
         // Where the strip would rest on the draft's line, hover leads to the draft, never the pill.
         let restsOnDraft = draftPreview != nil && snapshot.session.owner == nil && runningTasks == 0
             && !keepsExpanded
@@ -101,6 +112,7 @@ struct PetSurfacePresentation: Equatable {
         if composerOpen || peeksComposer { mode = .composer }
         else if snapshot.session.owner != nil && !voiceConnecting { mode = .voice }
         else { mode = .compact }
+        showsAttachments = mode == .composer && !attachments.isEmpty
         showsActions = (hovered && !restsOnDraft) || composerOpen || peeksComposer || keepsExpanded
         showsStatus = mode == .composer ? composerOpen && composerSent
                                         : !showsActions && (runningTasks > 0 || voiceConnecting)

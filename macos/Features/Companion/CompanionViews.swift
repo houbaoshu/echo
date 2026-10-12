@@ -348,6 +348,10 @@ struct ActivityCapsule: View {
         didSet { if isComposerOpen != oldValue { onComposerOpenChange?(isComposerOpen) } }
     }
     var draft = ""
+    /// Files added to the draft, sent with it.
+    var attachments: [ChatAttachment] = []
+    /// Says which files stayed out of the draft for not being text.
+    @ObservationIgnored var onAttachmentsRefused: ((String) -> Void)?
     private(set) var focusRequest = 0
     /// The pet's horizontal center inside the fixed canvas; the content clamps itself to the canvas.
     var petCenterX = PetSurfacePresentation.canvasWidth / 2
@@ -357,9 +361,16 @@ struct ActivityCapsule: View {
     var isProjectPickerOpen = false {
         didSet { if isProjectPickerOpen != oldValue { onProjectPickerOpenChange?(isProjectPickerOpen) } }
     }
+    /// A folder or file dialog the + menu opened is up. Like the menu, it takes the keyboard from
+    /// the composer without closing it: the composer stays open with its draft, and typing returns
+    /// to it once the dialog closes.
+    var isDialogOpen = false {
+        didSet { if isDialogOpen != oldValue { onDialogOpenChange?(isDialogOpen) } }
+    }
     /// The controller's hooks, called once the new value is stored and only when it changed.
     @ObservationIgnored var onComposerOpenChange: ((Bool) -> Void)?
     @ObservationIgnored var onProjectPickerOpenChange: ((Bool) -> Void)?
+    @ObservationIgnored var onDialogOpenChange: ((Bool) -> Void)?
     /// After a send the empty composer collapses once the pointer leaves, like the idle strip.
     private(set) var collapsesOnExit = false
     /// The Live Voice session that has connected once. The snapshot shows only the current
@@ -376,7 +387,8 @@ struct ActivityCapsule: View {
                  unseenCompleted: Int, runningTasks: Int, activityCount: Int? = nil, activitiesCollapsed: Bool? = nil,
                  keepsExpanded: Bool = false) -> PetSurfacePresentation {
         // The + menu's popover belongs to the composer showing the draft; it keeps that composer up.
-        PetSurfacePresentation(hovered: hovered || isProjectPickerOpen, composerOpen: isComposerOpen, draft: draft,
+        PetSurfacePresentation(hovered: hovered || isProjectPickerOpen || isDialogOpen, composerOpen: isComposerOpen, draft: draft,
+                               attachments: attachmentNames,
                                activityCount: activityCount ?? store.activityCount, activitiesCollapsed: activitiesCollapsed ?? store.activitiesCollapsed,
                                unseenCompleted: unseenCompleted, voice: voice.snapshot, canStartVoice: voice.canStartCall,
                                runningTasks: runningTasks, composerSent: collapsesOnExit,
@@ -405,16 +417,23 @@ struct ActivityCapsule: View {
         if isHovered { draftPeekWaitsForExit = true }
     }
     /// Clicking elsewhere, losing the keyboard and the pointer leaving collapse the composer only
-    /// while it holds no character at all. Any draft, even a lone space, keeps it open; Escape, a
-    /// send and the voice controls still collapse it outright. Returns whether it collapsed.
+    /// while it holds no character and no file at all. Any draft, even a lone space, keeps it open;
+    /// Escape, a send and the voice controls still collapse it outright. Returns whether it collapsed.
     @discardableResult func closeComposerIfEmpty() -> Bool {
-        guard draft.isEmpty else { return false }
+        guard draft.isEmpty, attachments.isEmpty else { return false }
         closeComposer()
         return true
     }
     /// Asks the open editor for focus again, e.g. once its panel has become key.
     func refocusComposer() { if isComposerOpen { focusRequest += 1 } }
-    func didSend() { draft = ""; collapsesOnExit = true; closeComposer() }
+    func didSend() { draft = ""; attachments = []; collapsesOnExit = true; closeComposer() }
+    /// Adds files to the draft.
+    func attach(_ urls: [URL]) {
+        ChatAttachment.add(urls, to: self, \.attachments) { [weak self] in self?.onAttachmentsRefused?(ChatAttachment.refusalNotice($0)) }
+    }
+    /// The names the draft's files will go by in the new chat, in order.
+    var attachmentNames: [String] { AttachedFile.names(for: attachments.map(\.path), known: []) }
+    func removeAttachment(_ id: UUID) { attachments.removeAll { $0.id == id } }
 }
 
 struct PetControlActions {
@@ -425,6 +444,8 @@ struct PetControlActions {
     var send: (String) -> Bool = { _ in false }
     /// The + menu's "添加项目文件夹…", run after the menu has closed.
     var addProjectFolder: () -> Void = {}
+    /// The + menu's "添加文件…", run after the menu has closed.
+    var addFiles: () -> Void = {}
     /// The bell and ⌃.
     var toggleTray: () -> Void
 }
@@ -495,12 +516,22 @@ struct PetControls: View {
     }
     var body: some View {
         let surface = surface
-        content(surface)
-            .onChange(of: voice.snapshot, initial: true) { _, snapshot in presentation.noteVoice(snapshot) }
-            .frame(width: surface.width, height: PetSurfacePresentation.circle)
-            .position(x: PetSurfacePresentation.contentCenter(petCenter: presentation.petCenterX, width: surface.width),
-                      y: PetSurfacePresentation.canvasHeight / 2)
-            .frame(width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight)
+        let center = PetSurfacePresentation.contentCenter(petCenter: presentation.petCenterX, width: surface.width)
+        ZStack {
+            content(surface)
+                .onChange(of: voice.snapshot, initial: true) { _, snapshot in presentation.noteVoice(snapshot) }
+                .frame(width: surface.width, height: PetSurfacePresentation.circle)
+                .position(x: center, y: surface.height - PetSurfacePresentation.canvasHeight / 2)
+            if surface.showsAttachments {
+                // Aligned with the composer, which leads the row.
+                attachmentRow
+                    .frame(width: PetSurfacePresentation.composerWidth, height: PetSurfacePresentation.attachmentChipHeight)
+                    .position(x: center - surface.width / 2 + PetSurfacePresentation.composerWidth / 2,
+                              y: PetSurfacePresentation.attachmentRowTop + PetSurfacePresentation.attachmentChipHeight / 2)
+                    .transition(.opacity)
+            }
+        }
+            .frame(width: PetSurfacePresentation.canvasWidth, height: surface.height)
             .animation(reduceMotion ? nil : .easeInOut(duration: Self.morphDuration), value: surface.mode)
             .animation(reduceMotion ? nil : .easeInOut(duration: Self.morphDuration), value: surface.showsActions)
             .animation(reduceMotion ? nil : .easeInOut(duration: Self.morphDuration), value: surface.showsDraftLine)
@@ -743,6 +774,7 @@ struct PetControls: View {
             }
             NativeComposer(text: $presentation.draft, focusRequest: presentation.focusRequest,
                            onEscape: { presentation.closeComposer(); return true },
+                           onDropFiles: { presentation.attach($0) },
                            minHeight: 20, maxLines: 1,
                            label: String(localized: "新聊天输入框"), identifier: "pet.composer",
                            caretColor: .labelColor, onSend: send)
@@ -765,6 +797,24 @@ struct PetControls: View {
         .frame(width: PetSurfacePresentation.composerWidth, height: PetSurfacePresentation.circle)
     }
 
+    /// The draft's files, between the pet and the composer, each on glass of its own: the row
+    /// floats over the desktop, outside the strip's panes.
+    private var attachmentRow: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                ForEach(Array(zip(presentation.attachments, presentation.attachmentNames)), id: \.0.id) { attachment, name in
+                    DraftAttachmentChip(attachment: attachment, name: name, onGlass: true) {
+                        presentation.removeAttachment(attachment.id)
+                        presentation.refocusComposer()
+                    }
+                }
+            }
+            .font(.subheadline)
+        }
+        .scrollIndicators(.never).scrollClipDisabled()
+        .accessibilityIdentifier("pet.attachments")
+    }
+
     private func projectButton(_ workspace: WorkspaceStore) -> some View {
         Button { presentation.isProjectPickerOpen.toggle() } label: {
             Image(systemName: "plus").font(.system(.callout, weight: .medium)).foregroundStyle(.primary)
@@ -776,6 +826,7 @@ struct PetControls: View {
         .popover(isPresented: $presentation.isProjectPickerOpen, arrowEdge: .bottom) {
             ProjectSelectionPanel(workspace: workspace, selectedProjectID: presentation.projectID,
                                   select: { presentation.projectID = $0 }, addFolder: actions.addProjectFolder,
+                                  addFiles: actions.addFiles, willOpenDialog: { presentation.isDialogOpen = true },
                                   close: { presentation.isProjectPickerOpen = false })
         }
         .help(Self.projectButtonLabel).accessibilityLabel(Self.projectButtonLabel).accessibilityIdentifier("pet.project")
@@ -948,6 +999,26 @@ struct StackedCardSliver: Shape {
     }
 }
 
+/// The dialogs the pet's + menu opens. Each calls back once it closes: with nothing when cancelled.
+struct PetDialogs {
+    var chooseFolder: (@escaping @MainActor (URL?) -> Void) -> Void
+    var chooseFiles: (@escaping @MainActor ([URL]) -> Void) -> Void
+
+    /// The system's dialogs, standalone: the pet's panels cannot host a sheet, so the dialog
+    /// activates the app instead. They run modally, so each has closed when its callback runs.
+    @MainActor static var system: PetDialogs {
+        PetDialogs(chooseFolder: { done in
+            var picked: URL?
+            WorkspaceActions.chooseFolder(asSheet: false) { picked = $0 }
+            done(picked)
+        }, chooseFiles: { done in
+            var picked: [URL] = []
+            WorkspaceActions.chooseFiles(asSheet: false) { picked = $0 }
+            done(picked)
+        })
+    }
+}
+
 struct WorkspacePetControls: View {
     var workspace: WorkspaceStore
     /// Observed here rather than inside `PetControls`: a planet swap republishes `active`, and
@@ -955,6 +1026,7 @@ struct WorkspacePetControls: View {
     var planets: PlanetStore
     let presentation: PetControlsPresentation
     let placement: ActivityPlacement
+    var dialogs = PetDialogs.system
     var body: some View {
         // No identity reset on activity changes: a quick send must keep the composer's focus.
         PetControls(store: workspace.activityStore, voice: workspace.voice, presentation: presentation,
@@ -965,12 +1037,19 @@ struct WorkspacePetControls: View {
             endVoice: { workspace.endVoice(owner: $0) },
             toggleMute: { workspace.toggleVoiceMute(owner: $0) },
             toggleSpeaker: { workspace.toggleVoiceSpeakerMute(owner: $0) },
-            send: { [presentation] in workspace.sendQuickMessage($0, projectID: presentation.projectID) },
-            addProjectFolder: { [presentation] in
-                // The pet's panels cannot host a sheet; the dialog activates the app instead.
-                WorkspaceActions.chooseFolder(asSheet: false) { url in
-                    presentation.projectID = workspace.addProject(url: url)
-                    presentation.openComposer()
+            send: { [presentation] in workspace.sendQuickMessage($0, attachments: presentation.attachments, projectID: presentation.projectID) },
+            addProjectFolder: { [presentation, dialogs] in
+                presentation.isDialogOpen = true
+                dialogs.chooseFolder { url in
+                    if let url { presentation.projectID = workspace.addProject(url: url) }
+                    presentation.isDialogOpen = false
+                }
+            },
+            addFiles: { [presentation, dialogs] in
+                presentation.isDialogOpen = true
+                dialogs.chooseFiles { urls in
+                    presentation.attach(urls)
+                    presentation.isDialogOpen = false
                 }
             },
             toggleTray: { workspace.toggleActivityTray() }))

@@ -89,9 +89,10 @@ import SwiftUI
     /// How the status item and the pet's menu bring Echo forward; tests record the request instead.
     var systemOpen: (SystemOpen.Destination) -> Void = { SystemOpen.open($0) }
 
+    /// `dialogs` are what the pet's + menu opens.
     init(petStore: PetStore, workspace: WorkspaceStore, settings: SettingsStore, pets: PetCatalog? = nil,
          planets: PlanetStore? = nil, defaults: UserDefaults = .standard,
-         activityFadeDuration: Duration = .milliseconds(200)) {
+         activityFadeDuration: Duration = .milliseconds(200), dialogs: PetDialogs = .system) {
         self.defaults = defaults
         self.activityFadeDuration = activityFadeDuration
         self.workspace = workspace
@@ -111,7 +112,7 @@ import SwiftUI
         controlsPanel = CompanionSurface(title: String(localized: "活动控件"), acceptsKeyboard: true,
                                          content: WorkspacePetControls(workspace: workspace, planets: planets,
                                                                        presentation: controlsPresentation,
-                                                                       placement: placement))
+                                                                       placement: placement, dialogs: dialogs))
         bubblePanel = CompanionSurface(title: String(localized: "语音气泡"),
                                        content: WorkspaceCompanionBubble(voice: workspace.voice,
                                                                          state: bubbleState, placement: placement))
@@ -139,6 +140,8 @@ import SwiftUI
         }
         petPanel.onClick = { [weak self] in self?.showMainWindowFromPet() }
         petPanel.onDropFolder = { [weak self] in self?.startChat(inFolder: $0) }
+        petPanel.onDropFiles = { [weak self] in self?.startChat(withFiles: $0) }
+        controlsPresentation.onAttachmentsRefused = { [weak self] in self?.showNotice($0) }
         petPanel.onHide = { [weak self] in self?.setPetHidden(true) }
         petPanel.onShowSettings = { [weak self] in self?.systemOpen(.settings) }
         workspace.onOpenPetActivity = { [weak self] in
@@ -151,7 +154,8 @@ import SwiftUI
             guard let self else { return origin }
             let proposed = NSRect(origin: origin, size: self.petPanel.frame.size)
             guard let screen = CompanionLayout.screen(for: proposed, screens: NSScreen.screens.map(\.visibleFrame)) else { return origin }
-            return CompanionLayout.place(pet: proposed, in: screen, expanded: self.taskStore.isFollowUpExpanded).pet.origin
+            return CompanionLayout.place(pet: proposed, in: screen, expanded: self.taskStore.isFollowUpExpanded,
+                                         controlsHeight: self.controlsHeight).pet.origin
         }
         petPanel.onMove = { [weak self] in self?.layout() }
         petPanel.onPointerSample = { [weak self] point in self?.samplePointer(point) }
@@ -166,6 +170,16 @@ import SwiftUI
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.controlsPresentation.isComposerOpen, !self.controlsPresentation.isProjectPickerOpen,
                       !self.composerReleasedKeyboard else { return }
+                self.controlsPanel.makeKey()
+                self.controlsPresentation.refocusComposer()
+            }
+        }
+        controlsPresentation.onDialogOpenChange = { [weak self] open in
+            guard !open else { return }
+            // Typing returns to the composer, where its caret was, once the dialog has closed.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.controlsPresentation.isComposerOpen, !self.controlsPresentation.isDialogOpen else { return }
+                self.composerReleasedKeyboard = false
                 self.controlsPanel.makeKey()
                 self.controlsPresentation.refocusComposer()
             }
@@ -339,11 +353,13 @@ import SwiftUI
         guard presentation.isHovered != hovered else { return }
         presentation.isHovered = hovered
         // An empty composer follows the idle strip, unless the user is still typing in it.
-        if !hovered, presentation.isComposerOpen, !presentation.isProjectPickerOpen,
+        if !hovered, presentation.isComposerOpen, !presentation.isProjectPickerOpen, !presentation.isDialogOpen,
            presentation.collapsesOnExit || !controlsPanel.isKeyWindow {
             presentation.closeComposerIfEmpty()
         }
     }
+    /// The controls' canvas grows by a row while the composer shows the draft's files.
+    private var controlsHeight: CGFloat { controlsSurface(hovered: controlsPresentation.isHovered).height }
     private func controlsSurface(hovered: Bool) -> PetSurfacePresentation {
         controlsPresentation.surface(hovered: hovered, store: taskStore, voice: workspace.voice,
                                      unseenCompleted: workspace.unseenCompletedCount,
@@ -391,9 +407,17 @@ import SwiftUI
         composerReleasedKeyboard = false
         controlsPanel.makeKey()
     }
+    /// Text files dropped on the pet join the composer's draft, after any already there, and the
+    /// composer opens with the keyboard. Nothing is sent; the project and the text stay as they are.
+    func startChat(withFiles files: [URL]) {
+        controlsPresentation.attach(files)
+        controlsPresentation.openComposer()
+        composerReleasedKeyboard = false
+        controlsPanel.makeKey()
+    }
     @objc private func controlsResignedKey() {
-        // The + menu's popover takes the keyboard while it is open.
-        guard !controlsPresentation.isProjectPickerOpen else { return }
+        // The + menu's popover, and a dialog it opened, take the keyboard while they are open.
+        guard !controlsPresentation.isProjectPickerOpen, !controlsPresentation.isDialogOpen else { return }
         composerLostFocus()
     }
     @objc private func controlsBecameKey() {
@@ -408,7 +432,8 @@ import SwiftUI
     /// only the caret: typing goes to whatever took the click, and clicking the field brings it back.
     private func composerLostFocus() {
         let presentation = controlsPresentation
-        guard presentation.isComposerOpen, !presentation.closeComposerIfEmpty() else { return }
+        // A dialog from the + menu holds the keyboard for the composer, wherever its clicks land.
+        guard presentation.isComposerOpen, !presentation.isDialogOpen, !presentation.closeComposerIfEmpty() else { return }
         composerReleasedKeyboard = true
         if presentation.isProjectPickerOpen { presentation.isProjectPickerOpen = false }
         // A non-activating panel is not always told that another app took the click.
@@ -425,7 +450,8 @@ import SwiftUI
         let reservesBubble = CompanionBubbleContent.isShown(voice: workspace.voice.snapshot, spoken: workspace.voice.spoken,
                                                             notice: bubbleState.notice)
         let frames = CompanionLayout.place(pet: petPanel.frame, in: screen, expanded: taskStore.isFollowUpExpanded,
-                                           bubble: reservesBubble, activityHeight: workspace.petActivityHeight)
+                                           bubble: reservesBubble, activityHeight: workspace.petActivityHeight,
+                                           controlsHeight: controlsHeight)
         if activityPlacement.isBelowPet != frames.isActivityBelowPet {
             activityPlacement.isBelowPet = frames.isActivityBelowPet
         }

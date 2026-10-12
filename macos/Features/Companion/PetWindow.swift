@@ -9,6 +9,8 @@ final class PetPanel: NSPanel {
     var onShowSettings: (() -> Void)?
     /// A folder dropped on the pet; see `PetInteractionView.droppedFolder(on:)` for what counts.
     var onDropFolder: ((URL) -> Void)?
+    /// Text files dropped on the pet; see `PetInteractionView.Drop`.
+    var onDropFiles: (([URL]) -> Void)?
     var onMove: (() -> Void)?
     var onPointerSample: ((NSPoint) -> Void)?
     var constrainOrigin: ((NSPoint) -> NSPoint)?
@@ -55,6 +57,7 @@ final class PetPanel: NSPanel {
     private func interactionView(for store: PetStore) -> PetInteractionView {
         PetInteractionView(store: store, onClick: { [weak self] in self?.onClick?() },
                            onDropFolder: { [weak self] in self?.onDropFolder?($0) },
+                           onDropFiles: { [weak self] in self?.onDropFiles?($0) },
                            onHide: { [weak self] in self?.onHide?() },
                            onShowSettings: { [weak self] in self?.onShowSettings?() })
     }
@@ -120,6 +123,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     private let onHide: () -> Void
     private let onShowSettings: () -> Void
     private let onDropFolder: (URL) -> Void
+    private let onDropFiles: ([URL]) -> Void
     private var mouseStart: NSPoint?
     private var windowStart: NSPoint?
     private var dragging = false
@@ -130,12 +134,13 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     private var hoverTrackingArea: NSTrackingArea?
 
     init(store: PetStore, onClick: @escaping () -> Void, onDropFolder: @escaping (URL) -> Void,
-         onHide: @escaping () -> Void, onShowSettings: @escaping () -> Void) {
+         onDropFiles: @escaping ([URL]) -> Void = { _ in }, onHide: @escaping () -> Void, onShowSettings: @escaping () -> Void) {
         self.store = store
         self.onClick = onClick
         self.onHide = onHide
         self.onShowSettings = onShowSettings
         self.onDropFolder = onDropFolder
+        self.onDropFiles = onDropFiles
         super.init(frame: NSRect(origin: .zero, size: store.size))
         let hosting = NSHostingView(rootView: PetView(store: store))
         hosting.frame = bounds
@@ -164,17 +169,32 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
         return folders[0]
     }
 
+    /// What a drag on the pet brings: one folder for a chat's project, or text files for its draft.
+    /// Anything else, a folder with files or a package such as an app among them, is refused whole.
+    enum Drop: Equatable {
+        case folder(URL)
+        case files([URL])
+        @MainActor init?(_ pasteboard: NSPasteboard) {
+            if let folder = PetInteractionView.droppedFolder(on: pasteboard) { self = .folder(folder) }
+            else if let files = ChatAttachmentTypes.droppedFiles(on: pasteboard) { self = .files(files) }
+            else { return nil }
+        }
+    }
+
     // Adding a folder here does what dropping it on the sidebar's 项目 section does, so the cursor
     // shows the same + badge; a source that does not allow copying gets the next operation it does.
     // Without draggingUpdated AppKit keeps this answer for the drag.
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard Self.droppedFolder(on: sender.draggingPasteboard) != nil else { return [] }
+        guard Drop(sender.draggingPasteboard) != nil else { return [] }
         return [.copy, .link, .generic].first { sender.draggingSourceOperationMask.contains($0) } ?? []
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let folder = Self.droppedFolder(on: sender.draggingPasteboard) else { return false }
-        onDropFolder(folder)
+        switch Drop(sender.draggingPasteboard) {
+        case .folder(let folder): onDropFolder(folder)
+        case .files(let files): onDropFiles(files)
+        case nil: return false
+        }
         return true
     }
 

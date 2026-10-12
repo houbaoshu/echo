@@ -672,11 +672,25 @@ struct ConversationView: View {
         // Built once per render: each build trims the draft and evaluates `canRetry`.
         let presentation = presentation
         return VStack(alignment: .leading, spacing: 10) {
+            if !store.mainAttachments.isEmpty {
+                ChipFlow {
+                    ForEach(Array(zip(store.mainAttachments, store.mainAttachmentNames)), id: \.0.id) { attachment, name in
+                        DraftAttachmentChip(attachment: attachment, name: name) {
+                            store.removeMainAttachment(attachment.id)
+                            workspace?.requestComposerFocus(conversationID: conversationID)
+                        }
+                    }
+                }.font(WorkspaceStyle.caption).accessibilityIdentifier("conversation.attachments")
+            }
+            if let notice = store.attachmentNotice {
+                Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                    .accessibilityIdentifier("conversation.attachments.notice")
+            }
             NativeComposer(text: $store.mainDraft, focusRequest: focusRequest,
                            isSuspended: presentation.isDictating,
                            diagnostics: !voice.isActive && !voice.testing && dictation.diagnosticTrace?.conversationID == conversationID
                                ? dictation.diagnosticTrace : nil,
-                           onEscape: escape, onSend: sendText)
+                           onEscape: escape, onDropFiles: canAttach ? { store.attachToMainDraft($0) } : nil, onSend: sendText)
                 .opacity(presentation.isDictating ? 0 : 1)
                 .allowsHitTesting(!presentation.isDictating)
                 .accessibilityHidden(presentation.isDictating)
@@ -739,6 +753,13 @@ struct ConversationView: View {
                         .help("结束录音").accessibilityLabel("结束录音")
                         .accessibilityIdentifier("dictation.finish")
                 } else {
+                    Button(action: chooseFiles) {
+                        Image(systemName: "plus").font(.body.weight(.medium)).foregroundStyle(.primary)
+                            .frame(width: 28, height: 28)
+                            .background { Circle().fill(.primary.opacity(0.06)) }
+                            .contentShape(Circle())
+                    }.buttonStyle(.plain).disabled(!canAttach)
+                        .help(Self.addFilesLabel).accessibilityLabel(Self.addFilesLabel).accessibilityIdentifier("conversation.addFiles")
                     if isBackgroundVoice, let owner = voiceOwner, let ws = workspace {
                         Button { ws.revealVoice(owner: owner) } label: {
                             HStack(spacing: 4) {
@@ -826,9 +847,21 @@ struct ConversationView: View {
             // has to be changed in step when the card's does.
             .containerShape(Self.card)
             .shadow(color: .black.opacity(0.05), radius: 10, y: 3)
+            // Files dropped anywhere on the card; the editor takes those dropped on it itself.
+            .onDrop(of: [.fileURL], delegate: ChatFileDrop(add: { if canAttach { store.attachToMainDraft($0) } }))
             .onDisappear {
                 if dictation.conversationID == conversationID { dictation.cancel() }
             }
+    }
+    /// A tooltip and the button's name; the pet's + menu has the same words as a menu item.
+    private static var addFilesLabel: String { String(localized: "添加文件|悬停提示", defaultValue: "添加文件") }
+    /// A blocked conversation takes no files, as it takes no messages.
+    private var canAttach: Bool { store.agentLoadError == nil }
+    private func chooseFiles() {
+        WorkspaceActions.chooseFiles { urls in
+            store.attachToMainDraft(urls)
+            workspace?.requestComposerFocus(conversationID: conversationID)
+        }
     }
     private func toolCard(_ tool: AgentToolRecord) -> AgentToolView {
         AgentToolView(tool: tool, undo: store.offersUndo(tool) ? { store.undo(tool.id) } : nil, canUndo: store.canUndo(tool))
@@ -1007,6 +1040,30 @@ final class ComposerTextView: NSTextView {
     var isSuspended = false
     var onSend: (() -> Void)?
     var onEscape: (() -> Bool)?
+    /// Files dragged onto the editor join the draft instead of being typed in as their paths; a
+    /// drag of files the chat does not take is refused. Nil keeps the text view's own handling.
+    var onDropFiles: (([URL]) -> Void)?
+    private func carriesFiles(_ sender: any NSDraggingInfo) -> Bool {
+        onDropFiles != nil && sender.draggingPasteboard.types?.contains(.fileURL) == true
+    }
+    private func fileOperation(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        ChatAttachmentTypes.droppedFiles(on: sender.draggingPasteboard) == nil ? [] : .copy
+    }
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        carriesFiles(sender) ? fileOperation(sender) : super.draggingEntered(sender)
+    }
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        carriesFiles(sender) ? fileOperation(sender) : super.draggingUpdated(sender)
+    }
+    override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        carriesFiles(sender) ? fileOperation(sender) == .copy : super.prepareForDragOperation(sender)
+    }
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard carriesFiles(sender) else { return super.performDragOperation(sender) }
+        guard let files = ChatAttachmentTypes.droppedFiles(on: sender.draggingPasteboard) else { return false }
+        onDropFiles?(files)
+        return true
+    }
     private var focusPending = false
     override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
         guard !isSuspended else { return false }
@@ -1105,6 +1162,8 @@ struct NativeComposer: NSViewRepresentable {
     var isSuspended = false
     var diagnostics: DictationTrace?
     var onEscape: (() -> Bool)?
+    /// Files dropped on the editor; nil leaves drops to the text view.
+    var onDropFiles: (([URL]) -> Void)?
     // The desktop pet reuses this editor as a compact single-line field.
     var fontSize = WorkspaceStyle.bodySize
     var minHeight: CGFloat = 44
@@ -1132,7 +1191,7 @@ struct NativeComposer: NSViewRepresentable {
         editor.setAccessibilityIdentifier(identifier)
         // The delegate vends the composer's undo manager; text changes arrive from the
         // document instead, because a TextKit 2 undo never reaches `textDidChange`.
-        editor.delegate = context.coordinator; editor.onSend = onSend; editor.onEscape = onEscape
+        editor.delegate = context.coordinator; editor.onSend = onSend; editor.onEscape = onEscape; editor.onDropFiles = onDropFiles
         context.coordinator.editor = editor
         editor.textContentStorage?.textStorage?.delegate = context.coordinator
         editor.onFocusChange = onFocusChange
@@ -1149,6 +1208,7 @@ struct NativeComposer: NSViewRepresentable {
         defer { diagnostics?.snapshot("editor.update.after", context.coordinator.diagnosticState(editor)) }
         editor.onSend = onSend
         editor.onEscape = onEscape
+        editor.onDropFiles = onDropFiles
         if (editor.onFocusChange == nil) != (onFocusChange == nil) { editor.onFocusChange = onFocusChange }
         editor.onCompositionEnded = { [weak coordinator = context.coordinator, weak editor] in
             guard let editor else { return }
@@ -1348,4 +1408,27 @@ struct NativeComposer: NSViewRepresentable {
     let workspace = WorkspaceStore(initialStore: store)
     return WorkspaceConversationView(workspace: workspace, planets: PlanetStore())
         .frame(width: 700, height: 560)
+}
+
+#Preview("聊天 · 附件") {
+    var sent = ConversationMessage(role: .user, content: "对比一下这两份需求，列出差异。")
+    sent.attachments = zip(["/Users/someone/Desktop/需求说明.md", "/Users/someone/Documents/旧版/需求说明.md"], ["需求说明.md", "需求说明 2.md"])
+        .map { path, name in
+            var attachment = ChatAttachment(path: path)
+            attachment.label = name
+            return attachment
+        }
+    var snapshot = TaskStore.Snapshot(
+        task: nil,
+        messages: [sent, ConversationMessage(role: .assistant, content: "两份需求的主要差异在登录方式和导出格式。")],
+        mainDraft: "再看看这两个文件",
+        followUpDraft: "",
+        activityDismissed: false,
+        activitiesCollapsed: false)
+    snapshot.mainAttachments = [ChatAttachment(path: "/Users/someone/Downloads/main.swift"),
+                                ChatAttachment(path: "/Users/someone/Documents/config.json", problem: .denied)]
+    let store = TaskStore(snapshot: snapshot, harness: nil)
+    let workspace = WorkspaceStore(initialStore: store)
+    return WorkspaceConversationView(workspace: workspace, planets: PlanetStore())
+        .frame(width: 700, height: 460)
 }

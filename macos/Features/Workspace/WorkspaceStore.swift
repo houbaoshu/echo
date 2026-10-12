@@ -452,24 +452,24 @@ struct WorkspaceSnapshot: Codable {
         }
         return TaskStore(snapshot: restored, harness: harnessFactory?())
     }
-    @discardableResult func send(_ text: String, conversationID: UUID) -> Bool {
+    @discardableResult func send(_ text: String, attachments: [ChatAttachment] = [], conversationID: UUID) -> Bool {
         guard !shuttingDown, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let target = conversation(id: conversationID), target.store.canSubmit else { return false }
         if voice.conversationID == conversationID {
             guard voice.canSubmit else { return false }
             voice.prepareForSubmission()
-            let accepted = target.store.send(text)
+            let accepted = target.store.send(text, attachments: attachments)
             voice.finishSubmission()
             return accepted
         }
-        return target.store.send(text)
+        return target.store.send(text, attachments: attachments)
     }
     /// The pet's quick composer always starts its own conversation. It never reuses the
     /// main window's draft or changes the selection; the first send makes it the activity.
-    @discardableResult func sendQuickMessage(_ text: String, projectID: UUID? = nil) -> Bool {
+    @discardableResult func sendQuickMessage(_ text: String, attachments: [ChatAttachment] = [], projectID: UUID? = nil) -> Bool {
         guard !shuttingDown, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let conversation = makeDraft(projectID: validProjectID(projectID))
-        if send(text, conversationID: conversation.id) { return true }
+        if send(text, attachments: attachments, conversationID: conversation.id) { return true }
         if conversation.store.messages.isEmpty {
             conversation.store.shutdown(); lifecycleObservations[conversation.id] = nil
             drafts.removeAll { $0.id == conversation.id }
@@ -492,8 +492,9 @@ struct WorkspaceSnapshot: Codable {
         return true
     }
     @discardableResult func sendMainMessage(conversationID: UUID) -> Bool {
-        guard let target = conversation(id: conversationID), send(target.store.mainDraft, conversationID: conversationID) else { return false }
-        target.store.mainDraft = ""
+        guard let target = conversation(id: conversationID),
+              send(target.store.mainDraft, attachments: target.store.mainAttachments, conversationID: conversationID) else { return false }
+        target.store.mainDraft = ""; target.store.mainAttachments = []; target.store.attachmentNotice = nil
         return true
     }
     @discardableResult func sendFollowUp(conversationID: UUID) -> Bool {

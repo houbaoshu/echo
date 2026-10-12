@@ -137,7 +137,7 @@ struct ConversationMessageView: View {
         return message.steering?.label
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 10) {
             if message.role == .assistant {
                 if !message.content.isEmpty { AssistantMarkdown(content: message.content).equatable() }
                 // A finished reply is its own receipt: the text is right there, so the
@@ -153,6 +153,7 @@ struct ConversationMessageView: View {
                 if let error = message.errorMessage { Text(error).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled) }
                 if let retry { Button("继续处理", systemImage: "arrow.clockwise", action: retry).buttonStyle(.bordered) }
             } else {
+                if !message.attachments.isEmpty { MessageAttachments(attachments: message.attachments) }
                 Text(message.content).font(WorkspaceStyle.body).lineSpacing(6).textSelection(.enabled)
                     .padding(14).background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
                 if let steeringCaption { Text(steeringCaption).font(.caption).foregroundStyle(.secondary) }

@@ -166,6 +166,23 @@ private extension View {
 #Preview("托盘 · 收起（卡片展开）") { trayControls(folded: false, hovered: false) }
 #Preview("托盘 · 可交互") { PreviewDesktop { InteractiveTray() } }
 
+#Preview("输入框 · 附件") {
+    let workspace = CompanionPreviewData.tray(folded: true)
+    let presentation = PetControlsPresentation()
+    presentation.draft = "对比一下这两份需求"
+    presentation.attachments = [ChatAttachment(path: "/Users/someone/Desktop/需求说明.md"),
+                                ChatAttachment(path: "/Users/someone/Documents/旧版/需求说明.md")]
+    presentation.openComposer()
+    let pet = Bundle.main.resourceURL.flatMap { try? PetStore(directory: $0.appendingPathComponent("pets/chiyan")) }
+    return PreviewDesktop {
+        VStack(spacing: 0) {
+            if let pet { PetView(store: pet) }
+            PetControls(store: workspace.activityStore, voice: workspace.voice, presentation: presentation,
+                        placement: ActivityPlacement(), workspace: workspace, actions: PetControlActions(toggleTray: {}))
+        }
+    }
+}
+
 #Preview("精灵控制") {
     HStack(spacing: 12) {
         RoundControl(symbol: "square.and.pencil", label: "输入", textStyle: .body) {}

@@ -82,12 +82,13 @@ struct ConversationProjectPicker: View {
 }
 
 enum ProjectPickerOption: Hashable {
-    case project(UUID), add
-    static func filtered(projects: [WorkspaceProject], query: String) -> [ProjectPickerOption] {
+    case project(UUID), add, addFiles
+    /// `files` offers 添加文件… after 添加项目文件夹….
+    static func filtered(projects: [WorkspaceProject], query: String, files: Bool = false) -> [ProjectPickerOption] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return projects.filter {
             query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.path.localizedCaseInsensitiveContains(query)
-        }.map { .project($0.id) } + [.add]
+        }.map { .project($0.id) } + [.add] + (files ? [.addFiles] : [])
     }
 }
 
@@ -98,6 +99,11 @@ struct ProjectSelectionPanel: View {
     let select: (UUID) -> Void
     /// Runs after the panel has dismissed, so a folder dialog does not belong to it.
     let addFolder: () -> Void
+    /// The pet's panel also adds files to the draft, after it has dismissed; nil offers no such row.
+    var addFiles: (() -> Void)? = nil
+    /// Runs as a dialog row is chosen, before the panel closes, so the pet's composer knows a dialog
+    /// is coming while nothing holds its keyboard.
+    var willOpenDialog: () -> Void = {}
     let close: () -> Void
     @State private var query = ""
     @State private var highlighted: ProjectPickerOption = .add
@@ -120,7 +126,9 @@ struct ProjectSelectionPanel: View {
     private var selection: Binding<ProjectPickerOption?> {
         Binding(get: { highlighted }, set: { if let value = $0 { highlighted = value } })
     }
-    private var options: [ProjectPickerOption] { ProjectPickerOption.filtered(projects: workspace.projects, query: query) }
+    private var options: [ProjectPickerOption] {
+        ProjectPickerOption.filtered(projects: workspace.projects, query: query, files: addFiles != nil)
+    }
     private func project(_ option: ProjectPickerOption) -> WorkspaceProject? {
         guard case .project(let id) = option else { return nil }
         return workspace.projects.first { $0.id == id }
@@ -129,7 +137,7 @@ struct ProjectSelectionPanel: View {
     private func selected(_ option: ProjectPickerOption) -> Bool {
         switch option {
         case .project(let id): return selectedProjectID == id
-        case .add: return false
+        case .add, .addFiles: return false
         }
     }
     var body: some View {
@@ -169,8 +177,8 @@ struct ProjectSelectionPanel: View {
     /// the row supplies the icon, the name and what a click means.
     private func row(_ option: ProjectPickerOption) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: option == .add ? "folder.badge.plus" : "folder")
-            Text(project(option)?.name ?? String(localized: "添加项目文件夹…")).lineLimit(1)
+            Image(systemName: option == .add ? "folder.badge.plus" : option == .addFiles ? "doc.badge.plus" : "folder")
+            Text(project(option)?.name ?? (option == .addFiles ? String(localized: "添加文件…") : String(localized: "添加项目文件夹…"))).lineLimit(1)
             Spacer(minLength: 0)
             if !enabled(option) { Text("不可用").font(WorkspaceStyle.caption) }
             if selected(option) { Image(systemName: "checkmark") }
@@ -186,7 +194,8 @@ struct ProjectSelectionPanel: View {
             // the pointer and by nothing else, so assistive technology gets the same
             // activation spelled out as the row's default action.
             .accessibilityAction { if enabled(option) { choose(option) } }
-            .accessibilityIdentifier(project(option).map { "projectPicker.project.\($0.id)" } ?? "projectPicker.add")
+            .accessibilityIdentifier(project(option).map { "projectPicker.project.\($0.id)" }
+                                     ?? (option == .addFiles ? "projectPicker.addFiles" : "projectPicker.add"))
             .accessibilityAddTraits(selected(option) ? .isSelected : [])
     }
     private func move(_ delta: Int) {
@@ -200,9 +209,14 @@ struct ProjectSelectionPanel: View {
         switch option {
         case .project(let id): select(id); close()
         case .add:
+            willOpenDialog()
             close()
             // Let the popover dismiss so a sheet belongs to the main window.
             DispatchQueue.main.async { addFolder() }
+        case .addFiles:
+            willOpenDialog()
+            close()
+            DispatchQueue.main.async { addFiles?() }
         }
     }
 }

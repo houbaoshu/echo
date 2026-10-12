@@ -22,7 +22,9 @@ struct CompanionLayout {
         activity.insetBy(dx: 12 - Self.activityPadding, dy: 12 - Self.activityPadding)
     }
     /// `bubble` reserves the bubble canvas between the pet and the activity, e.g. for a voice session.
-    static func place(pet: CGRect, in screen: CGRect, expanded: Bool, bubble reservesBubble: Bool = false, activityHeight: CGFloat? = nil) -> Self {
+    /// `controlsHeight` is the controls' canvas, taller while the composer shows files.
+    static func place(pet: CGRect, in screen: CGRect, expanded: Bool, bubble reservesBubble: Bool = false, activityHeight: CGFloat? = nil,
+                      controlsHeight: CGFloat = Self.controlsHeight) -> Self {
         let inset = screen.insetBy(dx: 8, dy: 8)
         let width = min(capsuleWidth + 24, inset.width)
         let height = min((activityHeight ?? (expanded ? expandedHeight : collapsedHeight)) + 24, inset.height - pet.height - controlsHeight - 8)

@@ -71,6 +71,16 @@
         }
       }
     },
+    "%@ 不是文本文件，没有添加。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ aren’t text files, so they weren’t added."
+          }
+        }
+      }
+    },
     "%@ 的 Live Voice" : {
       "localizations" : {
         "en" : {
@@ -87,6 +97,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ (unavailable)"
+          }
+        }
+      }
+    },
+    "%@（无法读取）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ (can’t be read)"
           }
         }
       }
@@ -333,6 +353,16 @@
     "https://api.openai.com/v1" : {
       "shouldTranslate" : false
     },
+    "macOS 没有允许 Echo 读取这个文件。可以在“系统设置 > 隐私与安全性 > 文件和文件夹”里打开。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS didn’t allow Echo to read this file. You can turn on access in System Settings > Privacy & Security > Files & Folders."
+          }
+        }
+      }
+    },
     "metadata.json 不是语言模型的描述" : {
       "localizations" : {
         "en" : {
@@ -399,6 +429,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "stdout truncated"
+          }
+        }
+      }
+    },
+    "“%@”不是文本文件，没有添加。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@” isn’t a text file, so it wasn’t added."
           }
         }
       }
@@ -2151,6 +2191,16 @@
         }
       }
     },
+    "无法读取这个文件：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read this file: %@"
+          }
+        }
+      }
+    },
     "无法读取钥匙串中的 API Key（OSStatus %d），请检查钥匙串访问权限。" : {
       "localizations" : {
         "en" : {
@@ -2931,6 +2981,50 @@
         }
       }
     },
+    "添加|选文件框按钮" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "添加"
+          }
+        }
+      }
+    },
+    "添加文件|悬停提示" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add files"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "添加文件"
+          }
+        }
+      }
+    },
+    "添加文件…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add Files…"
+          }
+        }
+      }
+    },
     "添加项目文件夹" : {
       "localizations" : {
         "en" : {
@@ -3014,6 +3108,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hover to make it jump, drag to make it run, and move away to have it face the pointer. Click to open the chat; right-click to hide the pet or open Settings."
+          }
+        }
+      }
+    },
+    "移除文件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove file"
           }
         }
       }

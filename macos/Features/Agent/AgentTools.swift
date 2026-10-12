@@ -32,11 +32,22 @@ protocol AgentProjectAccess: Sendable {
     func waitForTurn(call: GenerationID?) async throws
     /// `call` is done, however it ended; the write calls after it may go.
     func finished(call: GenerationID?) async
+    /// read_file on the file attached to the chat as `name`.
+    func readAttached(name: String, startLine: Int, call: GenerationID?) async throws -> String
 }
 
 extension AgentProjectAccess {
     func waitForTurn(call: GenerationID?) async throws {}
     func finished(call: GenerationID?) async {}
+    func readAttached(name: String, startLine: Int, call: GenerationID?) async throws -> String {
+        AgentToolResult.failed(AgentToolResult.notAttached(name: name, attached: []))
+    }
+}
+
+/// Where tests hold a read of an attached file. It runs on the thread doing the read, never the main actor.
+struct AgentAttachmentHooks: Sendable {
+    /// Before the file is opened: opening can wait for the person to answer the system's access prompt.
+    var beforeOpening: @Sendable () -> Void = {}
 }
 
 /// The Finder side of a read.
@@ -126,6 +137,17 @@ enum AgentToolResult {
             + lines.joined(separator: " ")
             + " Earlier tool results and replies that show these changes predate the undo.]\n\n"
     }
+    /// What precedes the person's message when they added files with it.
+    static func attachedNotice(_ names: [String]) -> String {
+        "[Echo: with this message the person attached " + names.map { "\"\($0)\"" }.joined(separator: ", ") + ".]\n\n"
+    }
+    static func notAttached(name: String, attached: [String]) -> String {
+        attached.isEmpty
+            ? "no file is attached to this chat; only the person can attach one: \(name)"
+            : "no file named \(name) is attached to this chat; attached files: " + attached.map { "\"\($0)\"" }.joined(separator: ", ")
+    }
+    static let attachedReadOnly = "files attached to this chat can only be read, so nothing was written"
+    static let attachedNotListed = "list_files does not list the files attached to this chat; read one with read_file, root \"attached\" and its name as the path"
     static func isUndone(_ result: String) -> Bool {
         ((try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any])?["undone"] != nil
     }
@@ -180,6 +202,8 @@ struct AgentReadContext: Sendable {
         case nil: choice = nil
         case "finder": choice = .finder
         case "project": choice = .project
+        // read_file takes this root before it gets here.
+        case "attached": return .result(AgentToolResult.failed(nothing == "written" ? AgentToolResult.attachedReadOnly : AgentToolResult.attachedNotListed))
         case let other?: return .result(AgentToolResult.failed(#"root must be "finder" or "project"; received: \#(other)"#))
         }
         if choice != .finder {
@@ -294,7 +318,7 @@ struct ReadFileTool: Tool {
         var path: String
         @Guide(description: "First line to read, 1-based; omit to start at line 1")
         var start_line: Int?
-        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project; omit for the project when the chat has one, else the Finder folder"#)
+        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project, "attached" for a file attached to this chat, with its name as the path; omit for the project when the chat has one, else the Finder folder"#)
         var root: String?
     }
 
@@ -303,7 +327,10 @@ struct ReadFileTool: Tool {
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         try await context.ordered(call: arguments.id) {
             guard let input = try? Input(arguments) else {
-                return AgentToolResult.failed("invalid arguments for read_file; expected {\"path\": string, \"start_line\"?: integer, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)")
+                return AgentToolResult.failed("invalid arguments for read_file; expected {\"path\": string, \"start_line\"?: integer, \"root\"?: \"finder\" | \"project\" | \"attached\"}. Received: \(arguments.jsonString)")
+            }
+            if input.root == "attached" {
+                return try await context.access.readAttached(name: input.path, startLine: input.start_line ?? 1, call: arguments.id)
             }
             return try await context.run(root: input.root, call: arguments.id) { root, scope in
                 Self.read(root: root, path: input.path, startLine: input.start_line ?? 1, scope: scope)
@@ -320,6 +347,31 @@ struct ReadFileTool: Tool {
         do { fd = try ProjectPath.open(root: root, path: path, directory: false) }
         catch { return AgentToolResult.failed(AgentToolPath.message(error, path: raw, scope: scope)) }
         defer { close(fd) }
+        return read(fd, raw: raw, startLine: startLine)
+    }
+
+    /// A file attached to the chat, by the path it was attached from. A file that is gone or
+    /// that the system will not open says so; where it went is not looked for.
+    static func read(attached file: AttachedFile, startLine: Int) -> String {
+        guard startLine >= 1 else { return AgentToolResult.failed("start_line must be at least 1") }
+        let fd = open(file.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return AgentToolResult.failed(attachedFailure(errno, name: file.name)) }
+        defer { close(fd) }
+        return read(fd, raw: file.name, startLine: startLine, textOnly: true)
+    }
+
+    static func attachedFailure(_ code: Int32, name: String) -> String {
+        switch code {
+        case ENOENT, ENOTDIR: "\(name) is no longer where it was attached from; it may have been moved, renamed or deleted"
+        // The system's privacy protection, not the file's permissions.
+        case EPERM: "permission denied: macOS does not allow Echo to read \(name). The person can allow it in System Settings > Privacy & Security > Files & Folders"
+        default: AgentToolPath.message(.system(code), path: name)
+        }
+    }
+
+    /// The lines of an open file from `startLine`, bounded; `raw` names it in messages. `textOnly`
+    /// refuses a file whose start is not text, by the test that admitted it to the chat.
+    private static func read(_ fd: Int32, raw: String, startLine: Int, textOnly: Bool = false) -> String {
         var info = stat()
         guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return AgentToolResult.failed("not a regular file: \(raw)") }
         guard info.st_size <= maxFileBytes else { return AgentToolResult.failed("file exceeds 4 MiB: \(raw)") }
@@ -330,6 +382,9 @@ struct ReadFileTool: Tool {
             if count < 0, errno == EINTR { continue }
             guard count > 0 else { break }
             total += count
+        }
+        if textOnly, !ChatAttachment.isText(data.prefix(min(total, ChatAttachment.sniffLength)), whole: total <= ChatAttachment.sniffLength) {
+            return AgentToolResult.failed("\(raw) is not a text file, so it was not read")
         }
         let text = String(decoding: data.prefix(total), as: UTF8.self)
         // Split on "\n" like Rust's `str::lines`; a String would keep "\r\n" together as one Character.

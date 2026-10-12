@@ -3159,13 +3159,15 @@ private struct ComposerHeightHost: View {
     }
 
     /// Dropping exactly one folder on the pet opens its composer on that folder's project; a
-    /// folder that already is a project is reused, the draft survives, and anything else is refused.
+    /// folder that already is a project is reused, the draft survives. Text files join the draft,
+    /// after those already there, and anything else is refused.
     func testPetFolderDropStartsChatInProject() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pet-drop-\(UUID())")
         let folder = root.appendingPathComponent("拖来的项目"), known = root.appendingPathComponent("已有项目")
         let file = root.appendingPathComponent("notes.txt"), package = root.appendingPathComponent("Probe.app")
+        let pdf = root.appendingPathComponent("paper.pdf"), markdown = root.appendingPathComponent("plan.md")
         for directory in [folder, known, package] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
-        try Data("notes".utf8).write(to: file)
+        for text in [file, pdf, markdown] { try Data("notes".utf8).write(to: text) }
         defer { try? FileManager.default.removeItem(at: root) }
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
@@ -3182,8 +3184,8 @@ private struct ComposerHeightHost: View {
             return (view.draggingEntered(drag), view.performDragOperation(drag))
         }
 
-        for (refused, label) in [([file], "a file"), ([folder, known], "two folders"), ([folder, file], "a folder with a file"),
-                                 ([package], "a package")] {
+        for (refused, label) in [([pdf], "a file that is not text"), ([file, pdf], "text with a file that is not"),
+                                 ([folder, known], "two folders"), ([folder, file], "a folder with a file"), ([package], "a package")] {
             let result = drop(refused)
             XCTAssertTrue(result.operation == [] && !result.accepted, "The pet refuses \(label)")
         }
@@ -3206,6 +3208,104 @@ private struct ComposerHeightHost: View {
                      "Dropping the first folder again reuses its project")
         XCTAssertTrue(presentation.isComposerOpen && presentation.draft == "先看看目录结构")
         try await eventually("the chip is back on the dropped folder") { axValue(findAccessibility("pet.project.name", in: controls)) == "拖来的项目" }
+
+        let files = drop([file, markdown])
+        XCTAssertTrue(files.operation == .copy && files.accepted, "Text files are accepted with the + badge")
+        try await eventually("the files' starts are read") { presentation.attachments.count == 2 }
+        XCTAssertTrue(drop([file]).accepted, "A file already in the draft is accepted and kept once")
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(presentation.attachments.map(\.name) == ["notes.txt", "plan.md"] && presentation.projectID == added.id
+                     && presentation.isComposerOpen && presentation.draft == "先看看目录结构",
+                     "The files join the draft; the project and the text stay")
+        XCTAssertTrue(workspace.activityStore.messages.isEmpty && workspace.conversations.isEmpty, "Nothing is sent")
+        try await eventually("the chips show") { findAccessibility("attachment.plan.md", in: controls) != nil }
+    }
+
+    /// A folder or file dialog opened from the pet's + menu takes the keyboard without closing the
+    /// composer, even an empty one, and leaves its draft alone. Once it closes, the composer asks
+    /// for the keyboard again with its caret where it was, and what was chosen joins the draft.
+    /// Losing the keyboard is the panel's resign notification, posted here, so no app has to be in front.
+    func testPetPlusMenuDialogsKeepTheComposer() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pet-dialog-\(UUID())")
+        let folder = root.appendingPathComponent("选来的项目"), file = root.appendingPathComponent("notes.txt")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("notes".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: root) }
+        final class Pending { var folder: ((URL?) -> Void)?; var files: (([URL]) -> Void)? }
+        let pending = Pending()
+        let dialogs = PetDialogs(chooseFolder: { pending.folder = $0 }, chooseFiles: { pending.files = $0 })
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: SettingsStore(secrets: ComposerSecrets()),
+                                            defaults: EchoTestResources.defaults(), dialogs: dialogs)
+        defer { companion.shutdown() }
+        let presentation = companion.controlsPresentation
+        let controls = try XCTUnwrap(companion.controlsPanel.contentView)
+        func find(in view: NSView) -> ComposerTextView? {
+            if let editor = view as? ComposerTextView { return editor }
+            return view.subviews.lazy.compactMap { find(in: $0) }.first
+        }
+        func editor() -> ComposerTextView? { find(in: controls) }
+        func loseKeyboard() { NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: companion.controlsPanel) }
+        /// Chooses a row of the + menu the way a click does: open the menu, press the row.
+        func choose(_ identifier: String) async throws {
+            XCTAssertTrue(findAccessibility("pet.project", in: controls)?.accessibilityPerformPress?() == true, "+ opens the menu")
+            var row: AnyObject?
+            try await eventually("the menu shows \(identifier)") {
+                row = NSApp.windows.lazy.compactMap { $0.contentView.flatMap { self.findAccessibility(identifier, in: $0) } }.first
+                return row != nil
+            }
+            XCTAssertTrue(row?.accessibilityPerformPress?() == true)
+            try await eventually("the dialog is up") { presentation.isDialogOpen }
+        }
+
+        // Without a dialog, an empty composer that loses the keyboard closes.
+        presentation.openComposer()
+        try await eventually("the composer shows") { editor() != nil }
+        loseKeyboard()
+        XCTAssertFalse(presentation.isComposerOpen, "The notification stands in for losing the keyboard")
+
+        // An empty composer stays open while each dialog is up, and what is chosen joins it.
+        presentation.openComposer()
+        try await eventually("the composer shows") { editor() != nil }
+        try await choose("projectPicker.addFiles")
+        XCTAssertTrue(presentation.isComposerOpen, "Files: open once the dialog is up")
+        loseKeyboard()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(presentation.isComposerOpen, "Files: the composer stays open")
+        XCTAssertTrue(presentation.draft.isEmpty && editor() != nil, "Files: the draft and the editor stay")
+        var requests = presentation.focusRequest
+        pending.files?([file])
+        try await eventually("the file joins the draft and typing returns") {
+            presentation.attachments.map(\.name) == ["notes.txt"] && presentation.focusRequest > requests
+        }
+        XCTAssertTrue(presentation.isComposerOpen && !presentation.isDialogOpen)
+
+        try await choose("projectPicker.add")
+        loseKeyboard()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(presentation.isComposerOpen && editor() != nil, "Folder: the composer stays open")
+        requests = presentation.focusRequest
+        pending.folder?(folder)
+        try await eventually("the folder becomes the project and typing returns") {
+            presentation.projectID != nil && presentation.focusRequest > requests
+        }
+        XCTAssertTrue(presentation.isComposerOpen && presentation.attachments.count == 1, "The files stay")
+
+        // A draft keeps its text, and the caret comes back where it was, also when the dialog is cancelled.
+        presentation.draft = "先看看这个文件"
+        let typed = try XCTUnwrap(editor())
+        try await eventually("the editor shows the draft") { typed.string == "先看看这个文件" }
+        typed.setSelectedRange(NSRange(location: 3, length: 0))
+        try await choose("projectPicker.addFiles")
+        loseKeyboard()
+        requests = presentation.focusRequest
+        pending.files?([])
+        try await eventually("typing returns") { presentation.focusRequest > requests }
+        try await eventually("the editor has the keyboard") { companion.controlsPanel.firstResponder === typed }
+        XCTAssertTrue(editor() === typed && presentation.draft == "先看看这个文件" && typed.selectedRange() == NSRange(location: 3, length: 0),
+                      "Same editor, same draft, caret where it was: \(typed.selectedRange())")
+        XCTAssertTrue(presentation.attachments.count == 1 && presentation.isComposerOpen)
     }
 
     /// Folders dropped on the sidebar's 项目 section are added one by one, known ones skipped, and
