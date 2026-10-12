@@ -12,8 +12,8 @@ import FoundationModels
         }
     }
     /// Direct answer, a read-only look at a project, a file edited and one created there, both
-    /// changes undone and the model aware of it, a file outside any project attached and read, and
-    /// a chat saved with a bash call continued:
+    /// changes undone and the model aware of it, a file outside any project attached and read, a
+    /// spoken-style request for a reminder tomorrow at ten, and a chat saved with a bash call continued:
     /// the service takes the old call back although the turn no longer offers bash.
     static func run(protocols: [ModelAPIProtocol]) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
@@ -32,11 +32,13 @@ import FoundationModels
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 try FileManager.default.moveItem(at: url, to: folder.appendingPathComponent(url.lastPathComponent))
             }
+            // Reminders and events go to a fake store: no step reads or changes the person's own.
+            let calendar = FakeCalendarStore(lists: ["提醒", "工作", "Echo 测试"])
             let harness = {
                 AgentHarness(resolveModel: {
                     let transport = AgentTransport.make(for: endpoint)
                     return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
-                }, trash: trash)
+                }, trash: trash, calendar: calendar)
             }
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
                                            harnessFactory: harness)
@@ -64,6 +66,8 @@ import FoundationModels
                 try await writeAndEdit(work, project: project, backups: root.appendingPathComponent("\(api.rawValue)/agent-backups"))
                 try await undoAndAsk(work, project: project)
                 try await readAttached(workspace, folder: root.appendingPathComponent("\(api.rawValue)/outside"))
+                try await remindTomorrow(workspace, calendar: calendar)
+                try await remindTomorrow(workspace, calendar: calendar, saying: "在 Echo 测试 列表里新建提醒：明天上午十点交报告", list: "Echo 测试")
                 try await continueSavedBashHistory(harness: harness())
             } catch {
                 failures += 1
@@ -73,6 +77,39 @@ import FoundationModels
             fflush(nil)
         }
         guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过实网验收；日志不包含密钥或已有会话。") }
+    }
+
+    /// Only the reminder step, for each protocol: a new workspace with a fake calendar store.
+    static func runReminder(protocols: [ModelAPIProtocol]) async throws {
+        let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
+        let (saved, key) = try settings.savedModelCredentials()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        print("Disposable live workspaces: \(root.path)"); fflush(nil)
+        var failures = 0
+        for api in protocols {
+            var config = saved; config.apiProtocol = api
+            print("START: \(api.title) reminder from a spoken-style request"); fflush(nil)
+            let endpoint = AgentEndpoint(config, key: key)
+            let calendar = FakeCalendarStore(lists: ["提醒", "工作", "Echo 测试"])
+            let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
+                                           harnessFactory: {
+                AgentHarness(resolveModel: {
+                    let transport = AgentTransport.make(for: endpoint)
+                    return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
+                }, calendar: calendar)
+            })
+            do {
+                try await remindTomorrow(workspace, calendar: calendar)
+                try await remindTomorrow(workspace, calendar: calendar, saying: "在 Echo 测试 列表里新建提醒：明天上午十点交报告", list: "Echo 测试")
+            } catch {
+                failures += 1
+                print("FAIL: \(api.title): \(error is SettingsError ? error.localizedDescription : "请检查服务的协议支持或连接。")")
+            }
+            await workspace.prepareForTermination()
+            fflush(nil)
+        }
+        guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过提醒验收。") }
     }
 
     /// In the project just read: the service edits note.txt and creates summary.txt with real
@@ -136,6 +173,34 @@ import FoundationModels
             throw SettingsError("附加文件读取未按要求完成：\(chat.store.tools.map { "\($0.command) \($0.result?.prefix(120) ?? "")" }) \(reply.prefix(200))")
         }
         print("PASS: attached file read by name: \(reply.prefix(80))"); fflush(nil)
+    }
+
+    /// As said to Live Voice: the service works out tomorrow from the time the message carries
+    /// and creates the reminder due then at ten, in the person's time zone, in the list asked for,
+    /// titled with the thing to do alone, without the time or the list.
+    /// `sentence` asks for "交报告" tomorrow at ten in the list named `list`.
+    static func remindTomorrow(_ workspace: WorkspaceStore, calendar: FakeCalendarStore, saying sentence: String = "明天上午十点提醒我交报告",
+                               list: String = "提醒") async throws {
+        let clock = AgentClock.system
+        let tomorrow = clock.calendar.date(byAdding: .day, value: 1, to: clock.now())!
+        let day = clock.calendar.dateComponents([.year, .month, .day], from: tomorrow)
+        let before = calendar.reminders.count
+        let chat = workspace.newConversation()
+        chat.store.send(sentence)
+        try await wait(chat.store)
+        let reply = chat.store.messages.last { $0.role == .assistant }?.content ?? ""
+        let calls = chat.store.tools.filter { $0.tool == "create_reminder" }
+        let made = calendar.reminders.dropFirst(before)
+        let due = made.last?.due
+        // A call the tool turned down, such as a list name spelled differently, may be retried;
+        // what counts is the one reminder made.
+        guard chat.store.task?.status == .completed, calls.last?.state == .finished,
+              made.count == 1, made.last?.title == "交报告", made.last?.listTitle == list,
+              due?.year == day.year, due?.month == day.month, due?.day == day.day, due?.hour == 10, due?.minute == 0,
+              due?.timeZone?.identifier == clock.timeZone.identifier else {
+            throw SettingsError("提醒没有按要求新建：\(chat.store.tools.map { "\($0.tool ?? "") \($0.result?.prefix(200) ?? "")" }) \(String(describing: due)) \(reply.prefix(200))")
+        }
+        print("PASS: \(sentence) → \(made.last!.title) in \(list) at \(AgentTimeText.due(due!, in: clock).text) after \(calls.count) create_reminder call(s): \(reply.prefix(80))"); fflush(nil)
     }
 
     /// A chat saved by a build that offered bash: one finished bash call and the reply after it.

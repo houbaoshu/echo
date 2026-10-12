@@ -120,7 +120,9 @@ final class LoopbackModelServer: @unchecked Sendable {
         guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw FixtureError("Expected model JSON object") }
         let responses = String(decoding: request.prefix(start), as: UTF8.self).components(separatedBy: "\r\n")[0].contains("/responses ")
         let items = body[responses ? "input" : "messages"] as? [[String: Any]] ?? []
-        let text = items.last(where: { $0["role"] as? String == "user" })?["content"] as? String ?? ""
+        // What the person wrote, after the line Echo puts before each message giving its time.
+        var text = items.last(where: { $0["role"] as? String == "user" })?["content"] as? String ?? ""
+        if text.hasPrefix("[Echo: sent "), let end = text.range(of: "]\n\n") { text = String(text[end.upperBound...]) }
         let results = items.filter { $0["role"] as? String == "tool" || $0["type"] as? String == "function_call_output" }
         // Failure modes key on any user message: later requests carry the core's feedback as the last one.
         let conversation = items.filter { $0["role"] as? String == "user" }.compactMap { $0["content"] as? String }.joined(separator: "\n")

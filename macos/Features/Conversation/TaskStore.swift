@@ -274,8 +274,9 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         var old: String
         var new: String
     }
-    /// For a write call that left a record of its change, whether the person can undo it, did, or
-    /// tried and could not. Nil for every other card, and for changes made before undo existed.
+    /// For a write, reminder or event change that left a record of itself, whether the person can
+    /// undo it, did, or tried and could not. Nil for every other card, and for changes made before
+    /// undo existed.
     var undo: Undo?
     enum Undo: Codable, Equatable {
         case available, undone
@@ -286,6 +287,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         case waiting = "待执行", running = "执行中", finished = "执行结束", notExecuted = "未执行", unknown = "执行结果未知"
         /// A write tool that ended without changing anything: refused, or failed before the change.
         case notWritten = "未写入"
+        /// A reminders or calendar tool that ended without changing anything.
+        case failed = "失败"
         var label: String {
             switch self {
             case .waiting: String(localized: "待执行")
@@ -294,6 +297,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             case .notExecuted: String(localized: "未执行")
             case .unknown: String(localized: "执行结果未知")
             case .notWritten: String(localized: "未写入")
+            case .failed: String(localized: "失败")
             }
         }
     }
@@ -454,7 +458,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     var isGenerating: Bool { task?.status == .running || task?.status == .stopping }
     var canSubmit: Bool { harness != nil && !retired && task?.status != .stopping && agentLoadError == nil && undoingTools.isEmpty }
 
-    /// Whether `tool`'s card shows Undo: a finished write whose record lets it be undone, not yet undone.
+    /// Whether `tool`'s card shows Undo: a finished change whose record lets it be undone, not yet undone.
     func offersUndo(_ tool: AgentToolRecord) -> Bool {
         guard tool.state == .finished, let undo = tool.undo else { return false }
         return undo != .undone
@@ -464,7 +468,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         guard let harness else { return false }
         return offersUndo(tool) && !retired && agentLoadError == nil && !isGenerating && !harness.isRunning && !undoingTools.contains(tool.id)
     }
-    /// Undoes the change of the write call on card `toolID`. The card says how it went and keeps it.
+    /// Undoes the change of the call on card `toolID`. The card says how it went and keeps it.
     func undo(_ toolID: String) {
         guard let harness, let tool = tools.first(where: { $0.id == toolID }), canUndo(tool) else { return }
         undoingTools.insert(toolID)
@@ -473,7 +477,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             undoingTools.remove(toolID)
             guard !retired else { return }
             if let refusal, let index = tools.firstIndex(where: { $0.id == toolID }) { tools[index].undo = .refused(refusal) }
-            if refusal == nil { onFilesChanged?() }
+            if refusal == nil, AgentHarness.writeTools.contains(tool.tool ?? "") { onFilesChanged?() }
         }
     }
     var responseMessage: ConversationMessage? { messages.first { $0.id == responseMessageID } }

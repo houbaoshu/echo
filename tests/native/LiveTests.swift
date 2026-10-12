@@ -14,6 +14,12 @@ final class LiveTests: XCTestCase {
     @MainActor func testAgentResponses() async throws {
         try await AgentLiveTests.run(protocols: [.responses])
     }
+    @MainActor func testReminderChatCompletions() async throws {
+        try await AgentLiveTests.runReminder(protocols: [.chatCompletions])
+    }
+    @MainActor func testReminderResponses() async throws {
+        try await AgentLiveTests.runReminder(protocols: [.responses])
+    }
     @MainActor func testVoiceSynthesisRecognitionAgentAndFinalSynthesis() async throws {
         try await VoiceLiveTests.run(play: ProcessInfo.processInfo.environment["ECHO_LIVE_PLAYBACK"] == "1")
     }

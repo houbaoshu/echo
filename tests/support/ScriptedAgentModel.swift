@@ -158,8 +158,11 @@ extension LanguageModelExecutorGenerationRequest {
             }
         }
     }
-    /// Text of the user prompts the model sees, in order.
-    var userTexts: [String] {
+    /// Text of the user prompts the model sees, in order, without the line giving the time each
+    /// was sent, which `promptTexts` keeps.
+    var userTexts: [String] { promptTexts.map(AgentToolResult.withoutSentNotice) }
+    /// Text of the user prompts exactly as the model sees them.
+    var promptTexts: [String] {
         transcript.compactMap { entry in
             guard case .prompt(let prompt) = entry, prompt.metadata[AgentPromptMarker.continueKey] == nil,
                   prompt.metadata[AgentPromptKey.feedback] == nil else { return nil }

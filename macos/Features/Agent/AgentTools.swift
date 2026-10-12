@@ -114,17 +114,29 @@ enum AgentToolResult {
     static func projectMissing(nothing: String) -> String {
         "The conversation's project folder can no longer be found; it may have been moved or deleted, so nothing was \(nothing). Ask the person to locate it with Relocate Folder… on the project in the sidebar."
     }
-    /// A write's result once the person undid its change, as later requests show it to the model.
-    static func undone(_ result: String) -> String {
+    /// A change's result once the person undid it, as later requests show it to the model.
+    static func undone(_ result: String, tool: String = "write_file") -> String {
         guard var value = (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any] else { return result }
-        value["undone"] = value["action"] as? String == "created"
-            ? "After this call, the person undid it: the file it created was moved to the Trash, so it no longer exists. Anything read from it after this call predates the undo."
-            : "After this call, the person undid it: the file was put back as it was before this call, so it no longer has what this call wrote. Anything read from it after this call predates the undo."
+        value["undone"] = switch (tool, value["action"] as? String) {
+        case ("create_reminder", _): "After this call, the person undid it: the reminder it created was deleted, so it no longer exists."
+        case ("complete_reminder", _): "After this call, the person undid it: the reminder is no longer marked as completed."
+        case ("create_event", _): "After this call, the person undid it: the event it created was deleted, so it no longer exists."
+        case (_, "created"): "After this call, the person undid it: the file it created was moved to the Trash, so it no longer exists. Anything read from it after this call predates the undo."
+        default: "After this call, the person undid it: the file was put back as it was before this call, so it no longer has what this call wrote. Anything read from it after this call predates the undo."
+        }
         return object(value)
     }
     /// One undone change, for the notice the model gets with the person's next message.
     static func undoNoticeLine(tool: String, result: String) -> String {
         let value = (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any]
+        let reminder = (value?["reminder"] as? [String: Any])?["title"] as? String ?? ""
+        let event = (value?["event"] as? [String: Any])?["title"] as? String ?? ""
+        switch tool {
+        case "create_reminder": return "Reminder \"\(reminder)\": the reminder your create_reminder call created was deleted."
+        case "complete_reminder": return "Reminder \"\(reminder)\": no longer marked as completed by your complete_reminder call."
+        case "create_event": return "Event \"\(event)\": the event your create_event call created was deleted."
+        default: break
+        }
         let path = value?["path"] as? String ?? "a file"
         return value?["action"] as? String == "created"
             ? "\(path): the file your \(tool) call created was moved to the Trash."
@@ -136,6 +148,15 @@ enum AgentToolResult {
         return "[Echo: after your last reply, the person used Undo in Echo on these changes, which no longer hold. "
             + lines.joined(separator: " ")
             + " Earlier tool results and replies that show these changes predate the undo.]\n\n"
+    }
+    /// What every message from the person starts with: when it reached the model, as `AgentTimeText.now` writes it.
+    static func sentNotice(_ time: String) -> String {
+        "[Echo: sent \(time)]\n\n"
+    }
+    /// A message as the person wrote it, without the line `sentNotice` put before it.
+    static func withoutSentNotice(_ text: String) -> String {
+        guard text.hasPrefix("[Echo: sent "), let end = text.range(of: "]\n\n") else { return text }
+        return String(text[end.upperBound...])
     }
     /// What precedes the person's message when they added files with it.
     static func attachedNotice(_ names: [String]) -> String {
@@ -969,7 +990,7 @@ struct AgentTrash: Sendable {
     static let system = AgentTrash { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
 }
 
-/// Why a change was not undone. Raw values are what archives store.
+/// Why a change was not undone, for a file or a reminder or event. Raw values are what archives store.
 enum AgentUndoRefusal: Codable, Equatable, Sendable {
     /// The file no longer has what the call wrote.
     case changed
@@ -981,6 +1002,10 @@ enum AgentUndoRefusal: Codable, Equatable, Sendable {
     case backupMissing
     /// The system refused; the reason as it said it.
     case failed(String)
+    /// The reminder or event is no longer as Echo's change left it: its modification date differs.
+    case reminderChanged, eventChanged
+    case reminderMissing, eventMissing
+    case noRemindersAccess, noCalendarAccess
 
     var message: String {
         switch self {
@@ -991,6 +1016,12 @@ enum AgentUndoRefusal: Codable, Equatable, Sendable {
         case .readOnly: String(localized: "这个位置只能读取，没有撤销。")
         case .backupMissing: String(localized: "找不到这次改动的备份，没有撤销。")
         case .failed(let reason): String(localized: "没有撤销：\(reason)")
+        case .reminderChanged: String(localized: "这条提醒事项后来又被改过，没有撤销。")
+        case .eventChanged: String(localized: "这个日程后来又被改过，没有撤销。")
+        case .reminderMissing: String(localized: "这条提醒事项已经不在了，没有撤销。")
+        case .eventMissing: String(localized: "这个日程已经不在了，没有撤销。")
+        case .noRemindersAccess: String(localized: "Echo 没有提醒事项的访问权限，没有撤销。")
+        case .noCalendarAccess: String(localized: "Echo 没有日历的访问权限，没有撤销。")
         }
     }
 }

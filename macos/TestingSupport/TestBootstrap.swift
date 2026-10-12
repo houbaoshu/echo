@@ -92,7 +92,7 @@ import FoundationModels
             // A continue prompt has no text of its own: the reply answers the message it continues.
             let text = request.transcript.reversed().lazy.compactMap { entry -> String? in
                 guard case .prompt(let prompt) = entry, !AgentPromptMarker.isContinue(prompt) else { return nil }
-                return AgentHarness.text(prompt.segments)
+                return AgentToolResult.withoutSentNotice(AgentHarness.text(prompt.segments))
             }.first ?? ""
             let chunks: [String], gap: Duration
             if text.contains("slow") {

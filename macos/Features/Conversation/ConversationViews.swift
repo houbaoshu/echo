@@ -901,6 +901,7 @@ struct AgentToolView: View {
     let undo: (() -> Void)?
     let canUndo: Bool
     @State private var isExpanded: Bool
+    @Environment(\.locale) private var locale
     init(tool: AgentToolRecord, expanded: Bool = false, undo: (() -> Void)? = nil, canUndo: Bool = false) {
         self.tool = tool
         self.undo = undo
@@ -928,7 +929,7 @@ struct AgentToolView: View {
     private var disclosure: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 8) {
-                if !tool.command.isEmpty {
+                if !tool.command.isEmpty, calendarCard == nil {
                     Text(tool.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 if let directory = tool.directory { Text(directory).font(.caption).foregroundStyle(.secondary) }
@@ -939,10 +940,13 @@ struct AgentToolView: View {
                     Text(edit.new).font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
                 }
                 // An unknown result is the model's note to itself; the person gets the card's own.
-                if let result = tool.result, tool.state != .unknown {
+                if let lines = calendarCard?.lines, tool.state != .unknown {
+                    Text(lines.joined(separator: "\n")).font(.caption).textSelection(.enabled)
+                } else if let result = tool.result, tool.state != .unknown {
                     if let data = result.data(using: .utf8),
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        Text(resultSummary(json)).font(.caption).foregroundStyle(.secondary)
+                        // A failed card's title already says it failed.
+                        if tool.state != .failed { Text(resultSummary(json)).font(.caption).foregroundStyle(.secondary) }
                         if let stdout = json["stdout"] as? String, !stdout.isEmpty {
                             Text(stdout).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                         }
@@ -967,9 +971,14 @@ struct AgentToolView: View {
         } label: {
             Group {
                 if let finderTitle { Label(finderTitle, systemImage: icon) }
+                else if let calendarCard { Label(calendarCard.title, systemImage: calendarCard.icon) }
                 else { Label("\(stateLabel) · \(action)\(tool.command.prefix(90))", systemImage: icon) }
             }.font(.caption).lineLimit(2)
         }
+    }
+    /// Reminders and calendar cards say what was done in words of their own.
+    private var calendarCard: AgentCalendarCard? {
+        AgentCalendarCard.applies(to: tool) ? AgentCalendarCard(tool: tool, locale: locale) : nil
     }
     /// finder_location has no arguments to show. The folder's name is in the result; a call that
     /// found none ends at what it looked at.
@@ -1371,6 +1380,110 @@ struct NativeComposer: NSViewRepresentable {
     VStack(alignment: .leading, spacing: 8) {
         ForEach(records) { record in
             AgentToolView(tool: record, undo: record.undo == .undone ? nil : {}, canUndo: true)
+        }
+    }.padding().frame(width: 520)
+}
+
+/// Reminders and events as the tools return them, around now, so the cards read "明天" and "周三".
+@MainActor private enum CalendarPreview {
+    static let clock = AgentClock.system
+    static func at(days: Int, hour: Int, minute: Int = 0) -> Date {
+        let calendar = clock.calendar
+        let day = calendar.date(byAdding: .day, value: days, to: calendar.startOfDay(for: Date()))!
+        return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day)!
+    }
+    static func due(days: Int, hour: Int) -> DateComponents {
+        var parts = clock.calendar.dateComponents([.year, .month, .day, .hour, .minute], from: at(days: days, hour: hour))
+        parts.timeZone = clock.timeZone
+        return parts
+    }
+    static func reminder(_ title: String, days: Int?, hour: Int = 10, list: String = "工作") -> AgentReminder {
+        AgentReminder(id: UUID().uuidString, title: title, due: days.map { due(days: $0, hour: hour) }, listID: list, listTitle: list,
+                      isCompleted: false, modified: nil)
+    }
+    static func event(_ title: String, days: Int, hour: Int, hours: Int = 1, location: String? = nil, allDay: Bool = false) -> AgentCalendarEvent {
+        let start = allDay ? at(days: days, hour: 0) : at(days: days, hour: hour)
+        return AgentCalendarEvent(id: UUID().uuidString, title: title, start: start,
+                                  end: allDay ? start.addingTimeInterval(86_399) : start.addingTimeInterval(TimeInterval(hours) * 3600),
+                                  isAllDay: allDay, location: location, calendarTitle: "日历", modified: nil)
+    }
+    static func object(_ value: [String: Any]) -> String { AgentToolResult.object(value) }
+    static var created: String { object(["action": "created", "reminder": AgentCalendarResult.reminder(reminder("交报告", days: 1), clock: clock)]) }
+    static var completed: String { object(["action": "completed", "reminder": AgentCalendarResult.reminder(reminder("买牛奶", days: nil, list: "提醒"), clock: clock)]) }
+    static var meeting: String {
+        object(["action": "created", "event": AgentCalendarResult.event(event("组会", days: 2, hour: 14, location: "三楼会议室"), clock: clock, id: true)])
+    }
+    static var reminders: String {
+        object(["reminders": [reminder("交报告", days: 1), reminder("续签合同", days: 9, hour: 9), reminder("买牛奶", days: nil, list: "提醒")]
+            .map { AgentCalendarResult.reminder($0, clock: clock) }, "truncated": false])
+    }
+    static var events: String {
+        let from = at(days: 0, hour: 0), to = at(days: 7, hour: 0)
+        return object(["from": AgentTimeText.stamp(from, in: clock), "to": AgentTimeText.stamp(to, in: clock), "truncated": false,
+                       "events": [event("组会", days: 2, hour: 14, location: "三楼会议室"), event("秋游", days: 5, hour: 0, allDay: true),
+                                  event("牙医", days: 6, hour: 9, hours: 1)].map { AgentCalendarResult.event($0, clock: clock) }])
+    }
+    static var cards: [AgentToolRecord] {[
+        .init(callID: "1", entryID: 1, turnID: 1, command: "", result: reminders, state: .finished, tool: "list_reminders"),
+        .init(callID: "2", entryID: 1, turnID: 1, command: "交报告", result: created, state: .finished, tool: "create_reminder", undo: .available),
+        .init(callID: "3", entryID: 1, turnID: 1, command: "", result: completed, state: .finished, tool: "complete_reminder", undo: .available),
+        .init(callID: "4", entryID: 1, turnID: 1, command: "", result: events, state: .finished, tool: "list_events"),
+        .init(callID: "5", entryID: 1, turnID: 1, command: "组会", result: meeting, state: .finished, tool: "create_event", undo: .available),
+    ]}
+    static var undoCards: [AgentToolRecord] {[
+        .init(callID: "1", entryID: 1, turnID: 1, command: "交报告", result: AgentToolResult.undone(created, tool: "create_reminder"),
+              state: .finished, tool: "create_reminder", undo: .undone),
+        .init(callID: "2", entryID: 1, turnID: 1, command: "组会", result: meeting, state: .finished, tool: "create_event",
+              undo: .refused(.eventChanged)),
+        .init(callID: "3", entryID: 1, turnID: 1, command: "", result: completed, state: .finished, tool: "complete_reminder",
+              undo: .refused(.reminderMissing)),
+        .init(callID: "4", entryID: 1, turnID: 1, command: "买菜",
+              result: AgentCalendarRunner.noList("购物", [.init(id: "a", title: "提醒"), .init(id: "b", title: "工作")]),
+              state: .failed, tool: "create_reminder"),
+    ]}
+    static var deniedCards: [AgentToolRecord] {[
+        .init(callID: "1", entryID: 1, turnID: 1, command: "", result: AgentCalendarResult.denied(.reminders, .denied), state: .failed,
+              tool: "list_reminders"),
+        .init(callID: "2", entryID: 1, turnID: 1, command: "交报告", result: AgentCalendarResult.denied(.reminders, .denied), state: .failed,
+              tool: "create_reminder"),
+        .init(callID: "3", entryID: 1, turnID: 1, command: "组会", result: AgentCalendarResult.denied(.events, .denied), state: .failed,
+              tool: "create_event"),
+        .init(callID: "4", entryID: 1, turnID: 1, command: "", result: AgentCalendarResult.denied(.events, .writeOnly), state: .failed,
+              tool: "list_events"),
+        .init(callID: "5", entryID: 1, turnID: 1, command: "", result: AgentCalendarResult.denied(.reminders, .restricted), state: .failed,
+              tool: "complete_reminder"),
+    ]}
+}
+
+#Preview("工具卡片 · 提醒事项和日历") {
+    ScrollView {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(CalendarPreview.cards) { record in
+                AgentToolView(tool: record, expanded: true, undo: record.undo == nil ? nil : {}, canUndo: true)
+            }
+        }.padding()
+    }.frame(width: 520, height: 640)
+}
+
+#Preview("工具卡片 · 提醒事项和日历 · 撤销") {
+    VStack(alignment: .leading, spacing: 8) {
+        ForEach(CalendarPreview.undoCards) { record in
+            AgentToolView(tool: record, expanded: record.state != .finished,
+                          undo: record.undo == nil || record.undo == .undone ? nil : {}, canUndo: true)
+        }
+    }.padding().frame(width: 520)
+}
+
+#Preview("工具卡片 · 提醒事项和日历 · 没有权限") {
+    VStack(alignment: .leading, spacing: 8) {
+        ForEach(CalendarPreview.deniedCards) { AgentToolView(tool: $0, expanded: true) }
+    }.padding().frame(width: 520)
+}
+
+#Preview("工具卡片 · 提醒事项和日历 · 折叠") {
+    VStack(alignment: .leading, spacing: 8) {
+        ForEach(CalendarPreview.cards) { record in
+            AgentToolView(tool: record, undo: record.undo == nil ? nil : {}, canUndo: true)
         }
     }.padding().frame(width: 520)
 }

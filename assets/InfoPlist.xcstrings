@@ -45,6 +45,24 @@
         }
       }
     },
+    "NSCalendarsFullAccessUsageDescription" : {
+      "comment" : "Privacy - Calendars Full Access Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Echo uses your calendars when you ask it to look up events or add one."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Echo 在你让它查看日程或新建日程时使用日历。"
+          }
+        }
+      }
+    },
     "NSMicrophoneUsageDescription" : {
       "comment" : "Privacy - Microphone Usage Description",
       "extractionState" : "extracted_with_value",
@@ -59,6 +77,24 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Echo 使用麦克风将讲话转写到输入框或进行语音通话。普通转写使用 Apple 本地识别；语音通话使用豆包识别。"
+          }
+        }
+      }
+    },
+    "NSRemindersFullAccessUsageDescription" : {
+      "comment" : "Privacy - Reminders Full Access Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Echo uses Reminders when you ask it to look up, add, or complete reminders."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Echo 在你让它查看、新建或完成提醒事项时使用提醒事项。"
           }
         }
       }

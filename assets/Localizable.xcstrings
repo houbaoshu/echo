@@ -330,6 +330,56 @@
         }
       }
     },
+    "Echo 只能添加日程，不能读取。可以在“系统设置 > 隐私与安全性 > 日历”里改为完全访问。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Echo can add events but can’t read them. You can give it full access in System Settings > Privacy & Security > Calendars."
+          }
+        }
+      }
+    },
+    "Echo 没有提醒事项的访问权限。可以在“系统设置 > 隐私与安全性 > 提醒事项”里打开。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Echo doesn’t have access to Reminders. You can turn it on in System Settings > Privacy & Security > Reminders."
+          }
+        }
+      }
+    },
+    "Echo 没有提醒事项的访问权限，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because Echo doesn’t have access to Reminders."
+          }
+        }
+      }
+    },
+    "Echo 没有日历的访问权限。可以在“系统设置 > 隐私与安全性 > 日历”里打开。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Echo doesn’t have access to Calendars. You can turn it on in System Settings > Privacy & Security > Calendars."
+          }
+        }
+      }
+    },
+    "Echo 没有日历的访问权限，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because Echo doesn’t have access to Calendars."
+          }
+        }
+      }
+    },
     "Live Voice" : {
       "localizations" : {
         "en" : {
@@ -439,6 +489,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%@” isn’t a text file, so it wasn’t added."
+          }
+        }
+      }
+    },
+    "“%@”不能修改" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@” can’t be changed"
           }
         }
       }
@@ -690,6 +750,16 @@
         }
       }
     },
+    "全天" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "all-day"
+          }
+        }
+      }
+    },
     "全选" : {
       "localizations" : {
         "en" : {
@@ -853,6 +923,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "List"
+          }
+        }
+      }
+    },
+    "列表：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "List: %@"
           }
         }
       }
@@ -1087,6 +1167,16 @@
         }
       }
     },
+    "地点：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Location: %@"
+          }
+        }
+      }
+    },
     "复制" : {
       "localizations" : {
         "en" : {
@@ -1123,6 +1213,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Failed"
+          }
+        }
+      }
+    },
+    "完成提醒" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mark as completed"
+          }
+        }
+      }
+    },
+    "完成提醒：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mark as completed: %@"
           }
         }
       }
@@ -1955,6 +2065,26 @@
         }
       }
     },
+    "新建提醒：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New reminder: %@"
+          }
+        }
+      }
+    },
+    "新建日程：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New event: %@"
+          }
+        }
+      }
+    },
     "新聊天" : {
       "localizations" : {
         "en" : {
@@ -2217,6 +2347,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Can’t preview this image. It’s damaged or in an unsupported format."
+          }
+        }
+      }
+    },
+    "日历：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Calendar: %@"
           }
         }
       }
@@ -2501,6 +2641,26 @@
         }
       }
     },
+    "查看提醒事项" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View reminders"
+          }
+        }
+      }
+    },
+    "查看日程" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View events"
+          }
+        }
+      }
+    },
     "查看聊天" : {
       "localizations" : {
         "en" : {
@@ -2691,6 +2851,16 @@
         }
       }
     },
+    "正在完成提醒" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Completing reminder"
+          }
+        }
+      }
+    },
     "正在完成转写…" : {
       "localizations" : {
         "en" : {
@@ -2737,6 +2907,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Speaking"
+          }
+        }
+      }
+    },
+    "正在新建提醒 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Creating reminder · %@"
+          }
+        }
+      }
+    },
+    "正在新建日程 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Creating event · %@"
+          }
+        }
+      }
+    },
+    "正在查看提醒事项" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Viewing reminders"
+          }
+        }
+      }
+    },
+    "正在查看日程" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Viewing events"
           }
         }
       }
@@ -4245,12 +4455,72 @@
         }
       }
     },
+    "这个日程后来又被改过，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because the event has changed since."
+          }
+        }
+      }
+    },
+    "这个日程已经不在了，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because the event no longer exists."
+          }
+        }
+      }
+    },
     "这只精灵已在列表中。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "This pet is already in the list."
+          }
+        }
+      }
+    },
+    "这台 Mac 限制了对提醒事项的访问，例如由配置描述文件限制。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Access to Reminders is restricted on this Mac, for example by a configuration profile."
+          }
+        }
+      }
+    },
+    "这台 Mac 限制了对日历的访问，例如由配置描述文件限制。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Access to Calendars is restricted on this Mac, for example by a configuration profile."
+          }
+        }
+      }
+    },
+    "这条提醒事项后来又被改过，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because the reminder has changed since."
+          }
+        }
+      }
+    },
+    "这条提醒事项已经不在了，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because the reminder no longer exists."
           }
         }
       }
@@ -4774,6 +5044,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Default model"
+          }
+        }
+      }
+    },
+    "（没有提醒事项）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(No reminders)"
+          }
+        }
+      }
+    },
+    "（没有日程）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(No events)"
           }
         }
       }

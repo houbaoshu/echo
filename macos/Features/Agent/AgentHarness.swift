@@ -50,9 +50,12 @@ struct NativeAgentState: Codable {
     /// Every file the person added to this chat, from the input that brought it into the
     /// transcript on. read_file reads them by name for the rest of the chat.
     var attachments: [AttachedFile] = []
+    /// The reminders and events Echo created or completed in this chat, by the card of the call
+    /// that did it, for an undo.
+    var calendarChanges: [String: AgentCalendarChange] = [:]
 
     init() {}
-    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies, finderFolder, undoNotices, attachments }
+    private enum CodingKeys: String, CodingKey { case transcript, turns, pendingInputs, replies, finderFolder, undoNotices, attachments, calendarChanges }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         entries = Array(try values.decode(Transcript.self, forKey: .transcript))
@@ -62,6 +65,7 @@ struct NativeAgentState: Codable {
         finderFolder = try values.decodeIfPresent(String.self, forKey: .finderFolder)
         undoNotices = try values.decodeIfPresent([String].self, forKey: .undoNotices) ?? []
         attachments = try values.decodeIfPresent([AttachedFile].self, forKey: .attachments) ?? []
+        calendarChanges = try values.decodeIfPresent([String: AgentCalendarChange].self, forKey: .calendarChanges) ?? [:]
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -72,6 +76,7 @@ struct NativeAgentState: Codable {
         try values.encodeIfPresent(finderFolder, forKey: .finderFolder)
         if !undoNotices.isEmpty { try values.encode(undoNotices, forKey: .undoNotices) }
         if !attachments.isEmpty { try values.encode(attachments, forKey: .attachments) }
+        if !calendarChanges.isEmpty { try values.encode(calendarChanges, forKey: .calendarChanges) }
     }
 
     /// The names the files at `paths` would go by in this chat, in order: a file the chat already
@@ -171,9 +176,11 @@ enum AgentPromptKey {
 
 enum AgentInstructions {
     /// Echo's own instructions, assembled from the tools a turn offers.
-    /// `attachments` names the files the person added to the chat.
+    /// `attachments` names the files the person added to the chat. They hold nothing that changes
+    /// from turn to turn, so a service's prompt cache keeps matching: the time goes with each message.
     nonisolated static func text(tools: [String], attachments: [String] = []) -> String {
-        var parts = ["You are a helpful assistant in a persistent conversation. Answer ordinary questions directly."]
+        var parts = ["You are a helpful assistant in a persistent conversation. Answer ordinary questions directly.",
+                     "Each message from the person starts with a line from Echo, \"[Echo: sent …]\", giving the person's local date, weekday, time and time zone when the message reached you. It is not part of what they wrote."]
         if tools.contains("list_files") || tools.contains("read_file") {
             parts.append("When the person asks about the files of the conversation's project, inspect them with list_files and read_file, passing root \"project\". Paths are relative to the project folder; use . for its root. If the conversation has no project folder, the tools say so; only the person can add one.")
         }
@@ -188,6 +195,9 @@ enum AgentInstructions {
         if tools.contains("read_file"), !attachments.isEmpty {
             let names = attachments.map { "\"\($0)\"" }.joined(separator: ", ")
             parts.append("The person attached these files to this chat: \(names). read_file reads one with root \"attached\" and its name as the path. They can only be read: write_file and edit_file cannot change them, and list_files does not list them.")
+        }
+        if tools.contains("create_reminder") || tools.contains("create_event") {
+            parts.append("list_reminders, create_reminder and complete_reminder work with the person's Reminders; list_events and create_event with their calendars, adding events to the default calendar. A title names the thing to do or the event alone; its date, time, place and list each have their own argument. Times are ISO 8601 with a UTC offset, such as 2026-10-13T10:00:00+08:00, or a date alone for a whole day; results give times in the person's time zone with the weekday. The first use asks the person for access.")
         }
         parts.append("You may explain what you are doing alongside a tool call. Finish the turn with a useful text reply and no tool call.")
         parts.append("Use the actual tool results to decide what to do next. Do not claim that an action happened when its result says it was not executed. When a result is unknown or interrupted, inspect the current state before relying on it.")
@@ -260,6 +270,9 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     private let writeHooks: AgentWriteHooks
     private let attachmentHooks: AgentAttachmentHooks
     private let trash: AgentTrash
+    private let calendarStore: any AgentCalendarStore
+    /// The person's clock: for the time each message carries, and the time zone of the calendar tools.
+    private let clock: AgentClock
     /// Write calls this turn that left a record their card can undo from.
     private var undoableCalls: Set<String> = []
     /// Undos under way. A turn must not start meanwhile: an undo amends the transcript when it ends.
@@ -290,7 +303,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
          localOnly: @escaping @MainActor () -> Bool = { false },
          finder: any FinderLocating = AppleEventFinderLocator.shared, writePolicy: AgentWritePolicy = AgentWritePolicy(),
          writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
-         trash: AgentTrash = .system) {
+         trash: AgentTrash = .system, calendar: any AgentCalendarStore = EventKitCalendarStore.shared, clock: AgentClock = .system) {
         self.resolveModel = resolveModel
         self.local = local
         self.localOnly = localOnly
@@ -299,6 +312,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         self.writeHooks = writeHooks
         self.attachmentHooks = attachmentHooks
         self.trash = trash
+        self.calendarStore = calendar
+        self.clock = clock
     }
 
     /// Reads the model settings saved when each turn starts. `ECHO_LOCAL_CHAT=always` sends every
@@ -385,11 +400,14 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         turn?.cancel()
     }
 
-    /// Undoes the change of the write call whose card is `toolID`, between turns: off the main
-    /// actor, from the call's record, only while the file still has what the call wrote. Once it is
-    /// undone, the call's result tells the model so in every later request. Nil when it was undone.
+    /// Undoes the change of the call whose card is `toolID`, between turns, off the main actor. A
+    /// write comes off from the call's record only while the file still has what the call wrote; a
+    /// reminder or event only while it was not modified since. Once it is undone, the call's result
+    /// tells the model so in every later request. Nil when it was undone.
     func undo(toolID: String) async -> AgentUndoRefusal? {
-        guard !isRunning, outputIndex(of: toolID) != nil, let directory = host?.harnessBackupDirectory() else { return .backupMissing }
+        guard !isRunning, outputIndex(of: toolID) != nil else { return .backupMissing }
+        if let change = state.calendarChanges[toolID] { return await undoCalendar(change, toolID: toolID) }
+        guard let directory = host?.harnessBackupDirectory() else { return .backupMissing }
         undoing += 1
         defer { undoing -= 1 }
         let policy = writePolicy, trash = trash
@@ -398,19 +416,43 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             return AgentFileUndo.undo(record, copy: folder, policy: policy, trash: trash)
         }.value
         guard refusal == nil else { return refusal }
+        noteUndone(toolID: toolID)
+        return nil
+    }
+
+    /// Undoes a reminder or event change while the item is still as the change left it. An
+    /// earlier change Echo made to the same item, which left it as this one found it, can then be
+    /// undone in turn.
+    private func undoCalendar(_ change: AgentCalendarChange, toolID: String) async -> AgentUndoRefusal? {
+        undoing += 1
+        defer { undoing -= 1 }
+        let store = calendarStore
+        switch await Task.detached(operation: { await AgentCalendarRunner.undo(change, store: store) }).value {
+        case .refused(let refusal): return refusal
+        case .undone(let modified):
+            state.calendarChanges[toolID] = nil
+            for (id, earlier) in state.calendarChanges where earlier.item == change.item {
+                if let modified, let before = change.before, abs(earlier.after - before) < 0.001 { state.calendarChanges[id]?.after = modified }
+            }
+            noteUndone(toolID: toolID)
+            return nil
+        }
+    }
+
+    /// Tells the model of an undone change.
+    private func noteUndone(toolID: String) {
         // No turn starts while an undo runs, so the transcript is as it was. The call's result says
         // so where it stands, and the next message the model gets says so where the model is now:
         // a note in an earlier result alone does not outweigh the model's own later reply.
         if let index = outputIndex(of: toolID), case .toolOutput(var amended) = state.entries[index] {
             let result = Self.text(amended.segments)
-            amended.segments = [.text(.init(content: AgentToolResult.undone(result)))]
+            amended.segments = [.text(.init(content: AgentToolResult.undone(result, tool: amended.toolName)))]
             state.entries[index] = .toolOutput(amended)
             state.undoNotices.append(AgentToolResult.undoNoticeLine(tool: amended.toolName, result: result))
         }
         project()
         // A failed save leaves the note in memory; the conversation's next save writes it.
         try? host?.harnessSave()
-        return nil
     }
 
     /// Where the result of the call whose card is `toolID` ("turn:entry:call ID") is in the transcript.
@@ -482,13 +524,17 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 steering.set(false)
                 let inputs = state.pendingInputs
                 state.pendingInputs = []
-                for input in inputs.dropLast() { history.append(.prompt(Self.userPrompt(input, prefix: attached(input, local: route.isLocal)))) }
+                // Each message carries the time it reached the cloud model, saved with it, so the
+                // history reads the same in every later request. The local model has no tools to
+                // work out dates for, and is not told.
+                let sent = route.isLocal ? "" : AgentToolResult.sentNotice(AgentTimeText.now(clock))
+                for input in inputs.dropLast() { history.append(.prompt(Self.userPrompt(input, prefix: sent + attached(input, local: route.isLocal)))) }
                 let last = inputs.last!
                 // The cloud model hears of undone changes before the person's next words. The local
                 // model has no tools, so it is not told.
                 let notice = route.isLocal ? "" : AgentToolResult.undoNotice(state.undoNotices)
                 if !route.isLocal { state.undoNotices = [] }
-                let prefix = notice + attached(last, local: route.isLocal)
+                let prefix = sent + notice + attached(last, local: route.isLocal)
                 userPrompt = Self.userPrompt(last, prefix: prefix)
                 promptText = prefix + last.text; metadata = [AgentPromptKey.message: last.messageID.uuidString]
             case .resume:
@@ -786,7 +832,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         let key = identity.flatMap { callKeys[$0] }
         defer { if let key { finishCall(key) } }
         guard isRunning, !stopRequested else { throw CancellationError() }
-        if let key { try await waitForEarlierCalls(key) { Self.writeTools.contains($0) } }
+        if let key { try await waitForEarlierCalls(key) { Self.changeTools.contains($0) } }
         if steering.isPending { return nil }
         let location = try await lookUpFinder()
         if case .folder(let path)? = location {
@@ -864,14 +910,19 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     }
 
     nonisolated static let writeTools: Set<String> = ["write_file", "edit_file"]
+    /// The reminders and calendar tools that change something.
+    nonisolated static let calendarChangeTools: Set<String> = ["create_reminder", "complete_reminder", "create_event"]
+    nonisolated static let calendarTools: Set<String> = calendarChangeTools.union(["list_reminders", "list_events"])
+    /// Every tool that changes something: each waits for every call written before it in its batch.
+    private static let changeTools = writeTools.union(calendarChangeTools)
     /// The tools a batch orders; a call to any other tool never runs, so nothing waits for it.
-    private static let orderedTools: Set<String> = writeTools.union(["list_files", "read_file", "finder_location"])
+    private static let orderedTools: Set<String> = changeTools.union(calendarTools).union(["list_files", "read_file", "finder_location"])
 
-    /// A read's turn: after the finder_location and write calls written before it in its batch.
+    /// A read's turn: after the finder_location and change calls written before it in its batch.
     fileprivate func waitForTurn(call identity: GenerationID?) async throws {
         guard isRunning, !stopRequested else { throw CancellationError() }
         guard let key = identity.flatMap({ callKeys[$0] }) else { return }
-        try await waitForEarlierCalls(key) { $0 == "finder_location" || Self.writeTools.contains($0) }
+        try await waitForEarlierCalls(key) { $0 == "finder_location" || Self.changeTools.contains($0) }
     }
 
     fileprivate func finished(call identity: GenerationID?) {
@@ -995,9 +1046,68 @@ private final class ResumeOnce<T: Sendable>: Sendable {
 
     private struct WriteSuperseded: Error {}
 
+    /// One reminders or calendar call, in its turn: a read after the finder_location and change
+    /// calls written before it in its batch, a change after every call before it. Access is asked
+    /// for first, and the wait for the person's answer ends at once on a Stop or newer input. A
+    /// change is saved before it is made and then runs to its end, as a write does; what it
+    /// changed is kept for its card's Undo.
+    fileprivate func calendar(call identity: GenerationID?, changes: Bool,
+                              _ arguments: Result<AgentCalendarRequest, AgentInvalidArguments>) async throws -> String {
+        guard isRunning else { throw CancellationError() }
+        let serial = turnSerial
+        let key = identity.flatMap { callKeys[$0] }
+        defer { if let key, serial == turnSerial { finishCall(key) } }
+        if let key {
+            try await waitForEarlierCalls(key) { changes || $0 == "finder_location" || Self.changeTools.contains($0) }
+        }
+        if storageFailure != nil || stopRequested { throw CancellationError() }
+        if steering.isPending { return AgentToolResult.superseded }
+        let request: AgentCalendarRequest
+        switch arguments {
+        case .failure(let invalid): return invalid.result
+        case .success(let valid): request = valid
+        }
+        let store = calendarStore, clock = clock
+        let plan: AgentCalendarPlan
+        do {
+            let permission = try await unlessInterrupted { await store.permission(for: request.kind) }
+            guard permission == .granted else { return AgentCalendarResult.denied(request.kind, permission) }
+            plan = try await unlessInterrupted { await AgentCalendarRunner.prepare(request, store: store, clock: clock) }
+        } catch is WriteSuperseded {
+            return AgentToolResult.superseded
+        }
+        guard serial == turnSerial, isRunning, !stopRequested, storageFailure == nil else { throw CancellationError() }
+        if case .done(let result) = plan { return result }
+        if steering.isPending { return AgentToolResult.superseded }
+
+        // The call is saved before anything changes, so a crash from here on reopens it as unknown.
+        do { try host?.harnessSave() }
+        catch { storageFailure = error.localizedDescription; throw error }
+        writesInFlight += 1
+        let (result, change) = await Task.detached { await AgentCalendarRunner.commit(plan, store: store, clock: clock) }.value
+        if let key {
+            finishedOutputs[key] = result
+            if let change {
+                // The card's ID: turns count from 1, the batch's entry and the call ID come from the key.
+                state.calendarChanges["\(state.turns.count):\(key)"] = change
+                undoableCalls.insert(key)
+            }
+            project()
+        }
+        writesInFlight -= 1
+        if writesInFlight == 0 { let waiters = writeWaiters; writeWaiters = []; waiters.forEach { $0.resume() } }
+        return result
+    }
+
     /// Runs `work` on a thread of its own. A Stop or newer input ends the wait at once, throwing
     /// CancellationError or WriteSuperseded; the work runs on and its result is dropped.
     private func offMainUnlessInterrupted<T: Sendable>(_ work: @escaping @Sendable () -> T) async throws -> T {
+        try await unlessInterrupted { work() }
+    }
+
+    /// Awaits `work` off the main actor. A Stop or newer input ends the wait at once, throwing
+    /// CancellationError or WriteSuperseded; the work runs on and its result is dropped.
+    private func unlessInterrupted<T: Sendable>(_ work: @escaping @Sendable () async -> T) async throws -> T {
         if steering.isPending { throw WriteSuperseded() }
         let once = ResumeOnce<T>()
         let id = UUID()
@@ -1007,7 +1117,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             try await withCheckedThrowingContinuation { continuation in
                 once.set(continuation)
                 if Task.isCancelled { once.resume(throwing: CancellationError()); return }
-                Task.detached { once.resume(returning: work()) }
+                Task.detached { once.resume(returning: await work()) }
             }
         } onCancel: {
             once.resume(throwing: CancellationError())
@@ -1033,8 +1143,11 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     private func tools() -> [any Tool] {
         let context = AgentReadContext(access: HarnessProjectAccess(harness: self), steering: steering)
         let writes = HarnessWriteAccess(harness: self)
+        let calendar = HarnessCalendarAccess(harness: self)
         return [ListFilesTool(context: context), ReadFileTool(context: context), FinderLocationTool(access: HarnessFinderAccess(harness: self)),
-                WriteFileTool(access: writes), EditFileTool(access: writes)]
+                WriteFileTool(access: writes), EditFileTool(access: writes),
+                ListRemindersTool(access: calendar), CreateReminderTool(access: calendar), CompleteReminderTool(access: calendar),
+                ListEventsTool(access: calendar), CreateEventTool(access: calendar)]
     }
 
     @concurrent private static func consume(
@@ -1080,7 +1193,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             switch entry {
             case .prompt(let prompt):
                 guard let id = Self.messageID(of: entry).flatMap(UUID.init(uuidString:)) else { continue }
-                var message = existing[id] ?? ConversationMessage(role: .user, content: Self.text(prompt.segments))
+                var message = existing[id] ?? ConversationMessage(role: .user, content: AgentToolResult.withoutSentNotice(Self.text(prompt.segments)))
                 message.id = id
                 // Input in the transcript has been taken, so it is neither queued nor interrupted.
                 message.steering = nil
@@ -1275,6 +1388,14 @@ private struct HarnessProjectAccess: AgentProjectAccess {
     }
 }
 
+private struct HarnessCalendarAccess: AgentCalendarAccess {
+    weak var harness: AgentHarness?
+    func run(call: GenerationID?, changes: Bool, _ request: Result<AgentCalendarRequest, AgentInvalidArguments>) async throws -> String {
+        guard let harness else { throw CancellationError() }
+        return try await harness.calendar(call: call, changes: changes, request)
+    }
+}
+
 private struct HarnessWriteAccess: AgentWriteAccess {
     weak var harness: AgentHarness?
     func write(call: GenerationID?, _ request: Result<AgentWriteRequest, AgentInvalidArguments>) async throws -> String {
@@ -1329,12 +1450,13 @@ private struct LocalChatProfile: LanguageModelSession.DynamicProfile {
 }
 
 extension AgentToolRecord {
-    /// Whether the call could have changed anything: bash calls from earlier builds and the write
-    /// tools. A read cut off before its result left nothing to check for.
+    /// Whether the call could have changed anything: bash calls from earlier builds, the write
+    /// tools and the reminders and calendar tools that change something. A read cut off before its
+    /// result left nothing to check for.
     var mayHaveChanged: Bool {
         switch tool {
         case nil: true
-        case let name?: AgentHarness.writeTools.contains(name)
+        case let name?: AgentHarness.writeTools.contains(name) || AgentHarness.calendarChangeTools.contains(name)
         }
     }
 
@@ -1352,6 +1474,10 @@ extension AgentToolRecord {
             if let line = object?["start_line"] as? Int, line > 1 { return "\(path):\(line)" }
             return path
         case "finder_location": return ""
+        // What the reminders and calendar cards show of the arguments: the title, or the list.
+        case "create_reminder", "create_event": return object?["title"] as? String ?? text
+        case "list_reminders": return object?["list"] as? String ?? ""
+        case "complete_reminder", "list_events": return ""
         default: return text
         }
     }
@@ -1362,20 +1488,30 @@ extension AgentToolRecord {
         case "finder_location": String(localized: "正在查看访达位置")
         case "write_file": String(localized: "正在写入文件 · \(String(display(call).prefix(60)))")
         case "edit_file": String(localized: "正在修改文件 · \(String(display(call).prefix(60)))")
+        case "list_reminders": String(localized: "正在查看提醒事项")
+        case "create_reminder": String(localized: "正在新建提醒 · \(String(display(call).prefix(60)))")
+        case "complete_reminder": String(localized: "正在完成提醒")
+        case "list_events": String(localized: "正在查看日程")
+        case "create_event": String(localized: "正在新建日程 · \(String(display(call).prefix(60)))")
         default: String(localized: "正在调用工具 · \(call.toolName)")
         }
     }
-    /// A write tool's result that says what it did is finished; any other that ran ended with nothing
-    /// written, so its card says so even folded. Other tools' failures show as finished.
+    /// A change tool's result that says what it did is finished; any other that ran ended with
+    /// nothing changed, so its card says so even folded: a write as not written, a reminder or event
+    /// change as failed. A reminders or calendar call that had no access failed too, a read as
+    /// well. Other tools' failures show as finished.
     static func state(forResult result: String, tool: String?) -> State {
         struct ResultStatus: Decodable { var status: String?; var action: String? }
         let decoded = try? JSONDecoder().decode(ResultStatus.self, from: Data(result.utf8))
         switch decoded?.status {
         case "not_executed": return .notExecuted
         case "unknown": return .unknown
+        case "failed" where AgentHarness.calendarTools.contains(tool ?? "") && AgentCalendarResult.missingAccess(result) != nil:
+            return .failed
         default:
-            guard let tool, AgentHarness.writeTools.contains(tool) else { return .finished }
-            return decoded?.action == nil ? .notWritten : .finished
+            guard decoded?.action == nil, let tool else { return .finished }
+            if AgentHarness.writeTools.contains(tool) { return .notWritten }
+            return AgentHarness.calendarChangeTools.contains(tool) ? .failed : .finished
         }
     }
 

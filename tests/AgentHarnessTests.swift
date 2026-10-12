@@ -13,6 +13,8 @@ import Testing
     @MainActor final class Chat {
         let store: TaskStore
         let model: ScriptedAgentModel
+        /// Stands in for Reminders and Calendar: no test touches the person's own.
+        let calendar: FakeCalendarStore
         var project: URL?
         /// This chat's folder of copies of replaced files, in a temporary folder of its own.
         let backups = FileManager.default.temporaryDirectory.appendingPathComponent("echo-backups-\(UUID())")
@@ -25,12 +27,14 @@ import Testing
         init(_ step: @escaping ScriptedAgentModel.Step, project: URL? = nil, snapshot: TaskStore.Snapshot? = nil,
              finder: FakeFinder = FakeFinder(), writePolicy: AgentWritePolicy = AgentWritePolicy(),
              writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
-             trash: AgentTrash? = nil) {
+             trash: AgentTrash? = nil, calendar: FakeCalendarStore = FakeCalendarStore(), clock: AgentClock = AgentCalendarTests.clock) {
             let model = ScriptedAgentModel(step: step)
             self.model = model
             self.project = project
+            self.calendar = calendar
             let harness = AgentHarness(resolveModel: { model.factory }, finder: finder, writePolicy: writePolicy, writeHooks: writeHooks,
-                                       attachmentHooks: attachmentHooks, trash: trash ?? AgentTrash.into(self.trash))
+                                       attachmentHooks: attachmentHooks, trash: trash ?? AgentTrash.into(self.trash),
+                                       calendar: calendar, clock: clock)
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.backupDirectory = backups
             // As the workspace answers: a project whose folder is gone is missing.
@@ -88,6 +92,10 @@ import Testing
             return location
         }
     }
+
+    /// Every tool a cloud turn offers, sorted.
+    static let offeredTools = ["complete_reminder", "create_event", "create_reminder", "edit_file", "finder_location", "list_events",
+                               "list_files", "list_reminders", "read_file", "write_file"]
 
     static func project() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-harness-\(UUID())").resolvingSymlinksInPath()
@@ -739,7 +747,7 @@ import Testing
         #expect(request.kinds == ["instructions", "prompt", "toolCalls", "toolOutput", "toolOutput", "toolOutput", "toolOutput", "continue"])
         #expect(Self.bashCalls(request) == ["cmd-done", "cmd-skipped", "cmd-cut", "cmd-lost"])
         #expect(request.toolOutputs == [Self.finished, AgentToolResult.superseded, Self.cut, AgentToolResult.unknownAfterInterruption])
-        #expect(request.enabledToolDefinitions.map(\.name).sorted() == ["edit_file", "finder_location", "list_files", "read_file", "write_file"])
+        #expect(request.enabledToolDefinitions.map(\.name).sorted() == AgentHarnessTests.offeredTools)
         #expect(chat.store.task?.status == .completed && chat.assistantTexts == ["接着 4"])
         #expect(chat.store.tools == tools, "Continuing leaves the bash cards as they were")
     }
@@ -761,14 +769,14 @@ import Testing
         #expect(chat.store.task?.status == .completed && chat.assistantTexts.last == "done")
     }
 
-    /// The turns offer the read and write tools and the instructions speak of no other, nor of
-    /// running anything; the connection test borrows list_files.
-    @Test func turnsOfferOnlyTheReadAndWriteTools() async throws {
+    /// The turns offer the file, reminders and calendar tools and the instructions speak of no
+    /// other, nor of running anything; the connection test borrows list_files.
+    @Test func turnsOfferNoToolThatRunsAnything() async throws {
         let chat = Chat({ _, emit, _ in try await emit.text("hi") })
         #expect(chat.store.send("hello"))
         try await chat.idle()
         let request = try #require(chat.model.requests.first)
-        #expect(request.enabledToolDefinitions.map(\.name).sorted() == ["edit_file", "finder_location", "list_files", "read_file", "write_file"])
+        #expect(request.enabledToolDefinitions.map(\.name).sorted() == AgentHarnessTests.offeredTools)
         let instructions = request.transcript.compactMap { entry -> String? in
             if case .instructions(let instructions) = entry { AgentHarness.text(instructions.segments) } else { nil }
         }.joined()
@@ -997,7 +1005,7 @@ import Testing
             if case .instructions(let instructions) = entry { AgentHarness.text(instructions.segments) } else { nil }
         }.joined()
         #expect(instructions.contains("finder_location switches this chat's Finder folder"))
-        #expect(request.enabledToolDefinitions.map(\.name).sorted() == ["edit_file", "finder_location", "list_files", "read_file", "write_file"])
+        #expect(request.enabledToolDefinitions.map(\.name).sorted() == AgentHarnessTests.offeredTools)
     }
 }
 

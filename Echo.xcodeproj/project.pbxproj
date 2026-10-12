@@ -62,9 +62,13 @@
 		9AE8661C4845450F1C8728AB /* tests/fixtures/speech/en-US.wav in Resources */ = {isa = PBXBuildFile; fileRef = 1E53D6C44AD40EA364F6E230 /* tests/fixtures/speech/en-US.wav */; };
 		A2D38BC03062D573000AB0C0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2D38BBF3062D573000AB0C0 /* Assets.xcassets */; };
 		A48445E581B7F7391D46A313 /* tests/support/EchoTestResources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D11BE1C34798D95A2C2829F /* tests/support/EchoTestResources.swift */; };
+		A6C1E7D2B3F4950A1B2C3D41 /* macos/Features/Agent/AgentCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3D40 /* macos/Features/Agent/AgentCalendar.swift */; };
 		A90FABF2D2B029FA59548B59 /* VoiceSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12500000000000000000F00 /* VoiceSoakTests.swift */; };
 		B1AA482C4F889BAA418DAE42 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		B704670FAF0415C2098489CE /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
+		B7D2E8F3C4A5061B2C3D4E52 /* tests/AgentCalendarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E50 /* tests/AgentCalendarTests.swift */; };
+		B7D2E8F3C4A5061B2C3D4E53 /* tests/support/FakeCalendarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E51 /* tests/support/FakeCalendarStore.swift */; };
+		B7D2E8F3C4A5061B2C3D4E54 /* tests/support/FakeCalendarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E51 /* tests/support/FakeCalendarStore.swift */; };
 		B9DDF01A179493CDC0297D15 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		BC0769A420E4834B8D65FD1E /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		C622A7EBBE746BA108EA86AA /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
@@ -242,8 +246,11 @@
 		A3C5FB9B86C9EE63938C7854 /* tests/native/PerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/PerformanceTests.swift; sourceTree = "<group>"; };
 		A3FF57E62DA09C501023D462 /* tests/native/EchoUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/EchoUITests.swift; sourceTree = "<group>"; };
 		A5C8CF99E608551A486FC246 /* EchoLiveTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoLiveTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A6C1E7D2B3F4950A1B2C3D40 /* macos/Features/Agent/AgentCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentCalendar.swift; sourceTree = "<group>"; };
 		AC2342CC6EB3F55C38085D3E /* tests/native/LiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/LiveTests.swift; sourceTree = "<group>"; };
 		B628CE43BFCAC712B3D75BF1 /* tests/fixtures/speech/mixed.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = tests/fixtures/speech/mixed.wav; sourceTree = "<group>"; };
+		B7D2E8F3C4A5061B2C3D4E50 /* tests/AgentCalendarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentCalendarTests.swift; sourceTree = "<group>"; };
+		B7D2E8F3C4A5061B2C3D4E51 /* tests/support/FakeCalendarStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/FakeCalendarStore.swift; sourceTree = "<group>"; };
 		BDB246AE9C0537E3D5EAD79A /* tests/tools/FixtureServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/tools/FixtureServer.swift; sourceTree = "<group>"; };
 		C038B52ADC4A870F1268E696 /* EchoDeviceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoDeviceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = Localizable.xcstrings; path = assets/Localizable.xcstrings; sourceTree = "<group>"; };
@@ -441,6 +448,8 @@
 				E11400000000000000000F01 /* WorkspaceVoiceCommandTests.swift */,
 				E11400000000000000000F02 /* ProjectFileBrowserTests.swift */,
 				0A943A0226E44527A68563F2 /* tests/AgentHarnessTests.swift */,
+				B7D2E8F3C4A5061B2C3D4E50 /* tests/AgentCalendarTests.swift */,
+				B7D2E8F3C4A5061B2C3D4E51 /* tests/support/FakeCalendarStore.swift */,
 				474D9F2D95791491A7B3D4E6 /* tests/AgentModelTests.swift */,
 				F20000000000000000000012 /* tests/LocalChatTests.swift */,
 				E11300000000000000000F00 /* VoiceTests.swift */,
@@ -455,6 +464,7 @@
 				3526F0A888174738325FD582 /* macos/Features/Agent/AgentLanguageModels.swift */,
 				EA68E8426039B5A782DA9770 /* macos/Features/Agent/AgentTools.swift */,
 				F1D3A0C2B4E5967A8C0D1E30 /* macos/Features/Agent/FinderLocation.swift */,
+				A6C1E7D2B3F4950A1B2C3D40 /* macos/Features/Agent/AgentCalendar.swift */,
 				CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */,
 				F20000000000000000000010 /* macos/Features/Agent/AgentLocalChat.swift */,
 				E11000000000000000000F05 /* SettingsStore.swift */,
@@ -1059,6 +1069,7 @@
 			files = (
 				906831DF4830EF6F47CA3556 /* tests/hosts/main.swift in Sources */,
 				5B7C35523FF9FBEB0850E76E /* AgentLiveTests.swift in Sources */,
+				B7D2E8F3C4A5061B2C3D4E54 /* tests/support/FakeCalendarStore.swift in Sources */,
 				FC6EBE592730BDB220A9F612 /* VoiceLiveTests.swift in Sources */,
 				A90FABF2D2B029FA59548B59 /* VoiceSoakTests.swift in Sources */,
 			);
@@ -1120,6 +1131,7 @@
 				26BC95D8A7B3E4F129E9AD9F /* macos/Features/Agent/AgentLanguageModels.swift in Sources */,
 				82EA4910FA0A21C0579F3E29 /* macos/Features/Agent/AgentTools.swift in Sources */,
 				F1D3A0C2B4E5967A8C0D1E2F /* macos/Features/Agent/FinderLocation.swift in Sources */,
+				A6C1E7D2B3F4950A1B2C3D41 /* macos/Features/Agent/AgentCalendar.swift in Sources */,
 				534B7D287D089271F8634C32 /* macos/Features/Agent/AgentHarness.swift in Sources */,
 				F20000000000000000000011 /* macos/Features/Agent/AgentLocalChat.swift in Sources */,
 				E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */,
@@ -1170,6 +1182,8 @@
 			files = (
 				E90000000000000000005A14 /* tests/support/Waiting.swift in Sources */,
 				3B42CB39447CC127369519D4 /* tests/AgentHarnessTests.swift in Sources */,
+				B7D2E8F3C4A5061B2C3D4E52 /* tests/AgentCalendarTests.swift in Sources */,
+				B7D2E8F3C4A5061B2C3D4E53 /* tests/support/FakeCalendarStore.swift in Sources */,
 				DDBEF3D5359192AC5896BA28 /* tests/AgentModelTests.swift in Sources */,
 				F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */,
 				F1DA05F3182E450B41CD433D /* tests/support/ScriptedAgentModel.swift in Sources */,
