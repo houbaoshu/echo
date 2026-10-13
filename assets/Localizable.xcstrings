@@ -1881,6 +1881,16 @@
         }
       }
     },
+    "搜索 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search · %@"
+          }
+        }
+      }
+    },
     "搜索聊天" : {
       "localizations" : {
         "en" : {
@@ -2381,6 +2391,16 @@
         }
       }
     },
+    "无法连接豆包搜索：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t connect to Doubao Search: %@"
+          }
+        }
+      }
+    },
     "无法预览图片：文件已损坏或格式不受支持。" : {
       "localizations" : {
         "en" : {
@@ -2543,16 +2563,16 @@
     },
     "有 %lld 个应用都叫“%@”，没有打开其中任何一个：" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "有 %1$lld 个应用都叫“%2$@”，没有打开其中任何一个："
-          }
-        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$lld apps are named “%2$@”, so none was opened:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 %1$lld 个应用都叫“%2$@”，没有打开其中任何一个："
           }
         }
       }
@@ -2987,6 +3007,16 @@
         }
       }
     },
+    "正在搜索 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Searching · %@"
+          }
+        }
+      }
+    },
     "正在播报" : {
       "localizations" : {
         "en" : {
@@ -3237,6 +3267,16 @@
         }
       }
     },
+    "没有找到结果。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No results found."
+          }
+        }
+      }
+    },
     "没有撤销：%@" : {
       "localizations" : {
         "en" : {
@@ -3394,6 +3434,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Clear API key (takes effect when you save)"
+          }
+        }
+      }
+    },
+    "火山方舟" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volcengine Ark"
           }
         }
       }
@@ -4431,6 +4481,62 @@
         }
       }
     },
+    "豆包搜索不接受这个 API Key（%@）。请在设置的模型页检查火山方舟的 API Key。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doubao Search didn’t accept this API key (%@). Check the Volcengine Ark API key on the Model page in Settings."
+          }
+        }
+      }
+    },
+    "豆包搜索没有及时响应。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doubao Search didn’t respond in time."
+          }
+        }
+      }
+    },
+    "豆包搜索的返回无法识别。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doubao Search returned a response Echo couldn’t read."
+          }
+        }
+      }
+    },
+    "豆包搜索返回 HTTP %lld。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doubao Search returned HTTP %lld."
+          }
+        }
+      }
+    },
+    "豆包搜索返回错误：%@（%@）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doubao Search returned an error: %1$@ (%2$@)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "豆包搜索返回错误：%1$@（%2$@）"
+          }
+        }
+      }
+    },
     "豆包语音" : {
       "localizations" : {
         "en" : {
@@ -4517,6 +4623,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Running"
+          }
+        }
+      }
+    },
+    "近一个月" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Past Month"
+          }
+        }
+      }
+    },
+    "近一周" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Past Week"
+          }
+        }
+      }
+    },
+    "近一天" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Past Day"
+          }
+        }
+      }
+    },
+    "近一年" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Past Year"
           }
         }
       }

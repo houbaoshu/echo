@@ -32,6 +32,28 @@ import Testing
 }
 
 @Suite(.serialized) enum SettingsTests {
+    /// Volcengine Ark starts from the Agent Plan's address, and only it gives a turn web_search,
+    /// with its own saved model key. Any other provider has none, even at the same address.
+    @Test @MainActor static func onlyVolcengineArkSearchesTheWeb() throws {
+        let settings = SettingsStore(secrets: ProviderSecrets())
+        settings.selectProvider(.volcengineArk)
+        #expect(settings.draft == ModelConfiguration(baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3", model: "", apiProtocol: .responses))
+        #expect(DoubaoSearch.searcher(for: settings) == nil, "Nothing is saved yet")
+        settings.draft.model = "doubao-seed-2.0-mini"; settings.apiKey = " ark-plan-key "; settings.save()
+        try #require(settings.notice == nil && settings.snapshot.activeProvider == .volcengineArk)
+        #expect(DoubaoSearch.searcher(for: settings)?.key == "ark-plan-key")
+        for provider in [ModelProvider.openAI, .deepSeek, .ollama, .custom] {
+            settings.selectProvider(provider)
+            settings.draft.baseURL = provider == .ollama ? "http://localhost:11434/v1" : "https://ark.cn-beijing.volces.com/api/plan/v3"
+            settings.draft.model = "model"; if provider.requiresKey { settings.apiKey = "ark-plan-key" }
+            settings.save()
+            try #require(settings.notice == nil && settings.snapshot.activeProvider == provider)
+            #expect(DoubaoSearch.searcher(for: settings) == nil, "\(provider)")
+        }
+        settings.selectProvider(.volcengineArk); settings.save()
+        #expect(DoubaoSearch.searcher(for: settings)?.key == "ark-plan-key", "Switching back brings it back")
+    }
+
     @Test @MainActor static func localModelOnlyIsOffUntilChosenAndSaved() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("local-only-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -274,6 +274,8 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         var old: String
         var new: String
     }
+    /// For web_search, the time range the call asked for: day, week, month or year.
+    var timeRange: String?
     /// For a write, reminder or event change that left a record of itself, whether the person can
     /// undo it, did, or tried and could not. Nil for every other card, and for changes made before
     /// undo existed.
@@ -301,13 +303,13 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             }
         }
     }
-    private enum CodingKeys: String, CodingKey { case callID, entryID, turnID, afterMessageID, command, result, state, directory, tool, edit, undo }
+    private enum CodingKeys: String, CodingKey { case callID, entryID, turnID, afterMessageID, command, result, state, directory, tool, edit, timeRange, undo }
     init(callID: String, entryID: UInt64, turnID: UInt64, afterMessageID: UUID? = nil, command: String,
          result: String? = nil, state: State = .waiting, directory: String? = nil, tool: String? = nil, edit: Edit? = nil,
-         undo: Undo? = nil) {
+         timeRange: String? = nil, undo: Undo? = nil) {
         self.callID = callID; self.entryID = entryID; self.turnID = turnID; self.afterMessageID = afterMessageID
         self.command = command; self.result = result; self.state = state; self.directory = directory; self.tool = tool
-        self.edit = edit; self.undo = undo
+        self.edit = edit; self.timeRange = timeRange; self.undo = undo
     }
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -320,6 +322,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
         directory = try values.decodeIfPresent(String.self, forKey: .directory)
         tool = try values.decodeIfPresent(String.self, forKey: .tool)
         edit = try values.decodeIfPresent(Edit.self, forKey: .edit)
+        timeRange = try values.decodeIfPresent(String.self, forKey: .timeRange)
         undo = try? values.decodeIfPresent(Undo.self, forKey: .undo)
         // A state this build does not know is worked out again from the record, so the
         // conversation still loads.

@@ -940,8 +940,20 @@ struct AgentToolView: View {
                     Text(edit.new).font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
                 }
                 // An unknown result is the model's note to itself; the person gets the card's own.
-                if let lines = ownCard?.lines, tool.state != .unknown {
-                    Text(lines.joined(separator: "\n")).font(.caption).textSelection(.enabled)
+                if let card = ownCard, let lines = card.lines, tool.state != .unknown {
+                    if !lines.isEmpty { Text(lines.joined(separator: "\n")).font(.caption).textSelection(.enabled) }
+                    ForEach(card.links) { link in
+                        if let url = link.url {
+                            Button {
+                                Task { try? await WorkspaceOpener.shared.openInBrowser(url) }
+                            } label: {
+                                searchEntry(link, color: .link)
+                            }.buttonStyle(.plain).help(url.absoluteString)
+                        } else {
+                            // A page without an address, such as a weather card: listed, not a link.
+                            searchEntry(link, color: .primary)
+                        }
+                    }
                 } else if let result = tool.result, tool.state != .unknown {
                     if let data = result.data(using: .utf8),
                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -976,18 +988,29 @@ struct AgentToolView: View {
             }.font(.caption).lineLimit(2)
         }
     }
-    /// Reminders and calendar cards, and the cards of the tools that open an app or a page, say
-    /// what was done in words of their own.
-    private var ownCard: (title: String, icon: String, lines: [String]?)? {
+    /// Reminders and calendar cards, the cards of the tools that open an app or a page, and search
+    /// cards say what was done in words of their own. A search card also lists the pages it found.
+    private var ownCard: (title: String, icon: String, lines: [String]?, links: [AgentSearchCard.Link])? {
         if AgentCalendarCard.applies(to: tool) {
             let card = AgentCalendarCard(tool: tool, locale: locale)
-            return (card.title, card.icon, card.lines)
+            return (card.title, card.icon, card.lines, [])
         }
         if AgentOpenCard.applies(to: tool) {
             let card = AgentOpenCard(tool: tool)
-            return (card.title, card.icon, card.lines)
+            return (card.title, card.icon, card.lines, [])
+        }
+        if AgentSearchCard.applies(to: tool) {
+            let card = AgentSearchCard(tool: tool)
+            return (card.title, card.icon, card.lines, card.links)
         }
         return nil
+    }
+    /// One page of a search card: its title, and its site beneath.
+    private func searchEntry(_ link: AgentSearchCard.Link, color: some ShapeStyle) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(link.title).font(.caption).foregroundStyle(color).multilineTextAlignment(.leading)
+            if !link.site.isEmpty { Text(link.site).font(.caption).foregroundStyle(.secondary) }
+        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
     }
     /// finder_location has no arguments to show. The folder's name is in the result; a call that
     /// found none ends at what it looked at.

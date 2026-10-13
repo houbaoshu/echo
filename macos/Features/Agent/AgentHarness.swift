@@ -274,6 +274,10 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     /// The person's clock: for the time each message carries, and the time zone of the calendar tools.
     private let clock: AgentClock
     private let opener: any AgentOpener
+    /// Read when a turn starts: the searcher web_search uses, when the model provider has one.
+    private let webSearch: @MainActor () -> DoubaoSearch?
+    /// The running turn's searcher; nil offers no web_search.
+    private var searcher: DoubaoSearch?
     /// Write calls this turn that left a record their card can undo from.
     private var undoableCalls: Set<String> = []
     /// Undos under way. A turn must not start meanwhile: an undo amends the transcript when it ends.
@@ -305,7 +309,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
          finder: any FinderLocating = AppleEventFinderLocator.shared, writePolicy: AgentWritePolicy = AgentWritePolicy(),
          writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
          trash: AgentTrash = .system, calendar: any AgentCalendarStore = EventKitCalendarStore.shared, clock: AgentClock = .system,
-         opener: any AgentOpener = WorkspaceOpener.shared) {
+         opener: any AgentOpener = WorkspaceOpener.shared, webSearch: @escaping @MainActor () -> DoubaoSearch? = { nil }) {
         self.resolveModel = resolveModel
         self.local = local
         self.localOnly = localOnly
@@ -317,6 +321,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         self.calendarStore = calendar
         self.clock = clock
         self.opener = opener
+        self.webSearch = webSearch
     }
 
     /// Reads the model settings saved when each turn starts. `ECHO_LOCAL_CHAT=always` sends every
@@ -328,7 +333,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             let endpoint = AgentEndpoint(configuration, key: key)
             let session = AgentTransport.make(for: endpoint)
             return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: session, ledger: ledger, budget: budget) }
-        }, local: local, localOnly: { alwaysLocal || settings.snapshot.localModelOnly })
+        }, local: local, localOnly: { alwaysLocal || settings.snapshot.localModelOnly },
+                  webSearch: { DoubaoSearch.searcher(for: settings) })
     }
 
     var isRunning: Bool { turn != nil }
@@ -507,6 +513,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             }
             catch { return finish(.failed(error.localizedDescription, notice: true)) }
         }
+        // The local model has no tools, so no search either.
+        searcher = route.isLocal ? nil : webSearch()
 
         let budget = GenerationBudget(limit: Self.generationLimit, steering: steering)
         state.turns.append(.init(start: state.entries.count))
@@ -1146,6 +1154,24 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         return result
     }
 
+    /// One web_search call. Nothing on the Mac changes, so it waits for no other call and is not
+    /// saved first; a Stop or newer input ends the wait at once and drops the result.
+    fileprivate func search(_ arguments: Result<AgentWebSearchRequest, AgentInvalidArguments>) async throws -> String {
+        guard isRunning, !stopRequested, storageFailure == nil else { throw CancellationError() }
+        if steering.isPending { return AgentToolResult.superseded }
+        let request: AgentWebSearchRequest
+        switch arguments {
+        case .failure(let invalid): return invalid.result
+        case .success(let valid): request = valid
+        }
+        guard let searcher else { return AgentToolResult.failed("web_search is not available with this model provider") }
+        do {
+            return try await unlessInterrupted { await AgentWebSearchResult.run(request, with: searcher) }
+        } catch is WriteSuperseded {
+            return AgentToolResult.superseded
+        }
+    }
+
     /// Runs `work` on a thread of its own. A Stop or newer input ends the wait at once, throwing
     /// CancellationError or WriteSuperseded; the work runs on and its result is dropped.
     private func offMainUnlessInterrupted<T: Sendable>(_ work: @escaping @Sendable () -> T) async throws -> T {
@@ -1197,6 +1223,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 ListRemindersTool(access: calendar), CreateReminderTool(access: calendar), CompleteReminderTool(access: calendar),
                 ListEventsTool(access: calendar), CreateEventTool(access: calendar),
                 OpenAppTool(access: open), OpenURLTool(access: open)]
+            + (searcher == nil ? [] : [WebSearchTool(access: HarnessSearchAccess(harness: self))])
     }
 
     @concurrent private static func consume(
@@ -1264,6 +1291,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                     record.tool = call.toolName == "bash" ? nil : call.toolName
                     record.afterMessageID = anchor; record.result = nil
                     if record.edit == nil { record.edit = AgentToolRecord.edit(call) }
+                    if record.timeRange == nil { record.timeRange = AgentToolRecord.timeRange(call) }
                     let callKey = "\(index):\(call.id)"
                     record.state = isRunning && dispatched.contains(callKey) ? .running : .waiting
                     if let directory = callDirectories[callKey] { record.directory = directory }
@@ -1453,6 +1481,14 @@ private struct HarnessOpenAccess: AgentOpenAccess {
     }
 }
 
+private struct HarnessSearchAccess: AgentWebSearchAccess {
+    weak var harness: AgentHarness?
+    func search(_ request: Result<AgentWebSearchRequest, AgentInvalidArguments>) async throws -> String {
+        guard let harness else { throw CancellationError() }
+        return try await harness.search(request)
+    }
+}
+
 private struct HarnessWriteAccess: AgentWriteAccess {
     weak var harness: AgentHarness?
     func write(call: GenerationID?, _ request: Result<AgentWriteRequest, AgentInvalidArguments>) async throws -> String {
@@ -1537,6 +1573,7 @@ extension AgentToolRecord {
         case "complete_reminder", "list_events": return ""
         case "open_app": return object?["name"] as? String ?? text
         case "open_url": return object?["url"] as? String ?? text
+        case "web_search": return object?["query"] as? String ?? text
         default: return text
         }
     }
@@ -1554,13 +1591,15 @@ extension AgentToolRecord {
         case "create_event": String(localized: "正在新建日程 · \(String(display(call).prefix(60)))")
         case "open_app": String(localized: "正在打开应用 · \(String(display(call).prefix(60)))")
         case "open_url": String(localized: "正在打开网址 · \(String(display(call).prefix(60)))")
+        case "web_search": String(localized: "正在搜索 · \(String(display(call).prefix(60)))")
         default: String(localized: "正在调用工具 · \(call.toolName)")
         }
     }
     /// A change tool's result that says what it did is finished; any other that ran ended with
     /// nothing changed, so its card says so even folded: a write as not written, a reminder or event
     /// change, or an app or page not opened, as failed. A reminders or calendar call that had no
-    /// access failed too, a read as well. Other tools' failures show as finished.
+    /// access failed too, a read as well, and so did a search that could not search. Other tools'
+    /// failures show as finished.
     static func state(forResult result: String, tool: String?) -> State {
         struct ResultStatus: Decodable { var status: String?; var action: String? }
         let decoded = try? JSONDecoder().decode(ResultStatus.self, from: Data(result.utf8))
@@ -1569,11 +1608,22 @@ extension AgentToolRecord {
         case "unknown": return .unknown
         case "failed" where AgentHarness.calendarTools.contains(tool ?? "") && AgentCalendarResult.missingAccess(result) != nil:
             return .failed
+        // A search that found nothing to return failed, whatever kept it from searching.
+        case "failed" where tool == "web_search":
+            return .failed
         default:
             guard decoded?.action == nil, let tool else { return .finished }
             if AgentHarness.writeTools.contains(tool) { return .notWritten }
             return AgentHarness.calendarChangeTools.contains(tool) || AgentHarness.openTools.contains(tool) ? .failed : .finished
         }
+    }
+
+    /// The time range a web_search call asked for, when it asked for one the tool knows.
+    static func timeRange(_ call: Transcript.ToolCall) -> String? {
+        guard call.toolName == "web_search",
+              let object = (try? JSONSerialization.jsonObject(with: Data(AgentCallArguments.text(call).utf8))) as? [String: Any],
+              let range = object["time_range"] as? String, AgentWebSearchRequest.TimeRange(rawValue: range) != nil else { return nil }
+        return range
     }
 
     /// Longest passage an edit card keeps of each side.

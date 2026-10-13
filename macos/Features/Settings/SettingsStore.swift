@@ -97,12 +97,13 @@ extension LocalizedStringResource {
 }
 
 enum ModelProvider: String, Codable, CaseIterable, Sendable {
-    case openAI, deepSeek, ollama, custom
+    case openAI, deepSeek, volcengineArk, ollama, custom
 
     var title: String {
         switch self {
         case .openAI: "OpenAI"
         case .deepSeek: "DeepSeek"
+        case .volcengineArk: String(localized: "火山方舟")
         case .ollama: "Ollama"
         case .custom: String(localized: "自定义（兼容 API）")
         }
@@ -112,6 +113,8 @@ enum ModelProvider: String, Codable, CaseIterable, Sendable {
         switch self {
         case .openAI: ModelConfiguration()
         case .deepSeek: ModelConfiguration(baseURL: "https://api.deepseek.com", model: "")
+        // The Agent Plan's OpenAI-compatible address; its key also pays for web_search.
+        case .volcengineArk: ModelConfiguration(baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3", model: "", apiProtocol: .responses)
         case .ollama: ModelConfiguration(baseURL: "http://localhost:11434/v1", model: "")
         case .custom: ModelConfiguration(baseURL: "", model: "")
         }

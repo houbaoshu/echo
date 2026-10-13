@@ -155,6 +155,50 @@ import FoundationModels
         guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过打开应用验收。") }
     }
 
+    /// A question only the web answers, in a new chat, for each protocol: the service calls
+    /// web_search, Doubao search answers with pages, and the reply follows them. The saved model key
+    /// must be a Volcengine Ark Agent Plan key; nothing else is searched with.
+    static func runWebSearch(protocols: [ModelAPIProtocol]) async throws {
+        let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
+        let (saved, key) = try settings.savedModelCredentials()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        print("Disposable live workspaces: \(root.path)"); fflush(nil)
+        let search = DoubaoSearch(key: key)
+        var failures = 0
+        for api in protocols {
+            var config = saved; config.apiProtocol = api
+            print("START: \(api.title) 联网搜索"); fflush(nil)
+            let endpoint = AgentEndpoint(config, key: key)
+            let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
+                                           harnessFactory: {
+                AgentHarness(resolveModel: {
+                    let transport = AgentTransport.make(for: endpoint)
+                    return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
+                }, calendar: FakeCalendarStore(), opener: FakeOpener(), webSearch: { search })
+            })
+            do {
+                let chat = workspace.newConversation()
+                chat.store.send("上网搜一下火山方舟 Agent Plan 的套餐包含哪些服务，简短回答并给出一个来源网址。")
+                try await wait(chat.store)
+                let calls = chat.store.tools.filter { $0.tool == "web_search" }
+                let pages = calls.flatMap { AgentSearchCard(tool: $0).links }
+                let reply = chat.store.messages.last { $0.role == .assistant }?.content ?? ""
+                guard chat.store.task?.status == .completed, !calls.isEmpty, calls.allSatisfy({ $0.state == .finished }), !pages.isEmpty,
+                      pages.contains(where: { reply.contains($0.url?.host() ?? "\u{0}") }) else {
+                    throw SettingsError("没有按要求联网搜索：\(chat.store.tools.map { "\($0.tool ?? "") \($0.command) \($0.result?.prefix(200) ?? "")" }) \(reply.prefix(300))")
+                }
+                print("PASS: \(calls.count) web_search → \(pages.count) pages: \(calls.map(\.command))"); fflush(nil)
+            } catch {
+                failures += 1
+                print("FAIL: \(api.title): \(error is SettingsError ? error.localizedDescription : "请检查服务的协议支持或连接。")")
+            }
+            await workspace.prepareForTermination()
+            fflush(nil)
+        }
+        guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过联网搜索验收。") }
+    }
+
     /// In the project just read: the service edits note.txt and creates summary.txt with real
     /// tool calls; the edit leaves a copy of the original beside the workspace's chats.
     static func writeAndEdit(_ work: WorkspaceConversation, project: URL, backups: URL) async throws {
