@@ -137,6 +137,7 @@ private struct ProjectFileBrowserView: View {
     private func entryRow(_ entry: ProjectFileEntry) -> some View {
         ProjectFileRow(entry: entry, isExpanded: browser.state.expanded.contains(entry.path),
                        activate: { activate(entry) })
+            .modifier(ProjectFileDrag(url: browser.url(for: entry.path)))
     }
     /// The two Finder commands a read-only tree can honour. Nothing writes to disk.
     /// The system hands in the selection the menu was raised over — one row for this
@@ -250,6 +251,37 @@ private struct ProjectFileRow: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("projectFiles.entry.\(entry.path)")
             .accessibilityValue(entry.kind == .directory ? (isExpanded ? "已展开" : "已折叠") : "")
+    }
+}
+
+/// Dragging a row out hands over the file or folder itself, as dragging it out of Finder does:
+/// the list starts the drag and draws the row as its image, and Finder, Mail or a chat app gets
+/// the file's URL. The drag only ever offers copy, so a drop on a Finder window on the same disk
+/// copies instead of moving the file out of the project, and ⌘, which asks Finder to move,
+/// gets no drop at all.
+private struct ProjectFileDrag: ViewModifier {
+    let url: URL?
+    private static let copyOnly = DragConfiguration(
+        operationsWithinApp: .init(allowCopy: true, allowMove: false, allowDelete: false),
+        operationsOutsideApp: .init(allowCopy: true, allowMove: false, allowDelete: false))
+    func body(content: Content) -> some View {
+        if let url {
+            content
+                .onDrag { NSItemProvider(object: url as NSURL) }
+                // SwiftUI hands the receiver a copy it makes of the provider's file under
+                // ~/Library/Caches/com.apple.SwiftUI.Drag-…, a whole folder included, and leaves it
+                // there. Putting the URL itself on the drag pasteboard once the drag begins gives
+                // the receiver the file in the project instead, and nothing is copied.
+                .onDragSessionUpdated { session in
+                    guard session.phase == .initial else { return }
+                    let pasteboard = NSPasteboard(name: .drag)
+                    pasteboard.clearContents()
+                    pasteboard.writeObjects([url as NSURL])
+                }
+                .dragConfiguration(Self.copyOnly)
+        } else {
+            content
+        }
     }
 }
 
