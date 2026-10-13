@@ -206,6 +206,81 @@ import FoundationModels
         guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过打开应用验收。") }
     }
 
+    /// Finder at a folder of six scripts, for this test alone: a test never asks the real Finder,
+    /// whichever app is in front.
+    struct ShownFolder: FinderLocating {
+        let path: String
+        func locate() async -> FinderLocation { .folder(path) }
+    }
+
+    /// "帮我看看这个文件夹里有什么" three times in new chats of each kind, for each protocol. Without a
+    /// project, the chat reads the folder Finder shows with a single list_files call, never naming
+    /// the folder itself among its entries; with one, it reads the project and has no finder_location.
+    static func runFinderFolder(protocols: [ModelAPIProtocol], rounds: Int = 3) async throws {
+        let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
+        let (saved, key) = try settings.savedModelCredentials()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")
+        let scripts = root.appendingPathComponent("finder/scripts"), project = root.appendingPathComponent("project")
+        for folder in [scripts, project] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        let names = ["cargo-isolated.sh", "install-local-model.sh", "measure-voice-startup.sh", "test-coreai-dependency.sh",
+                     "test-signing.sh", "xcode-cargo-build.sh"]
+        for name in names { try Data("#!/bin/zsh\n".utf8).write(to: scripts.appendingPathComponent(name)) }
+        try Data("今天的暗号是青柠。\n".utf8).write(to: project.appendingPathComponent("note.txt"))
+        print("Disposable live folders: \(root.path)"); fflush(nil)
+        let question = "帮我看看这个文件夹里有什么"
+        func describe(_ chat: WorkspaceConversation) -> String {
+            chat.store.tools.map { "\($0.tool ?? "") \($0.command) \($0.result?.prefix(200) ?? "")" }.joined(separator: " | ")
+        }
+        var failures = 0
+        for api in protocols {
+            var config = saved; config.apiProtocol = api
+            print("START: \(api.title) 访达文件夹与项目里问“\(question)”"); fflush(nil)
+            let endpoint = AgentEndpoint(config, key: key)
+            let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
+                                           harnessFactory: {
+                AgentHarness(resolveModel: {
+                    let transport = AgentTransport.make(for: endpoint)
+                    return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
+                }, finder: ShownFolder(path: scripts.resolvingSymlinksInPath().path), calendar: FakeCalendarStore(), opener: FakeOpener())
+            })
+            let projectID = workspace.addProject(url: project)
+            for round in 1...rounds {
+                do {
+                    let finder = workspace.newConversation()
+                    finder.store.send(question)
+                    try await wait(finder.store)
+                    let reply = finder.store.messages.last { $0.role == .assistant }?.content ?? ""
+                    print("FINDER \(round): \(describe(finder))\nREPLY: \(reply)"); fflush(nil)
+                    let listedScripts = reply.range(of: #"(子)?文件夹[：:]\s*[`*]*scripts"#, options: .regularExpression) != nil
+                    guard finder.store.task?.status == .completed, finder.store.tools.map(\.tool) == ["list_files"],
+                          finder.store.tools.first?.result?.contains(#""listed_folder":"scripts""#) == true,
+                          names.allSatisfy(reply.contains), !listedScripts else {
+                        throw SettingsError("访达文件夹没有一次 list_files 就答对：\(describe(finder))")
+                    }
+
+                    let work = workspace.newConversation(projectID: projectID)
+                    work.store.send(question)
+                    try await wait(work.store)
+                    let answer = work.store.messages.last { $0.role == .assistant }?.content ?? ""
+                    print("PROJECT \(round): \(describe(work))\nREPLY: \(answer)"); fflush(nil)
+                    guard work.store.task?.status == .completed, !work.store.tools.isEmpty,
+                          work.store.tools.allSatisfy({ ["list_files", "read_file"].contains($0.tool ?? "") && $0.result?.contains("scripts") == false }),
+                          work.store.tools.contains(where: { $0.tool == "list_files" && $0.result?.contains("note.txt") == true }),
+                          answer.contains("note.txt") else {
+                        throw SettingsError("项目聊天没有只读项目：\(describe(work))")
+                    }
+                    print("PASS: \(api.title) round \(round)"); fflush(nil)
+                } catch {
+                    failures += 1
+                    print("FAIL: \(api.title) round \(round): \(error is SettingsError ? error.localizedDescription : "请检查服务的协议支持或连接。")")
+                }
+            }
+            await workspace.prepareForTermination()
+            fflush(nil)
+        }
+        guard failures == 0 else { throw SettingsError("\(failures) 次未通过访达文件夹验收。") }
+    }
+
     /// A question only the web answers, in a new chat, for each protocol: the service calls
     /// web_search, Doubao search answers with pages, and the reply follows them. The saved model key
     /// must be a Volcengine Ark Agent Plan key; nothing else is searched with.

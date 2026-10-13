@@ -4,8 +4,8 @@ import Foundation
 import FoundationModels
 import Synchronization
 
-// Pure Swift tools for the native Agent. They read, and write text files in, the conversation's
-// project or this chat's Finder folder without starting any process. Names, descriptions and limits follow mini-agent-rs `tools.rs` / `tdd.rs`.
+// Pure Swift tools for the native Agent. They read, and write text files in, the chat's one folder
+// without starting any process: its project when it has one, else this chat's Finder folder. Names, descriptions and limits follow mini-agent-rs `tools.rs` / `tdd.rs`.
 // Arguments are decoded by the tool itself, so a schema mismatch becomes model-visible output
 // instead of aborting the turn: a typed `Arguments` would have to decode before the tool runs.
 // `AgentReadToolTests.argumentsAreDecodedByTheTool` covers the model-visible failure.
@@ -99,18 +99,15 @@ enum AgentToolResult {
     static func finderFolderMissing(name: String) -> String {
         failed("This chat's Finder folder, \(name), can no longer be found; it may have been moved or deleted. If the person asks, finder_location switches this chat to the folder Finder shows now.")
     }
-    /// A result read from this chat's Finder folder, naming the folder so the model knows which it read.
+    /// A result from this chat's Finder folder, naming the folder so the model knows which it worked
+    /// in: `in_folder`, unless the result already names the folder it listed in `listed_folder`. The
+    /// names stay apart from a listing's entries, where a folder name would read as one of them.
     static func naming(folder: String, in result: String) -> String {
         guard var value = (try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any] else { return result }
-        value["folder"] = folder
+        if value["listed_folder"] == nil { value["in_folder"] = folder }
         return object(value)
     }
-    static let noProject = noProject(nothing: "read")
     static let projectMissing = projectMissing(nothing: "read")
-    /// `nothing` says what did not happen: "read" or "written".
-    static func noProject(nothing: String) -> String {
-        "This conversation has no project folder, so nothing was \(nothing). Only the person can give a conversation a project, and only before its first message: ask them to start a new chat with the folder as its project (drag the folder onto the pet, choose New Chat on the project in the sidebar, or pick the folder with the project button of a new, empty chat) and ask there."
-    }
     static func projectMissing(nothing: String) -> String {
         "The conversation's project folder can no longer be found; it may have been moved or deleted, so nothing was \(nothing). Ask the person to locate it with Relocate Folder… on the project in the sidebar."
     }
@@ -171,7 +168,7 @@ enum AgentToolResult {
             : "no file named \(name) is attached to this chat; attached files: " + attached.map { "\"\($0)\"" }.joined(separator: ", ")
     }
     static let attachedReadOnly = "files attached to this chat can only be read, so nothing was written"
-    static let attachedNotListed = "list_files does not list the files attached to this chat; read one with read_file, root \"attached\" and its name as the path"
+    static let attachedNotListed = "list_files does not list the files attached to this chat; read one with read_file, attached true and its name as the path"
     static func isUndone(_ result: String) -> Bool {
         ((try? JSONSerialization.jsonObject(with: Data(result.utf8))) as? [String: Any])?["undone"] != nil
     }
@@ -185,9 +182,9 @@ enum AgentToolResult {
     }
 }
 
-/// Shared by the read tools: their place in the batch, supersession and the folder to read.
-/// `root` is the model's choice: "project", "finder" for this chat's Finder folder, or nil for the
-/// project when the chat has one, else the Finder folder. No tool asks the person for a folder.
+/// Shared by the read tools: their place in the batch, supersession and the folder to read. A chat
+/// has one folder: its project when it has one, else this chat's Finder folder. The model does not
+/// choose; no tool asks the person for a folder.
 struct AgentReadContext: Sendable {
     let access: any AgentProjectAccess
     let steering: AgentSteeringSignal
@@ -207,8 +204,8 @@ struct AgentReadContext: Sendable {
         }
     }
 
-    func run(root raw: String?, call: GenerationID?, _ body: @Sendable (String, AgentReadScope) -> String) async throws -> String {
-        switch try await Self.resolve(root: raw, call: call, access: access, steering: steering, nothing: "read") {
+    func run(call: GenerationID?, _ body: @Sendable (String, AgentReadScope) -> String) async throws -> String {
+        switch try await Self.resolve(call: call, access: access, steering: steering, nothing: "read") {
         case .result(let result): return result
         case .folder(let root, .project): return body(root, .project)
         case .folder(let folder, .finder):
@@ -216,30 +213,19 @@ struct AgentReadContext: Sendable {
         }
     }
 
-    /// The folder `root` names for this call, as the read and write tools share it. `nothing` says
-    /// what a call that ends here did not do: "read" or "written".
-    static func resolve(root raw: String?, call: GenerationID?, access: any AgentProjectAccess,
+    /// The chat's folder for this call, as the read and write tools share it: the project when the
+    /// chat has one, else this chat's Finder folder. `nothing` says what a call that ends here did
+    /// not do: "read" or "written".
+    static func resolve(call: GenerationID?, access: any AgentProjectAccess,
                         steering: AgentSteeringSignal, nothing: String) async throws -> AgentRootResolution {
         if steering.isPending { return .result(AgentToolResult.superseded) }
-        let choice: AgentReadScope?
-        switch raw {
-        case nil: choice = nil
-        case "finder": choice = .finder
-        case "project": choice = .project
-        // read_file takes this root before it gets here.
-        case "attached": return .result(AgentToolResult.failed(nothing == "written" ? AgentToolResult.attachedReadOnly : AgentToolResult.attachedNotListed))
-        case let other?: return .result(AgentToolResult.failed(#"root must be "finder" or "project"; received: \#(other)"#))
-        }
-        if choice != .finder {
-            switch try await access.projectRoot() {
-            case .path(let root):
-                try Task.checkCancellation()
-                return .folder(root, .project)
-            case .missing: return .result(AgentToolResult.failed(AgentToolResult.projectMissing(nothing: nothing)))
-            case .superseded: return .result(AgentToolResult.superseded)
-            // Without a project, a call that names no root works in the chat's Finder folder.
-            case .noProject: if choice == .project { return .result(AgentToolResult.failed(AgentToolResult.noProject(nothing: nothing))) }
-            }
+        switch try await access.projectRoot() {
+        case .path(let root):
+            try Task.checkCancellation()
+            return .folder(root, .project)
+        case .missing: return .result(AgentToolResult.failed(AgentToolResult.projectMissing(nothing: nothing)))
+        case .superseded: return .result(AgentToolResult.superseded)
+        case .noProject: break
         }
         switch try await access.finderRoot(call: call) {
         case .superseded: return .result(AgentToolResult.superseded)
@@ -248,6 +234,17 @@ struct AgentReadContext: Sendable {
             try Task.checkCancellation()
             return .folder(folder, .finder)
         }
+    }
+}
+
+/// Whether a call's arguments name a file attached to the chat: `attached` true, as read_file takes
+/// it, or root "attached", as read_file took it in earlier builds and a model may copy from a saved
+/// chat. Only read_file reads attached files; the other file tools refuse such a call rather than
+/// work in the chat's folder.
+enum AgentAttachedArguments {
+    static func named(in arguments: GeneratedContent) -> Bool {
+        (try? arguments.value(Bool.self, forProperty: "attached")) == true
+            || (try? arguments.value(String.self, forProperty: "root")) == "attached"
     }
 }
 
@@ -278,7 +275,7 @@ enum AgentToolPath {
 
 struct ListFilesTool: Tool {
     let name = "list_files"
-    static let toolDescription = "List a workspace directory; use . for the root"
+    static let toolDescription = "List a workspace directory; use . for the root. Only entries ending in / are subfolders; listed_folder, when present, names the folder listed and is not an entry"
     let description = toolDescription
     let context: AgentReadContext
 
@@ -286,8 +283,6 @@ struct ListFilesTool: Tool {
     struct Input {
         @Guide(description: "Directory relative to the root; . for the root")
         var path: String
-        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project; omit for the project when the chat has one, else the Finder folder"#)
-        var root: String?
     }
 
     var parameters: GenerationSchema { Input.generationSchema }
@@ -295,9 +290,10 @@ struct ListFilesTool: Tool {
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         try await context.ordered(call: arguments.id) {
             guard let input = try? Input(arguments) else {
-                return AgentToolResult.failed("invalid arguments for list_files; expected {\"path\": string, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)")
+                return AgentToolResult.failed("invalid arguments for list_files; expected {\"path\": string}. Received: \(arguments.jsonString)")
             }
-            return try await context.run(root: input.root, call: arguments.id) { root, scope in Self.list(root: root, path: input.path, scope: scope) }
+            if AgentAttachedArguments.named(in: arguments) { return AgentToolResult.failed(AgentToolResult.attachedNotListed) }
+            return try await context.run(call: arguments.id) { root, scope in Self.list(root: root, path: input.path, scope: scope) }
         }
     }
 
@@ -324,7 +320,10 @@ struct ListFilesTool: Tool {
         }
         files.sort()
         let truncated = files.count > 200
-        return AgentToolResult.object(["files": Array(files.prefix(200)), "truncated": truncated])
+        var result: [String: Any] = ["files": Array(files.prefix(200)), "truncated": truncated]
+        // Which folder was listed, by the name Finder shows, apart from the entries.
+        if scope == .finder { result["listed_folder"] = ([FileManager.default.displayName(atPath: root)] + (path.isEmpty ? [] : [path])).joined(separator: "/") }
+        return AgentToolResult.object(result)
     }
 }
 
@@ -342,8 +341,8 @@ struct ReadFileTool: Tool {
         var path: String
         @Guide(description: "First line to read, 1-based; omit to start at line 1")
         var start_line: Int?
-        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project, "attached" for a file attached to this chat, with its name as the path; omit for the project when the chat has one, else the Finder folder"#)
-        var root: String?
+        @Guide(description: "true for a file attached to this chat, with its name as the path; omit otherwise")
+        var attached: Bool?
     }
 
     var parameters: GenerationSchema { Input.generationSchema }
@@ -351,12 +350,12 @@ struct ReadFileTool: Tool {
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         try await context.ordered(call: arguments.id) {
             guard let input = try? Input(arguments) else {
-                return AgentToolResult.failed("invalid arguments for read_file; expected {\"path\": string, \"start_line\"?: integer, \"root\"?: \"finder\" | \"project\" | \"attached\"}. Received: \(arguments.jsonString)")
+                return AgentToolResult.failed("invalid arguments for read_file; expected {\"path\": string, \"start_line\"?: integer, \"attached\"?: boolean}. Received: \(arguments.jsonString)")
             }
-            if input.root == "attached" {
+            if AgentAttachedArguments.named(in: arguments) {
                 return try await context.access.readAttached(name: input.path, startLine: input.start_line ?? 1, call: arguments.id)
             }
-            return try await context.run(root: input.root, call: arguments.id) { root, scope in
+            return try await context.run(call: arguments.id) { root, scope in
                 Self.read(root: root, path: input.path, startLine: input.start_line ?? 1, scope: scope)
             }
         }
@@ -469,7 +468,6 @@ struct AgentWriteRequest: Sendable {
         case derive(@Sendable (Data?) -> Result<Data, AgentInvalidArguments>)
     }
     var path: String
-    var root: String?
     var change: Change
 }
 
@@ -495,8 +493,6 @@ struct WriteFileTool: Tool {
         var path: String
         @Guide(description: "The file's whole new content")
         var content: String
-        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project; omit for the project when the chat has one, else the Finder folder"#)
-        var root: String?
     }
 
     var parameters: GenerationSchema { Input.generationSchema }
@@ -504,9 +500,12 @@ struct WriteFileTool: Tool {
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         guard let input = try? Input(arguments) else {
             return try await access.write(call: arguments.id, .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for write_file; expected {\"path\": string, \"content\": string, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)"))))
+                "invalid arguments for write_file; expected {\"path\": string, \"content\": string}. Received: \(arguments.jsonString)"))))
         }
-        return try await access.write(call: arguments.id, .success(.init(path: input.path, root: input.root, change: .replace(input.content))))
+        if AgentAttachedArguments.named(in: arguments) {
+            return try await access.write(call: arguments.id, .failure(.init(result: AgentToolResult.failed(AgentToolResult.attachedReadOnly))))
+        }
+        return try await access.write(call: arguments.id, .success(.init(path: input.path, change: .replace(input.content))))
     }
 }
 
@@ -523,8 +522,6 @@ struct EditFileTool: Tool {
         var old_text: String
         @Guide(description: "The text that replaces it")
         var new_text: String
-        @Guide(description: #"Folder the path is in: "finder" for this chat's Finder folder, "project" for the conversation's project; omit for the project when the chat has one, else the Finder folder"#)
-        var root: String?
     }
 
     var parameters: GenerationSchema { Input.generationSchema }
@@ -532,10 +529,12 @@ struct EditFileTool: Tool {
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         guard let input = try? Input(arguments) else {
             return try await access.write(call: arguments.id, .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for edit_file; expected {\"path\": string, \"old_text\": string, \"new_text\": string, \"root\"?: \"finder\" | \"project\"}. Received: \(arguments.jsonString)"))))
+                "invalid arguments for edit_file; expected {\"path\": string, \"old_text\": string, \"new_text\": string}. Received: \(arguments.jsonString)"))))
         }
-        return try await access.write(call: arguments.id, .success(.init(path: input.path, root: input.root,
-                                                                        change: .edit(old: input.old_text, new: input.new_text))))
+        if AgentAttachedArguments.named(in: arguments) {
+            return try await access.write(call: arguments.id, .failure(.init(result: AgentToolResult.failed(AgentToolResult.attachedReadOnly))))
+        }
+        return try await access.write(call: arguments.id, .success(.init(path: input.path, change: .edit(old: input.old_text, new: input.new_text))))
     }
 }
 

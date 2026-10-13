@@ -458,12 +458,13 @@ extension EchoIntegrationScenarios {
           workspace.selectedID == chat.id && workspace.fileBrowser.location == nil,
           "Another project's completion cannot change selected file root")
 
-        // Without a project the read says so, and nothing waits for a folder.
+        // Without a project the read is of the Finder folder; when Finder shows none the read says
+        // why, and nothing waits for a folder.
         let unbound = workspace.newConversation()
         unbound.store.send("tool")
         try await eventually("the unbound call ends", timeout: .seconds(8)) { !unbound.store.isGenerating }
         #expect(unbound.store.task?.status == .completed
-                && unbound.store.tools.first?.result?.contains("no project folder") == true)
+                && unbound.store.tools.first?.result == FinderLocation.unavailable(.noFolder).toolResult)
       }
     }
     @Test static func responsesToolsAndAtomicHistory() async throws {

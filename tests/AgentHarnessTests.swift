@@ -379,35 +379,62 @@ import Testing
 
     // MARK: Project folder
 
-    /// Without a project no tool asks for one: a read of Finder's side says Finder has no folder,
-    /// root "project" says there is no project, and only the person adds one.
-    @Test func withoutAProjectNoToolAsksForAFolder() async throws {
-        let calls = [("list_files", #"{"path":"."}"#), ("read_file", #"{"path":"x.txt","root":"finder"}"#),
-                     ("list_files", #"{"path":".","root":"project"}"#)]
-        let finder = FakeFinder { .unavailable(.noFolder) }
+    /// A chat without a project reads its Finder folder, whatever root a call copied from a chat
+    /// saved by an earlier build names; when Finder shows no folder, the result says why, and no
+    /// tool asks the person for a folder.
+    @Test func withoutAProjectEveryReadIsOfTheFinderFolder() async throws {
+        let calls = [("list_files", #"{"path":"."}"#), ("read_file", #"{"path":"x.txt","root":"project"}"#),
+                     ("list_files", #"{"path":".","root":"finder"}"#)]
+        let finder = FakeFinder.answering([.unavailable(.notAFolder), .unavailable(.noWindow), .unavailable(.notRunning)])
         let chat = Chat(FinderRootTests.oneByOne(calls), finder: finder)
         try await FinderRootTests.run(chat)
-        let results = chat.store.tools.map(\.result)
-        #expect(results == [FinderLocation.unavailable(.noFolder).toolResult, FinderLocation.unavailable(.noFolder).toolResult,
-                            AgentToolResult.failed(AgentToolResult.noProject)])
-        #expect(finder.calls == 2, "Only the reads of Finder's side asked Finder")
+        #expect(chat.store.tools.map(\.result) == [FinderLocation.unavailable(.notAFolder).toolResult,
+                                                   FinderLocation.unavailable(.noWindow).toolResult,
+                                                   FinderLocation.unavailable(.notRunning).toolResult])
+        #expect(finder.calls == 3, "Each read asked Finder while the chat had no Finder folder")
         #expect(chat.store.tools.map(\.state) == [.finished, .finished, .finished])
         #expect(chat.store.task?.status == .completed)
+        let request = try #require(chat.model.requests.first)
+        #expect(request.enabledToolDefinitions.map(\.name).sorted() == AgentHarnessTests.offeredTools)
+        Self.expectTheSamePrefix(chat.model.requests)
+        #expect(!ChatAttachmentTests.instructions(request).contains("project"), "Nothing about a project")
+    }
 
-        // With a project, a read that names no root reads it as before.
+    /// Every request of a chat offers the same tools with the same instructions, so a service's
+    /// prompt cache keeps matching.
+    static func expectTheSamePrefix(_ requests: [LanguageModelExecutorGenerationRequest],
+                                    sourceLocation: SourceLocation = #_sourceLocation) {
+        #expect(requests.count > 1, sourceLocation: sourceLocation)
+        let tools = requests.map { $0.enabledToolDefinitions.map { "\($0.name): \($0.description)" } }
+        let instructions = requests.map(ChatAttachmentTests.instructions)
+        #expect(Set(tools).count == 1 && Set(instructions).count == 1, sourceLocation: sourceLocation)
+    }
+
+    /// A chat with a project reads only the project, whatever root a call copied from a chat saved
+    /// by an earlier build names, and is offered no finder_location.
+    @Test func withAProjectEveryReadIsOfTheProject() async throws {
         let root = try Self.project()
         defer { try? FileManager.default.removeItem(at: root) }
-        let listed = Chat(FinderRootTests.oneByOne([("list_files", #"{"path":"."}"#)]), project: root)
-        try await FinderRootTests.run(listed)
-        #expect(listed.store.tools.first?.result == #"{"files":[".env","src/"],"truncated":false}"#, "Dot files are listed; only .git is skipped")
+        let calls = [("list_files", #"{"path":"."}"#), ("list_files", #"{"path":".","root":"finder"}"#),
+                     ("read_file", #"{"path":"src/main.txt","root":"finder"}"#)]
+        let chat = Chat(FinderRootTests.oneByOne(calls), project: root, finder: FakeFinder())
+        try await FinderRootTests.run(chat)
+        let listed = #"{"files":[".env","src/"],"truncated":false}"#
+        #expect(chat.store.tools.map(\.result) == [listed, listed, #"{"content":"line one\nline two","start_line":1,"truncated":false}"#],
+                "Dot files are listed; only .git is skipped")
+        #expect(chat.native.finderFolder == nil)
+        let request = try #require(chat.model.requests.first)
+        #expect(request.enabledToolDefinitions.map(\.name).sorted() == AgentHarnessTests.offeredTools.filter { $0 != "finder_location" })
+        Self.expectTheSamePrefix(chat.model.requests)
+        #expect(!ChatAttachmentTests.instructions(request).contains("Finder"), "Nothing about Finder")
     }
 
     /// A project whose folder was moved or deleted reads nothing, and asks for nothing.
     @Test func aMissingProjectFolderFailsWithoutAsking() async throws {
         let root = try Self.project()
         try FileManager.default.removeItem(at: root)
-        let calls = [("list_files", #"{"path":"."}"#), ("read_file", #"{"path":"x.txt","root":"project"}"#)]
-        let chat = Chat(FinderRootTests.oneByOne(calls), project: root)
+        let calls = [("list_files", #"{"path":"."}"#), ("read_file", #"{"path":"x.txt"}"#)]
+        let chat = Chat(FinderRootTests.oneByOne(calls), project: root, finder: FakeFinder())
         try await FinderRootTests.run(chat)
         #expect(chat.store.tools.map(\.result) == [AgentToolResult.failed(AgentToolResult.projectMissing),
                                                    AgentToolResult.failed(AgentToolResult.projectMissing)])
@@ -847,7 +874,10 @@ import Testing
     }
 
     @Test(arguments: [
-        (FinderLocation.unavailable(.noFolder), "unavailable", "not in a readable folder"),
+        (FinderLocation.unavailable(.notAFolder), "unavailable", "not a folder, such as Recents"),
+        (.unavailable(.noWindow), "unavailable", "No Finder window is open"),
+        (.unavailable(.notRunning), "unavailable", "Finder is not running"),
+        (.unavailable(.noFolder), "unavailable", "cannot be opened as a folder"),
         (.unavailable(.promptUnanswered), "unavailable", "click Allow"),
         (.unavailable(.error(-10000)), "unavailable", "error -10000"),
         (.permissionDenied, "permission_denied", "Privacy & Security > Automation"),
@@ -867,7 +897,8 @@ import Testing
     @Test func noResultCarriesAnAbsolutePath() throws {
         let path = try Self.folder("Projects")
         defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
-        let locations: [FinderLocation] = [.folder(path), .permissionDenied, .unavailable(.noFolder),
+        let locations: [FinderLocation] = [.folder(path), .permissionDenied, .unavailable(.notAFolder), .unavailable(.noWindow),
+                                           .unavailable(.notRunning), .unavailable(.noFolder),
                                            .unavailable(.promptUnanswered), .unavailable(.error(-1))]
         for location in locations {
             #expect(!location.toolResult.contains("/"), "\(location.toolResult)")
@@ -960,19 +991,21 @@ import Testing
         let root = try AgentHarnessTests.project()
         defer { try? FileManager.default.removeItem(at: root) }
         let gate = ScriptGate()
-        let finder = FakeFinder { try? await gate.wait(); return .unavailable(.noFolder) }
+        // The list anchors the chat on the folder at once; finder_location then waits.
+        let finder = FakeFinder.answering([.folder(root.path), .unavailable(.noFolder)])
+        let held = FakeFinder { if finder.calls > 0 { try? await gate.wait() }; return await finder.locate() }
         let chat = Chat({ _, emit, index in
             switch index {
             case 0: await emit.call("list_files", #"{"path":"."}"#)
             case 1: await emit.call("finder_location", "{}")
             default: try await emit.text("must not run")
             }
-        }, project: root, finder: finder)
+        }, finder: held)
         #expect(chat.store.send("看看"))
-        try await eventually("asking Finder") { finder.calls == 1 }
+        try await eventually("asking Finder") { held.calls == 2 }
         chat.store.stopTask()
         try await chat.idle()
-        let listed = #"{"files":[".env","src/"],"truncated":false}"#
+        let listed = #"{"files":[".env","src/"],"listed_folder":"\#(root.lastPathComponent)","truncated":false}"#
         #expect(chat.store.tools.map(\.callID) == ["call-1", "call-1"])
         #expect(chat.store.tools.map(\.result) == [listed, AgentToolResult.cancelledBefore])
         #expect(chat.native.entries.toolOutputs == [listed, AgentToolResult.cancelledBefore],
@@ -980,27 +1013,27 @@ import Testing
         gate.open()
     }
 
+    /// A chat has one folder, and its instructions speak only of that one: the Finder folder in a
+    /// chat offered finder_location, else the project.
     @Test func instructionsMentionFinderOnlyWithTheTool() async throws {
         let with = AgentInstructions.text(tools: ["list_files", "read_file", "finder_location"])
         let finders = with.components(separatedBy: "\n\n").filter { $0.contains("finder_location") }
         #expect(finders.count == 1, "One paragraph about Finder: \(finders)")
         let finder = try #require(finders.first)
-        #expect(finder.hasPrefix("When the person asks about the place they are viewing in Finder, list_files and read_file can read it directly."))
+        #expect(finder.hasPrefix("When the person asks about the place they are viewing in Finder, list_files and read_file read it directly."))
         #expect(finder.contains("the folder Finder showed the first time this chat read from Finder. It stays the same while the person browses elsewhere in Finder."))
         #expect(finder.contains("finder_location switches this chat's Finder folder to the one Finder shows now, for when the person asks to switch"))
         #expect(finder.contains("Paths are relative to the Finder folder, . is its root, and only what is inside it can be read."))
-        #expect(finder.contains(#"When the chat has a project, list_files and read_file read the project unless root is "finder"."#))
         #expect(finder.contains("The person can see which folder they are in; its name is context for you."))
         #expect(FinderLocationTool(access: Self.NoAccess()).description == "Switch this chat's Finder folder to the folder shown in Finder's frontmost window")
         for word in ["must", "never", "always", "every reply", "Never", "Always", "Do not", "do not"] {
             #expect(!finder.contains(word), "The Finder paragraph states facts, not orders: \(word)")
         }
+        #expect(!with.contains("project") && !with.contains("root \""), "Nothing about a project or a choice of folder")
         let without = AgentInstructions.text(tools: ["list_files", "read_file"])
-        #expect(!without.contains("finder_location") && !without.contains("Finder"))
-        for text in [with, without] {
-            #expect(text.contains(#"When the person asks about the files of the conversation's project, inspect them with list_files and read_file, passing root "project"."#))
-            #expect(!text.contains("choose") && text.contains("only the person can add one"), "No tool asks the person for a folder")
-        }
+        #expect(!without.contains("finder_location") && !without.contains("Finder") && !without.contains("root \""))
+        #expect(without.contains("When the person asks about the files of the conversation's project, inspect them with list_files and read_file. Paths are relative to the project folder; use . for its root."))
+        for text in [with, without] { #expect(!text.contains("choose") && !text.contains("new chat"), "No tool asks the person for a folder") }
 
         // Every cloud turn offers the tool, and so the paragraph.
         let chat = Chat({ _, emit, _ in try await emit.text("hi") })
@@ -1028,8 +1061,8 @@ import Testing
 
     @Test func errorsInTheReply() {
         #expect(FinderLocation.classify(reply: Self.reply(errn: -1743)) == .permissionDenied)
-        #expect(FinderLocation.classify(reply: Self.reply(errn: -1708)) == .unavailable(.noFolder), "Recents, AirDrop, tags")
-        #expect(FinderLocation.classify(reply: Self.reply(errn: -1728)) == .unavailable(.noFolder), "No browser window")
+        #expect(FinderLocation.classify(reply: Self.reply(errn: -1708)) == .unavailable(.notAFolder), "Recents, AirDrop, tags")
+        #expect(FinderLocation.classify(reply: Self.reply(errn: -1728)) == .unavailable(.noWindow), "No browser window")
         #expect(FinderLocation.classify(reply: Self.reply(errn: -1700)) == .unavailable(.error(-1700)))
         #expect(FinderLocation.classify(reply: Self.reply(errn: -1743, url: URL(fileURLWithPath: "/tmp"))) == .permissionDenied,
                 "errn is read before the result")
@@ -1038,7 +1071,7 @@ import Testing
 
     @Test func thrownErrors() {
         #expect(FinderLocation.classify(thrown: NSError(domain: NSOSStatusErrorDomain, code: -1712)) == .unavailable(.promptUnanswered))
-        #expect(FinderLocation.classify(thrown: NSError(domain: NSOSStatusErrorDomain, code: -600)) == .unavailable(.noFolder),
+        #expect(FinderLocation.classify(thrown: NSError(domain: NSOSStatusErrorDomain, code: -600)) == .unavailable(.notRunning),
                 "Finder not running")
         #expect(FinderLocation.classify(thrown: NSError(domain: NSOSStatusErrorDomain, code: -609)) == .unavailable(.error(-609)))
     }
@@ -1117,7 +1150,7 @@ import Testing
     static func content(_ text: String) -> String { #"{"content":"\#(text)","start_line":1,"truncated":false}"# }
     /// What a read of the chat's Finder folder returns: the content and the folder's name.
     static func content(_ text: String, in folder: String) -> String {
-        #"{"content":"\#(text)","folder":"\#(folder)","start_line":1,"truncated":false}"#
+        #"{"content":"\#(text)","in_folder":"\#(folder)","start_line":1,"truncated":false}"#
     }
 
     /// Runs one turn to its end. No tool waits for a folder, so a turn that ends asked for none.
@@ -1135,7 +1168,7 @@ import Testing
         let chat = Chat(Self.oneByOne([("read_file", #"{"path":"note.txt"}"#), ("list_files", #"{"path":"./sub/"}"#)]), finder: finder)
         try await Self.run(chat)
         #expect(chat.store.tools.map(\.result) == [Self.content("from finder", in: "finder"),
-                                                   #"{"files":["inner.txt"],"folder":"finder","truncated":false}"#])
+                                                   #"{"files":["inner.txt"],"listed_folder":"finder/sub","truncated":false}"#])
         #expect(finder.calls == 1, "Finder is asked once, when the chat has no folder yet")
         #expect(chat.native.finderFolder == f.finder && chat.store.tools.map(\.directory) == [f.finder, f.finder])
         #expect(chat.model.requests.last?.toolOutputs.contains { $0.contains(f.base) } == false, "No path reaches the model")
@@ -1163,7 +1196,7 @@ import Testing
         shown.withLock { $0 = f.second }
         try await Self.run(chat, "再读一下 note")
         #expect(chat.store.tools.map(\.result) == [Self.content("from finder", in: "finder"),
-                                                   #"{"files":["inner.txt"],"folder":"finder","truncated":false}"#,
+                                                   #"{"files":["inner.txt"],"listed_folder":"finder/sub","truncated":false}"#,
                                                    Self.content("from finder", in: "finder")])
         #expect(finder.calls == 1 && chat.native.finderFolder == f.finder)
     }
@@ -1187,9 +1220,10 @@ import Testing
     }
 
     /// No Finder folder yet and Finder has none to give: the read says why, and asks for nothing.
-    @Test(arguments: [FinderLocation.unavailable(.noFolder), .permissionDenied, .unavailable(.promptUnanswered)])
+    @Test(arguments: [FinderLocation.unavailable(.notAFolder), .unavailable(.noWindow), .unavailable(.notRunning),
+                      .unavailable(.noFolder), .permissionDenied, .unavailable(.promptUnanswered)])
     func withoutAFolderFromFinderTheReadFails(failure: FinderLocation) async throws {
-        let chat = Chat(Self.oneByOne([("read_file", #"{"path":"note.txt"}"#), ("list_files", #"{"path":".","root":"finder"}"#)]),
+        let chat = Chat(Self.oneByOne([("read_file", #"{"path":"note.txt"}"#), ("list_files", #"{"path":"."}"#)]),
                         finder: FakeFinder { failure })
         try await Self.run(chat)
         #expect(chat.store.tools.map(\.result) == [failure.toolResult, failure.toolResult])
@@ -1229,31 +1263,6 @@ import Testing
         let record = try #require(chat.store.tools.last)
         #expect(record.result == AgentToolResult.finderFolderMissing(name: "finder") && record.directory == f.finder)
         #expect(AgentToolResult.finderFolderMissing(name: "finder").contains("finder_location switches this chat to the folder Finder shows now"))
-    }
-
-    /// With a project, a read that names no root reads the project; root "finder" reads the chat's
-    /// Finder folder, and root "project" never asks Finder. No root falls back to the other.
-    @Test func withAProjectRootPicksTheFolder() async throws {
-        let f = try Self.folders()
-        defer { f.remove() }
-        let finder = FakeFinder.answering([.folder(f.finder)])
-        let chat = Chat(Self.oneByOne([
-            ("read_file", #"{"path":"note.txt"}"#),
-            ("read_file", #"{"path":"note.txt","root":"project"}"#),
-            ("list_files", #"{"path":".","root":"project"}"#),
-            ("read_file", #"{"path":"note.txt","root":"finder"}"#),
-            ("read_file", #"{"path":"only-project.txt","root":"finder"}"#),
-        ]), project: f.project, finder: finder)
-        try await Self.run(chat)
-        let results = chat.store.tools.map(\.result)
-        #expect(Array(results.prefix(4)) == [
-            Self.content("from project"), Self.content("from project"),
-            #"{"files":["note.txt","only-project.txt"],"truncated":false}"#, Self.content("from finder", in: "finder"),
-        ])
-        #expect(results.last??.contains("no such file or directory: only-project.txt") == true,
-                "A path missing from the Finder folder is missing, even when the project has it: \(results.last as Any)")
-        #expect(finder.calls == 1, "Only root \"finder\" asked Finder")
-        #expect(chat.store.tools.map(\.directory) == [nil, nil, nil, f.finder, f.finder], "Project cards are as before")
     }
 
     /// Input that arrives during the turn does not change the chat's Finder folder.
@@ -1302,9 +1311,9 @@ import Testing
         let f = try Self.folders()
         defer { f.remove() }
         let escapes = ["/etc/hosts", "../project/note.txt", "sub/../../outside/secret.txt", "link/secret.txt", "file-link"]
-        let chat = Chat(Self.oneByOne([("finder_location", "{}")] + escapes.map { ("read_file", #"{"path":"\#($0)","root":"finder"}"#) }
-                                      + [("list_files", #"{"path":"link","root":"finder"}"#), ("list_files", #"{"path":"..","root":"finder"}"#)]),
-                        project: f.project, finder: FakeFinder { .folder(f.finder) })
+        let chat = Chat(Self.oneByOne([("finder_location", "{}")] + escapes.map { ("read_file", #"{"path":"\#($0)"}"#) }
+                                      + [("list_files", #"{"path":"link"}"#), ("list_files", #"{"path":".."}"#)]),
+                        finder: FakeFinder { .folder(f.finder) })
         try await Self.run(chat)
         let results = chat.store.tools.dropFirst().map { $0.result ?? "" }
         #expect(results.allSatisfy { $0.contains(#""status":"failed""#) && !$0.contains("secret\"") && !$0.contains("from project") }, "\(results)")
@@ -1317,19 +1326,43 @@ import Testing
                 "Project messages are unchanged")
     }
 
-    @Test func rootTakesOnlyFinderOrProject() async throws {
+    /// The tools take no root. One that a call copied from a chat saved by an earlier build names
+    /// is ignored, whatever it holds; arguments the tool cannot read still fail as before.
+    @Test func aRootFromAnEarlierBuildIsIgnored() async throws {
         let f = try Self.folders()
         defer { f.remove() }
         let chat = Chat(Self.oneByOne([
             ("finder_location", "{}"), ("read_file", #"{"path":"note.txt","root":"home"}"#),
-            ("list_files", #"{"path":".","root":"Finder"}"#), ("list_files", #"{"path":".","root":1}"#),
+            ("list_files", #"{"path":"sub","root":"project"}"#), ("list_files", #"{"path":"sub","root":1}"#),
+            ("list_files", #"{"path":1}"#),
         ]), finder: FakeFinder { .folder(f.finder) })
         try await Self.run(chat)
         let results = chat.store.tools.dropFirst().map { $0.result ?? "" }
-        #expect(results[0] == AgentToolResult.failed(#"root must be "finder" or "project"; received: home"#))
-        #expect(results[1] == AgentToolResult.failed(#"root must be "finder" or "project"; received: Finder"#))
-        #expect(results[2].contains("invalid arguments for list_files") && results[2].contains(#"\"root\"?"#))
-        #expect(chat.store.tools.dropFirst().allSatisfy { $0.directory == nil })
+        let listed = #"{"files":["inner.txt"],"listed_folder":"finder/sub","truncated":false}"#
+        #expect(Array(results.prefix(3)) == [Self.content("from finder", in: "finder"), listed, listed])
+        #expect(results[3].contains(#"invalid arguments for list_files; expected {\"path\": string}. Received:"#), "\(results[3])")
+        #expect(chat.store.tools.dropFirst().prefix(3).map(\.command) == ["note.txt", "sub", "sub"], "Cards show the path, not the root")
+
+        // Saved with those calls and reopened, the chat shows them as before and goes on.
+        let saved = try JSONDecoder().decode(TaskStore.Snapshot.self, from: JSONEncoder().encode(chat.store.snapshot))
+        let reopened = Chat(Self.oneByOne([("read_file", #"{"path":"sub/inner.txt","root":"finder"}"#)]), snapshot: saved)
+        #expect(reopened.store.tools.map(\.result) == chat.store.tools.map(\.result))
+        try await Self.run(reopened, "再读一下")
+        #expect(reopened.store.tools.last?.result == Self.content("inner", in: "finder") && reopened.store.task?.status == .completed)
+        #expect(reopened.model.requests.first?.transcript.contains { if case .toolCalls = $0 { true } else { false } } == true,
+                "The model sees the earlier calls as they were made")
+    }
+
+    /// A listing names the folder it lists apart from its entries; only entries ending in / are
+    /// subfolders, as the tool's description says.
+    @Test func aListingNamesItsFolderApartFromTheEntries() throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let listed = try #require(try JSONSerialization.jsonObject(with: Data(ListFilesTool.list(root: f.finder, path: ".", scope: .finder).utf8)) as? [String: Any])
+        #expect(listed["listed_folder"] as? String == "finder" && listed["in_folder"] == nil)
+        #expect(listed["files"] as? [String] == ["note.txt", "sub/"], "Links are not listed")
+        #expect(ListFilesTool.list(root: f.project.path, path: ".").contains("listed_folder") == false, "A project listing is as before")
+        #expect(ListFilesTool.toolDescription.contains("Only entries ending in / are subfolders; listed_folder, when present, names the folder listed and is not an entry"))
     }
 }
 
@@ -1682,12 +1715,12 @@ import Testing
         defer { f.remove() }
         let chat = Chat(FinderRootTests.oneByOne([
             ("write_file", #"{"path":"new.txt","content":"hi"}"#),
-            ("edit_file", #"{"path":"note.txt","old_text":"from","new_text":"to","root":"finder"}"#),
+            ("edit_file", #"{"path":"note.txt","old_text":"from","new_text":"to"}"#),
         ]), finder: FakeFinder { .folder(f.finder) })
         defer { try? FileManager.default.removeItem(at: chat.backups) }
         try await FinderRootTests.run(chat)
-        #expect(chat.store.tools.map(\.result) == [#"{"action":"created","bytes":2,"folder":"finder","path":"new.txt"}"#,
-                                                  #"{"action":"edited","bytes":9,"folder":"finder","path":"note.txt"}"#])
+        #expect(chat.store.tools.map(\.result) == [#"{"action":"created","bytes":2,"in_folder":"finder","path":"new.txt"}"#,
+                                                  #"{"action":"edited","bytes":9,"in_folder":"finder","path":"note.txt"}"#])
         #expect(chat.store.tools.allSatisfy { $0.directory == f.finder }, "The card keeps the folder's path")
         #expect(try String(contentsOfFile: f.finder + "/note.txt", encoding: .utf8) == "to finder")
         #expect(try Self.backups(chat).map(\.record.rootKind) == ["finder", "finder"])
@@ -1720,9 +1753,9 @@ import Testing
             guard index < count else { return try await emit.text("done") }
             await emit.calls([
                 ("finder_location", "{}", "f\(index)"),
-                ("write_file", #"{"path":"new.txt","content":"x","root":"finder"}"#, "w\(index)"),
-                ("edit_file", #"{"path":"existing.txt","old_text":"here","new_text":"changed","root":"finder"}"#, "e\(index)"),
-                ("read_file", #"{"path":"existing.txt","root":"finder"}"#, "r\(index)"),
+                ("write_file", #"{"path":"new.txt","content":"x"}"#, "w\(index)"),
+                ("edit_file", #"{"path":"existing.txt","old_text":"here","new_text":"changed"}"#, "e\(index)"),
+                ("read_file", #"{"path":"existing.txt"}"#, "r\(index)"),
             ])
         }
     }
@@ -1789,7 +1822,7 @@ import Testing
     @Test func aFolderInsideAnApplicationCanOnlyBeRead() async throws {
         let root = try Self.project(["Tool.app/Contents/Info.plist": "plist"])
         defer { try? FileManager.default.removeItem(at: root) }
-        let chat = Chat(FinderRootTests.oneByOne([("finder_location", "{}"), ("write_file", #"{"path":"x.txt","content":"x","root":"finder"}"#)]),
+        let chat = Chat(FinderRootTests.oneByOne([("finder_location", "{}"), ("write_file", #"{"path":"x.txt","content":"x"}"#)]),
                         finder: FakeFinder { .folder(root.path + "/Tool.app/Contents") })
         try await FinderRootTests.run(chat)
         #expect(chat.store.tools.last?.result?.contains("is inside an application bundle (.app), so nothing was written") == true)
@@ -1834,7 +1867,7 @@ import Testing
             if index == 0 {
                 await emit.calls([("finder_location", "{}", "c0"), ("write_file", #"{"path":"late.txt","content":"x"}"#, "c1")])
             } else { try await emit.text("ok") }
-        }, project: root, finder: FakeFinder { try? await gate.wait(); return .folder(root.path) })
+        }, finder: FakeFinder { try? await gate.wait(); return .folder(root.path) })
         #expect(chat.store.send("写一个"))
         try await eventually("asking Finder") { gate.arrivals == 1 }
         #expect(chat.store.tools.last?.result == nil, "The write waits for finder_location")
@@ -1903,12 +1936,17 @@ import Testing
         let root = try Self.project()
         defer { try? FileManager.default.removeItem(at: root) }
         let gate = ScriptGate()
+        // The first write anchors the chat on the folder at once; finder_location then waits.
+        let asked = Mutex(0)
         let chat = Chat({ _, emit, index in
             if index == 0 {
                 await emit.calls([("write_file", #"{"path":"one.txt","content":"1"}"#, "w1"), ("finder_location", "{}", "f1"),
                                   ("write_file", #"{"path":"two.txt","content":"2"}"#, "w2")])
             } else { try await emit.text("must not run") }
-        }, project: root, finder: FakeFinder { try? await gate.wait(); return .folder(root.path) })
+        }, finder: FakeFinder {
+            if asked.withLock({ count in defer { count += 1 }; return count }) > 0 { try? await gate.wait() }
+            return .folder(root.path)
+        })
         #expect(chat.store.send("写两个"))
         try await eventually("asking Finder") { gate.arrivals == 1 }
         #expect(chat.store.tools.first?.result?.contains(#""action":"created""#) == true, "The card shows the write before the batch ends")
@@ -1916,7 +1954,8 @@ import Testing
         try await chat.idle()
         gate.open()
         let tools = chat.store.tools
-        #expect(tools[0].state == .finished && tools[0].result == #"{"action":"created","bytes":1,"path":"one.txt"}"#)
+        #expect(tools[0].state == .finished
+                && tools[0].result == #"{"action":"created","bytes":1,"in_folder":"\#(root.lastPathComponent)","path":"one.txt"}"#)
         #expect(tools[2].result == AgentToolResult.cancelledBefore && tools[2].state == .notExecuted)
         #expect(Self.text(root, "one.txt") == "1" && Self.text(root, "two.txt") == nil)
         #expect(chat.native.entries.toolOutputs.first == tools[0].result, "The model's context keeps what the write did")
@@ -1940,7 +1979,7 @@ import Testing
         #expect(writes.count == 1, "\(writes)")
         let paragraph = try #require(writes.first)
         #expect(paragraph.hasPrefix("write_file creates a UTF-8 text file or replaces one in full; edit_file replaces a passage that appears exactly once"))
-        for fact in ["same root and paths relative to that folder", "at most 4 MiB", "(names starting with .), executable files, .terminal files",
+        for fact in ["the same folder as list_files and read_file, with paths relative to it", "at most 4 MiB", "(names starting with .), executable files, .terminal files",
                      "application bundle (.app)", "~/Library outside iCloud Drive and cloud storage folders can only be read",
                      "Echo keeps a copy of the original", "No tool deletes, renames or moves files."] {
             #expect(paragraph.contains(fact), "\(fact)")
@@ -2526,8 +2565,8 @@ extension AgentTrash {
     @Test func sameNamedFilesAreToldApartAndNoPathReachesTheModel() async throws {
         let f = try Files()
         defer { f.remove() }
-        let chat = Chat(Self.reads([[("read_file", #"{"path":"notes 2.md","root":"attached"}"#),
-                                     ("read_file", #"{"path":"notes.md","root":"attached"}"#)]]))
+        let chat = Chat(Self.reads([[("read_file", #"{"path":"notes 2.md","attached":true}"#),
+                                     ("read_file", #"{"path":"notes.md","attached":true}"#)]]))
         #expect(chat.store.send("对比一下", attachments: f.attachments("a/notes.md", "b/notes.md")))
         try await chat.idle()
         #expect(chat.store.tools.map(\.result) == [FinderRootTests.content("from b"), FinderRootTests.content("from a")])
@@ -2544,7 +2583,7 @@ extension AgentTrash {
     @Test func attachedFilesStayReadableInLaterTurns() async throws {
         let f = try Files()
         defer { f.remove() }
-        let chat = Chat(Self.reads([[], [("read_file", #"{"path":"notes.md","root":"attached"}"#)], []]))
+        let chat = Chat(Self.reads([[], [("read_file", #"{"path":"notes.md","attached":true}"#)], []]))
         #expect(chat.store.send("先放这里", attachments: f.attachments("a/notes.md")))
         try await chat.idle()
         #expect(chat.store.send("现在读一下"))
@@ -2561,7 +2600,11 @@ extension AgentTrash {
     @Test func attachedFilesAreOnlyRead() async throws {
         let f = try Files()
         defer { f.remove() }
+        // As the tools take it now, and as a call copied from a chat saved by an earlier build names it.
         let chat = Chat(Self.reads([[
+            ("write_file", #"{"path":"notes.md","attached":true,"content":"changed"}"#),
+            ("edit_file", #"{"path":"notes.md","attached":true,"old_text":"from","new_text":"to"}"#),
+            ("list_files", #"{"path":".","attached":true}"#),
             ("write_file", #"{"path":"notes.md","root":"attached","content":"changed"}"#),
             ("edit_file", #"{"path":"notes.md","root":"attached","old_text":"from","new_text":"to"}"#),
             ("list_files", #"{"path":".","root":"attached"}"#),
@@ -2570,10 +2613,10 @@ extension AgentTrash {
         #expect(chat.store.send("改掉它", attachments: f.attachments("a/notes.md")))
         try await chat.idle()
         let results = chat.store.tools.map { $0.result ?? "" }
-        #expect(results[0] == AgentToolResult.failed(AgentToolResult.attachedReadOnly))
-        #expect(results[1] == AgentToolResult.failed(AgentToolResult.attachedReadOnly))
-        #expect(results[2] == AgentToolResult.failed(AgentToolResult.attachedNotListed))
-        #expect(chat.store.tools.prefix(2).allSatisfy { $0.state == .notWritten })
+        let refused = [AgentToolResult.failed(AgentToolResult.attachedReadOnly), AgentToolResult.failed(AgentToolResult.attachedReadOnly),
+                       AgentToolResult.failed(AgentToolResult.attachedNotListed)]
+        #expect(results == refused + refused)
+        #expect(chat.store.tools.map(\.state) == [.notWritten, .notWritten, .finished, .notWritten, .notWritten, .finished])
         #expect(f.text("a/notes.md") == "from a\n")
         #expect(Self.instructions(try #require(chat.model.requests.first)).contains("They can only be read"))
     }
@@ -2583,8 +2626,8 @@ extension AgentTrash {
     @Test func aDeletedFileReadsAsGone() async throws {
         let f = try Files()
         defer { f.remove() }
-        let chat = Chat(Self.reads([[], [("read_file", #"{"path":"notes.md","root":"attached"}"#),
-                                         ("read_file", #"{"path":"other.md","root":"attached"}"#)]]))
+        let chat = Chat(Self.reads([[], [("read_file", #"{"path":"notes.md","attached":true}"#),
+                                         ("read_file", #"{"path":"other.md","attached":true}"#)]]))
         #expect(chat.store.send("放这里", attachments: f.attachments("a/notes.md")))
         try await chat.idle()
         try FileManager.default.moveItem(at: f.url("a/notes.md"), to: f.url("a/moved.md"))
@@ -2626,7 +2669,7 @@ extension AgentTrash {
         defer { f.remove() }
         for ending in ["follow-up", "stop"] {
             let hold = Hold()
-            let chat = Chat(Self.reads([[("read_file", #"{"path":"notes.md","root":"attached"}"#)]]),
+            let chat = Chat(Self.reads([[("read_file", #"{"path":"notes.md","attached":true}"#)]]),
                             attachmentHooks: AgentAttachmentHooks(beforeOpening: { hold.wait() }))
             #expect(chat.store.send("读一下", attachments: f.attachments("a/notes.md")))
             // Polling here runs on the main actor while the read is held.
@@ -2710,7 +2753,7 @@ extension AgentTrash {
     @Test func aFileThatIsNoLongerTextIsNotRead() async throws {
         let f = try Files()
         defer { f.remove() }
-        let chat = Chat(Self.reads([[], [("read_file", #"{"path":"notes.md","root":"attached"}"#)]]))
+        let chat = Chat(Self.reads([[], [("read_file", #"{"path":"notes.md","attached":true}"#)]]))
         #expect(chat.store.send("放这里", attachments: f.attachments("a/notes.md")))
         try await chat.idle()
         try Data([0x00, 0x01, 0x02]).write(to: f.url("a/notes.md"))

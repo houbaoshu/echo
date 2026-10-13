@@ -182,20 +182,20 @@ enum AgentInstructions {
     nonisolated static func text(tools: [String], attachments: [String] = [], memory: String? = nil) -> String {
         var parts = ["You are a helpful assistant in a persistent conversation. Answer ordinary questions directly.",
                      "Each message from the person starts with a line from Echo, \"[Echo: sent …]\", giving the person's local date, weekday, time and time zone when the message reached you. It is not part of what they wrote."]
-        if tools.contains("list_files") || tools.contains("read_file") {
-            parts.append("When the person asks about the files of the conversation's project, inspect them with list_files and read_file, passing root \"project\". Paths are relative to the project folder; use . for its root. If the conversation has no project folder, the tools say so; only the person can add one.")
-        }
         let writes = tools.contains("write_file") || tools.contains("edit_file")
+        // One folder per chat: the tools offer finder_location only in a chat without a project.
         if tools.contains("finder_location") {
             let inside = writes ? "only what is inside it can be read or written" : "only what is inside it can be read"
-            parts.append("When the person asks about the place they are viewing in Finder, list_files and read_file can read it directly. They read this chat's Finder folder: the folder Finder showed the first time this chat read from Finder. It stays the same while the person browses elsewhere in Finder. finder_location switches this chat's Finder folder to the one Finder shows now, for when the person asks to switch, such as \"look at the folder I'm in now\". Paths are relative to the Finder folder, . is its root, and \(inside). When the chat has a project, list_files and read_file read the project unless root is \"finder\". The person can see which folder they are in; its name is context for you.")
+            parts.append("When the person asks about the place they are viewing in Finder, list_files and read_file read it directly. They read this chat's Finder folder: the folder Finder showed the first time this chat read from Finder. It stays the same while the person browses elsewhere in Finder. finder_location switches this chat's Finder folder to the one Finder shows now, for when the person asks to switch, such as \"look at the folder I'm in now\". Paths are relative to the Finder folder, . is its root, and \(inside). The person can see which folder they are in; its name is context for you.")
+        } else if tools.contains("list_files") || tools.contains("read_file") {
+            parts.append("When the person asks about the files of the conversation's project, inspect them with list_files and read_file. Paths are relative to the project folder; use . for its root.")
         }
         if writes {
-            parts.append("write_file creates a UTF-8 text file or replaces one in full; edit_file replaces a passage that appears exactly once in an existing UTF-8 text file. They work in the same folders as list_files and read_file, with the same root and paths relative to that folder, and create folders missing on the way. A file they write is at most 4 MiB. Hidden files and folders (names starting with .), executable files, .terminal files and anything inside an application bundle (.app) are not written. The home folder itself, the folders above it, hidden folders, and ~/Library outside iCloud Drive and cloud storage folders can only be read. Before a file is replaced or edited, Echo keeps a copy of the original. No tool deletes, renames or moves files.")
+            parts.append("write_file creates a UTF-8 text file or replaces one in full; edit_file replaces a passage that appears exactly once in an existing UTF-8 text file. They work in the same folder as list_files and read_file, with paths relative to it, and create folders missing on the way. A file they write is at most 4 MiB. Hidden files and folders (names starting with .), executable files, .terminal files and anything inside an application bundle (.app) are not written. The home folder itself, the folders above it, hidden folders, and ~/Library outside iCloud Drive and cloud storage folders can only be read. Before a file is replaced or edited, Echo keeps a copy of the original. No tool deletes, renames or moves files.")
         }
         if tools.contains("read_file"), !attachments.isEmpty {
             let names = attachments.map { "\"\($0)\"" }.joined(separator: ", ")
-            parts.append("The person attached these files to this chat: \(names). read_file reads one with root \"attached\" and its name as the path. They can only be read: write_file and edit_file cannot change them, and list_files does not list them.")
+            parts.append("The person attached these files to this chat: \(names). read_file reads one with attached true and its name as the path. They can only be read: write_file and edit_file cannot change them, and list_files does not list them.")
         }
         if tools.contains("create_reminder") || tools.contains("create_event") {
             parts.append("list_reminders, create_reminder and complete_reminder work with the person's Reminders; list_events and create_event with their calendars, adding events to the default calendar. A title names the thing to do or the event alone; its date, time, place and list each have their own argument. Times are ISO 8601 with a UTC offset, such as 2026-10-13T10:00:00+08:00, or a date alone for a whole day; results give times in the person's time zone with the weekday. The first use asks the person for access.")
@@ -1014,7 +1014,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         case .success(let valid): request = valid
         }
         let folder: String, scope: AgentReadScope
-        switch try await AgentReadContext.resolve(root: request.root, call: identity, access: HarnessProjectAccess(harness: self),
+        switch try await AgentReadContext.resolve(call: identity, access: HarnessProjectAccess(harness: self),
                                                   steering: steering, nothing: "written") {
         case .result(let result): return result
         case .folder(let path, let kind): folder = path; scope = kind
@@ -1311,7 +1311,11 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         let writes = HarnessWriteAccess(harness: self)
         let calendar = HarnessCalendarAccess(harness: self)
         let open = HarnessOpenAccess(harness: self)
-        return [ListFilesTool(context: context), ReadFileTool(context: context), FinderLocationTool(access: HarnessFinderAccess(harness: self)),
+        // A chat has one folder: its project, or else its Finder folder, which finder_location
+        // switches. A chat gets its project before its first message, so its tools stay the same
+        // from request to request and a service's prompt cache keeps matching.
+        let finder: [any Tool] = host?.harnessProjectDirectory() == .noProject ? [FinderLocationTool(access: HarnessFinderAccess(harness: self))] : []
+        return [ListFilesTool(context: context), ReadFileTool(context: context)] + finder + [
                 WriteFileTool(access: writes), EditFileTool(access: writes),
                 ListRemindersTool(access: calendar), CreateReminderTool(access: calendar), CompleteReminderTool(access: calendar),
                 ListEventsTool(access: calendar), CreateEventTool(access: calendar),

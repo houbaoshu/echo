@@ -18,8 +18,14 @@ enum FinderLocation: Sendable, Equatable {
     case permissionDenied
 
     enum Unavailable: Sendable, Equatable {
-        /// No folder there: a location that is not one (-1708: Recents, AirDrop, Network, tags),
-        /// no browser window (-1728), Finder not running (-600), or a folder that cannot be opened.
+        /// The frontmost window shows a place that is not a folder (-1708): Recents, AirDrop,
+        /// Network, a tag.
+        case notAFolder
+        /// Finder has no browser window open (-1728).
+        case noWindow
+        /// Finder is not running (-600).
+        case notRunning
+        /// The window names no folder, or one that cannot be opened.
         case noFolder
         /// The permission prompt got no answer before the send timed out (-1712).
         case promptUnanswered
@@ -32,7 +38,9 @@ enum FinderLocation: Sendable, Equatable {
         switch code {
         case -1743: .permissionDenied
         case -1712: .unavailable(.promptUnanswered)
-        case -1708, -1728, -600: .unavailable(.noFolder)
+        case -1708: .unavailable(.notAFolder)
+        case -1728: .unavailable(.noWindow)
+        case -600: .unavailable(.notRunning)
         default: .unavailable(.error(code))
         }
     }
@@ -62,7 +70,8 @@ enum FinderLocation: Sendable, Equatable {
         return .folder(canonical)
     }
 
-    /// What the model sees: the folder's name as Finder shows it, never a path.
+    /// What the model sees: the folder's name as Finder shows it, never a path. A failure says why
+    /// Echo could not tell which folder Finder shows, for finder_location and a chat's first read alike.
     var toolResult: String {
         switch self {
         case .folder(let path):
@@ -73,9 +82,18 @@ enum FinderLocation: Sendable, Equatable {
         case .unavailable(.promptUnanswered):
             AgentToolResult.status("unavailable",
                 "The prompt asking whether Echo may control Finder got no answer. Ask the person to click Allow in the prompt when it appears, then ask again.")
+        case .unavailable(.notAFolder):
+            AgentToolResult.status("unavailable",
+                "Finder's frontmost window shows a place that is not a folder, such as Recents, AirDrop, Network or a tag, so Echo cannot tell which folder to use. Tell the person, and ask them to open the folder in Finder, then ask again.")
+        case .unavailable(.noWindow):
+            AgentToolResult.status("unavailable",
+                "No Finder window is open, so Echo cannot tell which folder to use. Tell the person, and ask them to open the folder in Finder, then ask again.")
+        case .unavailable(.notRunning):
+            AgentToolResult.status("unavailable",
+                "Finder is not running, so Echo cannot tell which folder to use. Tell the person, and ask them to open the folder in Finder, then ask again.")
         case .unavailable(.noFolder):
             AgentToolResult.status("unavailable",
-                "Finder's frontmost window is not in a readable folder, or no Finder window is open. Answer normally; do not present this to the person as an error.")
+                "The place in Finder's frontmost window cannot be opened as a folder. Tell the person, and ask them to open another folder in Finder, then ask again.")
         case .unavailable(.error(let code)):
             AgentToolResult.status("unavailable",
                 "Finder did not report its location (Apple Event error \(code)). Tell the person Echo could not tell which folder Finder is showing.")

@@ -140,14 +140,14 @@ final class LoopbackModelServer: @unchecked Sendable {
         }
         if text.contains("slow-model") { slowModel.pass() }
         // The tool the model calls, if any, and its arguments.
-        let listProject: [String: Any] = ["path": ".", "root": "project"]
+        let listProject: [String: Any] = ["path": "."]
         var call: (name: String, arguments: [String: Any])?
         if text.contains("tool"), results.isEmpty { call = ("list_files", listProject) }
         if text.contains("multi-tool"), results.count == 1 { call = ("list_files", listProject) }
         if text.contains("acceptance-reads") || text.contains("acceptance-history") {
             // Three reads of the project, each checked against what the project holds.
-            let calls: [[String: Any]] = [listProject, ["path": "note.txt", "root": "project"],
-                                          ["path": "note.txt", "start_line": 2, "root": "project"]]
+            let calls: [[String: Any]] = [listProject, ["path": "note.txt"],
+                                          ["path": "note.txt", "start_line": 2]]
             let expected: [[String: Any]] = [["files": ["note.txt"]], ["content": "first\nsecond", "start_line": 1],
                                              ["content": "second", "start_line": 2]]
             guard results.count <= 3, body["stream"] as? Bool == true,
