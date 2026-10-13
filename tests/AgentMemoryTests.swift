@@ -76,6 +76,127 @@ import Testing
     }
 }
 
+/// What the memory does not accept, kind by kind: what is caught, and what looks like it but is not.
+@Suite struct AgentMemorySensitiveTests {
+    typealias Kind = AgentMemorySensitive
+    static func kinds(_ text: String) -> [Kind] { AgentMemorySensitive.kinds(in: text) }
+
+    static func expect(_ kind: Kind, hits: [String], misses: [String], sourceLocation: SourceLocation = #_sourceLocation) {
+        for text in hits { #expect(kinds(text) == [kind], "\(text)", sourceLocation: sourceLocation) }
+        for text in misses { #expect(kinds(text).isEmpty, "\(text)", sourceLocation: sourceLocation) }
+    }
+
+    @Test func idCardNumbersWhoseCheckCharacterAgrees() {
+        Self.expect(.idCard, hits: [
+            "330106199003071236", "身份证号 330106199003071236。", "11010519491231002X", "11010519491231002x", "440304200002290014",
+        ], misses: [
+            "订单号 202610131234567890",        // 18 digits, no birth date in them
+            "330106199003071235",               // the check digit is off by one
+            "33010619900307123",                // 17 digits
+            "3301061990030712366",              // 19 digits
+        ])
+    }
+
+    @Test func bankCardNumbersThatPassLuhn() {
+        Self.expect(.bankCard, hits: [
+            "6222021234567894", "卡号 6222 0212 3456 7894", "6222-0212-3456-7894", "4111111111111111", "6228 4800 1234 5671",
+            "6212261202011234565",              // 19 digits
+        ], misses: [
+            "6222021234567890",                 // 16 digits that fail Luhn
+            "6222 0212 3456 7890",
+            "123456789012",                     // 12 digits
+            "62220212345678940",                // 17 digits that fail Luhn
+        ])
+    }
+
+    @Test func passwordsWrittenAsTheWordAndAValue() {
+        Self.expect(.password, hits: [
+            "密码：abc12345", "WiFi 密码是12345678", "家里 Wi-Fi 密码是 hunter22", "口令: open-sesame", "密码为 Abcd1234", "密码 abc123",
+            "password: hunter2", "My password is Tr0ub4dor", "pwd=abcd1234", "Password hunter2", "passwd：qwerty",
+        ], misses: [
+            "在学密码学", "密码学是一门学科", "我忘了密码是什么", "银行卡密码是 6 位数字", "密码：abc",   // three characters
+            "用 1Password 管理密码", "I use a password manager", "改密码：在设置里", "密码 很长",
+        ])
+    }
+
+    @Test func keysAndTokensByTheirPrefixes() {
+        Self.expect(.apiKey, hits: [
+            "sk-proj-abcdefghijklmnopqrstuvwx1234", "我的 key 是 sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv", "sk-0123456789abcdef0123456789abcdef",
+            "ghp_" + String(repeating: "a1B2", count: 9), "github_pat_11ABCDEFG0123456789_abcdefghijklmnop",
+            "AKIAIOSFODNN7EXAMPLE", "xoxb-1234567890-abcdefghij", "AIza" + String(repeating: "Sy0_", count: 9).dropLast(),
+            "glpat-abcdefghij0123456789", "hf_" + String(repeating: "abc12", count: 7), "sk_live_0123456789abcdefgh",
+            "-----BEGIN OPENSSH PRIVATE KEY-----",
+        ], misses: [
+            "我在学 skill 和 sklearn", "task-based sk-learn", "risk-free-strategy-for-long-term-savings", "sk-short",
+            "AKIA1234", "ghp_short", "xoxo-hugs", "一串随机字符 Zx81kPq0LmN4vB7cR2tY9wE3",   // no prefix, however random
+        ])
+    }
+
+    @Test func mainlandMobileNumbers() {
+        Self.expect(.phone, hits: [
+            "13800138000", "电话是13912345678。", "138 0013 8000", "138-0013-8000", "+86 138 0013 8000", "8613800138000",
+            "+86-13800138000", "19912345678",
+        ], misses: [
+            "12345678901",                      // the second digit is 2
+            "1380013800",                       // 10 digits
+            "138001380001",                     // 12 digits
+            "订单 1380013800012345",            // inside a longer number
+            "10 月 13 日下午 3 点",
+        ])
+        #expect(Self.kinds("2026-10-13 13800138000") == [.phone], "After a date on the same line")
+    }
+
+    @Test func emailAddresses() {
+        Self.expect(.email, hits: ["zhang.san@example.com", "邮箱 test+echo@qq.com", "Work: a_b-c@mail.example.org.cn"],
+                    misses: ["微博 @某某", "推特 @echo_app", "@zhangsan", "a@b", "价格 @ 5 元"])
+    }
+
+    /// The rules for addresses are rough on purpose; these are where they draw the line.
+    @Test func addressesDownToADoorBuildingUnitOrRoom() {
+        Self.expect(.address, hits: [
+            "住在文三路 88 号", "文三路88号", "延安中路 123 弄", "南京道 5 号", "公司在某某街 12 号",
+            "某某小区 3 单元", "5 栋 1201", "住 2 号楼", "3 幢", "1201 室",
+        ], misses: [
+            "住在杭州", "在西湖区上班", "老家是浙江省杭州市西湖区",
+            "生日是 5 月 3 号", "坐 2 号线上班", "我住在 3 号线旁边", "延安路 3 号线",
+            "我知道 3 号要交报告", "第 3 单元测试", "第3单元", "三室两厅", "3 室 2 厅", "在 12 楼开会",
+        ])
+    }
+
+    @Test func everyKindFoundIsNamed() {
+        #expect(Self.kinds("手机 13800138000，邮箱 a@example.com") == [.phone, .email])
+        #expect(Self.kinds("喜欢喝美式") == [] && Self.kinds("生日是 5 月 3 日") == [] && Self.kinds("常用项目是 Echo") == [])
+        #expect(AgentMemorySensitive.phrase([.phone]) == "a phone number")
+        #expect(AgentMemorySensitive.phrase([.idCard, .phone, .email]) == "a Chinese resident ID card number, a phone number and an email address")
+    }
+
+    /// The whole call fails with the kinds named, and the result never repeats the number or value.
+    @Test func aCallWithOneChangesNothing() {
+        let remember = AgentMemoryEditTests.apply(.remember("我的手机号是 138 0013 8000"), to: "- 住在杭州\n")
+        #expect(AgentMemoryEditTests.reason(remember) == "sensitive")
+        if case .failure(let unchanged) = remember {
+            let object = try? JSONSerialization.jsonObject(with: Data(unchanged.result.utf8)) as? [String: Any]
+            #expect(object?["kinds"] as? [String] == ["phone"])
+            #expect(object?["detail"] as? String == "text contains a phone number, which the memory does not accept, so nothing was remembered")
+            #expect(!unchanged.result.contains("138") && !unchanged.result.contains("8000"))
+        }
+        let update = AgentMemoryEditTests.apply(.update(old: "住在杭州", new: "住在文三路 88 号，密码：abc12345"), to: "- 住在杭州\n")
+        if case .failure(let unchanged) = update {
+            #expect(unchanged.result.contains(#""kinds":["password","address"]"#), "\(unchanged.result)")
+            #expect(unchanged.result.contains("new_text contains a password and a street address, which the memory does not accept, so nothing was changed"))
+            #expect(!unchanged.result.contains("abc12345") && !unchanged.result.contains("88"))
+        } else {
+            Issue.record("A password in new_text changes nothing")
+        }
+        #expect(AgentMemoryEditTests.apply(.update(old: "电话 13800138000", new: ""), to: "- 电话 13800138000\n- 住在杭州\n") == .success("- 住在杭州\n"),
+                "Only new_text is checked: a number the person wrote in by hand can still be taken out")
+        switch AgentMemoryEdit.apply(.remember("邮箱 a@example.com"), to: Data([0xFF, 0xFE])) {
+        case .failure(let failure): #expect(failure.result.contains(#""reason":"sensitive""#), "Checked before the file is")
+        case .success: Issue.record("Nothing is written")
+        }
+    }
+}
+
 /// remember and update_memory in a turn, the memory in every request's instructions, the cards, Undo,
 /// and the settings button's file. Each chat's memory is a file in a temporary folder of its own.
 @MainActor @Suite(.serialized) struct AgentMemoryTests {
@@ -111,9 +232,11 @@ import Testing
         #expect(with.hasSuffix("\n\n" + Self.memoryParagraph + "- 喜欢喝美式\n- 住在上海\n</memory>"), "The memory comes last")
         #expect(with.hasPrefix(without), "Everything before it reads the same")
         #expect(!AgentInstructions.text(tools: ["read_file"]).contains("remember"), "Without the tools, no paragraph about them")
-        #expect(RememberTool(access: NoMemory()).description == "Add one line to what the person asked you to remember about them")
+        let note = "The memory does not accept ID card numbers, bank card numbers, passwords, API keys or tokens, phone numbers, email addresses or street addresses."
+        #expect(RememberTool(access: NoMemory()).description == "Add one line to what the person asked you to remember about them. " + note)
         #expect(UpdateMemoryTool(access: NoMemory()).description
-                == "Replace one exact passage of what the person asked you to remember about them; an empty new_text removes it")
+                == "Replace one exact passage of what the person asked you to remember about them; an empty new_text removes it. " + note)
+        #expect(!without.contains("phone"), "The instructions say nothing of it")
     }
 
     struct NoMemory: AgentMemoryAccess {
@@ -203,6 +326,31 @@ import Testing
         #expect(AgentMemoryCard(tool: tools[1]).title.hasPrefix("失败 · 记住："))
         #expect(Self.text(chat) == nil && (try? WriteToolHarnessTests.backups(chat))?.isEmpty != false, "Nothing written, nothing kept")
         #expect(chat.model.requests.last?.toolOutputs == tools.compactMap(\.result), "The model hears why, to tell the person")
+    }
+
+    /// A call with a phone number, an ID card number and so on leaves the file as it was and keeps
+    /// no record; its card fails and says which kind, and the model hears why without the value.
+    @Test func sensitiveDetailsAreNotWritten() async throws {
+        let chat = Chat(FinderRootTests.oneByOne([
+            ("remember", #"{"text":"手机号 138 0013 8000"}"#),
+            ("update_memory", #"{"old_text":"住在杭州","new_text":"身份证 330106199003071236，邮箱 a@example.com"}"#),
+            ("remember", #"{"text":"住在杭州西湖区"}"#),
+        ]))
+        defer { Self.remove(chat) }
+        try Self.write(chat, "- 住在杭州\n")
+        try await FinderRootTests.run(chat, "记住我的手机号和身份证")
+        #expect(Self.text(chat) == "- 住在杭州\n- 住在杭州西湖区\n", "Only the call without one changed the memory")
+        let tools = chat.store.tools
+        #expect(tools.map(\.state) == [.failed, .failed, .finished] && tools.map(\.undo) == [nil, nil, .available])
+        #expect(tools.prefix(2).map { AgentMemoryCard(tool: $0).lines } == [["含手机号，没有写入记忆。"], ["含身份证号，没有写入记忆。"]],
+                "A card names the first kind")
+        #expect(AgentMemoryCard(tool: tools[0]).title == "失败 · 记住：手机号 138 0013 8000")
+        #expect(try WriteToolHarnessTests.backups(chat).map(\.record.tool) == ["remember"], "No record for a call that wrote nothing")
+        let outputs = try #require(chat.model.requests.last).toolOutputs
+        #expect(outputs == tools.compactMap(\.result))
+        #expect(outputs[0].contains(#""kinds":["phone"]"#) && outputs[1].contains(#""kinds":["id_card","email"]"#))
+        for value in ["138", "8000", "330106", "a@example.com"] { #expect(!outputs.joined().contains(value), "\(value)") }
+        #expect(AgentMemoryCard.refusal(.email) == "含邮箱，没有写入记忆。" && AgentMemoryCard.refusal(.address) == "含详细地址，没有写入记忆。")
     }
 
     /// The card's Undo puts the memory back while it still has what the call left; the model hears

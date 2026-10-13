@@ -1651,7 +1651,15 @@ struct NativeComposer: NSViewRepresentable {
         record("3", "remember", "生日是 5 月 3 日", edit: .init(old: "", new: "- 生日是 5 月 3 日"), result: failed(.full), state: .failed),
         record("4", "update_memory", "周末不看工作消息", edit: .init(old: "周末不回消息", new: "周末不看工作消息"), result: failed(.notFound), state: .failed),
         record("5", "update_memory", "- ", edit: .init(old: "- ", new: ""), result: failed(.ambiguous, count: 6), state: .failed),
+        record("6", "remember", "手机号 138 0013 8000", edit: .init(old: "", new: "- 手机号 138 0013 8000"),
+               result: refused(.remember("手机号 138 0013 8000")), state: .failed),
+        record("7", "update_memory", "住在文三路 88 号", edit: .init(old: "住在杭州", new: "住在文三路 88 号"),
+               result: refused(.update(old: "住在杭州", new: "住在文三路 88 号")), state: .failed),
     ]}
+    /// What a call the memory does not accept gets back.
+    static func refused(_ change: AgentMemoryChange) -> String {
+        if case .failure(let failure) = AgentMemoryEdit.apply(change, to: nil) { failure.result } else { "" }
+    }
 }
 
 #Preview("工具卡片 · 记忆") {

@@ -1137,6 +1137,86 @@
         }
       }
     },
+    "含密码，没有写入记忆。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It contains a password, so it wasn’t saved to memory."
+          }
+        }
+      }
+    },
+    "含密钥或令牌，没有写入记忆。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It contains an API key or token, so it wasn’t saved to memory."
+          }
+        }
+      }
+    },
+    "含手机号，没有写入记忆。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It contains a phone number, so it wasn’t saved to memory."
+          }
+        }
+      }
+    },
+    "含敏感个人信息，没有写入记忆。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It contains sensitive personal information, so it wasn’t saved to memory."
+          }
+        }
+      }
+    },
+    "含详细地址，没有写入记忆。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It contains a street address, so it wasn’t saved to memory."
+          }
+        }
+      }
+    },
+    "含身份证号，没有写入记忆。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It contains an ID card number, so it wasn’t saved to memory."
+          }
+        }
+      }
+    },
+    "含邮箱，没有写入记忆。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It contains an email address, so it wasn’t saved to memory."
+          }
+        }
+      }
+    },
+    "含银行卡号，没有写入记忆。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It contains a bank card number, so it wasn’t saved to memory."
+          }
+        }
+      }
+    },
     "启用系统语音处理（回声消除）" : {
       "localizations" : {
         "en" : {

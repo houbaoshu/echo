@@ -57,7 +57,7 @@ protocol AgentMemoryAccess: Sendable {
 
 struct RememberTool: Tool {
     let name = "remember"
-    let description = "Add one line to what the person asked you to remember about them"
+    let description = "Add one line to what the person asked you to remember about them. " + AgentMemorySensitive.toolNote
     let access: any AgentMemoryAccess
 
     @Generable
@@ -79,7 +79,8 @@ struct RememberTool: Tool {
 
 struct UpdateMemoryTool: Tool {
     let name = "update_memory"
-    let description = "Replace one exact passage of what the person asked you to remember about them; an empty new_text removes it"
+    let description = "Replace one exact passage of what the person asked you to remember about them; an empty new_text removes it. "
+        + AgentMemorySensitive.toolNote
     let access: any AgentMemoryAccess
 
     @Generable
@@ -105,7 +106,7 @@ struct UpdateMemoryTool: Tool {
 enum AgentMemoryEdit {
     /// Why a call changed nothing, for the card. Raw values are what results carry.
     enum Reason: String {
-        case empty, full, notFound = "not_found", ambiguous, nothingRemembered = "nothing_remembered", notText = "not_text"
+        case empty, full, notFound = "not_found", ambiguous, nothingRemembered = "nothing_remembered", notText = "not_text", sensitive
     }
 
     /// What a remember call adds: the text on one line, as a Markdown list item.
@@ -120,6 +121,18 @@ enum AgentMemoryEdit {
     /// The memory after `change`, from what it holds now (nil when there is no file), or the
     /// result that ends the call with nothing changed.
     static func apply(_ change: AgentMemoryChange, to data: Data?) -> Result<Data, AgentInvalidArguments> {
+        // What the call would write is checked first, whatever the file holds; update_memory's
+        // old_text is already in the memory, so only its new_text is.
+        let (field, written) = switch change {
+        case .remember(let text): ("text", line(text))
+        case .update(_, let new): ("new_text", new)
+        }
+        let kinds = AgentMemorySensitive.kinds(in: written)
+        if !kinds.isEmpty {
+            // The result names what was found, never the text itself.
+            return failure(.sensitive, "\(field) contains \(AgentMemorySensitive.phrase(kinds)), which the memory does not accept, so nothing was \(field == "text" ? "remembered" : "changed")",
+                           kinds: kinds)
+        }
         let current: String
         if let data {
             guard let text = String(validating: data, as: UTF8.self) else {
@@ -189,9 +202,11 @@ enum AgentMemoryEdit {
         return .success(result)
     }
 
-    private static func failure(_ reason: Reason, _ detail: String, count: Int? = nil) -> Result<Data, AgentInvalidArguments> {
+    private static func failure(_ reason: Reason, _ detail: String, count: Int? = nil,
+                                kinds: [AgentMemorySensitive] = []) -> Result<Data, AgentInvalidArguments> {
         var value: [String: Any] = ["status": "failed", "detail": detail, "reason": reason.rawValue]
         if let count { value["count"] = count }
+        if !kinds.isEmpty { value["kinds"] = kinds.map(\.rawValue) }
         return .failure(.init(result: AgentToolResult.object(value)))
     }
 
@@ -202,5 +217,138 @@ enum AgentMemoryEdit {
         case .update(_, let new) where new.isEmpty: AgentToolResult.object(["action": "removed"])
         case .update: AgentToolResult.object(["action": "updated"])
         }
+    }
+}
+
+/// What the memory does not accept: personal details that are found by how they are written, so a
+/// call holding one changes nothing. Numbers count only when their check digits agree, keys only by
+/// their services' fixed prefixes, and an address only down to a door, building, unit or room number;
+/// a city or district alone is not one. The person's own edits to the file are not checked.
+enum AgentMemorySensitive: String, CaseIterable, Sendable {
+    case idCard = "id_card", bankCard = "bank_card", password, apiKey = "api_key", phone, email, address
+
+    /// What the tool descriptions say of it.
+    static let toolNote = "The memory does not accept ID card numbers, bank card numbers, passwords, API keys or tokens, phone numbers, email addresses or street addresses."
+
+    /// How a result names one.
+    var phrase: String {
+        switch self {
+        case .idCard: "a Chinese resident ID card number"
+        case .bankCard: "a bank card number"
+        case .password: "a password"
+        case .apiKey: "an API key or token"
+        case .phone: "a phone number"
+        case .email: "an email address"
+        case .address: "a street address"
+        }
+    }
+
+    /// "a phone number and an email address".
+    static func phrase(_ kinds: [Self]) -> String {
+        let phrases = kinds.map(\.phrase)
+        guard let last = phrases.last else { return "" }
+        return phrases.count == 1 ? last : phrases.dropLast().joined(separator: ", ") + " and " + last
+    }
+
+    /// Every kind `text` holds, in the order of the cases.
+    static func kinds(in text: String) -> [Self] {
+        var found = numberKinds(in: text)
+        for (kind, patterns) in patterns where patterns.contains(where: { $0.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil }) {
+            found.insert(kind)
+        }
+        return allCases.filter(found.contains)
+    }
+
+    private static let patterns: [(Self, [NSRegularExpression])] = [
+        // The word, then a colon, 是/为/is or an equals sign and a value; or the word, a space and
+        // a value with a digit or a symbol in it, so "password manager" is not one. A value is
+        // four or more printable ASCII characters: "密码学" and "密码是什么" are not.
+        (.password, [
+            #"(?i)(?<![a-z])(?:密码|口令|password|passwd|pwd)\s*(?:[:：=]|是|为|is(?![a-z]))\s*[!-~]{4,}"#,
+            #"(?i)(?<![a-z])(?:密码|口令|password|passwd|pwd)\s+(?=[a-z]*[!-@\[-`{-~])[!-~]{4,}"#,
+        ]),
+        (.apiKey, [
+            #"(?<![A-Za-z0-9])sk-[A-Za-z0-9_\-]{20,}"#,                          // OpenAI, Anthropic, DeepSeek…
+            #"(?<![A-Za-z0-9])(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"#,        // Stripe
+            #"(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{30,}"#,                      // GitHub
+            #"(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{30,}"#,
+            #"(?<![A-Za-z0-9])glpat-[A-Za-z0-9_\-]{20,}"#,                       // GitLab
+            #"(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![0-9A-Za-z])"#,        // AWS access key ID
+            #"(?<![A-Za-z0-9])AIza[0-9A-Za-z_\-]{35}"#,                          // Google
+            #"(?<![A-Za-z0-9])xox[abposr]-[A-Za-z0-9\-]{10,}"#,                  // Slack
+            #"(?<![A-Za-z0-9])hf_[A-Za-z0-9]{30,}"#,                             // Hugging Face
+            #"(?<![A-Za-z0-9])npm_[A-Za-z0-9]{36}"#,                             // npm
+            #"(?<![A-Za-z0-9])pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{20,}"#,         // PyPI
+            #"(?<![A-Za-z0-9])SG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}"#,    // SendGrid
+            #"(?<![A-Za-z0-9])eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]+"#,   // JWT
+            #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#,
+        ]),
+        (.email, [#"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}"#]),
+        // A road, street or lane and a door number ("文三路 88 号", but not "3 号线"); a building or
+        // unit number ("5 栋", "2 号楼", "3 单元", but not "第 3 单元"); a room number of three or
+        // more digits ("1201 室", but not "3 室 2 厅"). "5 号" alone is as often a date.
+        (.address, [
+            #"(?:路|街|(?<!知)道|巷|弄|胡同)\s*[0-9]+\s*(?:号|弄)(?!线)"#,
+            #"[0-9]+\s*(?:栋|幢|号楼)"#,
+            #"(?<![0-9第])(?<!第 )[0-9]+\s*单元"#,
+            #"[0-9]{3,}\s*室"#,
+        ]),
+    ].map { kind, patterns in (kind, patterns.map { try! NSRegularExpression(pattern: $0) }) }
+
+    /// Digits, maybe split by single spaces or hyphens ("138 0013 8000", "6222-0200-…"); an ID
+    /// card number may end in X.
+    private static let numberRun = try! NSRegularExpression(pattern: #"[0-9]+(?:[ \-][0-9]+)*[Xx]?"#)
+
+    /// ID card, phone and bank card numbers. Each run of consecutive groups in a written number is
+    /// tried, so a phone number written after a date on the same line is still found.
+    private static func numberKinds(in text: String) -> Set<Self> {
+        var found = Set<Self>()
+        for match in numberRun.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let range = Range(match.range, in: text) else { continue }
+            let groups = text[range].split(whereSeparator: { $0 == " " || $0 == "-" }).map(String.init)
+            for start in groups.indices {
+                var digits = ""
+                for group in groups[start...] {
+                    digits += group
+                    guard digits.count <= 19 else { break }
+                    if let kind = numberKind(digits) { found.insert(kind) }
+                }
+            }
+        }
+        return found
+    }
+
+    private static func numberKind(_ number: String) -> Self? {
+        let digits = number.compactMap(\.wholeNumberValue)
+        if isIDCard(number) { return .idCard }
+        guard digits.count == number.count else { return nil }   // an X anywhere else
+        // 11 digits from 13 to 19, maybe after 86.
+        let local = digits.count == 13 && digits.starts(with: [8, 6]) ? Array(digits.dropFirst(2)) : digits
+        if local.count == 11, local[0] == 1, (3...9).contains(local[1]) { return .phone }
+        if (13...19).contains(digits.count), luhn(digits) { return .bankCard }
+        return nil
+    }
+
+    /// 18 characters: a birth date at 7–14 and a check character that agrees with the other 17.
+    private static func isIDCard(_ number: String) -> Bool {
+        let characters = Array(number.uppercased())
+        guard characters.count == 18 else { return false }
+        let digits = characters.prefix(17).compactMap(\.wholeNumberValue)
+        guard digits.count == 17 else { return false }
+        func value(_ range: Range<Int>) -> Int { digits[range].reduce(0) { $0 * 10 + $1 } }
+        let year = value(6..<10), month = value(10..<12), day = value(12..<14)
+        guard (1900...2099).contains(year), (1...12).contains(month), (1...31).contains(day) else { return false }
+        let weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
+        let sum = zip(digits, weights).reduce(0) { $0 + $1.0 * $1.1 }
+        return characters[17] == Array("10X98765432")[sum % 11]
+    }
+
+    private static func luhn(_ digits: [Int]) -> Bool {
+        let sum = digits.reversed().enumerated().reduce(0) { sum, item in
+            let (index, digit) = item
+            guard index % 2 == 1 else { return sum + digit }
+            return sum + (digit * 2 > 9 ? digit * 2 - 9 : digit * 2)
+        }
+        return sum % 10 == 0
     }
 }
