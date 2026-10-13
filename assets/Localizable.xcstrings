@@ -583,6 +583,16 @@
         }
       }
     },
+    "从记忆中删除：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove from memory: %@"
+          }
+        }
+      }
+    },
     "任务活动期间不能解除项目关联。" : {
       "localizations" : {
         "en" : {
@@ -1411,6 +1421,16 @@
         }
       }
     },
+    "已从记忆中删除 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Removed from memory · %@"
+          }
+        }
+      }
+    },
     "已保存的 API Key 无效，请重新设置。" : {
       "localizations" : {
         "en" : {
@@ -1577,6 +1597,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chats hidden"
+          }
+        }
+      }
+    },
+    "已更新记忆 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memory updated · %@"
+          }
+        }
+      }
+    },
+    "已记住 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remembered · %@"
           }
         }
       }
@@ -1831,6 +1871,16 @@
         }
       }
     },
+    "打开记忆文件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Memory File"
+          }
+        }
+      }
+    },
     "执行中" : {
       "localizations" : {
         "en" : {
@@ -2061,6 +2111,16 @@
         }
       }
     },
+    "新增" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Added"
+          }
+        }
+      }
+    },
     "新对话" : {
       "localizations" : {
         "en" : {
@@ -2191,6 +2251,16 @@
         }
       }
     },
+    "无法创建记忆文件：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t create the memory file: %@"
+          }
+        }
+      }
+    },
     "无法启动桌面精灵" : {
       "localizations" : {
         "en" : {
@@ -2257,6 +2327,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t start Live Voice because the chat or settings are missing."
+          }
+        }
+      }
+    },
+    "无法打开记忆文件：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t open the memory file: %@"
           }
         }
       }
@@ -2527,6 +2607,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Listening paused"
+          }
+        }
+      }
+    },
+    "更新记忆：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update memory: %@"
           }
         }
       }
@@ -3047,6 +3137,16 @@
         }
       }
     },
+    "正在更新记忆 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updating memory · %@"
+          }
+        }
+      }
+    },
     "正在查看提醒事项" : {
       "localizations" : {
         "en" : {
@@ -3143,6 +3243,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Listening…"
+          }
+        }
+      }
+    },
+    "正在记住 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remembering · %@"
           }
         }
       }
@@ -3277,6 +3387,16 @@
         }
       }
     },
+    "没有指明要改哪段文字，没有更改。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No text to change was given, so nothing was changed."
+          }
+        }
+      }
+    },
     "没有撤销：%@" : {
       "localizations" : {
         "en" : {
@@ -3287,12 +3407,42 @@
         }
       }
     },
+    "没有更改：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing was changed: %@"
+          }
+        }
+      }
+    },
     "没有权限读取此文件或文件夹。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "You don’t have permission to read this item."
+          }
+        }
+      }
+    },
+    "没有能打开记忆文件的应用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No app can open the memory file."
+          }
+        }
+      }
+    },
+    "没有要记住的内容，没有更改。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There was nothing to remember, so nothing was changed."
           }
         }
       }
@@ -3831,6 +3981,66 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "overwritten"
+          }
+        }
+      }
+    },
+    "记住：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remember: %@"
+          }
+        }
+      }
+    },
+    "记忆" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memory"
+          }
+        }
+      }
+    },
+    "记忆在这次改动之后又变过，没有撤销。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t undo because the memory has changed since."
+          }
+        }
+      }
+    },
+    "记忆已满（最多 %lld 个字符），没有更改。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The memory is full (%lld characters at most), so nothing was changed."
+          }
+        }
+      }
+    },
+    "记忆文件不是 UTF-8 文本，没有更改。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The memory file isn’t UTF-8 text, so nothing was changed."
+          }
+        }
+      }
+    },
+    "记忆里没有这段文字，没有更改。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That text isn’t in the memory, so nothing was changed."
           }
         }
       }
@@ -4697,6 +4907,16 @@
         }
       }
     },
+    "还没有记住任何内容，没有更改。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing has been remembered yet, so nothing was changed."
+          }
+        }
+      }
+    },
     "这一轮已有回复或执行过工具，本地模型无法接着处理。" : {
       "localizations" : {
         "en" : {
@@ -4803,6 +5023,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This message is too long for the local model. Shorten it and try again."
+          }
+        }
+      }
+    },
+    "这段文字在记忆里出现了 %lld 次，没有更改。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That text appears %lld times in the memory, so nothing was changed."
           }
         }
       }
@@ -5316,6 +5546,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Default model"
+          }
+        }
+      }
+    },
+    "（删除）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(Removed)"
           }
         }
       }

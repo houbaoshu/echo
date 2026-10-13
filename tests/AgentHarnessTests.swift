@@ -22,6 +22,8 @@ import Testing
         let backups = FileManager.default.temporaryDirectory.appendingPathComponent("echo-backups-\(UUID())")
         /// Stands in for the Trash, so an undo in a test never fills the real one.
         let trash = FileManager.default.temporaryDirectory.appendingPathComponent("echo-trash-\(UUID())")
+        /// The memory file, in a folder of its own that only a memory call creates; never the person's.
+        let memory = AgentMemoryFile(folder: FileManager.default.temporaryDirectory.appendingPathComponent("echo-memory-\(UUID())"))
         var saved: [TaskStore.Snapshot] = []
         var saveFailure: ((TaskStore.Snapshot) -> Bool)?
         var events: [String] = []
@@ -38,7 +40,7 @@ import Testing
             self.opener = opener
             let harness = AgentHarness(resolveModel: { model.factory }, finder: finder, writePolicy: writePolicy, writeHooks: writeHooks,
                                        attachmentHooks: attachmentHooks, trash: trash ?? AgentTrash.into(self.trash),
-                                       calendar: calendar, clock: clock, opener: opener, webSearch: { webSearch })
+                                       calendar: calendar, clock: clock, opener: opener, webSearch: { webSearch }, memory: memory)
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.backupDirectory = backups
             // As the workspace answers: a project whose folder is gone is missing.
@@ -99,7 +101,7 @@ import Testing
 
     /// Every tool a cloud turn offers, sorted.
     static let offeredTools = ["complete_reminder", "create_event", "create_reminder", "edit_file", "finder_location", "list_events",
-                               "list_files", "list_reminders", "open_app", "open_url", "read_file", "write_file"]
+                               "list_files", "list_reminders", "open_app", "open_url", "read_file", "remember", "update_memory", "write_file"]
 
     static func project() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-harness-\(UUID())").resolvingSymlinksInPath()

@@ -112,6 +112,57 @@ import FoundationModels
         guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过提醒验收。") }
     }
 
+    /// "记住……" in one chat, then "你记得我什么" in a new one, for each protocol: the service calls
+    /// remember, the line lands in a memory file of the test's own, and the new chat answers from it.
+    static func runMemory(protocols: [ModelAPIProtocol]) async throws {
+        let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
+        let (saved, key) = try settings.savedModelCredentials()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        print("Disposable live workspaces: \(root.path)"); fflush(nil)
+        var failures = 0
+        for api in protocols {
+            var config = saved; config.apiProtocol = api
+            print("START: \(api.title) 记住 → 新聊天里问"); fflush(nil)
+            let endpoint = AgentEndpoint(config, key: key)
+            let memory = AgentMemoryFile(folder: root.appendingPathComponent("\(api.rawValue)/memory", isDirectory: true))
+            let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
+                                           harnessFactory: {
+                AgentHarness(resolveModel: {
+                    let transport = AgentTransport.make(for: endpoint)
+                    return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
+                }, calendar: FakeCalendarStore(), opener: FakeOpener(), memory: memory)
+            })
+            do {
+                let first = workspace.newConversation()
+                first.store.send("记住：我喜欢喝冰美式，不加糖。")
+                try await wait(first.store)
+                let remembered = try? String(contentsOf: memory.url, encoding: .utf8)
+                print("REMEMBER: \(first.store.tools.map { "\($0.tool ?? "") \($0.command) \($0.result?.prefix(200) ?? "")" }) → \(remembered ?? "(none)")")
+                print("REPLY 1: \(first.store.messages.last { $0.role == .assistant }?.content ?? "")")
+                guard first.store.task?.status == .completed, first.store.tools.contains(where: { $0.tool == "remember" && $0.state == .finished }),
+                      let remembered, remembered.contains("美式") else {
+                    throw SettingsError("没有按要求调用 remember")
+                }
+                let second = workspace.newConversation()
+                second.store.send("你记得我什么？")
+                try await wait(second.store)
+                let reply = second.store.messages.last { $0.role == .assistant }?.content ?? ""
+                print("REPLY 2: \(reply)"); fflush(nil)
+                guard second.store.task?.status == .completed, reply.contains("美式"), second.store.tools.isEmpty else {
+                    throw SettingsError("新聊天没有按记忆回答：\(reply.prefix(300)) \(second.store.tools.map { $0.tool ?? "" })")
+                }
+                print("PASS: \(api.title) 记住并在新聊天里带上"); fflush(nil)
+            } catch {
+                failures += 1
+                print("FAIL: \(api.title): \(error is SettingsError ? error.localizedDescription : "请检查服务的协议支持或连接。")")
+            }
+            await workspace.prepareForTermination()
+            fflush(nil)
+        }
+        guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过记忆验收。") }
+    }
+
     /// "打开提醒事项" in a new chat, for each protocol: the service calls open_app with a name that
     /// finds Reminders. A fake opener stands in for the Mac, so nothing opens.
     static func runOpenApp(protocols: [ModelAPIProtocol]) async throws {

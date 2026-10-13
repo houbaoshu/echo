@@ -65,6 +65,7 @@
 		A6C1E7D2B3F4950A1B2C3D41 /* macos/Features/Agent/AgentCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3D40 /* macos/Features/Agent/AgentCalendar.swift */; };
 		A6C1E7D2B3F4950A1B2C3D51 /* macos/Features/Agent/AgentOpen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3D50 /* macos/Features/Agent/AgentOpen.swift */; };
 		A6C1E7D2B3F4950A1B2C3D61 /* macos/Features/Agent/AgentWebSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3D60 /* macos/Features/Agent/AgentWebSearch.swift */; };
+		A6C1E7D2B3F4950A1B2C3D71 /* macos/Features/Agent/AgentMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3D70 /* macos/Features/Agent/AgentMemory.swift */; };
 		A90FABF2D2B029FA59548B59 /* VoiceSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12500000000000000000F00 /* VoiceSoakTests.swift */; };
 		B1AA482C4F889BAA418DAE42 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		B704670FAF0415C2098489CE /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
@@ -72,9 +73,10 @@
 		B7D2E8F3C4A5061B2C3D4E53 /* tests/support/FakeCalendarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E51 /* tests/support/FakeCalendarStore.swift */; };
 		B7D2E8F3C4A5061B2C3D4E54 /* tests/support/FakeCalendarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E51 /* tests/support/FakeCalendarStore.swift */; };
 		B7D2E8F3C4A5061B2C3D4E62 /* tests/AgentOpenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E60 /* tests/AgentOpenTests.swift */; };
-		B7D2E8F3C4A5061B2C3D4E72 /* tests/AgentWebSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E70 /* tests/AgentWebSearchTests.swift */; };
 		B7D2E8F3C4A5061B2C3D4E63 /* tests/support/FakeOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E61 /* tests/support/FakeOpener.swift */; };
 		B7D2E8F3C4A5061B2C3D4E64 /* tests/support/FakeOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E61 /* tests/support/FakeOpener.swift */; };
+		B7D2E8F3C4A5061B2C3D4E72 /* tests/AgentWebSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E70 /* tests/AgentWebSearchTests.swift */; };
+		B7D2E8F3C4A5061B2C3D4E82 /* tests/AgentMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D2E8F3C4A5061B2C3D4E80 /* tests/AgentMemoryTests.swift */; };
 		B9DDF01A179493CDC0297D15 /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		BC0769A420E4834B8D65FD1E /* pets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001D /* pets */; };
 		C622A7EBBE746BA108EA86AA /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
@@ -255,13 +257,15 @@
 		A6C1E7D2B3F4950A1B2C3D40 /* macos/Features/Agent/AgentCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentCalendar.swift; sourceTree = "<group>"; };
 		A6C1E7D2B3F4950A1B2C3D50 /* macos/Features/Agent/AgentOpen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentOpen.swift; sourceTree = "<group>"; };
 		A6C1E7D2B3F4950A1B2C3D60 /* macos/Features/Agent/AgentWebSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentWebSearch.swift; sourceTree = "<group>"; };
+		A6C1E7D2B3F4950A1B2C3D70 /* macos/Features/Agent/AgentMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentMemory.swift; sourceTree = "<group>"; };
 		AC2342CC6EB3F55C38085D3E /* tests/native/LiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/LiveTests.swift; sourceTree = "<group>"; };
 		B628CE43BFCAC712B3D75BF1 /* tests/fixtures/speech/mixed.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = tests/fixtures/speech/mixed.wav; sourceTree = "<group>"; };
 		B7D2E8F3C4A5061B2C3D4E50 /* tests/AgentCalendarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentCalendarTests.swift; sourceTree = "<group>"; };
 		B7D2E8F3C4A5061B2C3D4E51 /* tests/support/FakeCalendarStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/FakeCalendarStore.swift; sourceTree = "<group>"; };
 		B7D2E8F3C4A5061B2C3D4E60 /* tests/AgentOpenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentOpenTests.swift; sourceTree = "<group>"; };
-		B7D2E8F3C4A5061B2C3D4E70 /* tests/AgentWebSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentWebSearchTests.swift; sourceTree = "<group>"; };
 		B7D2E8F3C4A5061B2C3D4E61 /* tests/support/FakeOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/support/FakeOpener.swift; sourceTree = "<group>"; };
+		B7D2E8F3C4A5061B2C3D4E70 /* tests/AgentWebSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentWebSearchTests.swift; sourceTree = "<group>"; };
+		B7D2E8F3C4A5061B2C3D4E80 /* tests/AgentMemoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentMemoryTests.swift; sourceTree = "<group>"; };
 		BDB246AE9C0537E3D5EAD79A /* tests/tools/FixtureServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/tools/FixtureServer.swift; sourceTree = "<group>"; };
 		C038B52ADC4A870F1268E696 /* EchoDeviceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoDeviceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = Localizable.xcstrings; path = assets/Localizable.xcstrings; sourceTree = "<group>"; };
@@ -464,6 +468,7 @@
 				B7D2E8F3C4A5061B2C3D4E60 /* tests/AgentOpenTests.swift */,
 				B7D2E8F3C4A5061B2C3D4E61 /* tests/support/FakeOpener.swift */,
 				B7D2E8F3C4A5061B2C3D4E70 /* tests/AgentWebSearchTests.swift */,
+				B7D2E8F3C4A5061B2C3D4E80 /* tests/AgentMemoryTests.swift */,
 				474D9F2D95791491A7B3D4E6 /* tests/AgentModelTests.swift */,
 				F20000000000000000000012 /* tests/LocalChatTests.swift */,
 				E11300000000000000000F00 /* VoiceTests.swift */,
@@ -481,6 +486,7 @@
 				A6C1E7D2B3F4950A1B2C3D40 /* macos/Features/Agent/AgentCalendar.swift */,
 				A6C1E7D2B3F4950A1B2C3D50 /* macos/Features/Agent/AgentOpen.swift */,
 				A6C1E7D2B3F4950A1B2C3D60 /* macos/Features/Agent/AgentWebSearch.swift */,
+				A6C1E7D2B3F4950A1B2C3D70 /* macos/Features/Agent/AgentMemory.swift */,
 				CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */,
 				F20000000000000000000010 /* macos/Features/Agent/AgentLocalChat.swift */,
 				E11000000000000000000F05 /* SettingsStore.swift */,
@@ -1151,6 +1157,7 @@
 				A6C1E7D2B3F4950A1B2C3D41 /* macos/Features/Agent/AgentCalendar.swift in Sources */,
 				A6C1E7D2B3F4950A1B2C3D51 /* macos/Features/Agent/AgentOpen.swift in Sources */,
 				A6C1E7D2B3F4950A1B2C3D61 /* macos/Features/Agent/AgentWebSearch.swift in Sources */,
+				A6C1E7D2B3F4950A1B2C3D71 /* macos/Features/Agent/AgentMemory.swift in Sources */,
 				534B7D287D089271F8634C32 /* macos/Features/Agent/AgentHarness.swift in Sources */,
 				F20000000000000000000011 /* macos/Features/Agent/AgentLocalChat.swift in Sources */,
 				E11000000000000000000B02 /* AgentConnectionTester.swift in Sources */,
@@ -1206,6 +1213,7 @@
 				B7D2E8F3C4A5061B2C3D4E62 /* tests/AgentOpenTests.swift in Sources */,
 				B7D2E8F3C4A5061B2C3D4E63 /* tests/support/FakeOpener.swift in Sources */,
 				B7D2E8F3C4A5061B2C3D4E72 /* tests/AgentWebSearchTests.swift in Sources */,
+				B7D2E8F3C4A5061B2C3D4E82 /* tests/AgentMemoryTests.swift in Sources */,
 				DDBEF3D5359192AC5896BA28 /* tests/AgentModelTests.swift in Sources */,
 				F20000000000000000000013 /* tests/LocalChatTests.swift in Sources */,
 				F1DA05F3182E450B41CD433D /* tests/support/ScriptedAgentModel.swift in Sources */,

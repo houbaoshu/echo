@@ -192,6 +192,7 @@ struct ModelSettingsView: View {
                 }
             }
             LocalModelSection(settings: settings)
+            MemorySection(settings: settings)
         }
         // A grouped form draws a text field as plain trailing-aligned text, which reads
         // as a value rather than something editable. These are all credentials and
@@ -259,6 +260,37 @@ struct LocalModelSection: View {
         } else if let folder = settings.localModels?.models {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             NSWorkspace.shared.open(folder)
+        }
+    }
+}
+
+/// What the person asked the Agent to remember lives in a file they edit in their own editor;
+/// settings only opens it.
+struct MemorySection: View {
+    var settings: SettingsStore
+    var body: some View {
+        Section {
+            Button("打开记忆文件", action: open).disabled(settings.memoryFile == nil)
+                .accessibilityIdentifier("settings.memory.open")
+            if let notice = settings.memoryNotice {
+                Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                    .accessibilityIdentifier("settings.memory.notice")
+            }
+        } header: {
+            Text("记忆")
+        }
+    }
+    /// In the app that opens Markdown files, or the default text editor when none does.
+    private func open() {
+        guard let url = settings.memoryFileForEditing() else { return }
+        let workspace = NSWorkspace.shared
+        guard let app = workspace.urlForApplication(toOpen: url) ?? workspace.urlForApplication(toOpen: .plainText) else {
+            settings.memoryNotice = String(localized: "没有能打开记忆文件的应用。")
+            return
+        }
+        workspace.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            guard let error else { return }
+            Task { @MainActor in settings.memoryNotice = String(localized: "无法打开记忆文件：\(error.localizedDescription)") }
         }
     }
 }
@@ -399,4 +431,11 @@ struct PetCardButtonStyle: ButtonStyle {
     )
     return SettingsView(settings: settings, voice: voice, pets: pets, planets: planets)
         .frame(width: 720, height: 560)
+}
+
+#Preview("设置 · 记忆") {
+    // A store beside a settings.json that does not exist, so the button has a file to open.
+    let settings = SettingsStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("echo-preview-settings/settings.json"))
+    Form { MemorySection(settings: settings) }.formStyle(.grouped)
+        .frame(width: 520, height: 160)
 }

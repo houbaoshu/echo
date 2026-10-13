@@ -933,11 +933,16 @@ struct AgentToolView: View {
                     Text(tool.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 if let directory = tool.directory { Text(directory).font(.caption).foregroundStyle(.secondary) }
-                if let edit = tool.edit {
+                if let edit = tool.edit, tool.tool == "remember" {
+                    // A remember call has nothing before: the line it adds is all there is to show.
+                    Text("新增").font(.caption).foregroundStyle(.secondary)
+                    Text(edit.new).font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
+                } else if let edit = tool.edit {
                     Text("改前").font(.caption).foregroundStyle(.secondary)
                     Text(edit.old).font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
                     Text("改后").font(.caption).foregroundStyle(.secondary)
-                    Text(edit.new).font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
+                    Text(edit.new.isEmpty ? String(localized: "（删除）") : edit.new)
+                        .font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
                 }
                 // An unknown result is the model's note to itself; the person gets the card's own.
                 if let card = ownCard, let lines = card.lines, tool.state != .unknown {
@@ -988,8 +993,9 @@ struct AgentToolView: View {
             }.font(.caption).lineLimit(2)
         }
     }
-    /// Reminders and calendar cards, the cards of the tools that open an app or a page, and search
-    /// cards say what was done in words of their own. A search card also lists the pages it found.
+    /// Reminders and calendar cards, the cards of the tools that open an app or a page, search
+    /// cards and memory cards say what was done in words of their own. A search card also lists the
+    /// pages it found.
     private var ownCard: (title: String, icon: String, lines: [String]?, links: [AgentSearchCard.Link])? {
         if AgentCalendarCard.applies(to: tool) {
             let card = AgentCalendarCard(tool: tool, locale: locale)
@@ -1002,6 +1008,10 @@ struct AgentToolView: View {
         if AgentSearchCard.applies(to: tool) {
             let card = AgentSearchCard(tool: tool)
             return (card.title, card.icon, card.lines, card.links)
+        }
+        if AgentMemoryCard.applies(to: tool) {
+            let card = AgentMemoryCard(tool: tool)
+            return (card.title, card.icon, card.lines, [])
         }
         return nil
     }
@@ -1612,4 +1622,49 @@ struct NativeComposer: NSViewRepresentable {
     let workspace = WorkspaceStore(initialStore: store)
     return WorkspaceConversationView(workspace: workspace, planets: PlanetStore())
         .frame(width: 700, height: 460)
+}
+
+/// remember and update_memory cards: remembered, changed, removed, undone, refused, and each way nothing changed.
+@MainActor private enum MemoryPreview {
+    static func record(_ id: String, _ tool: String, _ command: String, edit: AgentToolRecord.Edit, result: String, state: AgentToolRecord.State,
+                       undo: AgentToolRecord.Undo? = nil) -> AgentToolRecord {
+        .init(callID: id, entryID: 1, turnID: 1, command: command, result: result, state: state, tool: tool, edit: edit, undo: undo)
+    }
+    static func failed(_ reason: AgentMemoryEdit.Reason, count: Int? = nil) -> String {
+        var value: [String: Any] = ["status": "failed", "detail": "", "reason": reason.rawValue]
+        if let count { value["count"] = count }
+        return AgentToolResult.object(value)
+    }
+    static let remembered = AgentMemoryEdit.result(.remember("喜欢喝美式，不加糖"))
+    static let updated = AgentMemoryEdit.result(.update(old: "住在杭州", new: "住在上海"))
+    static let removed = AgentMemoryEdit.result(.update(old: "常用项目是 Echo", new: ""))
+    static var cards: [AgentToolRecord] {[
+        record("1", "remember", "喜欢喝美式，不加糖", edit: .init(old: "", new: "- 喜欢喝美式，不加糖"), result: remembered, state: .finished, undo: .available),
+        record("2", "update_memory", "住在上海", edit: .init(old: "住在杭州", new: "住在上海"), result: updated, state: .finished, undo: .available),
+        record("3", "update_memory", "常用项目是 Echo", edit: .init(old: "常用项目是 Echo", new: ""), result: removed, state: .finished, undo: .available),
+    ]}
+    static var otherCards: [AgentToolRecord] {[
+        record("1", "remember", "喜欢喝美式，不加糖", edit: .init(old: "", new: "- 喜欢喝美式，不加糖"),
+               result: AgentToolResult.undone(remembered, tool: "remember"), state: .finished, undo: .undone),
+        record("2", "update_memory", "住在上海", edit: .init(old: "住在杭州", new: "住在上海"), result: updated, state: .finished,
+               undo: .refused(.memoryChanged)),
+        record("3", "remember", "生日是 5 月 3 日", edit: .init(old: "", new: "- 生日是 5 月 3 日"), result: failed(.full), state: .failed),
+        record("4", "update_memory", "周末不看工作消息", edit: .init(old: "周末不回消息", new: "周末不看工作消息"), result: failed(.notFound), state: .failed),
+        record("5", "update_memory", "- ", edit: .init(old: "- ", new: ""), result: failed(.ambiguous, count: 6), state: .failed),
+    ]}
+}
+
+#Preview("工具卡片 · 记忆") {
+    VStack(alignment: .leading, spacing: 8) {
+        ForEach(MemoryPreview.cards) { AgentToolView(tool: $0, expanded: true, undo: {}, canUndo: true) }
+    }.padding().frame(width: 520)
+}
+
+#Preview("工具卡片 · 记忆 · 撤销和失败") {
+    VStack(alignment: .leading, spacing: 8) {
+        ForEach(MemoryPreview.otherCards) { record in
+            AgentToolView(tool: record, expanded: record.state != .finished,
+                          undo: record.undo == nil || record.undo == .undone ? nil : {}, canUndo: true)
+        }
+    }.padding().frame(width: 520)
 }

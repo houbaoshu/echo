@@ -210,6 +210,10 @@ protocol ConnectionTesting: Sendable {
     private(set) var importingLocalModel = false
     var localModelNotice: String?
     private let url: URL?
+    /// What the person asked the Agent to remember, beside settings.json; nil when the store is off disk.
+    var memoryFile: AgentMemoryFile? { url.map { AgentMemoryFile(folder: $0.deletingLastPathComponent()) } }
+    /// Why the memory file could not be opened, beneath its button.
+    var memoryNotice: String?
     /// Where the offline model is imported and looked for. Like `url`, nil keeps the store off
     /// disk: there is no model.
     let localModels: LocalModelLocation?
@@ -353,6 +357,19 @@ protocol ConnectionTesting: Sendable {
             importingLocalModel = false
             localModelNotice = failure ?? String(localized: "已导入本地模型。")
             refreshLocalModel()
+        }
+    }
+    /// The memory file to open in the person's editor, created empty when there is none. Nil when
+    /// it cannot be, with `memoryNotice` saying why.
+    func memoryFileForEditing() -> URL? {
+        guard let memoryFile else { return nil }
+        do {
+            let url = try memoryFile.prepareForEditing()
+            memoryNotice = nil
+            return url
+        } catch {
+            memoryNotice = String(localized: "无法创建记忆文件：\(error.localizedDescription)")
+            return nil
         }
     }
     func savedModelCredentials() throws -> (configuration: ModelConfiguration, key: String) {

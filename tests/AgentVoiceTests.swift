@@ -87,6 +87,34 @@ extension VoiceTests {
         #expect(f.store.isGenerating && !f.audio.capturing, "ending Live Voice releases audio without cancelling the Agent")
     }
 
+    /// Live Voice talks to the same Agent: a spoken "记住…" reaches remember, and the next spoken
+    /// question's request carries the memory.
+    @Test @MainActor static func agentVoiceMemoryTests() async throws {
+        _ = NSApplication.shared
+        let memory = AgentMemoryFile(folder: FileManager.default.temporaryDirectory.appendingPathComponent("echo-voice-memory-\(UUID())"))
+        defer { try? FileManager.default.removeItem(at: memory.folder) }
+        let model = ScriptedAgentModel { _, emit, index in
+            if index == 0 { await emit.call("remember", #"{"text":"喜欢喝美式"}"#) }
+            else { try await emit.text(index == 1 ? "记住了" : "你喜欢喝美式") }
+        }
+        let f = AgentVoiceFixture(harness: AgentHarness(resolveModel: { model.factory }, finder: NoFinder(), memory: memory))
+        defer { f.shutdown() }
+        try await f.start()
+        f.speak("记住我喜欢喝美式")
+        try await eventually("the reply is spoken", timeout: .seconds(8)) { f.synths.first?.chunks == ["记住了"] }
+        #expect((try? String(contentsOf: memory.url, encoding: .utf8)) == "- 喜欢喝美式\n")
+        #expect(f.store.tools.map(\.tool) == ["remember"] && f.store.tools.first?.state == .finished)
+        try await eventually("the call listens again", timeout: .seconds(8)) {
+            !f.store.isGenerating && f.voice.snapshot.recognition == .listening
+        }
+        f.speak("我喜欢喝什么", start: 3000)
+        try await eventually("the second reply is spoken", timeout: .seconds(8)) { f.synths.last?.chunks == ["你喜欢喝美式"] }
+        let instructions = try #require(model.requests.last).transcript.compactMap { entry -> String? in
+            if case .instructions(let instructions) = entry { AgentHarness.text(instructions.segments) } else { nil }
+        }.joined()
+        #expect(instructions.hasSuffix("<memory>\n- 喜欢喝美式\n</memory>"), "\(instructions.suffix(200))")
+    }
+
     /// A finished utterance stops being a pending partial whatever becomes of it, including when
     /// the conversation refuses it (its save failed) or cannot take input at all.
     @Test @MainActor static func agentRefusedFinalTests() async throws {

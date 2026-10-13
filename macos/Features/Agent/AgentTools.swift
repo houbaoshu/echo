@@ -121,6 +121,7 @@ enum AgentToolResult {
         case ("create_reminder", _): "After this call, the person undid it: the reminder it created was deleted, so it no longer exists."
         case ("complete_reminder", _): "After this call, the person undid it: the reminder is no longer marked as completed."
         case ("create_event", _): "After this call, the person undid it: the event it created was deleted, so it no longer exists."
+        case ("remember", _), ("update_memory", _): "After this call, the person undid it: the memory is back as it was before this call."
         case (_, "created"): "After this call, the person undid it: the file it created was moved to the Trash, so it no longer exists. Anything read from it after this call predates the undo."
         default: "After this call, the person undid it: the file was put back as it was before this call, so it no longer has what this call wrote. Anything read from it after this call predates the undo."
         }
@@ -135,6 +136,8 @@ enum AgentToolResult {
         case "create_reminder": return "Reminder \"\(reminder)\": the reminder your create_reminder call created was deleted."
         case "complete_reminder": return "Reminder \"\(reminder)\": no longer marked as completed by your complete_reminder call."
         case "create_event": return "Event \"\(event)\": the event your create_event call created was deleted."
+        case "remember": return "Memory: the line your remember call added was taken out again."
+        case "update_memory": return "Memory: put back as it was before your update_memory call."
         default: break
         }
         let path = value?["path"] as? String ?? "a file"
@@ -462,6 +465,8 @@ struct AgentWriteRequest: Sendable {
         case replace(String)
         /// edit_file: one exact passage and what replaces it.
         case edit(old: String, new: String)
+        /// The new content worked out from the original, nil when there is none: the memory tools'.
+        case derive(@Sendable (Data?) -> Result<Data, AgentInvalidArguments>)
     }
     var path: String
     var root: String?
@@ -686,11 +691,16 @@ enum AgentFileWriter {
             case .success(let data): content = data
             case .failure(let failure): return failed(failure.detail)
             }
+        case .derive(let derive):
+            switch derive(original?.data) {
+            case .success(let data): content = data
+            case .failure(let failure): return .failure(failure)
+            }
         }
         guard content.count <= maxFileBytes else { return failed("the file would exceed 4 MiB: \(raw)") }
         let action = switch change {
         case .edit: "edited"
-        case .replace: original == nil ? "created" : "overwritten"
+        case .replace, .derive: original == nil ? "created" : "overwritten"
         }
         return .success(Plan(root: root, path: path, raw: raw, scope: scope, folders: folders, firstMissing: reached, name: name,
                              original: original, content: content, action: action))
@@ -894,7 +904,8 @@ struct AgentBackupStore {
     struct Record: Codable, Equatable {
         /// Where the file was, absolute.
         var path: String
-        /// The project or Finder folder the call wrote in, absolute, and which of the two it was.
+        /// The project or Finder folder the call wrote in, absolute, and which of the two it was;
+        /// for a memory call, the memory file's folder and `AgentBackupStore.memoryRoot`.
         var root: String
         var rootKind: String
         /// The path the call named, relative to `root`.
@@ -944,6 +955,8 @@ struct AgentBackupStore {
         }
     }
     static let recordName = "backup.json"
+    /// `Record.rootKind` of a change to the memory file.
+    static let memoryRoot = "memory"
     static let originalName = "original"
 
     /// This chat's folder of copies.
@@ -1006,6 +1019,8 @@ enum AgentUndoRefusal: Codable, Equatable, Sendable {
     case reminderChanged, eventChanged
     case reminderMissing, eventMissing
     case noRemindersAccess, noCalendarAccess
+    /// The memory no longer has what the call left in it.
+    case memoryChanged
 
     var message: String {
         switch self {
@@ -1022,6 +1037,7 @@ enum AgentUndoRefusal: Codable, Equatable, Sendable {
         case .eventMissing: String(localized: "这个日程已经不在了，没有撤销。")
         case .noRemindersAccess: String(localized: "Echo 没有提醒事项的访问权限，没有撤销。")
         case .noCalendarAccess: String(localized: "Echo 没有日历的访问权限，没有撤销。")
+        case .memoryChanged: String(localized: "记忆在这次改动之后又变过，没有撤销。")
         }
     }
 }
@@ -1037,12 +1053,18 @@ enum AgentFileUndo {
     /// and which apps may open it. The original's text encoding comes back with its bytes.
     static let attributesNotRestored: Set<String> = ["com.apple.provenance", "com.apple.macl"]
 
-    /// Nil when the change was undone.
+    /// Nil when the change was undone. `memory` is the memory file's folder, canonical: a memory
+    /// record is undone only there, the one folder outside the write tools' reach that it may change.
     static func undo(_ record: AgentBackupStore.Record, copy folder: URL, policy: AgentWritePolicy = AgentWritePolicy(),
-                     trash: AgentTrash = .system) -> AgentUndoRefusal? {
+                     memory: String? = nil, trash: AgentTrash = .system) -> AgentUndoRefusal? {
         guard let written = record.written, let action = record.action else { return .backupMissing }
-        let scope: AgentReadScope = record.rootKind == "finder" ? .finder : .project
-        guard policy.refusal(folder: record.root, scope: scope) == nil, let path = AgentToolPath.normalize(record.relativePath) else { return .readOnly }
+        if record.rootKind == AgentBackupStore.memoryRoot {
+            guard let memory, record.root == memory, record.relativePath == AgentMemoryFile.fileName else { return .backupMissing }
+        } else {
+            let scope: AgentReadScope = record.rootKind == "finder" ? .finder : .project
+            guard policy.refusal(folder: record.root, scope: scope) == nil else { return .readOnly }
+        }
+        guard let path = AgentToolPath.normalize(record.relativePath) else { return .readOnly }
         let parts = path.split(separator: "/")
         guard AgentWritePolicy.refusal(path: parts, raw: path) == nil else { return .readOnly }
         let folders = parts.dropLast().map(String.init), name = String(parts.last!)

@@ -32,6 +32,12 @@ final class LiveTests: XCTestCase {
     @MainActor func testWebSearchResponses() async throws {
         try await AgentLiveTests.runWebSearch(protocols: [.responses])
     }
+    @MainActor func testMemoryChatCompletions() async throws {
+        try await AgentLiveTests.runMemory(protocols: [.chatCompletions])
+    }
+    @MainActor func testMemoryResponses() async throws {
+        try await AgentLiveTests.runMemory(protocols: [.responses])
+    }
     @MainActor func testVoiceSynthesisRecognitionAgentAndFinalSynthesis() async throws {
         try await VoiceLiveTests.run(play: ProcessInfo.processInfo.environment["ECHO_LIVE_PLAYBACK"] == "1")
     }
