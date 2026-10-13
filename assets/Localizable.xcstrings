@@ -1107,6 +1107,16 @@
         }
       }
     },
+    "只打开 http 和 https 网址。“%@:”网址可能让别的应用执行操作，没有打开。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only http and https addresses are opened. A “%@:” address can make another app take an action, so it wasn’t opened."
+          }
+        }
+      }
+    },
     "可选择项目" : {
       "localizations" : {
         "en" : {
@@ -1437,6 +1447,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Stopped · Resumable"
+          }
+        }
+      }
+    },
+    "已在运行，已切换到前台。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Already open, brought to the front."
           }
         }
       }
@@ -1787,6 +1807,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The selected pet doesn’t exist. Import it again."
+          }
+        }
+      }
+    },
+    "打开应用：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open app: %@"
+          }
+        }
+      }
+    },
+    "打开网址：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open URL: %@"
           }
         }
       }
@@ -2481,12 +2521,38 @@
         }
       }
     },
+    "最接近的：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Closest: %@"
+          }
+        }
+      }
+    },
     "最近" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Recents"
+          }
+        }
+      }
+    },
+    "有 %lld 个应用都叫“%@”，没有打开其中任何一个：" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 %1$lld 个应用都叫“%2$@”，没有打开其中任何一个："
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld apps are named “%2$@”, so none was opened:"
           }
         }
       }
@@ -2901,6 +2967,26 @@
         }
       }
     },
+    "正在打开应用 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening app · %@"
+          }
+        }
+      }
+    },
+    "正在打开网址 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening URL · %@"
+          }
+        }
+      }
+    },
     "正在播报" : {
       "localizations" : {
         "en" : {
@@ -3127,6 +3213,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No microphone is available."
+          }
+        }
+      }
+    },
+    "没有名为“%@”的应用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There’s no app named “%@”."
+          }
+        }
+      }
+    },
+    "没有打开：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not opened: %@"
           }
         }
       }
@@ -3615,6 +3721,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "the model file %@ is missing"
+          }
+        }
+      }
+    },
+    "网址前面没有 http:// 或 https://，没有打开。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The address doesn’t start with http:// or https://, so it wasn’t opened."
           }
         }
       }
@@ -4441,6 +4557,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This turn already has a reply or ran tools, so the local model can’t continue it."
+          }
+        }
+      }
+    },
+    "这不是网址，没有打开。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This isn’t a web address, so it wasn’t opened."
           }
         }
       }

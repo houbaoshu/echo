@@ -38,7 +38,7 @@ import FoundationModels
                 AgentHarness(resolveModel: {
                     let transport = AgentTransport.make(for: endpoint)
                     return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
-                }, trash: trash, calendar: calendar)
+                }, trash: trash, calendar: calendar, opener: FakeOpener())
             }
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
                                            harnessFactory: harness)
@@ -97,7 +97,7 @@ import FoundationModels
                 AgentHarness(resolveModel: {
                     let transport = AgentTransport.make(for: endpoint)
                     return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
-                }, calendar: calendar)
+                }, calendar: calendar, opener: FakeOpener())
             })
             do {
                 try await remindTomorrow(workspace, calendar: calendar)
@@ -110,6 +110,49 @@ import FoundationModels
             fflush(nil)
         }
         guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过提醒验收。") }
+    }
+
+    /// "打开提醒事项" in a new chat, for each protocol: the service calls open_app with a name that
+    /// finds Reminders. A fake opener stands in for the Mac, so nothing opens.
+    static func runOpenApp(protocols: [ModelAPIProtocol]) async throws {
+        let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
+        let (saved, key) = try settings.savedModelCredentials()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        print("Disposable live workspaces: \(root.path)"); fflush(nil)
+        var failures = 0
+        for api in protocols {
+            var config = saved; config.apiProtocol = api
+            print("START: \(api.title) 打开提醒事项"); fflush(nil)
+            let endpoint = AgentEndpoint(config, key: key)
+            let opener = FakeOpener()
+            let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
+                                           harnessFactory: {
+                AgentHarness(resolveModel: {
+                    let transport = AgentTransport.make(for: endpoint)
+                    return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
+                }, calendar: FakeCalendarStore(), opener: opener)
+            })
+            do {
+                let chat = workspace.newConversation()
+                chat.store.send("打开提醒事项")
+                try await wait(chat.store)
+                let reminders = "/System/Applications/Reminders.app"
+                let calls = chat.store.tools.filter { $0.tool == "open_app" }
+                guard chat.store.task?.status == .completed, let call = calls.last,
+                      AgentOpenRunner.find(call.command, in: FakeOpener.apps).map(\.path) == [reminders],
+                      opener.openedApps == [reminders] else {
+                    throw SettingsError("没有按要求调用 open_app：\(chat.store.tools.map { "\($0.tool ?? "") \($0.command) \($0.result?.prefix(200) ?? "")" })")
+                }
+                print("PASS: open_app \(call.command) → \(reminders)"); fflush(nil)
+            } catch {
+                failures += 1
+                print("FAIL: \(api.title): \(error is SettingsError ? error.localizedDescription : "请检查服务的协议支持或连接。")")
+            }
+            await workspace.prepareForTermination()
+            fflush(nil)
+        }
+        guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过打开应用验收。") }
     }
 
     /// In the project just read: the service edits note.txt and creates summary.txt with real

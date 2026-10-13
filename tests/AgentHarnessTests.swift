@@ -15,6 +15,8 @@ import Testing
         let model: ScriptedAgentModel
         /// Stands in for Reminders and Calendar: no test touches the person's own.
         let calendar: FakeCalendarStore
+        /// Stands in for the apps and the browser: no test opens anything.
+        let opener: FakeOpener
         var project: URL?
         /// This chat's folder of copies of replaced files, in a temporary folder of its own.
         let backups = FileManager.default.temporaryDirectory.appendingPathComponent("echo-backups-\(UUID())")
@@ -27,14 +29,16 @@ import Testing
         init(_ step: @escaping ScriptedAgentModel.Step, project: URL? = nil, snapshot: TaskStore.Snapshot? = nil,
              finder: FakeFinder = FakeFinder(), writePolicy: AgentWritePolicy = AgentWritePolicy(),
              writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
-             trash: AgentTrash? = nil, calendar: FakeCalendarStore = FakeCalendarStore(), clock: AgentClock = AgentCalendarTests.clock) {
+             trash: AgentTrash? = nil, calendar: FakeCalendarStore = FakeCalendarStore(), clock: AgentClock = AgentCalendarTests.clock,
+             opener: FakeOpener = FakeOpener()) {
             let model = ScriptedAgentModel(step: step)
             self.model = model
             self.project = project
             self.calendar = calendar
+            self.opener = opener
             let harness = AgentHarness(resolveModel: { model.factory }, finder: finder, writePolicy: writePolicy, writeHooks: writeHooks,
                                        attachmentHooks: attachmentHooks, trash: trash ?? AgentTrash.into(self.trash),
-                                       calendar: calendar, clock: clock)
+                                       calendar: calendar, clock: clock, opener: opener)
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.backupDirectory = backups
             // As the workspace answers: a project whose folder is gone is missing.
@@ -95,7 +99,7 @@ import Testing
 
     /// Every tool a cloud turn offers, sorted.
     static let offeredTools = ["complete_reminder", "create_event", "create_reminder", "edit_file", "finder_location", "list_events",
-                               "list_files", "list_reminders", "read_file", "write_file"]
+                               "list_files", "list_reminders", "open_app", "open_url", "read_file", "write_file"]
 
     static func project() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-harness-\(UUID())").resolvingSymlinksInPath()

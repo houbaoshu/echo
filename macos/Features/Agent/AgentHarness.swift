@@ -273,6 +273,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     private let calendarStore: any AgentCalendarStore
     /// The person's clock: for the time each message carries, and the time zone of the calendar tools.
     private let clock: AgentClock
+    private let opener: any AgentOpener
     /// Write calls this turn that left a record their card can undo from.
     private var undoableCalls: Set<String> = []
     /// Undos under way. A turn must not start meanwhile: an undo amends the transcript when it ends.
@@ -303,7 +304,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
          localOnly: @escaping @MainActor () -> Bool = { false },
          finder: any FinderLocating = AppleEventFinderLocator.shared, writePolicy: AgentWritePolicy = AgentWritePolicy(),
          writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
-         trash: AgentTrash = .system, calendar: any AgentCalendarStore = EventKitCalendarStore.shared, clock: AgentClock = .system) {
+         trash: AgentTrash = .system, calendar: any AgentCalendarStore = EventKitCalendarStore.shared, clock: AgentClock = .system,
+         opener: any AgentOpener = WorkspaceOpener.shared) {
         self.resolveModel = resolveModel
         self.local = local
         self.localOnly = localOnly
@@ -314,6 +316,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         self.trash = trash
         self.calendarStore = calendar
         self.clock = clock
+        self.opener = opener
     }
 
     /// Reads the model settings saved when each turn starts. `ECHO_LOCAL_CHAT=always` sends every
@@ -913,8 +916,11 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     /// The reminders and calendar tools that change something.
     nonisolated static let calendarChangeTools: Set<String> = ["create_reminder", "complete_reminder", "create_event"]
     nonisolated static let calendarTools: Set<String> = calendarChangeTools.union(["list_reminders", "list_events"])
+    /// The tools that open an app or a web page: they change what is on the person's screen, and
+    /// cannot be undone.
+    nonisolated static let openTools: Set<String> = ["open_app", "open_url"]
     /// Every tool that changes something: each waits for every call written before it in its batch.
-    private static let changeTools = writeTools.union(calendarChangeTools)
+    private static let changeTools = writeTools.union(calendarChangeTools).union(openTools)
     /// The tools a batch orders; a call to any other tool never runs, so nothing waits for it.
     private static let orderedTools: Set<String> = changeTools.union(calendarTools).union(["list_files", "read_file", "finder_location"])
 
@@ -1099,6 +1105,47 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         return result
     }
 
+    /// One open_app or open_url call, in its turn: after every call written before it in its batch.
+    /// Nothing is asked first. Finding the app is ended at once by a Stop or newer input; the call
+    /// is saved before anything opens, and the opening then runs to its end, as a write does.
+    fileprivate func open(call identity: GenerationID?, _ arguments: Result<AgentOpenRequest, AgentInvalidArguments>) async throws -> String {
+        guard isRunning else { throw CancellationError() }
+        let serial = turnSerial
+        let key = identity.flatMap { callKeys[$0] }
+        defer { if let key, serial == turnSerial { finishCall(key) } }
+        if let key { try await waitForEarlierCalls(key) { _ in true } }
+        if storageFailure != nil || stopRequested { throw CancellationError() }
+        if steering.isPending { return AgentToolResult.superseded }
+        let request: AgentOpenRequest
+        switch arguments {
+        case .failure(let invalid): return invalid.result
+        case .success(let valid): request = valid
+        }
+        let opener = opener
+        let plan: AgentOpenPlan
+        do {
+            plan = try await unlessInterrupted { await AgentOpenRunner.prepare(request, opener: opener) }
+        } catch is WriteSuperseded {
+            return AgentToolResult.superseded
+        }
+        guard serial == turnSerial, isRunning, !stopRequested, storageFailure == nil else { throw CancellationError() }
+        if case .done(let result) = plan { return result }
+        if steering.isPending { return AgentToolResult.superseded }
+
+        // The call is saved before anything opens, so a crash from here on reopens it as unknown.
+        do { try host?.harnessSave() }
+        catch { storageFailure = error.localizedDescription; throw error }
+        writesInFlight += 1
+        let result = await Task.detached { await AgentOpenRunner.commit(plan, opener: opener) }.value
+        if let key {
+            finishedOutputs[key] = result
+            project()
+        }
+        writesInFlight -= 1
+        if writesInFlight == 0 { let waiters = writeWaiters; writeWaiters = []; waiters.forEach { $0.resume() } }
+        return result
+    }
+
     /// Runs `work` on a thread of its own. A Stop or newer input ends the wait at once, throwing
     /// CancellationError or WriteSuperseded; the work runs on and its result is dropped.
     private func offMainUnlessInterrupted<T: Sendable>(_ work: @escaping @Sendable () -> T) async throws -> T {
@@ -1144,10 +1191,12 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         let context = AgentReadContext(access: HarnessProjectAccess(harness: self), steering: steering)
         let writes = HarnessWriteAccess(harness: self)
         let calendar = HarnessCalendarAccess(harness: self)
+        let open = HarnessOpenAccess(harness: self)
         return [ListFilesTool(context: context), ReadFileTool(context: context), FinderLocationTool(access: HarnessFinderAccess(harness: self)),
                 WriteFileTool(access: writes), EditFileTool(access: writes),
                 ListRemindersTool(access: calendar), CreateReminderTool(access: calendar), CompleteReminderTool(access: calendar),
-                ListEventsTool(access: calendar), CreateEventTool(access: calendar)]
+                ListEventsTool(access: calendar), CreateEventTool(access: calendar),
+                OpenAppTool(access: open), OpenURLTool(access: open)]
     }
 
     @concurrent private static func consume(
@@ -1396,6 +1445,14 @@ private struct HarnessCalendarAccess: AgentCalendarAccess {
     }
 }
 
+private struct HarnessOpenAccess: AgentOpenAccess {
+    weak var harness: AgentHarness?
+    func run(call: GenerationID?, _ request: Result<AgentOpenRequest, AgentInvalidArguments>) async throws -> String {
+        guard let harness else { throw CancellationError() }
+        return try await harness.open(call: call, request)
+    }
+}
+
 private struct HarnessWriteAccess: AgentWriteAccess {
     weak var harness: AgentHarness?
     func write(call: GenerationID?, _ request: Result<AgentWriteRequest, AgentInvalidArguments>) async throws -> String {
@@ -1478,6 +1535,8 @@ extension AgentToolRecord {
         case "create_reminder", "create_event": return object?["title"] as? String ?? text
         case "list_reminders": return object?["list"] as? String ?? ""
         case "complete_reminder", "list_events": return ""
+        case "open_app": return object?["name"] as? String ?? text
+        case "open_url": return object?["url"] as? String ?? text
         default: return text
         }
     }
@@ -1493,13 +1552,15 @@ extension AgentToolRecord {
         case "complete_reminder": String(localized: "正在完成提醒")
         case "list_events": String(localized: "正在查看日程")
         case "create_event": String(localized: "正在新建日程 · \(String(display(call).prefix(60)))")
+        case "open_app": String(localized: "正在打开应用 · \(String(display(call).prefix(60)))")
+        case "open_url": String(localized: "正在打开网址 · \(String(display(call).prefix(60)))")
         default: String(localized: "正在调用工具 · \(call.toolName)")
         }
     }
     /// A change tool's result that says what it did is finished; any other that ran ended with
     /// nothing changed, so its card says so even folded: a write as not written, a reminder or event
-    /// change as failed. A reminders or calendar call that had no access failed too, a read as
-    /// well. Other tools' failures show as finished.
+    /// change, or an app or page not opened, as failed. A reminders or calendar call that had no
+    /// access failed too, a read as well. Other tools' failures show as finished.
     static func state(forResult result: String, tool: String?) -> State {
         struct ResultStatus: Decodable { var status: String?; var action: String? }
         let decoded = try? JSONDecoder().decode(ResultStatus.self, from: Data(result.utf8))
@@ -1511,7 +1572,7 @@ extension AgentToolRecord {
         default:
             guard decoded?.action == nil, let tool else { return .finished }
             if AgentHarness.writeTools.contains(tool) { return .notWritten }
-            return AgentHarness.calendarChangeTools.contains(tool) ? .failed : .finished
+            return AgentHarness.calendarChangeTools.contains(tool) || AgentHarness.openTools.contains(tool) ? .failed : .finished
         }
     }
 

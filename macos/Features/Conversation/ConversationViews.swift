@@ -929,7 +929,7 @@ struct AgentToolView: View {
     private var disclosure: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 8) {
-                if !tool.command.isEmpty, calendarCard == nil {
+                if !tool.command.isEmpty, ownCard == nil {
                     Text(tool.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 if let directory = tool.directory { Text(directory).font(.caption).foregroundStyle(.secondary) }
@@ -940,7 +940,7 @@ struct AgentToolView: View {
                     Text(edit.new).font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
                 }
                 // An unknown result is the model's note to itself; the person gets the card's own.
-                if let lines = calendarCard?.lines, tool.state != .unknown {
+                if let lines = ownCard?.lines, tool.state != .unknown {
                     Text(lines.joined(separator: "\n")).font(.caption).textSelection(.enabled)
                 } else if let result = tool.result, tool.state != .unknown {
                     if let data = result.data(using: .utf8),
@@ -971,14 +971,23 @@ struct AgentToolView: View {
         } label: {
             Group {
                 if let finderTitle { Label(finderTitle, systemImage: icon) }
-                else if let calendarCard { Label(calendarCard.title, systemImage: calendarCard.icon) }
+                else if let ownCard { Label(ownCard.title, systemImage: ownCard.icon) }
                 else { Label("\(stateLabel) · \(action)\(tool.command.prefix(90))", systemImage: icon) }
             }.font(.caption).lineLimit(2)
         }
     }
-    /// Reminders and calendar cards say what was done in words of their own.
-    private var calendarCard: AgentCalendarCard? {
-        AgentCalendarCard.applies(to: tool) ? AgentCalendarCard(tool: tool, locale: locale) : nil
+    /// Reminders and calendar cards, and the cards of the tools that open an app or a page, say
+    /// what was done in words of their own.
+    private var ownCard: (title: String, icon: String, lines: [String]?)? {
+        if AgentCalendarCard.applies(to: tool) {
+            let card = AgentCalendarCard(tool: tool, locale: locale)
+            return (card.title, card.icon, card.lines)
+        }
+        if AgentOpenCard.applies(to: tool) {
+            let card = AgentOpenCard(tool: tool)
+            return (card.title, card.icon, card.lines)
+        }
+        return nil
     }
     /// finder_location has no arguments to show. The folder's name is in the result; a call that
     /// found none ends at what it looked at.
@@ -1485,6 +1494,42 @@ struct NativeComposer: NSViewRepresentable {
         ForEach(CalendarPreview.cards) { record in
             AgentToolView(tool: record, undo: record.undo == nil ? nil : {}, canUndo: true)
         }
+    }.padding().frame(width: 520)
+}
+
+/// open_app and open_url cards: opened, brought to the front, and each way nothing opened.
+@MainActor private enum OpenPreview {
+    static let reminders = AgentApp(path: "/System/Applications/Reminders.app", name: "提醒事项", names: [])
+    static var cards: [AgentToolRecord] {[
+        .init(callID: "1", entryID: 1, turnID: 1, command: "提醒事项", result: AgentOpenResult.opened(reminders, wasRunning: false),
+              state: .finished, tool: "open_app"),
+        .init(callID: "2", entryID: 1, turnID: 1, command: "Finder",
+              result: AgentOpenResult.opened(.init(path: "/System/Library/CoreServices/Finder.app", name: "访达", names: []), wasRunning: true),
+              state: .finished, tool: "open_app"),
+        .init(callID: "3", entryID: 1, turnID: 1, command: "https://developer.apple.com/documentation/appkit?language=objc",
+              result: AgentOpenResult.opened(URL(string: "https://developer.apple.com/documentation/appkit?language=objc")!),
+              state: .finished, tool: "open_url"),
+        .init(callID: "4", entryID: 1, turnID: 1, command: "提醒", result: AgentOpenResult.noApp("提醒", closest: ["提醒事项", "备忘录", "日历"]),
+              state: .failed, tool: "open_app"),
+        .init(callID: "5", entryID: 1, turnID: 1, command: "Siri",
+              result: AgentOpenResult.sameName("Siri", apps: [.init(path: "/System/Applications/Siri.app", name: "Siri", names: []),
+                                                               .init(path: "/System/Applications/Siri AI.app", name: "Siri AI", names: [])]),
+              state: .failed, tool: "open_app"),
+        .init(callID: "6", entryID: 1, turnID: 1, command: "shortcuts://run-shortcut?name=x", result: AgentOpenResult.scheme("shortcuts"),
+              state: .failed, tool: "open_url"),
+        .init(callID: "7", entryID: 1, turnID: 1, command: "example.com", result: AgentOpenResult.noScheme, state: .failed, tool: "open_url"),
+    ]}
+}
+
+#Preview("工具卡片 · 打开应用和网址") {
+    VStack(alignment: .leading, spacing: 8) {
+        ForEach(OpenPreview.cards) { AgentToolView(tool: $0, expanded: true) }
+    }.padding().frame(width: 520)
+}
+
+#Preview("工具卡片 · 打开应用和网址 · 折叠") {
+    VStack(alignment: .leading, spacing: 8) {
+        ForEach(OpenPreview.cards) { AgentToolView(tool: $0) }
     }.padding().frame(width: 520)
 }
 
