@@ -3790,8 +3790,9 @@ private struct ComposerHeightHost: View {
         let savedTop = table.rect(ofRow: row).minY
         XCTAssertTrue(savedTop > scroll.contentView.bounds.height, "The target row sits below the first screenful")
 
-        // What a click records: the highlight and the row to come back to.
-        workspace.fileBrowser.highlight(target); workspace.fileBrowser.setScrollID(target)
+        // What clicks record: the highlight, here two rows, and the row to come back to.
+        let selected: Set<String> = [target, names[row + 1]]
+        workspace.fileBrowser.setSelection(selected); workspace.fileBrowser.setScrollID(target)
         // Leave the tree at the very top, so only a real restore can move it back down.
         scroll.contentView.scroll(to: NSPoint(x: 0, y: 0))
         scroll.reflectScrolledClipView(scroll.contentView)
@@ -3810,6 +3811,8 @@ private struct ComposerHeightHost: View {
         }
         XCTAssertTrue(workspace.fileBrowser.location?.projectID == tallID, "Back on the first project")
         XCTAssertTrue(workspace.fileBrowser.state.scrollID == target, "The saved position survives the switch")
+        XCTAssertTrue(workspace.fileBrowser.state.selection == selected, "Both selected rows survive the switch: \(workspace.fileBrowser.state.selection)")
+        XCTAssertTrue(tree()?.selectedRowIndexes == IndexSet([row, row + 1]), "The list highlights both again")
         guard let restoredTable = tree(), let restoredScroll = restoredTable.enclosingScrollView else {
             throw SettingsError("Project tree missing after the switch")
         }
@@ -3926,15 +3929,19 @@ private struct ComposerHeightHost: View {
                 charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
             try await eventually(label, timeout: .seconds(10), layingOut: main.window?.contentView, condition)
         }
-        // Opening a folder highlights it, and the list agrees about which row that is.
+        // A folder row's press is its disclosure, which opens it and leaves the selection
+        // alone, as the triangle does. The list agrees with the tree about the highlighted row.
         // The pointer handing this list the first responder is the shared SidebarListFocus,
         // which the chat sidebar's own pointer test covers.
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
-        try await eventually("the opened folder is selected and highlighted", timeout: .seconds(10), layingOut: main.window?.contentView) {
-            workspace.fileBrowser.state.selectedPath == "folder" && tree.selectedRow == treeRow("projectFiles.entry.folder")
+        try await eventually("the folder opens again", timeout: .seconds(10), layingOut: main.window?.contentView) { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) != nil }
+        XCTAssertTrue(workspace.fileBrowser.state.selection.isEmpty, "Disclosing selects nothing")
+        workspace.fileBrowser.highlight("folder")
+        try await eventually("the selected folder is highlighted", timeout: .seconds(10), layingOut: main.window?.contentView) {
+            tree.selectedRow == treeRow("projectFiles.entry.folder")
         }
         XCTAssertTrue(workspace.fileBrowser.state.expanded.contains("folder")
-                     && workspace.fileBrowser.state.selectedPath == "folder", "Opening a folder selects it")
+                     && workspace.fileBrowser.state.selectedPath == "folder", "The open folder is selected")
         XCTAssertTrue(tree.selectedRow == treeRow("projectFiles.entry.folder"),
                      "The list highlights the row the tree calls selected")
         window.makeFirstResponder(tree)
@@ -3962,6 +3969,7 @@ private struct ComposerHeightHost: View {
                      "Return opens the file the arrow keys reached")
         workspace.fileBrowser.returnToDirectory()
         try await eventually("the tree is back", timeout: .seconds(10), layingOut: main.window?.contentView) { findAccessibility("projectFiles.entry.folder", in: inspector) != nil }
+        try await checkTreeMultipleSelection(workspace: workspace, root: root, inspector: inspector, window: window)
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder", in: inspector)?.accessibilityPerformPress?() == true)
         try await eventually("the folder closes again", timeout: .seconds(10), layingOut: main.window?.contentView) { findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil }
         XCTAssertTrue(findAccessibility("projectFiles.entry.folder/child.txt", in: inspector) == nil,
@@ -4576,6 +4584,75 @@ private struct ComposerHeightHost: View {
         let opened = try XCTUnwrap(workspace.selected)
         XCTAssertTrue(opened.id != plain.id && opened.projectID == projectID,
                      "The action opens a new chat in the project, got \(String(describing: opened.projectID))")
+    }
+
+    /// Several rows of the project tree selected at once: ⇧↓ extends the selection, Return
+    /// opens nothing, and the menu acts on the selection when raised over a selected row and on
+    /// the row alone when raised over another. Expects the tree to show folder (open),
+    /// folder/child.txt selected, and README.md.
+    private func checkTreeMultipleSelection(workspace: WorkspaceStore, root: URL, inspector: NSView,
+                                            window: NSWindow) async throws {
+        let browser = workspace.fileBrowser
+        guard let tree = findView(inspector, { $0.accessibilityRole() == .outline }) as? NSTableView else {
+            throw SettingsError("The project tree must be a system source list")
+        }
+        func row(_ path: String) -> Int? {
+            guard let node = findAccessibility("projectFiles.entry.\(path)", in: inspector),
+                  let screen = node.accessibilityFrame?() else { return nil }
+            let inTree = tree.convert(window.convertFromScreen(screen), from: nil)
+            let row = tree.row(at: NSPoint(x: inTree.midX, y: inTree.midY))
+            return row >= 0 ? row : nil
+        }
+        func key(_ code: UInt16, _ characters: String, _ flags: NSEvent.ModifierFlags = []) {
+            window.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
+        }
+        XCTAssertTrue(browser.state.selection == ["folder/child.txt"], "Starts on the opened file: \(browser.state.selection)")
+        window.makeFirstResponder(tree)
+        key(125, "\u{F701}", .shift)
+        try await eventually("⇧↓ extends the selection", timeout: .seconds(10), layingOut: window.contentView) {
+            browser.state.selection == ["folder/child.txt", "README.md"]
+        }
+        XCTAssertTrue(tree.selectedRowIndexes == IndexSet([row("folder/child.txt"), row("README.md")].compactMap { $0 }),
+                     "The list highlights both rows: \(tree.selectedRowIndexes)")
+        key(36, "\r")
+        // Return writes nothing it could queue for later, so one main-queue turn covers it.
+        await nextMainTurn()
+        XCTAssertTrue(!browser.state.showingFile && browser.state.selection.count == 2,
+                     "Return over several rows opens nothing")
+
+        // The menu, raised as a right click raises it, and its 拷贝路径 run on a saved pasteboard.
+        let pasteboard = NSPasteboard.general
+        let savedItems = (pasteboard.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+            return copy
+        }
+        defer { pasteboard.clearContents(); pasteboard.writeObjects(savedItems) }
+        func copyPaths(rightClicking path: String) throws -> String? {
+            guard let index = row(path) else { throw SettingsError("No row for \(path)") }
+            let rect = tree.rect(ofRow: index)
+            let point = tree.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+            let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            guard let menu = tree.menu(for: event) else { throw SettingsError("No menu over \(path)") }
+            menu.delegate?.menuNeedsUpdate?(menu)
+            guard let copy = menu.items.firstIndex(where: { $0.title == "拷贝路径" }) else {
+                throw SettingsError("No 拷贝路径 over \(path): \(menu.items.map(\.title))")
+            }
+            pasteboard.clearContents()
+            menu.performActionForItem(at: copy)
+            return pasteboard.string(forType: .string)
+        }
+        let child = root.appendingPathComponent("folder/child.txt").path, readme = root.appendingPathComponent("README.md").path
+        XCTAssertTrue(try copyPaths(rightClicking: "README.md") == child + "\n" + readme,
+                     "A selected row's menu copies every selected path, one per line, in tree order")
+        XCTAssertTrue(browser.state.selection.count == 2, "The menu changes no selection")
+        XCTAssertTrue(try copyPaths(rightClicking: "folder") == root.appendingPathComponent("folder").path,
+                     "Another row's menu copies that row alone")
+        await nextMainTurn()
+        XCTAssertTrue(!browser.state.showingFile, "Neither menu opens anything")
     }
 
     private func findView(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {

@@ -35,7 +35,11 @@ enum ProjectFilePreview: Equatable, Sendable {
     struct BrowsingState {
         var directories: [String: ProjectDirectoryState] = [:]
         var expanded: Set<String> = []
-        var selectedPath: String?
+        /// The tree's highlight: one row, several, or none.
+        var selection: Set<String> = []
+        /// The one selected row, which is also the file the preview page shows. Nil while
+        /// several rows or none are selected.
+        var selectedPath: String? { selection.count == 1 ? selection.first : nil }
         var showingFile = false
         var preview: ProjectFilePreview = .loading
         var scrollID: String?
@@ -89,12 +93,37 @@ enum ProjectFilePreview: Equatable, Sendable {
     }
     /// The tree's highlight, which the pointer and the arrow keys move. Opening a file
     /// is a separate step, so walking the tree never replaces it with a preview.
-    func highlight(_ path: String) { state.selectedPath = path }
+    func highlight(_ path: String) { state.selection = [path] }
+    func setSelection(_ paths: Set<String>) { state.selection = paths }
+    /// The paths among `paths` that the tree shows, in the order it shows them.
+    func inTreeOrder(_ paths: Set<String>) -> [String] {
+        var ordered: [String] = []
+        func walk(_ directory: String) {
+            guard case .loaded(let entries) = state.directories[directory] else { return }
+            for entry in entries where ordered.count < paths.count {
+                if paths.contains(entry.path) { ordered.append(entry.path) }
+                if entry.kind == .directory, state.expanded.contains(entry.path) { walk(entry.path) }
+            }
+        }
+        walk("")
+        return ordered
+    }
+    /// What a drag that starts on `path` carries, as in Finder: the whole selection when
+    /// the row is part of it, otherwise that row alone.
+    func draggedPaths(from path: String) -> [String] {
+        state.selection.contains(path) ? inTreeOrder(state.selection) : [path]
+    }
+    /// A click on a folder: it alone is selected, the way Finder selects it, whether it
+    /// opens or closes. In the tree the selection is only the highlight; the preview page
+    /// reads selectedPath solely while showingFile is set, so a folder never becomes a
+    /// previewed file.
+    func activateDirectory(_ path: String) {
+        state.selection = [path]
+        toggleDirectory(path)
+    }
+    /// Opening or closing alone, as the disclosure triangle and ← / → do: the list keeps
+    /// whatever is selected, several rows included.
     func toggleDirectory(_ path: String) {
-        // A click selects the row whether it opens or closes, the way Finder does. In the
-        // tree the selection is only the highlight; the preview page reads selectedPath
-        // solely while showingFile is set, so a folder never becomes a previewed file.
-        state.selectedPath = path
         if state.expanded.contains(path) { state.expanded.remove(path) }
         else {
             state.expanded.insert(path)
@@ -112,7 +141,7 @@ enum ProjectFilePreview: Equatable, Sendable {
     func openFile(_ path: String, preservingContent: Bool = false) {
         guard let location else { return }
         if state.selectedPath != path { collapsePreview() }
-        state.selectedPath = path; state.showingFile = true
+        state.selection = [path]; state.showingFile = true
         if !preservingContent { state.preview = .loading }
         let request = UUID(), generation = generation, readPreview = readPreview
         previewRequest = request

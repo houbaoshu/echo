@@ -44,11 +44,12 @@ private struct ProjectFileBrowserView: View {
                 }.listStyle(.sidebar).scrollContentBackground(.hidden)
                     .modifier(SidebarListFocusBinding(focus: listFocus))
                     .accessibilityIdentifier("projectFiles.tree")
+                    // Return opens one row; over several it does nothing.
                     .onKeyPress(.return) { activateSelection(); return .handled }
                     // The list owns the menu, which is what brings the system's own
-                    // right-click semantics with it: right-clicking an unselected row
-                    // selects it first, and a menu raised over a multiple selection acts
-                    // on the whole selection rather than on the row under the pointer.
+                    // right-click semantics with it: a menu raised over a selected row acts
+                    // on the whole selection, one raised over any other row on that row
+                    // alone.
                     //
                     // No `primaryAction:`. The system would fire it on a double click,
                     // and this tree opens on a single one — the row's own tap gesture
@@ -67,14 +68,15 @@ private struct ProjectFileBrowserView: View {
             }
         }
     }
-    /// The highlight, which the pointer and the arrow keys move. A click on the background
-    /// hands back nil; the row that was selected stays selected.
-    private var selection: Binding<String?> {
-        Binding(get: { browser.state.selectedPath }, set: { path in
-            guard let path else { return }
+    /// The highlight, which the pointer, ⇧ / ⌘ clicks and the arrow keys move, all drawn
+    /// and extended by the list itself. The row to scroll back to is the first one a
+    /// change added, so a range comes back from its top.
+    private var selection: Binding<Set<String>> {
+        Binding(get: { browser.state.selection }, set: { paths in
             listFocus.take()
-            browser.highlight(path)
-            browser.setScrollID(path)
+            let added = paths.subtracting(browser.state.selection)
+            browser.setSelection(paths)
+            if let first = browser.inTreeOrder(added).first { browser.setScrollID(first) }
         })
     }
     /// Expanding loads on demand, and only ever from here, so a collapsed folder is
@@ -87,12 +89,14 @@ private struct ProjectFileBrowserView: View {
                 })
     }
     /// A click, Return or an accessibility press activates a row: a folder opens or
-    /// closes, a file opens its preview. The list's own triangle only ever discloses.
+    /// closes, a file opens its preview. The list's own triangle only ever discloses, and
+    /// it is also what a folder row's accessibility press reaches.
     private func activate(_ entry: ProjectFileEntry) {
-        if entry.kind == .directory { browser.toggleDirectory(entry.path) }
+        if entry.kind == .directory { browser.activateDirectory(entry.path) }
         else { browser.openFile(entry.path) }
     }
     private func activateSelection() {
+        // selectedPath is nil unless exactly one row is selected.
         guard let path = browser.state.selectedPath,
               case .loaded(let entries) = browser.state.directories[(path as NSString).deletingLastPathComponent],
               let entry = entries.first(where: { $0.path == path }) else { return }
@@ -137,14 +141,17 @@ private struct ProjectFileBrowserView: View {
     private func entryRow(_ entry: ProjectFileEntry) -> some View {
         ProjectFileRow(entry: entry, isExpanded: browser.state.expanded.contains(entry.path),
                        activate: { activate(entry) })
-            .modifier(ProjectFileDrag(url: browser.url(for: entry.path)))
+            .modifier(ProjectFileDrag(url: browser.url(for: entry.path)) {
+                browser.draggedPaths(from: entry.path).compactMap { browser.url(for: $0) }
+            })
     }
     /// The two Finder commands a read-only tree can honour. Nothing writes to disk.
-    /// The system hands in the selection the menu was raised over — one row for this
-    /// single-selection list, and nothing at all when it was raised over the background,
-    /// which is why an empty selection produces no menu rather than inert commands.
+    /// The system hands in the rows the menu was raised over — the whole selection, or
+    /// the one row under the pointer when it is not selected, and nothing at all over the
+    /// background, which is why an empty set produces no menu rather than inert commands.
+    /// Several paths are copied one per line, in the order the tree shows them.
     @ViewBuilder private func entryMenu(_ paths: Set<String>) -> some View {
-        let urls = paths.sorted().compactMap { browser.url(for: $0) }
+        let urls = browser.inTreeOrder(paths).compactMap { browser.url(for: $0) }
         if !urls.isEmpty {
             Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
             Button("拷贝路径") {
@@ -244,7 +251,11 @@ private struct ProjectFileRow: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             // The list keeps click-to-select; this adds what activation means on top.
-            .simultaneousGesture(TapGesture().onEnded { activate() })
+            // Assistive technology's press reaches this gesture too, so it stays a plain tap.
+            .simultaneousGesture(TapGesture().onEnded {
+                guard !ProjectFileClick.onlySelects(NSApp.currentEvent) else { return }
+                activate()
+            })
             .help(entry.path)
             // Keep the content one element so assistive technology reads and selects the
             // row, not its label, and so a press activates it.
@@ -254,13 +265,26 @@ private struct ProjectFileRow: View {
     }
 }
 
-/// Dragging a row out hands over the file or folder itself, as dragging it out of Finder does:
-/// the list starts the drag and draws the row as its image, and Finder, Mail or a chat app gets
-/// the file's URL. The drag only ever offers copy, so a drop on a Finder window on the same disk
-/// copies instead of moving the file out of the project, and ⌘, which asks Finder to move,
-/// gets no drop at all.
+/// A ⇧ or ⌘ click only adds to or takes from the selection, and a ⌃ click raises the menu,
+/// both of which the list does itself, so neither opens the row as a plain click does. A press
+/// from assistive technology or the keyboard carries no click and always opens it.
+enum ProjectFileClick {
+    static func onlySelects(_ event: NSEvent?) -> Bool {
+        guard let event, event.type == .leftMouseDown || event.type == .leftMouseUp else { return false }
+        return !event.modifierFlags.isDisjoint(with: [.shift, .command, .control])
+    }
+}
+
+/// Dragging a row out hands over the files and folders themselves, as dragging them out of
+/// Finder does: the list starts the drag and draws the rows as its image, and Finder, Mail or a
+/// chat app gets their URLs. A drag from a selected row carries the whole selection, one from any
+/// other row that row alone. The drag only ever offers copy, so a drop on a Finder window on the
+/// same disk copies instead of moving anything out of the project, and ⌘, which asks Finder to
+/// move, gets no drop at all.
 private struct ProjectFileDrag: ViewModifier {
     let url: URL?
+    /// Every URL the drag carries, read once it begins.
+    let draggedURLs: () -> [URL]
     private static let copyOnly = DragConfiguration(
         operationsWithinApp: .init(allowCopy: true, allowMove: false, allowDelete: false),
         operationsOutsideApp: .init(allowCopy: true, allowMove: false, allowDelete: false))
@@ -270,13 +294,14 @@ private struct ProjectFileDrag: ViewModifier {
                 .onDrag { NSItemProvider(object: url as NSURL) }
                 // SwiftUI hands the receiver a copy it makes of the provider's file under
                 // ~/Library/Caches/com.apple.SwiftUI.Drag-…, a whole folder included, and leaves it
-                // there. Putting the URL itself on the drag pasteboard once the drag begins gives
-                // the receiver the file in the project instead, and nothing is copied.
+                // there. Putting the URLs themselves on the drag pasteboard once the drag begins
+                // gives the receiver the files in the project instead, and nothing is copied.
                 .onDragSessionUpdated { session in
                     guard session.phase == .initial else { return }
+                    let urls = draggedURLs()
                     let pasteboard = NSPasteboard(name: .drag)
                     pasteboard.clearContents()
-                    pasteboard.writeObjects([url as NSURL])
+                    pasteboard.writeObjects((urls.isEmpty ? [url] : urls) as [NSURL])
                 }
                 .dragConfiguration(Self.copyOnly)
         } else {

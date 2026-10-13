@@ -223,6 +223,71 @@ import AppKit
         }
     }
 
+    /// The tree holds several selected rows; what acts on them — a drag, the menu, Return — sees
+    /// them in the order the tree shows them, and a folder click and the triangle differ.
+    @Test static func multipleSelection() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-selection-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let listings: [String: [ProjectFileEntry]] = [
+            "": [.init(path: "b", name: "b", kind: .directory), .init(path: "a.txt", name: "a.txt", kind: .file),
+                 .init(path: "c.txt", name: "c.txt", kind: .file)],
+            "b": [.init(path: "b/inner.txt", name: "inner.txt", kind: .file)],
+        ]
+        let browser = ProjectFileBrowserStore(readDirectory: { _, path in .loaded(listings[path] ?? []) })
+        let project = WorkspaceProject(name: "selection", path: root.path)
+        browser.select(project: project)
+        try await eventually("root loaded") { browser.state.directories[""] != nil && browser.state.directories[""] != .loading }
+
+        browser.setSelection(["c.txt", "a.txt", "b"])
+        #expect(browser.state.selectedPath == nil, "Several rows have no single selected path")
+        #expect(browser.inTreeOrder(browser.state.selection) == ["b", "a.txt", "c.txt"], "Tree order, folders first")
+        #expect(browser.draggedPaths(from: "a.txt") == ["b", "a.txt", "c.txt"], "A selected row drags the selection")
+        browser.setSelection(["a.txt", "c.txt"])
+        #expect(browser.draggedPaths(from: "b") == ["b"], "An unselected row drags alone")
+
+        // The triangle and ← / → only disclose; the selection stays as it was.
+        browser.toggleDirectory("b")
+        try await eventually("folder loaded") { browser.state.directories["b"] != nil && browser.state.directories["b"] != .loading }
+        #expect(browser.state.selection == ["a.txt", "c.txt"], "Disclosing keeps several rows selected")
+        browser.setSelection(["c.txt", "b/inner.txt"])
+        #expect(browser.inTreeOrder(browser.state.selection) == ["b/inner.txt", "c.txt"], "Open folders' rows sit in place")
+        browser.toggleDirectory("b")
+        #expect(browser.inTreeOrder(browser.state.selection) == ["c.txt"], "Rows in a closed folder are not listed")
+        // A click on the folder selects it alone, whether it opens or closes.
+        browser.activateDirectory("b")
+        #expect(browser.state.selection == ["b"] && browser.state.expanded.contains("b"))
+
+        // A project switch keeps the whole selection to come back to.
+        browser.setSelection(["a.txt", "c.txt"])
+        browser.select(project: nil)
+        #expect(browser.state.selection.isEmpty)
+        browser.select(project: project)
+        #expect(browser.state.selection == ["a.txt", "c.txt"], "Coming back restores every selected row")
+        browser.openFile("a.txt")
+        #expect(browser.state.selection == ["a.txt"] && browser.state.selectedPath == "a.txt", "Opening a file selects it alone")
+        browser.select(project: nil)
+    }
+
+    /// Only a plain click opens a row; ⇧ and ⌘ clicks change the selection and a ⌃ click raises
+    /// the menu. A press with no click behind it, from assistive technology, always opens.
+    @Test static func modifierClicksOnlySelect() {
+        func click(_ type: NSEvent.EventType, _ flags: NSEvent.ModifierFlags) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        for flags: NSEvent.ModifierFlags in [.shift, .command, .control, [.shift, .command]] {
+            #expect(ProjectFileClick.onlySelects(click(.leftMouseUp, flags)), "\(flags.rawValue) only selects")
+            #expect(ProjectFileClick.onlySelects(click(.leftMouseDown, flags)))
+        }
+        #expect(!ProjectFileClick.onlySelects(click(.leftMouseUp, [])), "A plain click opens")
+        #expect(!ProjectFileClick.onlySelects(click(.leftMouseUp, .option)), "⌥ is not a selection click")
+        #expect(!ProjectFileClick.onlySelects(nil), "A press with no event opens")
+        let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: 0,
+                                   context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)
+        #expect(!ProjectFileClick.onlySelects(key), "Only a click's modifiers count")
+    }
+
     @Test static func testRefreshCoalescesWhileScanning() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-refresh-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
