@@ -1,13 +1,21 @@
 import AppKit
 import SwiftUI
 
-/// The shared surface behind the activity cards and the voice bubble. The panels are borderless
-/// and fully transparent, so the system material is what samples the desktop behind them. It
-/// keeps its active look although these panels are almost never key.
+/// The shared surface behind the activity cards and the voice bubble: regular Liquid Glass, the
+/// same surface as the controls below the pet. The panels are borderless, fully transparent and
+/// almost never key, so the glass draws as it does in any window without an active appearance,
+/// as flat frost that blurs the desktop well past legibility and refracts nothing. Glass samples
+/// whatever the panel draws beneath it like the desktop, so in dark appearance a black fill under
+/// it darkens the card: dark glass over a bright desktop is otherwise a light grey that leaves
+/// white text near 2:1. Tinting the glass instead lightens it further.
 struct CompanionBackground<SurfaceShape: Shape>: View {
     var shape: SurfaceShape
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
-        Color.clear.background(.thickMaterial, in: shape)
+        Color.clear.glassEffect(.regular, in: shape)
+            .background {
+                if colorScheme == .dark { shape.fill(.black.opacity(0.3)) }
+            }
     }
 }
 
@@ -23,7 +31,7 @@ private extension View {
 private let systemButtonInset: CGFloat = 8
 
 /// A round control drawn on top of a companion card. The fill is one grey step away from the
-/// card's material in both appearances, so the half that overlaps the card stays visible; the
+/// card's glass in both appearances, so the half that overlaps the card stays visible; the
 /// style exists to give the control the hover and pressed states that `.plain` does not provide.
 private struct CompanionRoundButtonStyle: ButtonStyle {
     let size: CGFloat
@@ -66,7 +74,7 @@ struct RoundControl: View {
 
     /// The main action follows the system accent color through the prominent style, which also
     /// brings its own hover, pressed and disabled appearance. The secondary actions sit on a card's
-    /// material and keep their own fill, so they stay legible against the surface behind them.
+    /// glass and keep their own fill, so they stay legible against the surface behind them.
     @ViewBuilder private var control: some View {
         if emphasized {
             Button(action: action) {
@@ -937,32 +945,37 @@ struct WorkspaceActivityCapsule: View {
                 card(conversation)
             } else if workspace.isActivityListExpanded {
                 // The scroll view reaches past the cards' leading edge by ✕'s overhang, so it does not
-                // clip ✕; the cards stay where they were. The 6pt top inset already covers it above.
+                // clip ✕, and past their trailing edge by the glass's rim; the cards stay where they
+                // were. The 6pt top inset already covers both above.
                 ScrollView {
                     VStack(spacing: 8) { ForEach(workspace.visiblePetActivities) { card($0) } }
                         .padding(.vertical, 6)
                         .padding(.leading, CompanionLayout.closeButtonOverhang)
+                        .padding(.trailing, CompanionLayout.glassRimOverhang)
                 }
                 .scrollIndicators(.automatic)
                 .frame(height: workspace.petActivityHeight)
                 .padding(.leading, -CompanionLayout.closeButtonOverhang)
+                .padding(.trailing, -CompanionLayout.glassRimOverhang)
             } else if let first = workspace.visiblePetActivities.first {
                 // A stack opens into the list wherever it is clicked; a single card opens its chat.
                 let stacked = workspace.visiblePetActivities.count > 1
                 // Above or below the pet, the back layers peek out below the front card, in the
-                // same height either way.
+                // same height either way. Each is the same glass as the front card at full strength:
+                // fading glass makes it see-through rather than paler, so the desktop's detail would
+                // show sharp through the strips.
                 ZStack(alignment: .top) {
                     ForEach(Array(workspace.visiblePetActivities.prefix(3).enumerated().dropFirst().reversed()), id: \.element.id) { index, _ in
                         let sliver = StackedCardSliver(depth: index)
                         CompanionBackground(shape: sliver)
-                            .opacity(index == 1 ? 0.7 : 0.45)
                             .contentShape(sliver)
                             .onTapGesture { workspace.expandActivityList() }
                             .frame(width: StackedCardSliver.width(depth: index), height: CompanionLayout.collapsedHeight)
+                            .reportsStackedCardFrame(depth: index)
                             .offset(y: CGFloat(index) * StackedCardSliver.step.offset)
                             .accessibilityHidden(true)
                     }
-                    card(first, stacked: stacked)
+                    card(first, stacked: stacked).reportsStackedCardFrame(depth: 0)
                 }
                 .frame(height: workspace.petActivityHeight, alignment: .top)
                 // A stack opens its list through its front card's press.
@@ -978,9 +991,30 @@ struct WorkspaceActivityCapsule: View {
     }
 }
 
+/// Where each layer of a stack sits in the activity canvas, by depth from the front card at 0.
+/// The layout, not the pixels, is what shows where the layers are: glass draws nothing into a
+/// cached display.
+struct StackedCardFrames: PreferenceKey {
+    static var defaultValue: [Int: CGRect] { [:] }
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+private extension View {
+    /// Inside any offset that places the layer, so the frame is where it is drawn.
+    func reportsStackedCardFrame(depth: Int) -> some View {
+        background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: StackedCardFrames.self, value: [depth: proxy.frame(in: .named("activityCanvas"))])
+            }
+        }
+    }
+}
+
 /// The part of a stacked card's back layer that shows past the layers in front of it. The front
-/// card's material blends with whatever the panel draws beneath it, so a full layer under it
-/// would tint the card; each layer draws only its own strip.
+/// card's glass samples whatever the panel draws beneath it like the desktop, so a full layer
+/// under it would show through the card; each layer draws only its own strip.
 struct StackedCardSliver: Shape {
     let depth: Int
     static let step = (width: CGFloat(12), offset: CGFloat(7))

@@ -8,6 +8,9 @@ struct CompanionLayout {
     static let activityPadding: CGFloat = 48
     /// How far a card's ✕ reaches past its top and leading edges.
     static let closeButtonOverhang: CGFloat = 4
+    /// How far a card's glass draws past its shape. A clip at the shape's edge cuts the rounded
+    /// end flat, so the list's scroll view leaves this much room beyond the cards.
+    static let glassRimOverhang: CGFloat = 2
     static let controlsWidth = PetSurfacePresentation.canvasWidth
     static let controlsHeight = PetSurfacePresentation.canvasHeight
     var pet: CGRect

@@ -65,7 +65,7 @@ import SwiftUI
     }
 }
 
-/// The companion panels float over the desktop, and their material and glass only show against
+/// The companion panels float over the desktop, and their glass only shows against
 /// something behind them. This stands in for a wallpaper with a window on it.
 private struct PreviewDesktop<Content: View>: View {
     @ViewBuilder var content: Content

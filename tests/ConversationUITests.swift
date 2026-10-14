@@ -1918,35 +1918,40 @@ private struct ComposerHeightHost: View {
             try await answer(text, in: workspace, sessions: sessions, with: .fail(AgentModelError(message: text)))
         }
         XCTAssertEqual(workspace.petTrayLevel, .stack)
-        // The activity panel's canvas: the stack and the padding around it, on white.
+        // The activity panel's canvas: the stack and the padding around it. Glass draws nothing into
+        // a cached display, so the layers' frames come from the layout.
         let padding = CompanionLayout.activityPadding
         let size = CGSize(width: CompanionLayout.capsuleWidth + 2 * padding, height: workspace.petActivityHeight + 2 * padding)
-        func render(belowPet: Bool) async throws -> NSBitmapImageRep {
+        func layers(belowPet: Bool) async throws -> [Int: CGRect] {
             let placement = ActivityPlacement()
             placement.isBelowPet = belowPet
+            final class Frames { var value: [Int: CGRect] = [:] }
+            let frames = Frames()
             let host = NSHostingView(rootView: WorkspaceActivityCapsule(workspace: workspace, placement: placement)
-                .background(.white).environment(\.colorScheme, .light))
+                .onPreferenceChange(StackedCardFrames.self) { frames.value = $0 })
             host.frame = NSRect(origin: .zero, size: size)
-            try await Task.sleep(for: .milliseconds(150))
             host.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            return bitmap
+            try await eventually("The stack lays out its three layers") { frames.value.count == 3 }
+            return frames.value
         }
-        let below = try await render(belowPet: true)
-        let above = try await render(belowPet: false)
-        XCTAssertEqual(below.representation(using: .png, properties: [:]), above.representation(using: .png, properties: [:]),
-                       "The stack draws the same way above and below the pet")
-        // Down the middle, the stack runs from the front card's top to the back layers below it.
-        let scale = CGFloat(below.pixelsHigh) / size.height
-        let drawn = (0..<below.pixelsHigh).filter { y in
-            guard let color = below.colorAt(x: below.pixelsWide / 2, y: y)?.usingColorSpace(.sRGB) else { return false }
-            return color.redComponent + color.greenComponent + color.blueComponent < 2.99
+        let below = try await layers(belowPet: true)
+        let above = try await layers(belowPet: false)
+        XCTAssertEqual(below, above, "The stack lays out the same way above and below the pet")
+        for (placement, frames) in [("below", below), ("above", above)] {
+            let front = try XCTUnwrap(frames[0])
+            XCTAssertEqual(front.minY, padding, accuracy: 0.5, "\(placement): the front card is at the stack's top")
+            for depth in 1...2 {
+                let layer = try XCTUnwrap(frames[depth])
+                XCTAssertEqual(layer.midX, front.midX, accuracy: 0.5, "\(placement): layer \(depth) is centred under the front card")
+                XCTAssertEqual(layer.width, front.width - CGFloat(depth) * StackedCardSliver.step.width, accuracy: 0.5,
+                               "\(placement): layer \(depth) narrows by a step")
+                XCTAssertEqual(layer.maxY, front.maxY + CGFloat(depth) * StackedCardSliver.step.offset, accuracy: 0.5,
+                               "\(placement): layer \(depth) peeks out below the front card")
+                XCTAssertGreaterThan(layer.minY, front.minY, "\(placement): layer \(depth) stays below the front card's top")
+            }
+            XCTAssertEqual(try XCTUnwrap(frames[2]).maxY, padding + workspace.petActivityHeight, accuracy: 0.5,
+                           "\(placement): the back layers fill the stack's height below the front card")
         }
-        let top = CGFloat(drawn.first ?? 0) / scale, bottom = CGFloat((drawn.last ?? 0) + 1) / scale
-        XCTAssertEqual(top, padding, accuracy: 1, "The front card is at the stack's top")
-        XCTAssertEqual(bottom, padding + workspace.petActivityHeight, accuracy: 1,
-                       "The back layers fill the stack's height below the front card")
     }
 
     func testPetStackFrontCardIsAButtonThatExpandsTheList() async throws {
