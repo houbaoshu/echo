@@ -875,7 +875,15 @@ private struct ComposerHeightHost: View {
         }
         XCTAssertTrue(original.textLayoutManager != nil,
                      "Composer runs on TextKit 2; reading NSTextView.layoutManager downgrades it silently")
+        /// The card's trailing edge, read through the editor, which spans the card less its inset. A
+        /// legacy scroller appearing as the chat overflows moves the whole card, so the primary is
+        /// held to the card rather than to the window.
+        func cardTrailing() -> CGFloat {
+            let scroll = original.enclosingScrollView!
+            return window.convertToScreen(scroll.convert(scroll.bounds, to: nil)).maxX
+        }
         let primaryFrame = node("voice.start")!.accessibilityFrame!()
+        let primaryInset = cardTrailing() - primaryFrame.maxX
         /// Waits for the action row to show `primary` with exactly these neighbours, then checks it.
         func check(_ primary: String, present: [String], absent: [String], enabled: Bool = true) async throws {
             try await eventually("\(primary) is the \(enabled ? "enabled" : "disabled") primary, with \(present), without \(absent)", layingOut: host) {
@@ -885,8 +893,8 @@ private struct ComposerHeightHost: View {
             XCTAssertTrue(node("conversation.actions") != nil)
             guard let button = node(primary) else { throw stopTest("Missing primary: \(primary)") }
             let frame = button.accessibilityFrame!()
-            XCTAssertTrue(abs(frame.maxX - primaryFrame.maxX) < 1 && abs(frame.minY - primaryFrame.minY) < 1
-                         && frame.size == primaryFrame.size, "Primary location and hit area stay fixed: \(primary)")
+            XCTAssertTrue(abs(cardTrailing() - frame.maxX - primaryInset) < 1 && abs(frame.minY - primaryFrame.minY) < 1
+                         && frame.size == primaryFrame.size, "Primary location and hit area stay fixed in the card: \(primary)")
             XCTAssertTrue(button.isAccessibilityEnabled?() == enabled, "Action availability: \(primary)")
             for id in present { XCTAssertTrue(node(id) != nil, "Missing \(id)") }
             for id in absent { XCTAssertTrue(node(id) == nil, "Stale action \(id)") }

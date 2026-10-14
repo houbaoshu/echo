@@ -469,6 +469,10 @@ struct ConversationView: View {
     /// Where the toolbar and the composer bar float over the transcript, and the heights the
     /// fade under them is cut to.
     @State private var transcriptInsets = EdgeInsets()
+    /// The column a legacy scroller takes beside the chat, which centres in what is left. The
+    /// bar under it has no scroller, so it leaves the same column, or the card would sit half
+    /// a scroller to the right of the chat.
+    @State private var scrollerWidth: CGFloat = 0
     @State private var cardHeight: CGFloat = 0
     /// The captions between the bar's top and the card's: the bar is 8pt of padding on either
     /// side of the card, and 8pt of spacing above it once there is anything to space from.
@@ -562,6 +566,9 @@ struct ConversationView: View {
         }
         .scrollPosition($scrollPosition)
         .onScrollGeometryChange(for: EdgeInsets.self) { $0.contentInsets } action: { transcriptInsets = $1 }
+        .onScrollGeometryChange(for: CGFloat.self) { max(0, $0.containerSize.width - $0.contentSize.width) } action: {
+            scrollerWidth = $1
+        }
         .mask { transcriptFade }
         // The chat is focusable the way a control is, not the way a text field is: it
         // takes focus only through macOS Keyboard Navigation, so a click leaves the
@@ -581,6 +588,8 @@ struct ConversationView: View {
                     // The block below already opens with 8pt, and the sprite carries ~10pt of
                     // its own transparent skirt, which together make the reference's 16pt.
                     .padding(.bottom, 0)
+                    // On the card's centre line, clear of a legacy scroller's column.
+                    .padding(.trailing, scrollerWidth)
                     .transition(.scale(scale: 0.92).combined(with: .opacity))
                     .allowsHitTesting(false)
             }
@@ -595,6 +604,7 @@ struct ConversationView: View {
                     .help("回到最新消息").accessibilityLabel("回到最新消息").padding(8)
                     // Clear the planet rather than landing on top of it.
                     .padding(.bottom, isVoiceOwner ? Self.planetSize + 12 : 0)
+                    .padding(.trailing, scrollerWidth)
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isVoiceOwner)
@@ -628,7 +638,10 @@ struct ConversationView: View {
                 }
                 composer
             }
-            .frame(maxWidth: 760).padding(.horizontal, 24).padding(.bottom, 8).padding(.top, 8)
+            // 16pt wider than the chat on either side, the card's own inset, so the draft lines
+            // up with the chat and what scrolls behind the card never shows past its edges.
+            .frame(maxWidth: 792).padding(.horizontal, 12).padding(.bottom, 8).padding(.top, 8)
+            .padding(.trailing, scrollerWidth)
             .frame(maxWidth: .infinity)
         }
     }
