@@ -1,4 +1,5 @@
 import XCTest
+import AppIntents
 import AppKit
 import FoundationModels
 import SwiftUI
@@ -4851,5 +4852,175 @@ private struct ComposerHeightHost: View {
         }
         XCTAssertEqual(outcomes.count, expected.count)
         print("Workspace observer archive kept at \(root.path)")
+    }
+}
+
+/// Echo's App Intents, run the way Shortcuts, Spotlight and Siri run them: `perform()` on the pet
+/// the app registers as their dependency. The app is in the background throughout; none of them
+/// may bring up the main window.
+@MainActor final class PetIntentTests: XCTestCase {
+    private func makeCompanion() throws -> (CompanionController, WorkspaceStore, VoiceSessionController) {
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() },
+                                           synthesizer: { ComposerSynthesizer() }, permission: { true })
+        let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
+        let settings = SettingsStore(secrets: ComposerSecrets())
+        settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
+        settings.voiceAPIKey = "voice"; settings.saveVoice()
+        let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings,
+                                            defaults: EchoTestResources.defaults())
+        return (companion, workspace, voice)
+    }
+    private func clusterShown(_ companion: CompanionController) -> Bool {
+        companion.petPanel.isVisible && companion.controlsPanel.isVisible
+    }
+    private func mainWindowShown(_ companion: CompanionController) -> Bool {
+        companion.mainWindow?.isVisible == true || companion.workspace.isMainWindowVisible
+    }
+
+    func testShowAndHidePet() async throws {
+        let (companion, _, _) = try makeCompanion()
+        defer { companion.shutdown() }
+        let show = ShowPetIntent(), hide = HidePetIntent()
+        show.companion = companion; hide.companion = companion
+        try await eventually("The pet starts on screen") { clusterShown(companion) }
+
+        _ = try await hide.perform()
+        try await eventually("Hide Pet takes the cluster off screen") { !companion.petPanel.isVisible && !companion.controlsPanel.isVisible }
+        XCTAssertTrue(companion.isPetHidden, "Hide Pet is the same state as the pet menu's Hide Pet")
+        _ = try await hide.perform()
+        XCTAssertTrue(companion.isPetHidden, "Hiding a hidden pet leaves it hidden")
+
+        _ = try await show.perform()
+        try await eventually("Show Pet brings the cluster back") { clusterShown(companion) }
+        XCTAssertFalse(companion.isPetHidden)
+        _ = try await show.perform()
+        XCTAssertTrue(clusterShown(companion) && !companion.isPetHidden, "Showing a shown pet leaves it shown")
+        XCTAssertFalse(mainWindowShown(companion), "Neither opens the main window")
+    }
+
+    /// The pet's Live Voice button: its own conversation, the reader's chat left selected. A call
+    /// already on is neither replaced nor ended.
+    func testStartLiveVoiceShowsThePetAndLeavesARunningCallAlone() async throws {
+        let (companion, workspace, voice) = try makeCompanion()
+        defer { voice.end(); companion.shutdown(); voice.shutdown() }
+        let start = StartLiveVoiceIntent()
+        start.companion = companion
+        let read = workspace.selected!
+        XCTAssertTrue(workspace.send("正在读的聊天", conversationID: read.id), "The chat being read accepts a message")
+        companion.setPetHidden(true)
+
+        _ = try await start.perform()
+        XCTAssertFalse(companion.isPetHidden, "Starting Live Voice brings a hidden pet back first")
+        try await eventually("The pet is back on screen") { clusterShown(companion) }
+        let owner = try XCTUnwrap(voice.snapshot.session.owner, "The intent starts Live Voice")
+        XCTAssertTrue(owner.conversationID != read.id && workspace.selectedID == read.id,
+                      "Like the pet's button, it brings its own conversation and leaves the read one selected")
+        XCTAssertFalse(mainWindowShown(companion), "Starting Live Voice does not open the main window")
+
+        companion.setPetHidden(true)
+        _ = try await start.perform()
+        XCTAssertEqual(voice.snapshot.session.owner, owner, "A call already on is neither replaced nor ended")
+        XCTAssertFalse(companion.isPetHidden, "The pet still comes back")
+        XCTAssertFalse(mainWindowShown(companion))
+    }
+
+    /// The pet's quick composer: a new chat, its reply on the pet's card. Empty text is refused
+    /// before anything changes.
+    func testAskEchoSendsAQuickMessageAndRefusesEmptyText() async throws {
+        let (companion, workspace, voice) = try makeCompanion()
+        defer { companion.shutdown(); voice.shutdown() }
+        let ask = AskEchoIntent()
+        ask.companion = companion
+        let read = workspace.selected!
+        companion.setPetHidden(true)
+        let activityBefore = workspace.activityID, chatsBefore = workspace.conversations.map(\.id)
+
+        for blank in ["", "  \n\t"] {
+            ask.question = blank
+            do {
+                _ = try await ask.perform()
+                XCTFail("Empty text \(blank.debugDescription) is refused")
+            } catch {}
+        }
+        XCTAssertTrue(companion.isPetHidden, "A refused question leaves the pet hidden")
+        XCTAssertTrue(workspace.activityID == activityBefore && workspace.conversations.map(\.id) == chatsBefore,
+                      "A refused question starts no chat")
+
+        ask.question = "桌宠提问"
+        _ = try await ask.perform()
+        XCTAssertFalse(companion.isPetHidden, "Asking brings a hidden pet back first")
+        let asked = try XCTUnwrap(workspace.activityID)
+        XCTAssertTrue(asked != read.id && workspace.selectedID == read.id, "The question goes to a new chat; the selection stays")
+        XCTAssertEqual(workspace.conversation(id: asked)?.store.messages.first?.content, "桌宠提问")
+        XCTAssertTrue(workspace.petActivities.contains { $0.id == asked }, "The new chat is the pet's card")
+        try await eventually("The card shows next to the pet") { clusterShown(companion) && companion.activityPanel.isVisible }
+        XCTAssertFalse(mainWindowShown(companion), "Asking does not open the main window")
+    }
+
+    /// A reopen as Launch Services delivers it, with the parameters measured from each opener.
+    private func reopenEvent(_ params: [AEKeyword: NSAppleEventDescriptor] = [:]) -> NSAppleEventDescriptor {
+        let event = NSAppleEventDescriptor(eventClass: AEEventClass(kCoreEventClass), eventID: AEEventID(kAEReopenApplication),
+                                           targetDescriptor: nil, returnID: AEReturnID(kAutoGenerateReturnID),
+                                           transactionID: AETransactionID(kAnyTransactionID))
+        for (keyword, value) in params { event.setParam(value, forKeyword: keyword) }
+        return event
+    }
+    private func keyword(_ code: String) -> AEKeyword { code.utf8.reduce(0) { $0 << 8 | AEKeyword($1) } }
+    /// What running an intent sends first: launch flags with kLSLaunchDontSwitch, as measured.
+    private var intentReopen: NSAppleEventDescriptor {
+        reopenEvent([keyword("rsto"): NSAppleEventDescriptor(enumCode: keyword("no  ")),
+                     keyword("lsfg"): NSAppleEventDescriptor(int32: -2012216576)])
+    }
+
+    /// Running an intent reopens Echo just before it performs, whether Echo is in front or not.
+    /// None of the four may open the main window or turn it to the Live Voice conversation; the
+    /// Dock, Spotlight and Launch Services still open it as before.
+    func testIntentsLeaveTheMainWindowAloneWhileReopeningStillShowsIt() async throws {
+        let (companion, workspace, voice) = try makeCompanion()
+        defer { voice.end(); companion.shutdown(); voice.shutdown() }
+        let show = ShowPetIntent(), hide = HidePetIntent(), start = StartLiveVoiceIntent(), ask = AskEchoIntent()
+        show.companion = companion; hide.companion = companion; start.companion = companion; ask.companion = companion
+        ask.question = "桌宠提问"
+        let read = workspace.selected!
+        XCTAssertTrue(workspace.send("正在读的聊天", conversationID: read.id), "The chat being read accepts a message")
+        XCTAssertTrue(SystemOpen.leavesEchoBehind(intentReopen), "An intent's reopen asks to leave Echo behind")
+
+        companion.reopen(intentReopen); _ = try await hide.perform()
+        companion.reopen(intentReopen); _ = try await show.perform()
+        companion.reopen(intentReopen); _ = try await ask.perform()
+        companion.reopen(intentReopen); _ = try await start.perform()
+        try await eventually("The pet takes the question and the call") { voice.snapshot.session.owner != nil }
+        XCTAssertFalse(mainWindowShown(companion), "No intent opens the main window")
+
+        // The main window in front on the read chat, a call on elsewhere: the intents leave both be.
+        companion.reopen(reopenEvent([keyword("aapd"): NSAppleEventDescriptor(int32: 1)]))
+        workspace.select(read.id)
+        let window = try XCTUnwrap(companion.mainWindow)
+        XCTAssertTrue(window.isVisible && workspace.selectedID == read.id, "Spotlight's reopen opens the main window")
+        let owner = try XCTUnwrap(voice.snapshot.session.owner)
+        for intent in [start, ask] as [any AppIntent] {
+            companion.reopen(intentReopen)
+            _ = try await intent.perform()
+            XCTAssertEqual(workspace.selectedID, read.id, "\(type(of: intent)) leaves the main window on the chat being read")
+        }
+        XCTAssertEqual(voice.snapshot.session.owner, owner, "The call is still the one it was")
+
+        // Every opener measured without the flag still brings the window back.
+        let openers: [(String, NSAppleEventDescriptor)] = [
+            ("Spotlight", reopenEvent([keyword("aapd"): NSAppleEventDescriptor(int32: 1)])),
+            ("the Dock", reopenEvent([keyword("disp"): NSAppleEventDescriptor(int32: 1)])),
+            ("open -g", reopenEvent()),
+        ]
+        for (opener, event) in openers {
+            XCTAssertFalse(SystemOpen.leavesEchoBehind(event), "\(opener)'s reopen is someone opening Echo")
+            companion.mainController?.hideMainWindow()
+            XCTAssertFalse(mainWindowShown(companion))
+            companion.reopen(event)
+            XCTAssertTrue(mainWindowShown(companion), "\(opener) still opens the main window")
+        }
+        companion.mainController?.hideMainWindow()
+        companion.reopen(nil)
+        XCTAssertTrue(mainWindowShown(companion), "A reopen with no event to read still opens the main window")
     }
 }

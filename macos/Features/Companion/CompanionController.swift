@@ -474,6 +474,13 @@ import SwiftUI
         }
     }
 
+    /// Something opened Echo again while it runs: the Dock tile, Spotlight, Finder, the status
+    /// item, or one of Echo's App Intents. An intent's reopen asks to leave Echo where it is, and it
+    /// comes whether or not Echo is in front, so only that flag tells it from a person's.
+    func reopen(_ event: NSAppleEventDescriptor?) {
+        guard !SystemOpen.leavesEchoBehind(event) else { return }
+        showMainWindow()
+    }
     func showMainWindow() {
         clearNotice()
         if workspace.voice.isActive { workspace.voice.reveal() }

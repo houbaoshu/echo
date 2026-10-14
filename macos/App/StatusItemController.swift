@@ -20,6 +20,17 @@ import AppKit
         }
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
     }
+
+    /// Whether a reopen asked Launch Services not to bring Echo forward (`kLSLaunchDontSwitch`).
+    /// Running an App Intent reopens Echo this way just before the intent performs. The Dock,
+    /// Spotlight, Finder, `open` and this type's own requests carry no launch flags at all, so a
+    /// reopen without them is always someone opening Echo.
+    static func leavesEchoBehind(_ event: NSAppleEventDescriptor?) -> Bool {
+        guard let flags = event?.paramDescriptor(forKeyword: launchFlagsKeyword)?.int32Value else { return false }
+        return LSLaunchFlags(rawValue: UInt32(bitPattern: flags)).contains(.dontSwitch)
+    }
+    /// 'lsfg': where Launch Services puts the opener's launch flags in a reopen. Not documented.
+    static let launchFlagsKeyword: AEKeyword = 0x6C73_6667
 }
 
 /// Echo's item at the right of the menu bar. With every window closed Echo stays in the

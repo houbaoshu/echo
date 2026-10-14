@@ -1,0 +1,130 @@
+{
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "叫出 ${applicationName} 桌宠" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show the ${applicationName} pet"
+          }
+        }
+      }
+    },
+    "向 ${applicationName} 提问" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ask ${applicationName}"
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "向 ${applicationName} 提问",
+              "问 ${applicationName} 一个问题"
+            ]
+          }
+        }
+      }
+    },
+    "和 ${applicationName} 语音聊天" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Talk to ${applicationName}"
+          }
+        }
+      }
+    },
+    "收起 ${applicationName} 桌宠" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide the ${applicationName} pet"
+          }
+        }
+      }
+    },
+    "显示 ${applicationName} 桌宠" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Show ${applicationName} pet"
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "显示 ${applicationName} 桌宠",
+              "叫出 ${applicationName} 桌宠"
+            ]
+          }
+        }
+      }
+    },
+    "用 ${applicationName} 开始 Live Voice" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Start Live Voice in ${applicationName}"
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "用 ${applicationName} 开始 Live Voice",
+              "和 ${applicationName} 语音聊天"
+            ]
+          }
+        }
+      }
+    },
+    "问 ${applicationName} 一个问题" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask ${applicationName} a question"
+          }
+        }
+      }
+    },
+    "隐藏 ${applicationName} 桌宠" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hide ${applicationName} pet"
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "隐藏 ${applicationName} 桌宠",
+              "收起 ${applicationName} 桌宠"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

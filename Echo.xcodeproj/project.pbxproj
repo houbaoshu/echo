@@ -82,6 +82,7 @@
 		C622A7EBBE746BA108EA86AA /* tests/support/ScriptedAgentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 655F5CFF89FFBD3E8F8740CB /* tests/support/ScriptedAgentModel.swift */; };
 		C7A1D0E2F3B4C5D6E7F80912 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */; };
 		C7A1D0E2F3B4C5D6E7F80914 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */; };
+		C7A1D0E2F3B4C5D6E7F80916 /* AppShortcuts.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C7A1D0E2F3B4C5D6E7F80915 /* AppShortcuts.xcstrings */; };
 		D0D95B5D5B964B6609913AA4 /* tests/support/VoiceFakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89D5CB17C33E07630F4519C6 /* tests/support/VoiceFakes.swift */; };
 		D4D51A52463450D85F5130CA /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		DDBEF3D5359192AC5896BA28 /* tests/AgentModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 474D9F2D95791491A7B3D4E6 /* tests/AgentModelTests.swift */; };
@@ -270,6 +271,7 @@
 		C038B52ADC4A870F1268E696 /* EchoDeviceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = EchoDeviceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = Localizable.xcstrings; path = assets/Localizable.xcstrings; sourceTree = "<group>"; };
 		C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = InfoPlist.xcstrings; path = assets/InfoPlist.xcstrings; sourceTree = "<group>"; };
+		C7A1D0E2F3B4C5D6E7F80915 /* AppShortcuts.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; name = AppShortcuts.xcstrings; path = assets/AppShortcuts.xcstrings; sourceTree = "<group>"; };
 		CF0CDA52A4EF0DA66805FDBB /* macos/Features/ProjectBrowser/ProjectPathAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/ProjectBrowser/ProjectPathAccess.swift; sourceTree = "<group>"; };
 		CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentHarness.swift; sourceTree = "<group>"; };
 		D5E5E6CFBA9A83634534A68F /* tests/fixtures/speech/zh-CN.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "tests/fixtures/speech/zh-CN.wav"; sourceTree = "<group>"; };
@@ -329,6 +331,7 @@
 		2B7150E4BA9C1E2D3C6B7DFF /* Exceptions for "macos" folder in "EchoSpeechHost" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/EchoIntents.swift,
 				App/Info.plist,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
@@ -345,6 +348,7 @@
 		E112000000000000000000EC /* Exceptions for "macos" folder in "EchoIntegrationTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/EchoIntents.swift,
 				App/Info.plist,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
@@ -354,6 +358,7 @@
 		E113000000000000000000EC /* Exceptions for "macos" folder in "EchoVoiceTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/EchoIntents.swift,
 				App/Info.plist,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
@@ -363,6 +368,7 @@
 		E114000000000000000000EC /* Exceptions for "macos" folder in "EchoWorkspaceTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/EchoIntents.swift,
 				App/Info.plist,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
@@ -381,6 +387,7 @@
 		E69F3B51CE1B237D6FEB36E8 /* Exceptions for "macos" folder in "EchoLiveHost" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				App/EchoIntents.swift,
 				App/main.swift,
 				Features/Agent/CoreAILocalChat.swift,
 			);
@@ -506,6 +513,7 @@
 				F82E6758E135B6EA62E34341 /* Echo.icon */,
 				C7A1D0E2F3B4C5D6E7F80911 /* Localizable.xcstrings */,
 				C7A1D0E2F3B4C5D6E7F80913 /* InfoPlist.xcstrings */,
+				C7A1D0E2F3B4C5D6E7F80915 /* AppShortcuts.xcstrings */,
 				E0000000000000000000001D /* pets */,
 				E0000000000000000000001E /* planets */,
 				E0000000000000000000002A /* macos */,
@@ -1067,6 +1075,7 @@
 				E06EB300CAB9163F9A75410B /* Echo.icon in Resources */,
 				C7A1D0E2F3B4C5D6E7F80912 /* Localizable.xcstrings in Resources */,
 				C7A1D0E2F3B4C5D6E7F80914 /* InfoPlist.xcstrings in Resources */,
+				C7A1D0E2F3B4C5D6E7F80916 /* AppShortcuts.xcstrings in Resources */,
 				E00000000000000000000031 /* planets in Resources */,
 			);
 		};

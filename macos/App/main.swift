@@ -1,11 +1,17 @@
+import AppIntents
 import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pets: PetCatalog?
     private var companion: CompanionController? {
-        didSet { statusItem?.remove(); statusItem = companion.map(StatusItemController.init) }
+        didSet {
+            statusItem?.remove(); statusItem = companion.map(StatusItemController.init)
+            if let companion { companionWaiters.forEach { $0.resume(returning: companion) }; companionWaiters = [] }
+        }
     }
+    /// Intents that arrived before launch finished, waiting for the pet; see `launchedCompanion`.
+    private var companionWaiters: [CheckedContinuation<CompanionController, Never>] = []
     private var statusItem: StatusItemController?
     private var acceptanceWorkspace: WorkspaceStore?
     private var workspaceCommands: WorkspaceCommands?
@@ -244,9 +250,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Clicking the Dock tile, or opening a running Echo again from Spotlight or Finder, brings
-    /// the main window forward, also when the window open was Settings.
+    /// the main window forward, also when the window open was Settings. Running one of Echo's App
+    /// Intents reopens it too, and that one leaves the window alone; see `CompanionController.reopen`.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        companion?.showMainWindow()
+        companion?.reopen(NSAppleEventManager.shared().currentAppleEvent)
         return false
     }
 
@@ -269,6 +276,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pets = nil
     }
 
+    /// What Echo's App Intents act on. An intent can launch Echo and arrive before
+    /// `applicationDidFinishLaunching` has put the pet up; it waits for the pet rather than fail.
+    func launchedCompanion() async -> CompanionController {
+        if let companion { return companion }
+        return await withCheckedContinuation { companionWaiters.append($0) }
+    }
+
     private func showFailure(_ error: Error) {
         let alert = NSAlert()
         alert.messageText = String(localized: "无法启动桌面精灵")
@@ -284,4 +298,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
+// Registered before the run loop starts, so an intent that launched Echo finds it.
+AppDependencyManager.shared.add { await delegate.launchedCompanion() }
 app.run()

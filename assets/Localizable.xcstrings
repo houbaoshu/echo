@@ -1137,6 +1137,26 @@
         }
       }
     },
+    "向 Echo 提问" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask Echo"
+          }
+        }
+      }
+    },
+    "向 Echo 提问 ${question}" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask Echo ${question}"
+          }
+        }
+      }
+    },
     "含密码，没有写入记忆。" : {
       "localizations" : {
         "en" : {
@@ -1253,6 +1273,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Show in Finder"
+          }
+        }
+      }
+    },
+    "在新聊天里发出问题，回答显示在桌宠卡片上。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sends the question in a new chat. The answer shows on the pet’s card."
+          }
+        }
+      }
+    },
+    "在新聊天里开始 Live Voice，和点桌宠上的语音按钮一样。已在通话中时不做任何事。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starts Live Voice in a new chat, like the pet’s voice button. Does nothing if a call is already on."
           }
         }
       }
@@ -2001,6 +2041,16 @@
         }
       }
     },
+    "把收起的桌宠放回桌面。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brings the pet back to the desktop."
+          }
+        }
+      }
+    },
     "拷贝路径" : {
       "localizations" : {
         "en" : {
@@ -2087,6 +2137,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Collapse list"
+          }
+        }
+      }
+    },
+    "收起桌宠，Echo 仍在运行。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hides the pet. Echo keeps running."
           }
         }
       }
@@ -2637,6 +2697,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Show API key"
+          }
+        }
+      }
+    },
+    "显示桌宠" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Pet"
           }
         }
       }
@@ -4055,6 +4125,16 @@
         }
       }
     },
+    "要问什么？" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What do you want to ask?"
+          }
+        }
+      }
+    },
     "覆盖" : {
       "localizations" : {
         "en" : {
@@ -5334,6 +5414,16 @@
         }
       }
     },
+    "问题" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Question"
+          }
+        }
+      }
+    },
     "随心输入" : {
       "localizations" : {
         "en" : {
@@ -5370,6 +5460,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hide Others"
+          }
+        }
+      }
+    },
+    "隐藏桌宠" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Pet"
           }
         }
       }
