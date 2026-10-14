@@ -466,8 +466,15 @@ struct ConversationView: View {
     /// focused scroll area needs: where it is, and how to move.
     @State private var scrollPosition = ScrollPosition()
     @State private var transcriptGeometry = TranscriptGeometry()
-    /// The composer card's shape, named once so its fill, its border and the container
-    /// shape its contents round against are all literally the same shape.
+    /// Where the toolbar and the composer bar float over the transcript, and the heights the
+    /// fade under them is cut to.
+    @State private var transcriptInsets = EdgeInsets()
+    @State private var cardHeight: CGFloat = 0
+    /// The captions between the bar's top and the card's: the bar is 8pt of padding on either
+    /// side of the card, and 8pt of spacing above it once there is anything to space from.
+    private var captionsHeight: CGFloat { max(0, transcriptInsets.bottom - cardHeight - 16 - 8) }
+    /// The composer card's shape, named once so its glass, its edge and the container shape
+    /// its contents round against are all literally the same shape.
     private static let card = RoundedRectangle(cornerRadius: 22)
     /// The planet's sprite frame. The reference draws its orb 91pt across above the composer;
     /// `scaledToFit` on a 192x208 frame whose planet spans 175x173 shows ~0.83 of the frame, so
@@ -486,7 +493,9 @@ struct ConversationView: View {
         var maxOffset: CGFloat = 0
         init() {}
         init(_ geometry: ScrollGeometry) {
+            // Less the composer bar floating over the bottom inset, which hides what is under it.
             visible = geometry.visibleRect
+            visible.size.height -= geometry.contentInsets.bottom
             contentHeight = geometry.contentSize.height
             offset = geometry.contentOffset.y + geometry.contentInsets.top
             maxOffset = max(0, geometry.contentSize.height - geometry.containerSize.height)
@@ -496,94 +505,105 @@ struct ConversationView: View {
     var body: some View {
         // Grouped once, rather than filtering every tool for each realized row.
         let tools = Dictionary(grouping: store.tools, by: \.afterMessageID)
-        return VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 28) {
-                    ForEach(store.messages) { message in
-                        HStack(alignment: .top) {
-                            if message.role == .user { Spacer(minLength: 44) }
-                            ConversationMessageView(message: message,
-                                retry: message.id == store.messages.last?.id && store.canRetry ? retry : nil,
-                                showsProgress: !isVoiceOwner)
-                            if message.role == .assistant { Spacer(minLength: 0) }
-                        }.id(message.id)
-                        ForEach(tools[message.id] ?? []) { tool in
-                            toolCard(tool).id("tool.\(tool.turnID).\(tool.id)")
-                        }
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 28) {
+                ForEach(store.messages) { message in
+                    HStack(alignment: .top) {
+                        if message.role == .user { Spacer(minLength: 44) }
+                        ConversationMessageView(message: message,
+                            retry: message.id == store.messages.last?.id && store.canRetry ? retry : nil,
+                            showsProgress: !isVoiceOwner)
+                        if message.role == .assistant { Spacer(minLength: 0) }
+                    }.id(message.id)
+                    ForEach(tools[message.id] ?? []) { tool in
+                        toolCard(tool).id("tool.\(tool.turnID).\(tool.id)")
                     }
-                    ForEach(tools[nil] ?? []) { tool in toolCard(tool) }
-                    // What is being said, in the place what was said will keep. A spoken
-                    // follow-up becomes a message in `store.messages`, which is drawn above
-                    // the stream, so the words wait here rather than below the reply — being
-                    // committed then moves nothing.
-                    SpokenDraftView(text: isVoiceOwner ? voice.subtitle : "")
-                    // The reply as it is written, until the projected message carries the text.
-                    StreamingReplyView(stream: store.replyStream, showsProgress: !isVoiceOwner)
-                    // The planet floats over the bottom of the transcript, and the spoken draft
-                    // forms at the very tail. Reserving its height here is what keeps the words
-                    // being said from sitting underneath it.
-                    if isVoiceOwner { Color.clear.frame(height: Self.planetSize + 16) }
-                }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
-                    .frame(maxWidth: .infinity)
-            }
-            // Leave short conversations at the top; .alignment would pin them to the composer.
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .defaultScrollAnchor(.bottom, for: .sizeChanges)
-            .onScrollPhaseChange { _, phase in
-                userScrolling = phase != .idle
-                // A user gesture disarms the native anchor. Returning near the bottom
-                // must re-arm it once the gesture ends, without fighting the finger.
-                if phase == .idle && followTail { returnToTail() }
-            }
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentSize.height - geometry.visibleRect.maxY < 60
-            } action: { _, nearBottom in
-                if userScrolling { followTail = nearBottom }
-            }
-            .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
-                TranscriptGeometry(geometry)
-            } action: { previous, value in
-                transcriptGeometry = value
-                // macOS 27 misses the first growth from fitting content to overflow;
-                // later growth follows normally. Re-arm at that boundary only, so a
-                // one-shot reply reaches the tail without pulling someone out of history.
-                if followTail && !userScrolling,
-                   previous.contentHeight <= previous.visible.height,
-                   value.contentHeight > value.visible.height { returnToTail() }
-            }
-            .scrollPosition($scrollPosition)
-            // The chat is focusable the way a control is, not the way a text field is: it
-            // takes focus only through macOS Keyboard Navigation, so a click leaves the
-            // composer's focus alone, and with Keyboard Navigation off Tab passes it by.
-            // SwiftUI builds a real key view for it and AppKit places it geometrically,
-            // with no traversal code of Echo's own.
-            .focusable(interactions: .activate)
-            // That key view is NOT inside the scroll view, so scrollPageDown: and
-            // friends reach nobody. SwiftUI's own path is the one that works.
-            .onKeyPress(keys: [.upArrow, .downArrow, .pageUp, .pageDown, .home, .end]) { transcriptKey($0) }
-            .accessibilityIdentifier("conversation.transcript")
-            .accessibilityLabel("会话记录")
-            .overlay(alignment: .bottom) {
-                if isVoiceOwner {
-                    VoicePlanet(store: planet, indicator: PetSurfacePresentation.indicator(for: voice.snapshot),
-                                muted: voice.isMuted, size: Self.planetSize)
-                        // The block below already opens with 8pt, and the sprite carries ~10pt of
-                        // its own transparent skirt, which together make the reference's 16pt.
-                        .padding(.bottom, 0)
-                        .transition(.scale(scale: 0.92).combined(with: .opacity))
-                        .allowsHitTesting(false)
                 }
+                ForEach(tools[nil] ?? []) { tool in toolCard(tool) }
+                // What is being said, in the place what was said will keep. A spoken
+                // follow-up becomes a message in `store.messages`, which is drawn above
+                // the stream, so the words wait here rather than below the reply — being
+                // committed then moves nothing.
+                SpokenDraftView(text: isVoiceOwner ? voice.subtitle : "")
+                // The reply as it is written, until the projected message carries the text.
+                StreamingReplyView(stream: store.replyStream, showsProgress: !isVoiceOwner)
+                // The planet floats over the bottom of the transcript, and the spoken draft
+                // forms at the very tail. Reserving its height here is what keeps the words
+                // being said from sitting underneath it.
+                if isVoiceOwner { Color.clear.frame(height: Self.planetSize + 16) }
+            }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
+                .frame(maxWidth: .infinity)
+        }
+        // Leave short conversations at the top; .alignment would pin them to the composer.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        .onScrollPhaseChange { _, phase in
+            userScrolling = phase != .idle
+            // A user gesture disarms the native anchor. Returning near the bottom
+            // must re-arm it once the gesture ends, without fighting the finger.
+            if phase == .idle && followTail { returnToTail() }
+        }
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            // The visible rect runs on under the composer bar, which is the bottom inset.
+            geometry.contentSize.height + geometry.contentInsets.bottom - geometry.visibleRect.maxY < 60
+        } action: { _, nearBottom in
+            if userScrolling { followTail = nearBottom }
+        }
+        .onScrollGeometryChange(for: TranscriptGeometry.self) { geometry in
+            TranscriptGeometry(geometry)
+        } action: { previous, value in
+            transcriptGeometry = value
+            // macOS 27 misses the first growth from fitting content to overflow;
+            // later growth follows normally. Re-arm at that boundary only, so a
+            // one-shot reply reaches the tail without pulling someone out of history.
+            if followTail && !userScrolling,
+               previous.contentHeight <= previous.visible.height,
+               value.contentHeight > value.visible.height { returnToTail() }
+        }
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: EdgeInsets.self) { $0.contentInsets } action: { transcriptInsets = $1 }
+        .mask { transcriptFade }
+        // The chat is focusable the way a control is, not the way a text field is: it
+        // takes focus only through macOS Keyboard Navigation, so a click leaves the
+        // composer's focus alone, and with Keyboard Navigation off Tab passes it by.
+        // SwiftUI builds a real key view for it and AppKit places it geometrically,
+        // with no traversal code of Echo's own.
+        .focusable(interactions: .activate)
+        // That key view is NOT inside the scroll view, so scrollPageDown: and
+        // friends reach nobody. SwiftUI's own path is the one that works.
+        .onKeyPress(keys: [.upArrow, .downArrow, .pageUp, .pageDown, .home, .end]) { transcriptKey($0) }
+        .accessibilityIdentifier("conversation.transcript")
+        .accessibilityLabel("会话记录")
+        .overlay(alignment: .bottom) {
+            if isVoiceOwner {
+                VoicePlanet(store: planet, indicator: PetSurfacePresentation.indicator(for: voice.snapshot),
+                            muted: voice.isMuted, size: Self.planetSize)
+                    // The block below already opens with 8pt, and the sprite carries ~10pt of
+                    // its own transparent skirt, which together make the reference's 16pt.
+                    .padding(.bottom, 0)
+                    .transition(.scale(scale: 0.92).combined(with: .opacity))
+                    .allowsHitTesting(false)
             }
-            .overlay(alignment: .bottom) {
-                if !followTail {
-                    Button("回到最新消息", systemImage: "arrow.down") {
-                        returnToTail()
-                    }.buttonStyle(.bordered).padding(8)
-                        // Clear the planet rather than landing on top of it.
-                        .padding(.bottom, isVoiceOwner ? Self.planetSize + 12 : 0)
-                }
+        }
+        .overlay(alignment: .bottom) {
+            if !followTail {
+                // The arrow alone on a glass circle, as other chat apps draw it: the labelled
+                // bordered pill, with almost no fill, laid its words over the chat's.
+                Button { returnToTail() } label: {
+                    Image(systemName: "arrow.down").font(.body.weight(.semibold)).frame(width: 20, height: 20)
+                }.buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.large)
+                    .help("回到最新消息").accessibilityLabel("回到最新消息").padding(8)
+                    // Clear the planet rather than landing on top of it.
+                    .padding(.bottom, isVoiceOwner ? Self.planetSize + 12 : 0)
             }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isVoiceOwner)
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isVoiceOwner)
+        // The block floats over the chat, which scrolls on underneath it: the bar's height is
+        // the transcript's bottom inset, so the tail still comes to rest above the composer.
+        // An inset, not a safe area bar: a bar's scroll edge effect frosts the whole bar and
+        // rules a line along its top under anything not on glass, even over a short chat, and
+        // the fade below already does what the edge effect was for.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
                 // The running summary is what the transcript cannot show: which step the
                 // task is on, why it stopped, what failed. A completed task has already
@@ -608,9 +628,39 @@ struct ConversationView: View {
                 }
                 composer
             }
-            .frame(maxWidth: 760).padding(.horizontal, 24).padding(.bottom, 20).padding(.top, 8)
+            .frame(maxWidth: 760).padding(.horizontal, 24).padding(.bottom, 8).padding(.top, 8)
             .frame(maxWidth: .infinity)
         }
+    }
+    /// The transcript's mask. The chat fades where things float over it rather than running
+    /// sharp into them: under the toolbar (the titlebar is transparent, which leaves AppKit no
+    /// pocket to frost it, and an opaque one rules a line under the toolbar), behind the
+    /// captions above the card, and through the gap under the card. No system edge effect does
+    /// this here: `.soft` changed nothing at the top, and a bottom bar's is a frosted strip.
+    private var transcriptFade: some View {
+        let behindCaptions = 0.05
+        return VStack(spacing: 0) {
+            // Gone behind the title and buttons, back by 12pt under the toolbar, which the
+            // first message clears by 32pt at the top of the chat.
+            LinearGradient(stops: [.init(color: .clear, location: 0.55), .init(color: .black, location: 1)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: transcriptInsets.top + 12)
+            Color.black
+            if captionsHeight > 0 {
+                // From 12pt above the bar, clear of where the tail comes to rest 20pt above it,
+                // down to the captions; back in under the card's glass, which hides the seam.
+                LinearGradient(colors: [.black, .black.opacity(behindCaptions)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 20)
+                Color.black.opacity(behindCaptions).frame(height: captionsHeight + 8)
+                LinearGradient(colors: [.black.opacity(behindCaptions), .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 24)
+                Color.black.frame(height: max(0, cardHeight - 40))
+            } else {
+                // The card stands 8pt above the window's edge, and the fade starts 16pt up inside it.
+                Color.black.frame(height: max(0, cardHeight - 16))
+            }
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 24)
+        }.ignoresSafeArea()
     }
     /// The keys a focused scroll area answers on macOS: arrows by a line, Page Up / Page
     /// Down by a screenful, Home / End and ⌘↑ / ⌘↓ to the ends.
@@ -675,7 +725,7 @@ struct ConversationView: View {
             if !store.mainAttachments.isEmpty {
                 ChipFlow {
                     ForEach(Array(zip(store.mainAttachments, store.mainAttachmentNames)), id: \.0.id) { attachment, name in
-                        DraftAttachmentChip(attachment: attachment, name: name) {
+                        DraftAttachmentChip(attachment: attachment, name: name, onGlass: true) {
                             store.removeMainAttachment(attachment.id)
                             workspace?.requestComposerFocus(conversationID: conversationID)
                         }
@@ -840,13 +890,18 @@ struct ConversationView: View {
                     .accessibilityIdentifier(presentation.primary.identifier)
             }.accessibilityElement(children: .contain).accessibilityIdentifier("conversation.actions")
         }.padding(16)
-            .background(Color(nsColor: .controlBackgroundColor), in: Self.card)
-            .overlay(Self.card.strokeBorder(.primary.opacity(0.08), lineWidth: 1))
+            // Regular Liquid Glass, untinted, as Xcode's navigator filter field: the system
+            // adapts it to light and dark, frosting the chat that passes behind, and its own lit
+            // rim keeps the edge visible on a white window without a stroke. It is a layer
+            // of its own behind the content, so it doesn't restyle what it holds: glass holding
+            // the card lightened the draft's text from 37 to 74–77 and faded the + circle and
+            // the Live Voice mark. In an inactive window the system flattens all glass to frost.
+            .background { Color.clear.glassEffect(.regular, in: Self.card) }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
             // Publishing the card's shape is what lets everything drawn inside it round
             // concentrically with it, instead of each inner box repeating a number that
             // has to be changed in step when the card's does.
             .containerShape(Self.card)
-            .shadow(color: .black.opacity(0.05), radius: 10, y: 3)
             // Files dropped anywhere on the card; the editor takes those dropped on it itself.
             .onDrop(of: [.fileURL], delegate: ChatFileDrop(add: { if canAttach { store.attachToMainDraft($0) } }))
             .onDisappear {
