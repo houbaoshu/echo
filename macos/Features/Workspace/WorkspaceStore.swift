@@ -793,7 +793,9 @@ struct WorkspaceSnapshot: Codable {
         shuttingDown = true; dictation.shutdown(); voice.shutdown()
         let stores = (conversations + drafts).map(\.store)
         stores.forEach { $0.stopTask() }
-        while stores.contains(where: \.isGenerating) {
+        // An undo runs off the main actor and saves its result when done; it changes files, so it
+        // is waited for like a turn, or its change would be on disk with its card still offering Undo.
+        while stores.contains(where: { $0.isGenerating || !$0.undoingTools.isEmpty }) {
             try? await Task.sleep(for: .milliseconds(20))
         }
         flush()

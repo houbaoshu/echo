@@ -592,6 +592,9 @@ struct AgentFileDescription: Sendable {
     /// Extended attributes by name.
     let attributes: [String: Data]
     let created: timespec
+    /// Its access control list as `acl_to_text` writes it; nil for none. The list is kept apart from
+    /// the extended attributes, which do not show it.
+    var acl: String? = nil
 }
 
 /// The file a write replaces, as it was before: its bytes and what describes it.
@@ -607,8 +610,10 @@ struct AgentOriginalFile: Sendable {
     let device: dev_t
     let inode: ino_t
     let modified: timespec
+    /// Its access control list, as `AgentFileDescription.acl`.
+    var acl: String? = nil
 
-    var description: AgentFileDescription { .init(mode: mode, attributes: attributes, created: created) }
+    var description: AgentFileDescription { .init(mode: mode, attributes: attributes, created: created, acl: acl) }
 }
 
 /// Points in a write where tests hold it. Each runs on the thread doing the work, never the main actor.
@@ -630,6 +635,10 @@ enum AgentFileWriter {
     /// which are gone; provenance and macl are the system's own record of which app wrote the file and
     /// which apps may open it, so the new file gets the system's, not copies.
     static let attributesNotCarried: Set<String> = ["com.apple.TextEncoding", "com.apple.provenance", "com.apple.macl"]
+    /// Held by every write and undo, in every chat, from checking the target to putting the new
+    /// content in place. Each chat runs its own calls in turn, but two chats changing one file, the
+    /// memory file above all, could otherwise both pass the check and one lose its change unseen.
+    static let changes = Mutex(())
 
     /// A write checked and read, with nothing changed yet.
     struct Plan: Sendable {
@@ -707,11 +716,15 @@ enum AgentFileWriter {
     }
 
     /// Keeps a copy of the original, or for a new file a record that it is new, then puts the new
-    /// content in place, carrying over the original's permission bits, extended attributes and
-    /// creation date. The folders and the target are checked again: a target that changed since it
+    /// content in place, carrying over the original's permission bits, extended attributes, access
+    /// control list and creation date. The folders and the target are checked again: a target that changed since it
     /// was read is left as it is. `backup` gets nil for a new file.
     static func commit(_ plan: Plan, hooks: AgentWriteHooks = AgentWriteHooks(),
                        backup: (AgentOriginalFile?) throws -> Void) -> String {
+        changes.withLock { _ in commitHoldingChanges(plan, hooks: hooks, backup: backup) }
+    }
+
+    private static func commitHoldingChanges(_ plan: Plan, hooks: AgentWriteHooks, backup: (AgentOriginalFile?) throws -> Void) -> String {
         let raw = plan.raw
         func failure(_ code: Int32) -> String { AgentToolResult.failed(AgentToolPath.message(.system(code), path: raw, scope: plan.scope)) }
         let (opened, reached) = openFolders(root: plan.root, plan.folders)
@@ -832,8 +845,27 @@ enum AgentFileWriter {
             total += count
         }
         guard let attributes = attributes(of: file) else { return .failure(Errno(code: errno)) }
+        let acl: String?
+        switch accessControlList(of: file) {
+        case .success(let text): acl = text
+        case .failure(let error): return .failure(error)
+        }
         return .success(AgentOriginalFile(data: data.prefix(total), mode: info.st_mode & 0o777, path: path, attributes: attributes,
-                                          created: info.st_birthtimespec, device: info.st_dev, inode: info.st_ino, modified: info.st_mtimespec))
+                                          created: info.st_birthtimespec, device: info.st_dev, inode: info.st_ino, modified: info.st_mtimespec,
+                                          acl: acl))
+    }
+
+    /// An open file's access control list as text, nil when it has none.
+    private static func accessControlList(of file: Int32) -> Result<String?, Errno> {
+        guard let acl = acl_get_fd_np(file, ACL_TYPE_EXTENDED) else {
+            return errno == ENOENT ? .success(nil) : .failure(Errno(code: errno))
+        }
+        defer { acl_free(UnsafeMutableRawPointer(acl)) }
+        var entry: acl_entry_t?
+        guard acl_get_entry(acl, ACL_FIRST_ENTRY.rawValue, &entry) == 0 else { return .success(nil) }
+        guard let text = acl_to_text(acl, nil) else { return .failure(Errno(code: errno)) }
+        defer { acl_free(text) }
+        return .success(String(cString: text))
     }
 
     /// Every extended attribute of an open file, or nil with errno set.
@@ -884,6 +916,12 @@ enum AgentFileWriter {
             list.commonattr = attrgroup_t(ATTR_CMN_CRTIME)
             var created = original.created
             guard fsetattrlist(file, &list, &created, MemoryLayout<timespec>.size, 0) == 0 else { return fail(.system(errno)) }
+            // The new file has only what the folder passes on; the original's own entries go with it too.
+            if let text = original.acl {
+                guard let acl = acl_from_text(text) else { return fail(.attribute("ACL", errno)) }
+                defer { acl_free(UnsafeMutableRawPointer(acl)) }
+                guard acl_set_fd_np(file, acl, ACL_TYPE_EXTENDED) == 0 else { return fail(.attribute("ACL", errno)) }
+            }
         }
         guard fsync(file) == 0 else { return fail(.system(errno)) }
         close(file)
@@ -928,6 +966,9 @@ struct AgentBackupStore {
         /// `AgentFileWriter.fingerprint` of the content the call wrote.
         var written: String?
         var createdTime: FileTime?
+        /// The original's access control list, as `AgentFileDescription.acl`; none when it had none,
+        /// and in records kept before lists were carried over.
+        var acl: String?
 
         struct FileTime: Codable, Equatable {
             var seconds: Int
@@ -945,13 +986,14 @@ struct AgentBackupStore {
                 mode = Int(original.mode); size = original.data.count; attributes = original.attributes
                 created = Date(timeIntervalSince1970: TimeInterval(original.created.tv_sec) + TimeInterval(original.created.tv_nsec) / 1e9)
                 createdTime = FileTime(original.created)
+                acl = original.acl
             }
         }
 
         /// What described the original, for an undo to put back.
         var original: AgentFileDescription? {
             guard let mode, let createdTime else { return nil }
-            return .init(mode: mode_t(mode), attributes: attributes ?? [:], created: createdTime.value)
+            return .init(mode: mode_t(mode), attributes: attributes ?? [:], created: createdTime.value, acl: acl)
         }
     }
     static let recordName = "backup.json"
@@ -1043,8 +1085,8 @@ enum AgentUndoRefusal: Codable, Equatable, Sendable {
 }
 
 /// Puts a file back as it was before one write call, while it still has exactly what that call
-/// wrote: a replaced file gets its original bytes, permission bits, extended attributes and
-/// creation date back, through a temporary file renamed over it, as a write does; a new file goes
+/// wrote: a replaced file gets its original bytes, permission bits, extended attributes, access
+/// control list and creation date back, through a temporary file renamed over it, as a write does; a new file goes
 /// to the Trash, and the folders made for it stay. The path is checked as a write checks it, from
 /// the root's descriptor without following symbolic links. Runs off the main actor: reading the file
 /// can wait for it to download.
@@ -1094,18 +1136,27 @@ enum AgentFileUndo {
         guard current.device == info.st_dev, current.inode == info.st_ino,
               AgentFileWriter.fingerprint(current.data) == written else { return .changed }
 
-        if action == "created" {
-            do { try trash.move(URL(fileURLWithPath: record.root).appendingPathComponent(path)) }
-            catch { return .failed(error.localizedDescription) }
-            return nil
-        }
-        guard let original = record.original,
-              let data = try? Data(contentsOf: folder.appendingPathComponent(AgentBackupStore.originalName)),
-              data.count == record.size else { return .backupMissing }
-        switch AgentFileWriter.replace(in: fd, name: name, with: data, like: original, skipping: attributesNotRestored) {
-        case .none: return nil
-        case .system(let code): return .failed(String(cString: strerror(code)))
-        case .attribute(let attribute, let code): return .failed("\(attribute): \(String(cString: strerror(code)))")
+        // Read without the lock, since reading can wait for a download; under it, the file must
+        // still be the one read, so no write or undo from another chat comes between.
+        let directory = fd
+        return AgentFileWriter.changes.withLock { _ in
+            var now = stat()
+            guard fstatat(directory, name, &now, AT_SYMLINK_NOFOLLOW) == 0, now.st_dev == current.device, now.st_ino == current.inode,
+                  now.st_size == current.data.count, now.st_mtimespec.tv_sec == current.modified.tv_sec,
+                  now.st_mtimespec.tv_nsec == current.modified.tv_nsec else { return .changed }
+            if action == "created" {
+                do { try trash.move(URL(fileURLWithPath: record.root).appendingPathComponent(path)) }
+                catch { return .failed(error.localizedDescription) }
+                return nil
+            }
+            guard let original = record.original,
+                  let data = try? Data(contentsOf: folder.appendingPathComponent(AgentBackupStore.originalName)),
+                  data.count == record.size else { return .backupMissing }
+            switch AgentFileWriter.replace(in: directory, name: name, with: data, like: original, skipping: attributesNotRestored) {
+            case .none: return nil
+            case .system(let code): return .failed(String(cString: strerror(code)))
+            case .attribute(let attribute, let code): return .failed("\(attribute): \(String(cString: strerror(code)))")
+            }
         }
     }
 

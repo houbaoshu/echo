@@ -1612,6 +1612,111 @@ import Testing
         #expect(AgentFileWriter.attributesNotCarried == ["com.apple.TextEncoding", "com.apple.provenance", "com.apple.macl"])
     }
 
+    static func accessControlList(_ path: String) -> String? {
+        guard let acl = acl_get_file(path, ACL_TYPE_EXTENDED) else { return nil }
+        defer { acl_free(UnsafeMutableRawPointer(acl)) }
+        guard let text = acl_to_text(acl, nil) else { return nil }
+        defer { acl_free(text) }
+        return String(cString: text)
+    }
+    static func setAccessControlList(_ path: String, _ text: String) throws {
+        let acl = try #require(acl_from_text(text))
+        defer { acl_free(UnsafeMutableRawPointer(acl)) }
+        try #require(acl_set_file(path, ACL_TYPE_EXTENDED, acl) == 0, "acl_set_file: \(String(cString: strerror(errno)))")
+    }
+
+    /// A replaced file keeps its own access control list, which the extended attributes do not
+    /// show, and its copy records the list for an undo to put back.
+    @Test func writesAndUndoKeepTheFilesAccessControlList() throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        let store = AgentBackupStore(directory: URL(fileURLWithPath: f.base + "/backups"))
+        try f.file("shared.txt", "old")
+        let full = f.root + "/shared.txt"
+        try Self.setAccessControlList(full, "!#acl 1\ngroup:ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C:everyone:12:allow:read,readattr\n")
+        let list = try #require(Self.accessControlList(full))
+        let result = try AgentFileWriter.write(root: f.root, path: "shared.txt", change: .edit(old: "old", new: "new"), beforeChange: {}) { original in
+            try store.save(original, record: .init(path: full, root: f.root, rootKind: "project", relativePath: "shared.txt", chat: UUID(),
+                                                   toolRecord: "1:0:acl", tool: "edit_file", savedAt: Date(), original: original,
+                                                   action: "edited", written: Data("new".utf8)))
+        }
+        #expect(result.contains(#""action":"edited""#) && f.text("shared.txt") == "new")
+        #expect(Self.accessControlList(full) == list, "The new file has the original's list: \(Self.accessControlList(full) ?? "none")")
+
+        // Lost since, as another app's save may lose it: the undo puts it back with the content.
+        let none = try #require(acl_init(0))
+        defer { acl_free(UnsafeMutableRawPointer(none)) }
+        #expect(acl_set_file(full, ACL_TYPE_EXTENDED, none) == 0 && Self.accessControlList(full) == nil)
+        let (record, folder) = try #require(store.find(toolRecord: "1:0:acl"))
+        #expect(record.acl == list)
+        #expect(AgentFileUndo.undo(record, copy: folder, policy: AgentWritePolicy(home: "/nonexistent")) == nil)
+        #expect(f.text("shared.txt") == "old" && Self.accessControlList(full) == list)
+
+        // A record kept before lists were carried over still reads, with none to put back.
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        var json = try #require(try JSONSerialization.jsonObject(with: encoder.encode(record)) as? [String: Any])
+        json["acl"] = nil
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let older = try decoder.decode(AgentBackupStore.Record.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(older.acl == nil && older.original != nil && older.original?.acl == nil)
+    }
+
+    /// Writes and undos from different chats to one file come one at a time from the check to the
+    /// rename: the later finds the earlier's file and refuses, rather than replace it unseen. Each
+    /// chat runs its own calls in turn already; these come from two.
+    @Test func changesFromTwoChatsToOneFileComeOneAtATime() throws {
+        let f = try Self.folders()
+        defer { f.remove() }
+        try f.file("shared.txt", "v0")
+        let results = Mutex([String: String]())
+        let done = DispatchGroup()
+        func commit(_ key: String, _ plan: AgentFileWriter.Plan, _ hooks: AgentWriteHooks) {
+            done.enter()
+            DispatchQueue.global().async {
+                let result = AgentFileWriter.commit(plan, hooks: hooks) { _ in }
+                results.withLock { $0[key] = result }
+                done.leave()
+            }
+        }
+        func plan(_ text: String) throws -> AgentFileWriter.Plan {
+            try AgentFileWriter.prepare(root: f.root, path: "shared.txt", change: .replace(text)).get()
+        }
+        let first = try plan("A"), second = try plan("B")
+        let firstInside = DispatchSemaphore(value: 0), releaseFirst = DispatchSemaphore(value: 0), secondInside = DispatchSemaphore(value: 0)
+        commit("A", first, AgentWriteHooks(beforeReplacing: { firstInside.signal(); releaseFirst.wait() }))
+        #expect(firstInside.wait(timeout: .now() + 5) == .success)
+        commit("B", second, AgentWriteHooks(beforeReplacing: { secondInside.signal() }))
+        #expect(secondInside.wait(timeout: .now() + 0.3) == .timedOut, "The second write waits before its check while the first changes the file")
+        releaseFirst.signal()
+        #expect(done.wait(timeout: .now() + 5) == .success)
+        let both = results.withLock { $0 }
+        #expect(both["A"]?.contains(#""action":"overwritten""#) == true, "\(both)")
+        #expect(both["B"]?.contains("changed while it was being written") == true, "\(both)")
+        #expect(f.text("shared.txt") == "A")
+
+        // An undo of an earlier change waits the same way, and then finds the file changed.
+        let store = AgentBackupStore(directory: URL(fileURLWithPath: f.base + "/backups"))
+        _ = try AgentFileWriter.write(root: f.root, path: "shared.txt", change: .replace("C"), beforeChange: {}) { original in
+            try store.save(original, record: .init(path: f.root + "/shared.txt", root: f.root, rootKind: "project", relativePath: "shared.txt",
+                                                   chat: UUID(), toolRecord: "1:0:u", tool: "write_file", savedAt: Date(), original: original,
+                                                   action: "overwritten", written: Data("C".utf8)))
+        }
+        let (record, folder) = try #require(store.find(toolRecord: "1:0:u"))
+        let later = try plan("D")
+        commit("D", later, AgentWriteHooks(beforeReplacing: { firstInside.signal(); releaseFirst.wait() }))
+        #expect(firstInside.wait(timeout: .now() + 5) == .success)
+        let undone = Mutex<AgentUndoRefusal??>(nil), undoEnded = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            let refusal = AgentFileUndo.undo(record, copy: folder, policy: AgentWritePolicy(home: "/nonexistent"))
+            undone.withLock { $0 = .some(refusal) }
+            undoEnded.signal()
+        }
+        #expect(undoEnded.wait(timeout: .now() + 0.3) == .timedOut, "The undo waits while the other chat's write changes the file")
+        releaseFirst.signal()
+        #expect(undoEnded.wait(timeout: .now() + 5) == .success && done.wait(timeout: .now() + 5) == .success)
+        #expect(undone.withLock { $0 } == .some(.changed) && f.text("shared.txt") == "D", "The undo finds the write's file and leaves it")
+    }
+
     @Test func foldersThatCanOnlyBeRead() {
         let policy = AgentWritePolicy(home: "/Users/someone")
         let readOnly = [
@@ -2367,6 +2472,31 @@ extension AgentTrash {
         hold.release()
         try await eventually("undo ends") { chat.store.undoingTools.isEmpty }
         #expect(chat.store.tools[0].undo == .undone && chat.store.canSubmit)
+    }
+
+    /// Quitting waits for an undo under way, as for a turn, so the file put back and its card
+    /// saying so are saved together, never the change on disk with the card still offering Undo.
+    @Test func quittingWaitsForAnUndoUnderWay() async throws {
+        let root = try WriteToolHarnessTests.project(["notes.txt": "alpha\n"])
+        let hold = WriteToolHarnessTests.Hold()
+        let chat = Chat(FinderRootTests.oneByOne([("write_file", #"{"path":"new.txt","content":"hi"}"#)]), project: root,
+                        trash: AgentTrash { url in hold.wait(); try AgentTrash.into(FileManager.default.temporaryDirectory.appendingPathComponent("echo-trash-\(UUID())")).move(url) })
+        defer { Self.remove(chat, root) }
+        try await FinderRootTests.run(chat, "写")
+        let workspace = WorkspaceStore(initialStore: chat.store)
+        // An unsaved workspace keeps no copies; the chat's own folder holds the write's.
+        chat.store.backupDirectory = chat.backups
+        chat.store.undo(chat.store.tools[0].id)
+        try await eventually("undo under way") { hold.arrivals == 1 }
+        @MainActor final class Quit { var done = false }
+        let quit = Quit()
+        let quitting = Task { await workspace.prepareForTermination(); quit.done = true }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!quit.done, "Quitting waits while the undo runs")
+        hold.release()
+        await quitting.value
+        #expect(chat.store.tools[0].undo == .undone && chat.store.undoingTools.isEmpty,
+                "The undo's result reached the card before the conversation was shut down")
     }
 
     /// An overwrite or edit undone puts back the original's permission bits, extended attributes,
