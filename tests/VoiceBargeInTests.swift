@@ -39,7 +39,7 @@ import Foundation
         try await eventually("audio.pendingPlays == 1") { audio.pendingPlays == 1 }
     }
     /// Sends `count` packets and waits until the call has handled them all, used or dropped.
-    func frames(_ count: Int, _ data: Data = VoiceTests.activityPCM(), epoch: Int? = nil) async throws {
+    func frames(_ count: Int, _ data: Data = VoiceFixtureSupport.activityPCM(), epoch: Int? = nil) async throws {
         let epoch = epoch ?? audio.captureEpoch, handled = audio.handledPackets
         for _ in 0..<count { audio.input?.yield(.init(data: data, epoch: epoch)) }
         try await eventually("the call handles \(count) captured packets") { audio.handledPackets >= handled + count }
@@ -55,7 +55,7 @@ import Foundation
     func recognize() async throws {
         let opened = recognizers.count
         try await frames(12) // acoustic tail, deliberately loud to prove it is excluded
-        try await frames(5, VoiceTests.activityPCM(amplitude: 0.08))
+        try await frames(5, VoiceFixtureSupport.activityPCM(amplitude: 0.08))
         try await eventually("the confirming recognizer receives the clean audio") {
             recognizers.count == opened + 1 && recognizers.last?.receivedAudio.count == 1
         }
@@ -63,16 +63,13 @@ import Foundation
     func shutdown() { voice.shutdown(); store.shutdown() }
 }
 
-extension VoiceTests {
-    static func activityPCM(amplitude: Double = 0.05, samples: Int = 320) -> Data {
-        VoiceFixtureSupport.activityPCM(amplitude: amplitude, samples: samples)
-    }
-
+extension EchoVoiceScenarios {
+@Suite(.serialized) enum VoiceBargeInTests {
     @Test @MainActor static func bargeInGateTests() {
         _ = NSApplication.shared
-        let voice = activityPCM(), silence = Data(repeating: 0, count: 640)
+        let voice = VoiceFixtureSupport.activityPCM(), silence = Data(repeating: 0, count: 640)
         var gate = VoiceBargeInGate()
-        for frame in [silence, activityPCM(amplitude: 0.002), Data([1]), activityPCM(amplitude: 0)] {
+        for frame in [silence, VoiceFixtureSupport.activityPCM(amplitude: 0.002), Data([1]), VoiceFixtureSupport.activityPCM(amplitude: 0)] {
             #expect(gate.accept(frame) == nil, "silence, low noise and malformed PCM cannot pause")
         }
         for _ in 0..<4 { #expect(gate.accept(voice) == nil, "activity must be sustained before pausing") }
@@ -162,7 +159,7 @@ extension VoiceTests {
             try await f.recognize()
             #expect(f.recognizers.count == 2 && f.audio.playbackPaused && f.store.task?.status == .completed,
                   "fresh ASR is opened only after independent post-tail activity")
-            #expect(f.recognizers[1].receivedAudio == [Data(repeating: activityPCM(amplitude: 0.08), count: 5)],
+            #expect(f.recognizers[1].receivedAudio == [Data(repeating: VoiceFixtureSupport.activityPCM(amplitude: 0.08), count: 5)],
                   "upload begins with clean pre-roll, excluding all playback and tail samples")
             f.recognizers[0].emit("迟到的定稿", start: 0, end: 300, final: true)
             #expect(f.userTexts.count == 1 && !f.synths[0].cancelled, "old ASR cannot confirm the probe")
@@ -349,7 +346,7 @@ extension VoiceTests {
         do {
             let audio = FakeAudio(), synth = FakeSynthesizer(), permission = HeldPermission()
             synth.emitsAudio = true
-            let (store, puppet) = agentStore()
+            let (store, puppet) = VoiceTests.agentStore()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                 synthesizer: { synth }, captureTimeout: .milliseconds(50), permission: { await permission.ask() })
             let conversation = WorkspaceConversation(store: store)
@@ -370,6 +367,8 @@ extension VoiceTests {
                   "local monitoring also enforces the first-capture watchdog")
         }
     }
+}
+
 }
 
 private extension Data {

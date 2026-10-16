@@ -2,7 +2,8 @@ import AppKit
 import Testing
 import Foundation
 
-extension VoiceTests {
+extension EchoVoiceScenarios {
+@Suite(.serialized) enum AgentVoiceTests {
     /// Speech while the Agent works steers the same run; a call waiting for Finder and a project
     /// queue keep voice input open; mute closes only input; Stop pauses submission until cleanup; Continue
     /// appends nothing; ending the call leaves the Agent running.
@@ -501,9 +502,7 @@ extension VoiceTests {
             }
         }
     }
-}
 
-extension VoiceTests {
     /// The Live Voice contract on the native engine, with the real harness and a scripted model:
     /// speech while the Agent works steers the same run, only the final reply is spoken and
     /// exactly once, Stop pauses submission until cleanup, and Continue appends nothing.
@@ -553,6 +552,8 @@ extension VoiceTests {
         try await eventually("continued", timeout: .seconds(8)) { !f.store.isGenerating }
         #expect(f.store.messages.filter { $0.role == .user }.count == users && f.store.responseMessage?.content == "继续后的回复")
     }
+}
+
 }
 
 /// Answers finder_location only when the test opens the gate; no test asks the real Finder.

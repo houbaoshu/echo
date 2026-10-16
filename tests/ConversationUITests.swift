@@ -3048,7 +3048,7 @@ private struct ComposerHeightHost: View {
 
         // Stopping the turn takes half-heard words with it: nothing unsent is left in the chat
         // looking like a message. (A final the session refuses is pinned on the controller, in
-        // VoiceTests.agentRefusedFinalTests.)
+        // AgentVoiceTests.agentRefusedFinalTests.)
         let settled = store.messages.filter { $0.role == .user }.map(\.content)
         recognizers.last?.emit("还没说完", final: false, start: 400)
         try await settle("the half-heard words stand in") { standIns() == 1 }
