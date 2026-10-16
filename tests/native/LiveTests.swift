@@ -32,6 +32,9 @@ final class LiveTests: XCTestCase {
     @MainActor func testWebSearchResponses() async throws {
         try await AgentLiveTests.runWebSearch(protocols: [.responses])
     }
+    @MainActor func testImageGeneration() async throws {
+        try await AgentLiveTests.runImageGeneration()
+    }
     @MainActor func testMemoryChatCompletions() async throws {
         try await AgentLiveTests.runMemory(protocols: [.chatCompletions])
     }

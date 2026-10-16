@@ -1237,6 +1237,72 @@
         }
       }
     },
+    "图片已生成，但没能保存：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The image was generated but couldn’t be saved: %@"
+          }
+        }
+      }
+    },
+    "图片服务不接受这个 API Key（%@）。请在设置的模型页检查火山方舟的 API Key。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The image service didn’t accept this API key (%@). Check the Volcengine Ark API key on the Model page in Settings."
+          }
+        }
+      }
+    },
+    "图片服务没有在 %lld 秒内完成。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The image service didn’t finish within %lld seconds."
+          }
+        }
+      }
+    },
+    "图片服务的返回无法识别。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The image service returned a response Echo couldn’t read."
+          }
+        }
+      }
+    },
+    "图片服务返回 HTTP %lld。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The image service returned HTTP %lld."
+          }
+        }
+      }
+    },
+    "图片服务返回错误：%@（%@）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The image service returned an error: %1$@ (%2$@)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "图片服务返回错误：%1$@（%2$@）"
+          }
+        }
+      }
+    },
     "图片超过 32 MiB，无法预览。" : {
       "localizations" : {
         "en" : {
@@ -2591,6 +2657,16 @@
         }
       }
     },
+    "无法连接图片服务：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t connect to the image service: %@"
+          }
+        }
+      }
+    },
     "无法连接豆包搜索：%@" : {
       "localizations" : {
         "en" : {
@@ -3317,6 +3393,16 @@
         }
       }
     },
+    "正在生成图片 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generating image · %@"
+          }
+        }
+      }
+    },
     "正在确认讲话…" : {
       "localizations" : {
         "en" : {
@@ -3734,6 +3820,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Shows or hides this project’s chats."
+          }
+        }
+      }
+    },
+    "生成图片 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generate image · %@"
           }
         }
       }

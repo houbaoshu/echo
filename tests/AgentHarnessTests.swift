@@ -24,6 +24,8 @@ import Testing
         let trash = FileManager.default.temporaryDirectory.appendingPathComponent("echo-trash-\(UUID())")
         /// The memory file, in a folder of its own that only a memory call creates; never the person's.
         let memory = AgentMemoryFile(folder: FileManager.default.temporaryDirectory.appendingPathComponent("echo-memory-\(UUID())"))
+        /// Where generated images go by default, which only a generate_image call creates; never the person's Pictures.
+        let pictures = FileManager.default.temporaryDirectory.appendingPathComponent("echo-pictures-\(UUID())/Echo")
         var saved: [TaskStore.Snapshot] = []
         var saveFailure: ((TaskStore.Snapshot) -> Bool)?
         var events: [String] = []
@@ -32,7 +34,7 @@ import Testing
              finder: FakeFinder = FakeFinder(), writePolicy: AgentWritePolicy = AgentWritePolicy(),
              writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
              trash: AgentTrash? = nil, calendar: FakeCalendarStore = FakeCalendarStore(), clock: AgentClock = AgentCalendarTests.clock,
-             opener: FakeOpener = FakeOpener(), webSearch: DoubaoSearch? = nil) {
+             opener: FakeOpener = FakeOpener(), webSearch: DoubaoSearch? = nil, imageGenerator: ArkImageGenerator? = nil) {
             let model = ScriptedAgentModel(step: step)
             self.model = model
             self.project = project
@@ -40,7 +42,8 @@ import Testing
             self.opener = opener
             let harness = AgentHarness(resolveModel: { model.factory }, finder: finder, writePolicy: writePolicy, writeHooks: writeHooks,
                                        attachmentHooks: attachmentHooks, trash: trash ?? AgentTrash.into(self.trash),
-                                       calendar: calendar, clock: clock, opener: opener, webSearch: { webSearch }, memory: memory)
+                                       calendar: calendar, clock: clock, opener: opener, webSearch: { webSearch },
+                                       imageGenerator: { imageGenerator }, picturesFolder: pictures, memory: memory)
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.backupDirectory = backups
             // As the workspace answers: a project whose folder is gone is missing.

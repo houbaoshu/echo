@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import ImageIO
 
 /// Opt-in real service acceptance. Uses saved credentials only in memory and
 /// synthetic conversations with disposable projects, never the user's history.
@@ -324,6 +325,44 @@ import FoundationModels
             fflush(nil)
         }
         guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过联网搜索验收。") }
+    }
+
+    /// One image, end to end: the saved model calls generate_image for a square picture, the Agent
+    /// Plan makes it with the saved Volcengine Ark key and vision model, and it is saved as a JPEG of
+    /// the size asked for, in a disposable folder instead of Pictures/Echo. One request to the image
+    /// service, whose time this prints.
+    static func runImageGeneration() async throws {
+        let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
+        let (saved, key) = try settings.savedModelCredentials()
+        guard let generator = ArkImageGenerator.generator(for: settings) else { throw SettingsError.arkKeyMissing }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")
+        let pictures = root.appendingPathComponent("Pictures/Echo")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        print("Disposable live workspace and images: \(root.path)"); fflush(nil)
+        let endpoint = AgentEndpoint(saved, key: key)
+        let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("workspace.json")),
+                                       harnessFactory: {
+            AgentHarness(resolveModel: {
+                let transport = AgentTransport.make(for: endpoint)
+                return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
+            }, calendar: FakeCalendarStore(), opener: FakeOpener(), imageGenerator: { generator }, picturesFolder: pictures)
+        })
+        defer { Task { await workspace.prepareForTermination() } }
+        let chat = workspace.newConversation()
+        let start = ContinuousClock.now
+        chat.store.send("画一张正方形的图：一只橘猫趴在洒满阳光的木窗台上。画好后告诉我存在哪里。")
+        try await wait(chat.store)
+        let calls = chat.store.tools.filter { $0.tool == GenerateImageTool.toolName }
+        let reply = chat.store.messages.last { $0.role == .assistant }?.content ?? ""
+        guard chat.store.task?.status == .completed, calls.count == 1, let call = calls.first, call.state == .finished,
+              let file = AgentImageCard(tool: call).file, let data = try? Data(contentsOf: file),
+              let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetType(source) as String? == "public.jpeg",
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              properties[kCGImagePropertyPixelWidth] as? Int == 2048, properties[kCGImagePropertyPixelHeight] as? Int == 2048 else {
+            throw SettingsError("没有按要求生成图片：\(chat.store.tools.map { "\($0.tool ?? "") \($0.command) \($0.result?.prefix(300) ?? "")" }) \(reply.prefix(300))")
+        }
+        print("PASS: generate_image \(call.command) → \(file.path) 2048×2048 \(data.count) bytes, turn \(start.duration(to: .now))")
+        print("Reply: \(reply.prefix(300))"); fflush(nil)
     }
 
     /// In the project just read: the service edits note.txt and creates summary.txt with real

@@ -58,13 +58,16 @@ import Testing
         #expect(settings.arkDraft.useForChat == on, "The switch turns on only with a key")
         #expect(settings.canTestArk == (arkKey != nil) && settings.canTestModelService, "Each group's test needs its own key")
         if arkKey != nil {
-            #expect(DoubaoSearch.searcher(for: settings) == nil && !settings.canTestVoice, "An unsaved key is not used yet")
+            #expect(DoubaoSearch.searcher(for: settings) == nil && ArkImageGenerator.generator(for: settings) == nil && !settings.canTestVoice,
+                    "An unsaved key is not used yet")
         }
         settings.save(); settings.saveArk()
         try #require(settings.notice == nil && settings.arkNotice == nil && !settings.isDirty && !settings.isArkDirty)
         for store in [settings, SettingsStore(url: url, secrets: secrets)] {
             let saved = arkKey == nil ? nil : "ark-key"
             #expect(DoubaoSearch.searcher(for: store)?.key == saved, "search")
+            let images = ArkImageGenerator.generator(for: store)
+            #expect(images?.key == saved && images.map { $0.model == "doubao-seedream-5.0-pro" } != false, "images, with the vision model")
             #expect((try? store.savedVoiceCredentials().key) == saved, "voice")
             #expect(store.canTestVoice == (saved != nil))
             let chat = try store.savedModelCredentials()

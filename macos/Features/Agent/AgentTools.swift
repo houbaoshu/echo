@@ -827,14 +827,15 @@ enum AgentFileWriter {
     struct Errno: Error { let code: Int32 }
 
     /// The file and what describes it. The file is checked again once open, since it may have been
-    /// replaced after it was looked at. Reading a file that is not downloaded yet waits for it.
-    static func read(_ directory: Int32, _ name: String, path: String) -> Result<AgentOriginalFile, Errno> {
+    /// replaced after it was looked at. Reading a file that is not downloaded yet waits for it. A
+    /// file over `limit` bytes is not read.
+    static func read(_ directory: Int32, _ name: String, path: String, limit: Int = maxFileBytes) -> Result<AgentOriginalFile, Errno> {
         let file = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard file >= 0 else { return .failure(Errno(code: errno)) }
         defer { close(file) }
         var info = stat()
         guard fstat(file, &info) == 0 else { return .failure(Errno(code: errno)) }
-        guard info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o111 == 0, info.st_size <= maxFileBytes else { return .failure(Errno(code: EPERM)) }
+        guard info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o111 == 0, info.st_size <= limit else { return .failure(Errno(code: EPERM)) }
         var data = Data(count: Int(info.st_size))
         var total = 0
         while total < data.count {
@@ -1126,10 +1127,11 @@ enum AgentFileUndo {
         case S_IFREG: break
         default: return .notFile
         }
-        // Echo never writes an executable file or one over 4 MiB, so such a file was changed since.
-        guard info.st_mode & 0o111 == 0, info.st_size <= AgentFileWriter.maxFileBytes else { return .changed }
+        // Echo never writes an executable file, or a text file over 4 MiB, so such a file was changed since.
+        let limit = AgentHarness.imageTools.contains(record.tool) ? AgentImageFiles.maxBytes : AgentFileWriter.maxFileBytes
+        guard info.st_mode & 0o111 == 0, info.st_size <= limit else { return .changed }
         let current: AgentOriginalFile
-        switch AgentFileWriter.read(fd, name, path: record.root + "/" + path) {
+        switch AgentFileWriter.read(fd, name, path: record.root + "/" + path, limit: limit) {
         case .success(let file): current = file
         case .failure(let error): return refusal(error.code, in: fd, name)
         }

@@ -480,7 +480,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             undoingTools.remove(toolID)
             guard !retired else { return }
             if let refusal, let index = tools.firstIndex(where: { $0.id == toolID }) { tools[index].undo = .refused(refusal) }
-            if refusal == nil, AgentHarness.writeTools.contains(tool.tool ?? "") { onFilesChanged?() }
+            if refusal == nil, AgentHarness.writeTools.union(AgentHarness.imageTools).contains(tool.tool ?? "") { onFilesChanged?() }
         }
     }
     var responseMessage: ConversationMessage? { messages.first { $0.id == responseMessageID } }

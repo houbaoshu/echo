@@ -280,8 +280,8 @@ enum ProjectFileClick {
 /// chat app gets their URLs. A drag from a selected row carries the whole selection, one from any
 /// other row that row alone. The drag only ever offers copy, so a drop on a Finder window on the
 /// same disk copies instead of moving anything out of the project, and ⌘, which asks Finder to
-/// move, gets no drop at all.
-private struct ProjectFileDrag: ViewModifier {
+/// move, gets no drop at all. A generated image's card drags its file out the same way.
+struct ProjectFileDrag: ViewModifier {
     let url: URL?
     /// Every URL the drag carries, read once it begins.
     let draggedURLs: () -> [URL]

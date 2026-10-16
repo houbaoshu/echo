@@ -285,6 +285,12 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     private let webSearch: @MainActor () -> DoubaoSearch?
     /// The running turn's searcher; nil offers no web_search.
     private var searcher: DoubaoSearch?
+    /// Read when a turn starts: the generator generate_image uses, when the Volcengine Ark key is saved.
+    private let imageGeneration: @MainActor () -> ArkImageGenerator?
+    /// The running turn's generator; nil offers no generate_image.
+    private var imageGenerator: ArkImageGenerator?
+    /// Where generated images go unless the person asks for the chat's folder.
+    private let picturesFolder: URL
     /// What the person asked the Agent to remember; nil offers no memory tools and gives no memory.
     private let memory: AgentMemoryFile?
     /// Write calls this turn that left a record their card can undo from.
@@ -319,6 +325,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
          writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
          trash: AgentTrash = .system, calendar: any AgentCalendarStore = EventKitCalendarStore.shared, clock: AgentClock = .system,
          opener: any AgentOpener = WorkspaceOpener.shared, webSearch: @escaping @MainActor () -> DoubaoSearch? = { nil },
+         imageGenerator: @escaping @MainActor () -> ArkImageGenerator? = { nil }, picturesFolder: URL = AgentImageFiles.picturesFolder,
          memory: AgentMemoryFile? = nil) {
         self.resolveModel = resolveModel
         self.local = local
@@ -332,6 +339,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         self.clock = clock
         self.opener = opener
         self.webSearch = webSearch
+        self.imageGeneration = imageGenerator
+        self.picturesFolder = picturesFolder
         self.memory = memory
     }
 
@@ -345,7 +354,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             let session = AgentTransport.make(for: endpoint)
             return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: session, ledger: ledger, budget: budget) }
         }, local: local, localOnly: { alwaysLocal || settings.snapshot.localModelOnly },
-                  webSearch: { DoubaoSearch.searcher(for: settings) }, memory: settings.memoryFile)
+                  webSearch: { DoubaoSearch.searcher(for: settings) }, imageGenerator: { ArkImageGenerator.generator(for: settings) },
+                  memory: settings.memoryFile)
     }
 
     var isRunning: Bool { turn != nil }
@@ -531,8 +541,9 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             }
             catch { return finish(.failed(error.localizedDescription, notice: true)) }
         }
-        // The local model has no tools, so no search either.
+        // The local model has no tools, so no search or images either.
         searcher = route.isLocal ? nil : webSearch()
+        imageGenerator = route.isLocal ? nil : imageGeneration()
 
         let budget = GenerationBudget(limit: Self.generationLimit, steering: steering)
         state.turns.append(.init(start: state.entries.count))
@@ -948,8 +959,10 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     nonisolated static let openTools: Set<String> = ["open_app", "open_url"]
     /// The tools that change the memory.
     nonisolated static let memoryTools: Set<String> = ["remember", "update_memory"]
+    /// The tools that create a file of their own, outside the write tools' rules.
+    nonisolated static let imageTools: Set<String> = [GenerateImageTool.toolName]
     /// Every tool that changes something: each waits for every call written before it in its batch.
-    private static let changeTools = writeTools.union(calendarChangeTools).union(openTools).union(memoryTools)
+    private static let changeTools = writeTools.union(calendarChangeTools).union(openTools).union(memoryTools).union(imageTools)
     /// The tools a batch orders; a call to any other tool never runs, so nothing waits for it.
     private static let orderedTools: Set<String> = changeTools.union(calendarTools).union(["list_files", "read_file", "finder_location"])
 
@@ -1265,6 +1278,120 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         }
     }
 
+    /// One generate_image call, in its turn: after every call written before it in its batch. When
+    /// the image goes in the chat's folder, the folder is found first, so a chat without one
+    /// generates nothing. A Stop or newer input cancels the request at once. Once the image is in,
+    /// the call is saved before the file is written, and the write then runs to its end, as a write
+    /// call's does; the card undoes it like a file write_file created.
+    fileprivate func generateImage(call identity: GenerationID?, _ arguments: Result<AgentImageRequest, AgentInvalidArguments>) async throws -> String {
+        guard isRunning else { throw CancellationError() }
+        let serial = turnSerial
+        let key = identity.flatMap { callKeys[$0] }
+        defer { if let key, serial == turnSerial { finishCall(key) } }
+        if let key { try await waitForEarlierCalls(key) { _ in true } }
+        if storageFailure != nil || stopRequested { throw CancellationError() }
+        if steering.isPending { return AgentToolResult.superseded }
+        let request: AgentImageRequest
+        switch arguments {
+        case .failure(let invalid): return invalid.result
+        case .success(let valid): request = valid
+        }
+        guard let generator = imageGenerator else { return AgentToolResult.failed("generate_image is not available: no Volcengine Ark key is saved") }
+
+        // The chat's folder, when the person asked for it; otherwise Pictures/Echo, made when the image is saved.
+        var chatRoot: (path: String, scope: AgentReadScope)?
+        if request.saveToChatFolder {
+            let folder: String, scope: AgentReadScope
+            switch try await AgentReadContext.resolve(call: identity, access: HarnessProjectAccess(harness: self),
+                                                      steering: steering, nothing: "generated") {
+            case .result(let result): return result
+            case .folder(let path, let kind): folder = path; scope = kind
+            }
+            if storageFailure != nil || stopRequested { throw CancellationError() }
+            if steering.isPending { return AgentToolResult.superseded }
+            guard let root = ProjectPath.canonical(folder) else {
+                return scope == .project ? AgentToolResult.failed(AgentToolResult.projectMissing(nothing: "generated"))
+                    : AgentToolResult.finderFolderMissing(name: (folder as NSString).lastPathComponent)
+            }
+            if let refusal = writePolicy.refusal(folder: root, scope: scope) {
+                return scope == .finder ? AgentToolResult.naming(folder: FileManager.default.displayName(atPath: root), in: AgentToolResult.failed(refusal))
+                    : AgentToolResult.failed(refusal)
+            }
+            chatRoot = (root, scope)
+            if let key { callDirectories[key] = root; project() }
+        }
+        let named = { (result: String) in
+            guard let chatRoot, chatRoot.scope == .finder else { return result }
+            return AgentToolResult.naming(folder: FileManager.default.displayName(atPath: chatRoot.path), in: result)
+        }
+
+        let generated: Result<AgentGeneratedImage, AgentImageFailure>
+        do {
+            generated = try await cancellingUnlessInterrupted { () async -> Result<AgentGeneratedImage, AgentImageFailure> in
+                do throws(AgentImageFailure) { return .success(try await generator.generate(request)) } catch { return .failure(error) }
+            }
+        } catch is WriteSuperseded {
+            return AgentToolResult.superseded
+        }
+        // A later turn may have begun while the image was made; this call belongs to one that ended.
+        guard serial == turnSerial, isRunning, !stopRequested, storageFailure == nil else { throw CancellationError() }
+        if steering.isPending { return AgentToolResult.superseded }
+        let image: AgentGeneratedImage
+        switch generated {
+        case .failure(let failure): return named(AgentImageResult.failed(failure))
+        case .success(let made): image = made
+        }
+
+        // The call is saved before the file is written, so a crash from here on reopens it as unknown.
+        do { try host?.harnessSave() }
+        catch { storageFailure = error.localizedDescription; throw error }
+        let directory = host?.harnessBackupDirectory(), chat = host?.harnessChatID
+        // The card's ID: turns count from 1, the batch's entry and the call ID come from the key.
+        let record = key.map { "\(state.turns.count):\($0)" } ?? ""
+        let base = AgentImageFiles.baseName(prompt: request.prompt, at: clock.now(), in: clock.timeZone)
+        let pictures = picturesFolder
+        writesInFlight += 1
+        let (output, folder) = await Task.detached { () -> (String, String?) in
+            let root: String
+            if let chatRoot { root = chatRoot.path } else {
+                do { try FileManager.default.createDirectory(at: pictures, withIntermediateDirectories: true) }
+                catch { return (AgentImageResult.notSaved(error.localizedDescription), nil) }
+                guard let canonical = ProjectPath.canonical(pictures.path) else { return (AgentImageResult.notSaved(String(cString: strerror(ENOENT))), nil) }
+                root = canonical
+            }
+            let rootKind = switch chatRoot?.scope {
+            case nil: AgentImageFiles.picturesRoot
+            case .finder?: "finder"
+            case .project?: "project"
+            }
+            let saved = AgentImageFiles.save(image, in: root, base: base) { name in
+                // Without a folder of records the image is still saved; it has no undo.
+                guard let directory, let chat else { return }
+                try AgentBackupStore(directory: directory).save(nil, record: .init(
+                    path: root + "/" + name, root: root, rootKind: rootKind, relativePath: name, chat: chat, toolRecord: record,
+                    tool: GenerateImageTool.toolName, savedAt: Date(), original: nil, action: "created", written: image.data))
+            }
+            switch saved {
+            case .failure(let failure): return (AgentImageResult.notSaved(failure.message), root)
+            case .success(let name):
+                let path = chatRoot == nil ? (pictures.path as NSString).abbreviatingWithTildeInPath + "/" + name : name
+                return (AgentImageResult.saved(image, path: path), root)
+            }
+        }.value
+        let result = named(output)
+        if let key {
+            finishedOutputs[key] = result
+            if let folder { callDirectories[key] = folder }
+            if directory != nil, chat != nil, AgentToolRecord.state(forResult: result, tool: GenerateImageTool.toolName) == .finished {
+                undoableCalls.insert(key)
+            }
+            project()
+        }
+        writesInFlight -= 1
+        if writesInFlight == 0 { let waiters = writeWaiters; writeWaiters = []; waiters.forEach { $0.resume() } }
+        return result
+    }
+
     /// Runs `work` on a thread of its own. A Stop or newer input ends the wait at once, throwing
     /// CancellationError or WriteSuperseded; the work runs on and its result is dropped.
     private func offMainUnlessInterrupted<T: Sendable>(_ work: @escaping @Sendable () -> T) async throws -> T {
@@ -1287,6 +1414,25 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             }
         } onCancel: {
             once.resume(throwing: CancellationError())
+        }
+    }
+
+    /// As `unlessInterrupted`, but a Stop or newer input also cancels `work`, so a request under way
+    /// is abandoned rather than left to run on.
+    private func cancellingUnlessInterrupted<T: Sendable>(_ work: @escaping @Sendable () async -> T) async throws -> T {
+        if steering.isPending { throw WriteSuperseded() }
+        let once = ResumeOnce<T>()
+        let worker = Task.detached { once.resume(returning: await work()) }
+        let id = UUID()
+        pendingPrepares[id] = { once.resume(throwing: $0); worker.cancel() }
+        defer { pendingPrepares[id] = nil }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                once.set(continuation)
+                if Task.isCancelled { once.resume(throwing: CancellationError()); worker.cancel() }
+            }
+        } onCancel: {
+            once.resume(throwing: CancellationError()); worker.cancel()
         }
     }
 
@@ -1321,6 +1467,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 ListEventsTool(access: calendar), CreateEventTool(access: calendar),
                 OpenAppTool(access: open), OpenURLTool(access: open)]
             + (searcher == nil ? [] : [WebSearchTool(access: HarnessSearchAccess(harness: self))])
+            + (imageGenerator == nil ? [] : [GenerateImageTool(access: HarnessImageAccess(harness: self))])
             + (memory == nil ? [] : [RememberTool(access: HarnessMemoryAccess(harness: self)), UpdateMemoryTool(access: HarnessMemoryAccess(harness: self))])
     }
 
@@ -1587,6 +1734,14 @@ private struct HarnessSearchAccess: AgentWebSearchAccess {
     }
 }
 
+private struct HarnessImageAccess: AgentImageAccess {
+    weak var harness: AgentHarness?
+    func generate(call: GenerationID?, _ request: Result<AgentImageRequest, AgentInvalidArguments>) async throws -> String {
+        guard let harness else { throw CancellationError() }
+        return try await harness.generateImage(call: call, request)
+    }
+}
+
 private struct HarnessMemoryAccess: AgentMemoryAccess {
     weak var harness: AgentHarness?
     func change(call: GenerationID?, _ request: Result<AgentMemoryChange, AgentInvalidArguments>) async throws -> String {
@@ -1658,7 +1813,7 @@ extension AgentToolRecord {
         switch tool {
         case nil: true
         case let name?: AgentHarness.writeTools.contains(name) || AgentHarness.calendarChangeTools.contains(name)
-            || AgentHarness.memoryTools.contains(name)
+            || AgentHarness.memoryTools.contains(name) || AgentHarness.imageTools.contains(name)
         }
     }
 
@@ -1683,6 +1838,7 @@ extension AgentToolRecord {
         case "open_app": return object?["name"] as? String ?? text
         case "open_url": return object?["url"] as? String ?? text
         case "web_search": return object?["query"] as? String ?? text
+        case "generate_image": return object?["prompt"] as? String ?? text
         // What the memory card names: the line remembered, the passage's new text, or the passage removed.
         case "remember": return (object?["text"] as? String).map(AgentMemoryEdit.line) ?? text
         case "update_memory":
@@ -1706,6 +1862,7 @@ extension AgentToolRecord {
         case "open_app": String(localized: "正在打开应用 · \(String(display(call).prefix(60)))")
         case "open_url": String(localized: "正在打开网址 · \(String(display(call).prefix(60)))")
         case "web_search": String(localized: "正在搜索 · \(String(display(call).prefix(60)))")
+        case "generate_image": String(localized: "正在生成图片 · \(String(display(call).prefix(60)))")
         case "remember": String(localized: "正在记住 · \(String(display(call).prefix(60)))")
         case "update_memory": String(localized: "正在更新记忆 · \(String(display(call).prefix(60)))")
         default: String(localized: "正在调用工具 · \(call.toolName)")
@@ -1731,7 +1888,7 @@ extension AgentToolRecord {
             guard decoded?.action == nil, let tool else { return .finished }
             if AgentHarness.writeTools.contains(tool) { return .notWritten }
             return AgentHarness.calendarChangeTools.contains(tool) || AgentHarness.openTools.contains(tool)
-                || AgentHarness.memoryTools.contains(tool) ? .failed : .finished
+                || AgentHarness.memoryTools.contains(tool) || AgentHarness.imageTools.contains(tool) ? .failed : .finished
         }
     }
 

@@ -989,6 +989,10 @@ struct AgentToolView: View {
                         .accessibilityIdentifier("tool.undo")
                 }
             }
+            // A generated image shows whether or not the card is open.
+            if AgentImageCard.applies(to: tool), let file = AgentImageCard(tool: tool).file {
+                AgentImageThumbnail(url: file, pixels: AgentImageCard(tool: tool).pixels)
+            }
             if case .refused(let reason) = tool.undo {
                 Text(reason.message).font(.caption).foregroundStyle(.secondary)
             }
@@ -1066,8 +1070,8 @@ struct AgentToolView: View {
         }
     }
     /// Reminders and calendar cards, the cards of the tools that open an app or a page, search
-    /// cards and memory cards say what was done in words of their own. A search card also lists the
-    /// pages it found.
+    /// cards, memory cards and image cards say what was done in words of their own. A search card
+    /// also lists the pages it found.
     private var ownCard: (title: String, icon: String, lines: [String]?, links: [AgentSearchCard.Link])? {
         if AgentCalendarCard.applies(to: tool) {
             let card = AgentCalendarCard(tool: tool, locale: locale)
@@ -1083,6 +1087,10 @@ struct AgentToolView: View {
         }
         if AgentMemoryCard.applies(to: tool) {
             let card = AgentMemoryCard(tool: tool)
+            return (card.title, card.icon, card.lines, [])
+        }
+        if AgentImageCard.applies(to: tool) {
+            let card = AgentImageCard(tool: tool)
             return (card.title, card.icon, card.lines, [])
         }
         return nil
