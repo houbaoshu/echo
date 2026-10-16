@@ -252,7 +252,8 @@ enum AgentAttachedArguments {
 enum AgentToolPath {
     static func normalize(_ raw: String) -> String? {
         var path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.hasPrefix("/") else { return nil }
+        // The system reads a path only up to a NUL, so "..\0" would open "..".
+        guard !path.hasPrefix("/"), !path.utf8.contains(0) else { return nil }
         while path.hasPrefix("./") { path.removeFirst(2) }
         while path.hasSuffix("/") { path.removeLast() }
         if path == "." { path = "" }

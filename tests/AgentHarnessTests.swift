@@ -610,11 +610,15 @@ import Testing
         #expect(ListFilesTool.list(root: path, path: ".") == #"{"files":["binary.bin","dir/","huge.txt","long.txt","wide.txt"],"truncated":false}"#,
                 "Symbolic links are not listed")
         #expect(ListFilesTool.list(root: path, path: "./dir/") == #"{"files":[],"truncated":false}"#, ".git is skipped")
-        for escape in ["..", "../x", "/etc", "dir/../..", "link", "link/secret.txt"] {
+        // The system reads a path only up to a NUL: "..\0" names "..", whatever follows the NUL.
+        let sibling = outside.lastPathComponent
+        for escape in ["..", "../x", "/etc", "dir/../..", "link", "link/secret.txt", "..\u{0}", "..\u{0}/\(sibling)"] {
             let result = ListFilesTool.list(root: path, path: escape)
             #expect(result.contains(#""status":"failed""#), "\(escape): \(result)")
         }
-        for escape in ["../secret.txt", "/etc/hosts", "file-link", "link/secret.txt", "."] {
+        #expect(throws: ProjectPath.Failure.outsideProject) { try ProjectPath.open(root: path, path: "..\u{0}", directory: true) }
+        for escape in ["../secret.txt", "/etc/hosts", "file-link", "link/secret.txt", ".",
+                       "..\u{0}/\(sibling)/secret.txt", "..\u{0}x/\(sibling)/secret.txt"] {
             let result = ReadFileTool.read(root: path, path: escape, startLine: 1)
             #expect(result.contains(#""status":"failed""#) && !result.contains("secret\""), "\(escape): \(result)")
         }
@@ -1498,6 +1502,9 @@ import Testing
             ("/etc/x.txt", "path must stay inside the project: /etc/x.txt"),
             ("../x.txt", "path must stay inside the project"),
             ("dir/../../x.txt", "path must stay inside the project"),
+            // Read only up to the NUL, these would be "../x.txt" and "dir/x.txt".
+            ("..\u{0}/x.txt", "path must stay inside the project"),
+            ("dir\u{0}/x.txt", "path must stay inside the project"),
             ("link/x.txt", "not a directory: link/x.txt"),
             ("link/new/x.txt", "not a directory: link/new/x.txt"),
             ("file-link", "symbolic links are not followed: file-link"),

@@ -123,7 +123,8 @@ enum AgentTime: Sendable, Equatable {
     /// `2026-10-13` alone. A time without an offset is refused: whose 10:00 it is must be said.
     static func parse(_ raw: String) -> Result<AgentTime, AgentInvalidArguments> {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pattern = #"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(\.\d{1,9})?)?(Z|z|[+-]\d{2}(?::?\d{2})?)?)?$"#
+        // [0-9], not \d: \d also matches fullwidth and other scripts' digits, which Int() cannot read.
+        let pattern = #"^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(Z|z|[+-][0-9]{2}(?::?[0-9]{2})?)?)?$"#
         let regex = try! NSRegularExpression(pattern: pattern)
         let invalid = AgentInvalidArguments(result: AgentToolResult.failed(
             "\(raw) is not a time; use ISO 8601 with a UTC offset, such as 2026-10-13T10:00:00+08:00, or a date alone, such as 2026-10-13"))

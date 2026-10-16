@@ -237,7 +237,10 @@ import Testing
         #expect((try? AgentTime.parse(" 2026-10-13T02:00:00Z ").get()) == ten)
         #expect((try? AgentTime.parse("2026-10-13T10:00:00+0800").get()) == ten)
         #expect((try? AgentTime.parse("2026-10-13T02:00:00.500Z").get()) == .instant(Date(timeIntervalSince1970: 1_791_856_800.5)))
-        for bad in ["2026-02-30", "2026-10-13T25:00:00+08:00", "2026-13-01", "tomorrow", "2026-10-13T10:00:00+19:00"] {
+        // Digits of other scripts are refused, not read: fullwidth in each part, and Arabic-Indic.
+        for bad in ["2026-02-30", "2026-10-13T25:00:00+08:00", "2026-13-01", "tomorrow", "2026-10-13T10:00:00+19:00",
+                    "２０２６-１０-１３", "2026-10-13T１０:00:00+08:00", "2026-10-13T10:00:00+０８:００",
+                    "2026-10-13T10:00:00.５００+08:00", "٢٠٢٦-١٠-١٣"] {
             #expect(throws: AgentInvalidArguments.self, "\(bad)") { try AgentTime.parse(bad).get() }
         }
         #expect(AgentTimeText.now(Self.clock) == "Monday 2026-10-12 20:00 (Asia/Shanghai, UTC+08:00)")
