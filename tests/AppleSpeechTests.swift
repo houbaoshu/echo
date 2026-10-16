@@ -184,6 +184,28 @@ extension EchoVoiceScenarios {
                 "A failure delivers no final")
     }
 
+    /// The analyzer's results failing mid-dictation end it at once, cancelling the microphone's
+    /// feed, rather than once the person stops talking. A feed that ends normally waits for the relay.
+    @Test @MainActor static func theFirstFailureEndsTheAnalysis() async throws {
+        @MainActor final class Feed { var cancelled = false; var finished = false }
+        let feed = Feed()
+        let start = ContinuousClock.now
+        await #expect(throws: TestSpeechFailure.self) {
+            try await AppleSpeechRecognizer.analyze(feed: { @MainActor in
+                // Stands in for a microphone still recording: it would go on for two seconds.
+                do { try await Task.sleep(for: .seconds(2)) } catch { feed.cancelled = true; throw error }
+                feed.finished = true
+            }, relay: { throw TestSpeechFailure(description: "结果流失败") })
+        }
+        #expect(start.duration(to: .now) < .seconds(1) && feed.cancelled && !feed.finished,
+                "The failure ends the feed at once: \(start.duration(to: .now))")
+
+        feed.finished = false
+        try await AppleSpeechRecognizer.analyze(feed: { @MainActor in feed.finished = true },
+                                                relay: { try await Task.sleep(for: .milliseconds(50)) })
+        #expect(feed.finished, "Both sides ending normally is no failure")
+    }
+
     @Test @MainActor static func localeTests() async throws {
         let supported: Set<Locale> = [Locale(identifier: "zh_CN"), Locale(identifier: "en_US"), Locale(identifier: "fr-FR")]
         for preference in ["zh", "zh-CN", "zh_CN", "zh-Hans", "zh-Hans-CN", "zh-Hans-US"] {

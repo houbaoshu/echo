@@ -19,6 +19,41 @@ import Foundation
 
 extension EchoVoiceScenarios {
 @Suite(.serialized) enum DictationTests {
+    /// The engine is built off the main actor, as a call's is. While it builds, the recording shows
+    /// as preparing and can be cancelled, which ends the build without an error or a capture.
+    @Test @MainActor static func theEngineIsBuiltOffTheMainActor() async throws {
+        let audio = FakeAudio(), recognizer = DictationRecognizer(), (store, _) = VoiceTests.agentStore()
+        audio.holdsStarts = true
+        let dictation = DictationController(audio: audio, recognizer: { _ in recognizer }, permission: { true })
+        let call = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() },
+            synthesizer: { FakeSynthesizer() }, permission: { true })
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: call)
+        dictation.attach(workspace: workspace)
+        let conversation = workspace.selected!
+        defer { workspace.voice.shutdown(); workspace.shutdown() }
+
+        dictation.start(conversation: conversation)
+        try await eventually("the engine is being built") { audio.pendingStarts == 1 }
+        let preparing = ComposerPresentation(store: store, voice: call, dictation: dictation, conversationID: conversation.id)
+        #expect(dictation.state == .recording && !dictation.captureReady && !audio.capturing
+                && preparing.mode == .dictationPreparing && !preparing.primaryEnabled)
+        dictation.cancel()
+        #expect(dictation.state == .idle && dictation.error == nil)
+        let finished = audio.finishedStarts
+        audio.releaseStarts()
+        try await eventually("the cancelled build returns") { audio.finishedStarts == finished + 1 }
+        await nextMainTurn()
+        #expect(dictation.state == .idle && dictation.error == nil && !audio.capturing,
+                "The build the cancel ended is neither an error nor a capture")
+
+        dictation.start(conversation: conversation)
+        try await eventually("the engine is being built") { audio.pendingStarts == 1 }
+        audio.releaseStarts()
+        try await eventually("the recording runs") { dictation.captureReady && recognizer.pending != nil }
+        #expect(dictation.state == .recording && audio.capturing && audio.recoversDeviceSwitch == true)
+        dictation.cancel()
+    }
+
     @Test @MainActor static func recordFinishCancelAndPreview() async throws {
         let audio = FakeAudio(), recognizer = DictationRecognizer(), (store, puppet) = VoiceTests.agentStore()
         var prepareFailure: SettingsError? = SettingsError("无法下载 Apple 语音模型（zh-CN）：网络不可用")

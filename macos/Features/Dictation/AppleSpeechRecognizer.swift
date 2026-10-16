@@ -56,12 +56,7 @@ struct AppleSpeechSegment: Sendable {
                 let (inputs, input) = AsyncStream<AnalyzerInput>.makeStream()
                 try await analyzer.prepareToAnalyze(in: analyzerFormat)
                 try await analyzer.start(inputSequence: inputs)
-                try await withThrowingTaskGroup(of: Void.self) { group in
-                    group.addTask {
-                        for try await result in transcriber.results {
-                            output.yield(AppleSpeechSegment(text: String(result.text.characters), isFinal: result.isFinal, range: result.range))
-                        }
-                    }
+                try await AppleSpeechRecognizer.analyze(feed: { @MainActor in
                     for try await packet in audio {
                         for converted in try converter.convert(AppleSpeechRecognizer.pcmBuffer(packet), at: nil) { input.yield(converted) }
                     }
@@ -69,8 +64,11 @@ struct AppleSpeechSegment: Sendable {
                     input.finish()
                     try Task.checkCancellation()
                     try await analyzer.finalizeAndFinishThroughEndOfInput()
-                    try await group.waitForAll()
-                }
+                }, relay: {
+                    for try await result in transcriber.results {
+                        output.yield(AppleSpeechSegment(text: String(result.text.characters), isFinal: result.isFinal, range: result.range))
+                    }
+                })
                 output.finish()
             } catch { output.finish(throwing: error) }
         }
@@ -134,6 +132,20 @@ struct AppleSpeechSegment: Sendable {
         }
         try Task.checkCancellation()
         return AppleSpeechRecognizer(engine: engine)
+    }
+
+    /// Runs the microphone's feed into the analyzer, through its finalization, beside the relay of
+    /// its results. The first to fail ends the other at once: results that stop mid-dictation must
+    /// not wait for the person to stop talking to say so, while the microphone records for nothing.
+    static func analyze(feed: @escaping @MainActor @Sendable () async throws -> Void,
+                        relay: @escaping @Sendable () async throws -> Void) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await relay() }
+            group.addTask { try await feed() }
+            // waitForAll() would wait for both before throwing; next() throws the first failure, and
+            // leaving the group then cancels the other.
+            while try await group.next() != nil {}
+        }
     }
 
     static let pcmFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!

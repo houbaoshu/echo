@@ -122,8 +122,12 @@ import Observation
             guard self.generation == current, !Task.isCancelled else { return }
             guard allowed else { self.complete(error: String(localized: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。")); return }
             do {
-                // Follows a switch of the default devices at the same sample rate, as a call does.
-                let captured = try self.audio.start(capture: true, recoversDeviceSwitch: true)
+                // Follows a switch of the default devices at the same sample rate, as a call does, and
+                // like a call's its engine is built off the main actor, which it would hold for seconds;
+                // meanwhile the recording shows as preparing and can be cancelled.
+                let captured = try await self.audio.startInBackground(capture: true, recoversDeviceSwitch: true)
+                // Ended while the engine was built: its audio.stop() already let the engine go.
+                guard self.generation == current, !Task.isCancelled else { return }
                 self.captureReady = true
                 trace?.record("capture.ready", self.diagnosticState)
                 let (stream, input) = AsyncThrowingStream<Data, Error>.makeStream(bufferingPolicy: .bufferingOldest(10))
@@ -185,7 +189,11 @@ import Observation
                         self.complete(error: error is SettingsError ? error.localizedDescription : String(localized: "录音失败，请检查麦克风。"))
                     }
                 }
-            } catch { self.complete(error: String(localized: "无法启动麦克风，请检查输入设备。")) }
+            } catch {
+                // A cancellation is the stop() of the recording that ended meanwhile, or of a newer start.
+                guard self.generation == current, !(error is CancellationError) else { return }
+                self.complete(error: String(localized: "无法启动麦克风，请检查输入设备。"))
+            }
         }
     }
     /// Ends this recording. With `send`, the final transcript is sent once recognized instead of left for editing.

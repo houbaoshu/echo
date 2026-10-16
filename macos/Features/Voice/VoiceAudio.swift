@@ -410,8 +410,8 @@ extension AVAudioNode {
         engine?.mainMixerNode.outputVolume = muted ? 0 : 1
     }
 
-    /// Blocks the caller until the graph is running. Dictation, the diagnostic probe and the
-    /// speaker preview keep this; it still queues behind any background build in progress.
+    /// Blocks the caller until the graph is running. The diagnostic probe and the speaker preview
+    /// keep this; it still queues behind any background build in progress.
     func start(capture: Bool, recoversDeviceSwitch: Bool) throws -> AsyncThrowingStream<VoiceCapturePacket, Error> {
         stop()
         let (stream, continuation) = Self.makeCaptureStream()
