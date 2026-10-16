@@ -5,6 +5,32 @@ import Darwin
 import AppKit
 
 @MainActor @Suite(.serialized) enum ProjectFileBrowserTests {
+    /// A project's place in the tree is cached while another project shows, its text preview with
+    /// it, but not a decoded image, which can take 64 MiB: coming back reads the image again.
+    @Test static func cachedProjectsKeepNoDecodedImage() async throws {
+        let image = try #require(CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 0,
+                                           space: CGColorSpaceCreateDeviceRGB(),
+                                           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage())
+        let browser = ProjectFileBrowserStore(readDirectory: { _, _ in .loaded([]) }, readPreview: { _, path in
+            path.hasSuffix(".png") ? .image(image) : .text(path)
+        })
+        func showsImage() -> Bool { if case .image = browser.state.preview { true } else { false } }
+        let photos = WorkspaceProject(name: "photos", path: "/photos"), notes = WorkspaceProject(name: "notes", path: "/notes")
+        browser.select(project: photos)
+        browser.openFile("photo.png")
+        try await eventually("the image shows") { showsImage() }
+        browser.select(project: notes)
+        browser.openFile("notes.txt")
+        try await eventually("the text shows") { browser.state.preview == .text("notes.txt") }
+        browser.select(project: photos)
+        #expect(browser.state.preview == .loading && browser.state.showingFile && browser.state.selectedPath == "photo.png",
+                "The place comes back, the image does not")
+        try await eventually("the image is read again") { showsImage() }
+        browser.select(project: notes)
+        #expect(browser.state.preview == .text("notes.txt"), "A text preview is still kept")
+        browser.select(project: nil)
+    }
+
     @Test static func filesystemPermissionsWatchersAndPreviews() async throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("echo-files-\(UUID())").resolvingSymlinksInPath()

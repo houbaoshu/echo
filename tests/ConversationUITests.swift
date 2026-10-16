@@ -1485,6 +1485,105 @@ private struct ComposerHeightHost: View {
 
     }
 
+    /// With the chat window on a second display, ⌘K's palette opens centred on that window, on
+    /// its display. The panel is made at (0, 0), on the main display, and was kept there. Once
+    /// dragged, the panel stays on whichever display it was dragged to.
+    func testPaletteOpensOnTheChatWindowsScreen() {
+        let main = NSRect(x: 0, y: 0, width: 1920, height: 1055), second = NSRect(x: 1920, y: 0, width: 2560, height: 1415)
+        let host = NSRect(x: 2400, y: 300, width: 1280, height: 820), panel = NSSize(width: 640, height: 120)
+        let top = host.maxY - host.height * 0.22
+        let placed = SearchPaletteController.origin(host: host, panel: panel, anchorTop: top, anchorLeft: nil,
+                                                    hostScreen: second, panelScreen: main)
+        XCTAssertTrue(second.contains(NSRect(origin: placed, size: panel)) && abs(placed.x + panel.width / 2 - host.midX) <= 1,
+                      "The palette opens on the chat window's display, centred on it, got \(placed)")
+        // Dragged onto the main display, it is kept there as its height changes.
+        let dragged = SearchPaletteController.origin(host: host, panel: panel, anchorTop: 900, anchorLeft: 200,
+                                                     hostScreen: second, panelScreen: main)
+        XCTAssertTrue(dragged == NSPoint(x: 200, y: 780), "A dragged palette stays where it was left, got \(dragged)")
+    }
+
+    /// The project picker's search is the chat palette's AppKit field: ↑ / ↓ / Return / Escape reach
+    /// it as commands, after an input method has had the keys, and move, choose and close. The
+    /// commands are sent to the field editor directly, so no keyboard layout or input method is involved.
+    func testProjectPickerTakesNavigationAsCommands() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("picker-commands-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
+        defer { workspace.shutdown() }
+        for name in ["甲项目", "乙项目", "丙项目"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+            workspace.addProject(url: root.appendingPathComponent(name))
+        }
+        var selected: UUID?, closed = 0
+        let host = NSHostingView(rootView: ProjectSelectionPanel(workspace: workspace, selectedProjectID: nil,
+            select: { selected = $0 }, addFolder: { XCTFail("Navigation must not add a folder") }, close: { closed += 1 }))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 240), styleMask: .titled, backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded()
+        let field = try XCTUnwrap(findView(host) { ($0 as? NSTextField)?.isEditable == true } as? NSTextField)
+        let table = try XCTUnwrap(findView(host) { $0 is NSTableView } as? NSTableView)
+        XCTAssertTrue(field.accessibilityIdentifier() == "projectPicker.search" && field.accessibilitySubrole() != .searchField
+                      && field.placeholderString == String(localized: "搜索项目名称或路径") && field.frame.width > 200,
+                     "A bordered text field across the panel, got \(field.frame) \(String(describing: field.accessibilitySubrole()))")
+        XCTAssertTrue(window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        func command(_ selector: Selector) async throws {
+            editor.doCommand(by: selector)
+            try await Task.sleep(for: .milliseconds(60)); host.layoutSubtreeIfNeeded()
+        }
+        XCTAssertTrue(table.selectedRow == 0)
+        try await command(#selector(NSResponder.moveDown(_:)))
+        XCTAssertTrue(table.selectedRow == 1, "↓ moves the highlight, got \(table.selectedRow)")
+        try await command(#selector(NSResponder.moveUp(_:)))
+        XCTAssertTrue(table.selectedRow == 0 && selected == nil && closed == 0, "↑ moves it back without choosing")
+        try await command(#selector(NSResponder.insertNewline(_:)))
+        XCTAssertTrue(selected == workspace.projects[0].id && closed == 1, "Return chooses the highlighted project and closes")
+        try await command(#selector(NSResponder.cancelOperation(_:)))
+        XCTAssertTrue(closed == 2, "Escape closes")
+    }
+
+    /// A key shown in plain text is hidden again once Settings closes, on the voice section as on
+    /// the model section, and the key typed but not saved stays as it was.
+    func testRevealedAPIKeysHideWhenSettingsCloses() async throws {
+        let workspace = WorkspaceStore(initialStore: TaskStore(harness: idleAgent()))
+        defer { workspace.shutdown() }
+        let window = WorkspaceWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+                                     styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        let main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(), windowOverride: window,
+                                        settings: settingsWindowStore())
+        defer { main.shutdown() }
+        main.settings.selectProvider(.deepSeek)
+        // The reveal button is addressed by its label, which says what pressing it does.
+        func button(_ label: String, in value: Any, depth: Int = 0) -> AnyObject? {
+            guard depth < 30 else { return nil }
+            let object = value as AnyObject
+            if object.accessibilityRole?() == .button, object.accessibilityLabel?() == label { return object }
+            for child in object.accessibilityChildren?() ?? [] {
+                if let found = button(label, in: child, depth: depth + 1) { return found }
+            }
+            return nil
+        }
+        for section in [SettingsSection.voice, .model] {
+            main.settings.selectedSection = section
+            if section == .voice { main.settings.voiceAPIKey = "未保存的语音密钥" } else { main.settings.apiKey = "未保存的模型密钥" }
+            main.showSettings()
+            let settingsWindow = try XCTUnwrap(main.settingsController?.window)
+            let content = try XCTUnwrap(settingsWindow.contentView)
+            try await eventually("\(section): the key shows hidden", layingOut: content) { button("显示 API Key", in: content) != nil }
+            XCTAssertTrue(button("显示 API Key", in: content)?.accessibilityPerformPress?() == true)
+            try await eventually("\(section): the key shows in plain text", layingOut: content) { button("隐藏 API Key", in: content) != nil }
+            main.settingsController?.close()
+            main.showSettings()
+            try await eventually("\(section): hidden again after Settings reopens", layingOut: content) {
+                button("显示 API Key", in: content) != nil && button("隐藏 API Key", in: content) == nil
+            }
+            XCTAssertTrue(section == .voice ? main.settings.voiceAPIKey == "未保存的语音密钥" : main.settings.apiKey == "未保存的模型密钥",
+                         "\(section): the unsaved key is kept")
+            main.settingsController?.close()
+        }
+    }
+
     func testSettingsAndCompanionVoiceIntegration() async throws {
         let store = TaskStore(harness: idleAgent())
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() },

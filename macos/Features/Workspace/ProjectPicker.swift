@@ -107,7 +107,7 @@ struct ProjectSelectionPanel: View {
     let close: () -> Void
     @State private var query = ""
     @State private var highlighted: ProjectPickerOption = .add
-    @FocusState private var searchFocused: Bool
+    @State private var searchFocus = WorkspaceSearchFocus()
     @Environment(\.sidebarRowSize) private var sidebarRowSize
     /// A `.sidebar` row's height, which follows the sidebar size setting in System
     /// Settings. Measured on macOS 27: 24, 32 and 40pt, with the list adding 10pt above
@@ -142,9 +142,11 @@ struct ProjectSelectionPanel: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("搜索项目名称或路径", text: $query).textFieldStyle(.roundedBorder)
-                .focused($searchFocused).accessibilityIdentifier("projectPicker.search")
-                .onSubmit { choose(highlighted) }
+            // The chat palette's AppKit field: ↑ / ↓ / Return / Escape reach it as commands once an
+            // input method has had them, so a composing input method keeps them for its candidates.
+            WorkspaceSearchField(text: $query, focus: searchFocus, style: .bordered,
+                                 placeholder: String(localized: "搜索项目名称或路径"), identifier: "projectPicker.search",
+                                 onMove: { move($0) }, onSubmit: { choose(highlighted) }, onCancel: close)
             // The list draws the selection, but focus stays in the search field.
             // Changes from `move(_:)` need explicit scrolling to keep the row visible.
             ScrollViewReader { proxy in
@@ -166,11 +168,9 @@ struct ProjectSelectionPanel: View {
         }.padding(12).frame(width: 320).font(WorkspaceStyle.body)
             .onAppear {
                 highlighted = selectedProjectID.map(ProjectPickerOption.project) ?? options.first(where: enabled) ?? .add
-                searchFocused = true
+                searchFocus.focus()
             }
             .onChange(of: query) { _, _ in highlighted = options.first(where: enabled) ?? .add }
-            .onKeyPress(.downArrow) { move(1); return .handled }
-            .onKeyPress(.upArrow) { move(-1); return .handled }
             .onExitCommand(perform: close)
     }
     /// One row of the list. The list draws the selection, the hover and the row metrics;

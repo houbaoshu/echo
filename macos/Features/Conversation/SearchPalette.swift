@@ -41,10 +41,17 @@ import SwiftUI
 /// are still AppKit's own.
 ///
 /// It stays an AppKit field rather than a SwiftUI `TextField`: with `.onKeyPress`, a
-/// SwiftUI field took ↑ / ↓ from an input method whose candidate window was open.
+/// SwiftUI field took ↑ / ↓ from an input method whose candidate window was open. The project
+/// picker's search is one too, bordered, for the same reason.
 struct WorkspaceSearchField: NSViewRepresentable {
     @Binding var text: String
     let focus: WorkspaceSearchFocus
+    /// The palette's bare line, or the bordered field in the body font that the project picker's
+    /// search is, announced there as the text field it looks like.
+    enum Style { case palette, bordered }
+    var style = Style.palette
+    var placeholder = String(localized: "搜索聊天")
+    var identifier = "workspace.search"
     /// The system text style the query is set in. The magnifier beside it and the row's
     /// spacing follow it (see `ChatSearchPalette`).
     static let textStyle: NSFont.TextStyle = .title2
@@ -63,21 +70,28 @@ struct WorkspaceSearchField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(field: self) }
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField()
-        field.isBezeled = false
-        field.isBordered = false
-        field.drawsBackground = false
-        field.focusRingType = .none
+        switch style {
+        case .palette:
+            field.isBezeled = false
+            field.isBordered = false
+            field.drawsBackground = false
+            field.focusRingType = .none
+            field.font = Self.font
+            // Still announced as a search field, which is what it is.
+            field.setAccessibilitySubrole(.searchField)
+        case .bordered:
+            field.isBezeled = true
+            field.bezelStyle = .roundedBezel
+            field.font = .preferredFont(forTextStyle: .body)
+        }
         // One line that scrolls sideways, rather than wrapping a long query.
         field.usesSingleLineMode = true
         field.cell?.wraps = false
         field.cell?.isScrollable = true
         field.delegate = context.coordinator
-        field.placeholderString = String(localized: "搜索聊天")
-        field.font = Self.font
-        field.setAccessibilityLabel(String(localized: "搜索聊天"))
-        // Still announced as a search field, which is what it is.
-        field.setAccessibilitySubrole(.searchField)
-        field.setAccessibilityIdentifier("workspace.search")
+        field.placeholderString = placeholder
+        field.setAccessibilityLabel(placeholder)
+        field.setAccessibilityIdentifier(identifier)
         focus.field = field
         return field
     }
@@ -410,24 +424,32 @@ struct ChatSearchPalette: View {
     }
     private func applyAnchor(_ panel: SearchPalettePanel) {
         guard let anchorTop else { return }
-        let host = hostFrame()
         // Both the window's centre and the panel's width are read now rather than
         // remembered: the hosting controller settles the width from its SwiftUI content,
-        // which can land after the panel was first placed. Rounded, so the panel lands on
-        // whole points instead of straddling a pixel.
-        var origin = NSPoint(x: anchorLeft ?? (host.midX - panel.frame.width / 2).rounded(),
-                             y: anchorTop - panel.frame.height)
-        if let visible = (panel.screen ?? hostWindow()?.screen ?? NSScreen.main)?.visibleFrame {
-            // Where someone dragged it is theirs, even partly off screen; only the height
-            // changes from here on, and that is kept on screen.
-            if anchorLeft == nil {
-                origin.x = min(max(origin.x, visible.minX + 12), max(visible.minX, visible.maxX - panel.frame.width - 12))
-            }
-            origin.y = min(max(origin.y, visible.minY + 12), max(visible.minY, visible.maxY - panel.frame.height - 12))
-        }
+        // which can land after the panel was first placed.
+        let origin = Self.origin(host: hostFrame(), panel: panel.frame.size, anchorTop: anchorTop, anchorLeft: anchorLeft,
+                                 hostScreen: (hostWindow()?.screen ?? NSScreen.main)?.visibleFrame,
+                                 panelScreen: panel.screen?.visibleFrame)
         isPlacing = true
         defer { isPlacing = false }
         panel.setFrameOrigin(origin)
+    }
+    /// Where the panel goes: hanging from `anchorTop`, centred on the chat window until it is
+    /// dragged to `anchorLeft`, and kept inside a screen's visible frame. Until it is dragged
+    /// that is the chat window's screen: the panel is made at (0, 0), so its own screen is the
+    /// main display even when the window is on another one. Rounded, so the panel lands on
+    /// whole points instead of straddling a pixel.
+    static func origin(host: NSRect, panel: NSSize, anchorTop: CGFloat, anchorLeft: CGFloat?,
+                       hostScreen: NSRect?, panelScreen: NSRect?) -> NSPoint {
+        var origin = NSPoint(x: anchorLeft ?? (host.midX - panel.width / 2).rounded(), y: anchorTop - panel.height)
+        guard let visible = anchorLeft == nil ? hostScreen ?? panelScreen : panelScreen ?? hostScreen else { return origin }
+        // Where someone dragged it is theirs, even partly off screen; only the height
+        // changes from here on, and that is kept on screen.
+        if anchorLeft == nil {
+            origin.x = min(max(origin.x, visible.minX + 12), max(visible.minX, visible.maxX - panel.width - 12))
+        }
+        origin.y = min(max(origin.y, visible.minY + 12), max(visible.minY, visible.maxY - panel.height - 12))
+        return origin
     }
 
     /// The panel resizes as the result list grows and shrinks. Re-hang it from the same

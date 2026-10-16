@@ -71,7 +71,7 @@ struct SettingsView: View {
             // Keep the if/else chain: written as a switch, a swapped-in pane no longer
             // rejoins the key view loop (NativeAppKitEventTests.testSettingsKeyboardAndFocus).
             if section == .model { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
-            else if section == .voice { VoiceSettingsView(settings: settings, voice: voice) }
+            else if section == .voice { VoiceSettingsView(settings: settings, voice: voice).id(settings.presentationRevision) }
             else if section == .planet { PlanetSettingsView(planets: planets) }
             else { PetSettingsView(pets: pets, settings: settings) }
         }.formStyle(.grouped)

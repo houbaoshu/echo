@@ -68,7 +68,13 @@ enum ProjectFilePreview: Equatable, Sendable {
         let next = project.map { Location(projectID: $0.id, root: URL(fileURLWithPath: $0.path).standardizedFileURL.path) }
         guard next != location else { return }
         collapsePreview()
-        if let location { cache[location] = state }
+        if let location {
+            // Not a decoded image, which can take 64 MiB and would stay for as long as Echo runs:
+            // coming back to the project reads it again, as its refresh does anyway.
+            var kept = state
+            if case .image = kept.preview { kept.preview = .loading }
+            cache[location] = kept
+        }
         watcher = nil; watchID = UUID()
         generation = UUID(); directoryRequests = [:]; previewRequest = UUID()
         location = next
