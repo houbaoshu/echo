@@ -160,12 +160,16 @@ extension EchoVoiceScenarios {
         for (texts, reason) in [([String](), "Nothing recognized"), (["  "], "Only blank speech")] {
             let silent = try await AppleSpeechRecognizer.prepare(engine: engine)
             let starts = engine.starts
-            let silentTask = Task { try await silent.run(key: "", audio: pendingAudio) { _ in Issue.record("\(reason) must not be committed") } }
+            var received: [ASRResult] = []
+            let silentTask = Task { try await silent.run(key: "", audio: pendingAudio) { received.append($0) } }
             try await eventually("recognition starts the engine") { engine.starts == starts + 1 }
             for text in texts { engine.emit(text, final: true) }
             engine.end()
-            do { try await silentTask.value; Issue.record("\(reason) must report a useful error") }
-            catch { #expect(error.localizedDescription.contains("未识别到清晰语音"), "\(reason)") }
+            // Nothing said is no failure: the recording ends quietly with an empty final.
+            do { try await silentTask.value }
+            catch { Issue.record("\(reason) must end without an error: \(error)") }
+            #expect(received.count == 1 && received[0].streamFinal && received[0].result?.text == "",
+                    "\(reason) delivers only an empty final")
         }
 
         let failing = try await AppleSpeechRecognizer.prepare(engine: engine)

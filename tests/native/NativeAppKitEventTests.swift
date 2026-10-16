@@ -553,7 +553,18 @@ private struct HeldExecutor: LanguageModelExecutor {
             try await eventually("The turn stops") { selected.store.task?.status == .stopped }
         }
         _ = selected.store.send("generate during dictation")
+        // Escape during a recording ends just the recording, as its ✕ does: the reply goes on
+        // and the draft keeps what it had.
         press("\u{1b}", [])
+        XCTAssertTrue(!dictation.isActive && selected.store.isGenerating && selected.store.mainDraft == "未发送",
+                     "Escape cancels the recording alone: \(dictation.state), \(selected.store.mainDraft)")
+        press("d", [.control, .shift])
+        try await refresh()
+        permissionReply?.resume(returning: true); permissionReply = nil
+        try await refresh()
+        XCTAssertTrue(dictation.isActive && dictation.captureReady, "The next recording is listening")
+        recognizer.emit("追加听写")
+        press(".", .command)
         try await stopped()
         XCTAssertTrue(!selected.store.isGenerating && dictation.isActive, "Stop preserves ordinary recording")
         press("d", [.control, .shift])

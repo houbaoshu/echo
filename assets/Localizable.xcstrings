@@ -280,16 +280,6 @@
         }
       }
     },
-    "Apple 本地识别未识别到清晰语音，请重新录音。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No clear speech was recognized. Record again."
-          }
-        }
-      }
-    },
     "Apple 本地语音识别失败，请重新开始转写。" : {
       "localizations" : {
         "en" : {

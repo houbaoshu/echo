@@ -143,7 +143,10 @@ import SwiftUI
         rootController.view.addSubview(splitController.view)
         pin(splitController.view, to: rootController.view)
         window.contentViewController = rootController
-        window.onEscape = { [weak self] in self?.handleEscape() ?? false }
+        window.onEscape = { [weak self] in
+            guard let self else { return false }
+            return self.cancelDictation() || self.handleEscape()
+        }
         workspace.onRevealVoice = { [weak self] _ in self?.showWorkspace() }
         let toolbar = NSToolbar(identifier: "chiyan.main")
         toolbar.delegate = self; toolbar.displayMode = .iconOnly; toolbar.allowsUserCustomization = false
@@ -238,10 +241,17 @@ import SwiftUI
         if let owner = workspace.voice.snapshot.session.owner { workspace.endVoice(owner: owner) }
         else if let selected = workspace.selected { workspace.startVoice(conversationID: selected.id) }
     }
-    var canHandleEscape: Bool {
-        guard let window else { return false }
-        if window.attachedSheet != nil { return false }
+    /// Escape is the window's while no sheet is up and no input method is composing.
+    private var ownsEscape: Bool {
+        guard let window, window.attachedSheet == nil else { return false }
         if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
+        return true
+    }
+    /// Escape during a recording, wherever no control took it first, ends just the recording,
+    /// as its ✕ does. ⌘. stays Stop alone, so this is not part of `handleEscape`.
+    func cancelDictation() -> Bool { ownsEscape && workspace.dictation.cancelForEscape() }
+    var canHandleEscape: Bool {
+        guard ownsEscape else { return false }
         // The search palette is a window of its own, so Escape while it is up never
         // reaches this one.
         guard let presentation = composerPresentation else { return false }

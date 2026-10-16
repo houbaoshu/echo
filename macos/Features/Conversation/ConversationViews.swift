@@ -728,6 +728,7 @@ struct ConversationView: View {
         send()
     }
     private func escape() -> Bool {
+        if dictation.cancelForEscape() { return true }
         if presentation.canStop && presentation.stopEnabled { stop(); return true }
         return false
     }
@@ -756,7 +757,10 @@ struct ConversationView: View {
                            onEscape: escape, onDropFiles: canAttach ? { store.attachToMainDraft($0) } : nil, onSend: sendText)
                 .opacity(presentation.isDictating ? 0 : 1)
                 .allowsHitTesting(!presentation.isDictating)
-                .accessibilityHidden(presentation.isDictating)
+                // The editor keeps the keyboard under the recording preview, so it stays in the
+                // accessibility tree too, or the key window would report nothing focused at all.
+                // That takes saying: SwiftUI leaves a view at opacity 0 out of the tree by itself.
+                .accessibilityHidden(false)
                 .overlay(alignment: .topLeading) {
                     if presentation.isDictating {
                         Text(presentation.mode == .dictationFinalizing ? String(localized: "正在完成转写…") :

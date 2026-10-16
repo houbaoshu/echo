@@ -27,6 +27,44 @@
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
+      <PreActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Record input sources"
+               scriptText = "/usr/bin/xcrun swift &quot;$PROJECT_DIR/scripts/ui-test-input-sources.swift&quot; record &quot;$PROJECT_DIR/build&quot; || true&#10;"
+               shellToInvoke = "/bin/sh">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "E0000000000000000000002F"
+                     BuildableName = "Echo.app"
+                     BlueprintName = "Echo"
+                     ReferencedContainer = "container:Echo.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PreActions>
+      <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Restore input sources"
+               scriptText = "/usr/bin/xcrun swift &quot;$PROJECT_DIR/scripts/ui-test-input-sources.swift&quot; restore &quot;$PROJECT_DIR/build&quot; || true&#10;"
+               shellToInvoke = "/bin/sh">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "E0000000000000000000002F"
+                     BuildableName = "Echo.app"
+                     BlueprintName = "Echo"
+                     ReferencedContainer = "container:Echo.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
       <TestPlans>
          <TestPlanReference
             reference = "container:TestPlans/EchoAppTests.xctestplan"

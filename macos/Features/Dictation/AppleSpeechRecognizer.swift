@@ -191,7 +191,8 @@ struct AppleSpeechSegment: Sendable {
         catch { throw SettingsError(localized: "Apple 本地语音识别失败：\(String(describing: error))") }
         try Task.checkCancellation()
         guard !cancelled else { throw CancellationError() }
-        guard !transcript.text.isEmpty else { throw SettingsError(localized: "Apple 本地识别未识别到清晰语音，请重新录音。") }
+        // Delivered even when empty: nothing said is no failure, and an empty final withdraws
+        // whatever the volatile segments had shown.
         receive(ASRResult(result: .init(text: transcript.text, utterances: nil), streamFinal: true))
     }
 

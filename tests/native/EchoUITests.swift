@@ -39,8 +39,63 @@ import XCTest
         try body(app, root)
     }
 
+    private struct KeyboardUnavailable: Error {}
+
+    /// Keys go to whichever app is frontmost, so none is sent until Echo is frontmost with a key
+    /// window. Otherwise Echo is activated and given a few seconds; if it still is not there, the
+    /// test fails without sending anything. XCUI marks keyboard focus on the focused control, never
+    /// on its window (measured: a key main window reads as not focused while its composer reads as
+    /// focused), so a focused control anywhere in Echo stands for its key window.
+    @MainActor private func ensureKeyboard(_ app: XCUIApplication, file: StaticString, line: UInt) throws {
+        let keyWindow = app.descendants(matching: .any).matching(NSPredicate(format: "hasKeyboardFocus == true")).firstMatch
+        func ready() -> Bool { app.state == .runningForeground && keyWindow.exists }
+        if ready() { return }
+        app.activate()
+        let deadline = Date().addingTimeInterval(5)
+        while !ready() {
+            guard Date() < deadline else {
+                XCTFail("Echo is not frontmost with a key window (state \(app.state.rawValue)); no keys were sent", file: file, line: line)
+                throw KeyboardUnavailable()
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+    }
+    /// Every key a test sends goes through these, after `ensureKeyboard`.
+    @MainActor private func press(_ app: XCUIApplication, _ key: XCUIKeyboardKey, _ modifiers: XCUIElement.KeyModifierFlags = [],
+                                  file: StaticString = #filePath, line: UInt = #line) throws {
+        try ensureKeyboard(app, file: file, line: line)
+        app.typeKey(key, modifierFlags: modifiers)
+    }
+    @MainActor private func press(_ app: XCUIApplication, _ key: String, _ modifiers: XCUIElement.KeyModifierFlags = [],
+                                  file: StaticString = #filePath, line: UInt = #line) throws {
+        try ensureKeyboard(app, file: file, line: line)
+        app.typeKey(key, modifierFlags: modifiers)
+    }
+    @MainActor private func type(_ text: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) throws {
+        try ensureKeyboard(app, file: file, line: line)
+        app.typeText(text)
+    }
+    @MainActor private func type(_ text: String, into element: XCUIElement, of app: XCUIApplication,
+                                 file: StaticString = #filePath, line: UInt = #line) throws {
+        try ensureKeyboard(app, file: file, line: line)
+        element.typeText(text)
+    }
+
     @MainActor private func composer(_ app: XCUIApplication) -> XCUIElement {
         app.textViews["conversation.composer"]
+    }
+    /// Where to click or hover the composer. It floats over the chat on a bottom safe area inset,
+    /// so the transcript's scroll view runs on beneath it and answers accessibility hit tests there
+    /// (measured: every point of the composer hit-tests as `conversation.transcript`). XCUI then
+    /// finds no hit point and will neither click nor hover the composer, or scroll it to visible.
+    /// A point taken from its window rather than the composer skips both, and the pointer event
+    /// goes through AppKit's own hit testing, which reaches the editor as a person's click does.
+    /// Not the app: XCUI gives the application element an infinite frame on macOS.
+    @MainActor private func composerPoint(_ app: XCUIApplication) -> XCUICoordinate {
+        let window = app.windows.containing(.textView, identifier: "conversation.composer").firstMatch
+        let frame = composer(app).frame, origin = window.frame.origin
+        return window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX - origin.x, dy: frame.midY - origin.y))
     }
     @MainActor private func wait(_ description: String, timeout: TimeInterval = 10, _ condition: @escaping () -> Bool) {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)
@@ -67,8 +122,8 @@ import XCTest
         try withApp { app, _ in
             let editor = composer(app)
             XCTAssertTrue(editor.waitForExistence(timeout: 5), app.debugDescription)
-            editor.click(); editor.typeText("slow message")
-            app.typeKey(.return, modifierFlags: [])
+            composerPoint(app).click(); try type("slow message", into: editor, of: app)
+            try press(app, .return)
             XCTAssertTrue(app.buttons["conversation.stop"].waitForExistence(timeout: 3))
             // The reply being written shows part of the reply while the whole reply is not on screen.
             // A chunk reaches the screen two chunks late, so part of the reply shows from about 2 s
@@ -83,20 +138,20 @@ import XCTest
             poll("Part of the reply streams in before the whole reply: \(streamedTexts())", timeout: 10) {
                 streamedTexts().contains { !$0.isEmpty && $0 != reply && reply.hasPrefix($0) } && !app.staticTexts[reply].exists
             }
-            app.typeKey(".", modifierFlags: .command)
+            try press(app, ".", .command)
             XCTAssertTrue(app.buttons["conversation.resume"].waitForExistence(timeout: 3))
             app.buttons["conversation.resume"].click()
             wait("Retry completes the same user message", timeout: 12) {
                 !app.buttons["conversation.stop"].exists && app.staticTexts["Offline reply: slow message"].exists
             }
-            app.typeKey("q", modifierFlags: .command)
+            try press(app, "q", .command)
             XCTAssertTrue(app.wait(for: .notRunning, timeout: 10))
             app.launch(); app.activate()
-            app.typeKey("k", modifierFlags: .command)
+            try press(app, "k", .command)
             let search = app.searchFields["搜索聊天"]
             XCTAssertTrue(search.waitForExistence(timeout: 3))
-            search.typeText("slow message")
-            app.typeKey(.return, modifierFlags: [])
+            try type("slow message", into: search, of: app)
+            try press(app, .return)
             XCTAssertTrue(app.staticTexts["Offline reply: slow message"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["conversation.stop"].exists)
         }
@@ -106,27 +161,27 @@ import XCTest
         try withApp { app, _ in
             let editor = composer(app)
             XCTAssertTrue(editor.waitForExistence(timeout: 5))
-            editor.click(); editor.typeText("first conversation"); app.typeKey(.return, modifierFlags: [])
+            composerPoint(app).click(); try type("first conversation", into: editor, of: app); try press(app, .return)
             XCTAssertTrue(app.staticTexts["Offline reply: first conversation"].waitForExistence(timeout: 5))
-            composer(app).click(); composer(app).typeText("draft retained")
+            composerPoint(app).click(); try type("draft retained", into: composer(app), of: app)
             XCTAssertEqual(composer(app).value as? String, "draft retained")
-            app.typeKey("n", modifierFlags: .command)
+            try press(app, "n", .command)
             wait("New conversation has an empty composer") { self.composer(app).value as? String == "" }
-            app.typeKey("k", modifierFlags: .command)
+            try press(app, "k", .command)
             let search = app.searchFields["搜索聊天"]
             XCTAssertTrue(search.waitForExistence(timeout: 3))
-            search.typeText("first conversation")
-            app.typeKey(.return, modifierFlags: [])
+            try type("first conversation", into: search, of: app)
+            try press(app, .return)
             wait("Search restores the selected draft") { self.composer(app).value as? String == "draft retained" }
-            app.typeKey(",", modifierFlags: .command)
+            try press(app, ",", .command)
             let model = app.textFields["settings.model"]
             XCTAssertTrue(model.waitForExistence(timeout: 5))
-            model.click(); app.typeKey("a", modifierFlags: .command); model.typeText("ui-edited-model")
+            model.click(); try press(app, "a", .command); try type("ui-edited-model", into: model, of: app)
             app.buttons["settings.save"].click()
-            app.typeKey("w", modifierFlags: .command)
+            try press(app, "w", .command)
             XCTAssertTrue(editor.exists)
             XCTAssertEqual(editor.value as? String, "draft retained")
-            app.typeKey(",", modifierFlags: .command)
+            try press(app, ",", .command)
             XCTAssertTrue(model.waitForExistence(timeout: 3))
             XCTAssertEqual(model.value as? String, "ui-edited-model")
         }
@@ -138,24 +193,24 @@ import XCTest
             picker.click()
             let search = app.textFields["projectPicker.search"]
             XCTAssertTrue(search.waitForExistence(timeout: 3))
-            for _ in 0..<18 { app.typeKey(.downArrow, modifierFlags: []) }
-            app.typeKey(.return, modifierFlags: [])
+            for _ in 0..<18 { try press(app, .downArrow) }
+            try press(app, .return)
             XCTAssertTrue(picker.waitForExistence(timeout: 3))
             XCTAssertTrue(picker.label.contains("Project 18"), picker.label)
-            app.typeKey("i", modifierFlags: [.control, .command])
+            try press(app, "i", [.control, .command])
             let file = app.descendants(matching: .any)["projectFiles.entry.note.txt"].firstMatch
             XCTAssertTrue(file.waitForExistence(timeout: 5))
             file.doubleClick()
             let preview = app.textViews["projectFiles.text"]
             XCTAssertTrue(preview.waitForExistence(timeout: 5))
             XCTAssertTrue((preview.value as? String ?? "").contains("Preview fixture 18"))
-            composer(app).click(); composer(app).typeText("kept draft")
+            composerPoint(app).click(); try type("kept draft", into: composer(app), of: app)
             picker.hover()
             let detach = app.buttons["conversation.project.detach"]
             XCTAssertTrue(detach.waitForExistence(timeout: 3))
             detach.click()
             XCTAssertTrue(picker.label.contains("选择项目"))
-            app.typeText(" after detach")
+            try type(" after detach", in: app)
             XCTAssertEqual(composer(app).value as? String, "kept draft after detach")
         }
     }
@@ -164,32 +219,31 @@ import XCTest
         try withApp { app, _ in
             let editor = composer(app)
             XCTAssertTrue(editor.waitForExistence(timeout: 5))
-            editor.click(); editor.typeText("kept draft")
-            app.typeKey("d", modifierFlags: [.control, .shift])
+            composerPoint(app).click(); try type("kept draft", into: editor, of: app)
+            try press(app, "d", [.control, .shift])
             XCTAssertTrue(app.buttons["dictation.finish"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["voice.end"].exists)
-            app.typeKey(.escape, modifierFlags: [])
-            XCTAssertTrue(app.buttons["dictation.finish"].exists, "Idle Escape preserves recording")
-            app.typeKey("d", modifierFlags: [.control, .shift])
+            try press(app, .escape)
+            wait("Escape cancels the recording, as its ✕ does") { !app.buttons["dictation.finish"].exists }
             XCTAssertTrue(editor.waitForExistence(timeout: 5))
             XCTAssertEqual(editor.value as? String, "kept draft")
-            app.typeKey("v", modifierFlags: [.control, .shift])
+            try press(app, "v", [.control, .shift])
             XCTAssertTrue(app.buttons["voice.mute"].waitForExistence(timeout: 5))
             app.buttons["voice.mute"].click()
             XCTAssertEqual(app.buttons["voice.mute"].label, "开启麦克风")
             app.buttons["voice.mute"].click()
             app.buttons["voice.speaker"].click()
-            app.typeKey(.escape, modifierFlags: [])
+            try press(app, .escape)
             XCTAssertTrue(app.buttons["voice.mute"].exists, "Idle Escape preserves Live Voice")
-            app.typeKey("n", modifierFlags: .command)
-            app.typeKey("v", modifierFlags: [.control, .shift])
+            try press(app, "n", .command)
+            try press(app, "v", [.control, .shift])
             wait("End Voice addresses the existing owner after navigation") { !app.buttons["voice.mute"].exists }
         }
     }
 
     func testCompletedPetControlsStayExpandedAcrossRealPointerExit() throws {
         try withApp(petPosition: "top") { app, _ in
-            app.typeKey("w", modifierFlags: .command)
+            try press(app, "w", .command)
             let pet = app.buttons["赤焰"]
             XCTAssertTrue(pet.waitForExistence(timeout: 5))
             let outside = pet.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
@@ -203,7 +257,7 @@ import XCTest
             pet.hover(); compose.click()
             let editor = app.textViews["pet.composer"]
             XCTAssertTrue(editor.waitForExistence(timeout: 3))
-            editor.click(); editor.typeText("slow completion hold"); app.typeKey(.return, modifierFlags: [])
+            editor.click(); try type("slow completion hold", into: editor, of: app); try press(app, .return)
             wait("Sending closes the composer") { !editor.exists }
             outside.hover()
             let collapse = app.buttons["pet.activity.collapse"]
@@ -237,21 +291,21 @@ import XCTest
 
     func testPetConversationCardStates() throws {
         try withApp(petPosition: "top") { app, _ in
-            app.typeKey("w", modifierFlags: .command)
+            try press(app, "w", .command)
             app.activate()
             let pet = app.buttons["赤焰"]
             XCTAssertTrue(pet.waitForExistence(timeout: 5))
             // A stack's front card is one element whose only action opens the list.
             let stack = app.descendants(matching: .any)["activity.stack"]
             let cards = app.buttons.matching(identifier: "activity.summary")
-            @MainActor func sendQuick(_ text: String) {
+            @MainActor func sendQuick(_ text: String) throws {
                 pet.hover()
                 let compose = app.buttons["pet.compose"]
                 XCTAssertTrue(compose.waitForExistence(timeout: 4))
                 compose.click()
                 let editor = app.textViews["pet.composer"]
                 XCTAssertTrue(editor.waitForExistence(timeout: 3))
-                editor.click(); editor.typeText(text); app.typeKey(.return, modifierFlags: [])
+                editor.click(); try type(text, into: editor, of: app); try press(app, .return)
                 wait("Quick send closes the new-chat editor") { !editor.exists }
                 wait("The compact result completes", timeout: 8) {
                     (cards.allElementsBoundByIndex + (stack.exists ? [stack] : [])).contains {
@@ -265,8 +319,8 @@ import XCTest
             }
             // XCUI keyboard synthesis cannot reliably enter Chinese without an IME.
             // Chinese card text is covered by the hosted companion lifecycle test.
-            sendQuick("query current model")
-            sendQuick("pet greeting")
+            try sendQuick("query current model")
+            try sendQuick("pet greeting")
             XCTAssertFalse(app.textViews["activity.followUp"].exists)
             XCTAssertTrue(stack.exists && cards.count == 0, "Two notifications arrive as a stack")
             XCTAssertGreaterThan(stack.frame.minY, pet.frame.maxY)
@@ -296,7 +350,7 @@ import XCTest
             XCTAssertTrue(editor.waitForExistence(timeout: 3))
             capture("echo-cards-3-follow-up-below")
             for text in ["follow up one", "follow up two"] {
-                editor.click(); editor.typeText(text); app.typeKey(.return, modifierFlags: [])
+                editor.click(); try type(text, into: editor, of: app); try press(app, .return)
                 wait("Follow-up updates the original compact reply", timeout: 8) {
                     app.buttons["activity.summary"].label.contains(text) && app.buttons["activity.summary"].label.contains("已完成")
                 }
@@ -336,17 +390,17 @@ import XCTest
     func testPetFollowUpAboveAndMainWindowReceipt() throws {
         try withApp { app, _ in
             let main = composer(app)
-            main.click(); main.typeText("slow main-window task"); app.typeKey(.return, modifierFlags: [])
+            composerPoint(app).click(); try type("slow main-window task", into: main, of: app); try press(app, .return)
             XCTAssertTrue(app.buttons["activity.summary"].waitForExistence(timeout: 3))
             wait("A result viewed in the main window leaves no pet entry", timeout: 10) {
                 app.staticTexts["Offline reply: slow main-window task"].exists && !app.buttons["activity.summary"].exists
             }
-            app.typeKey("w", modifierFlags: .command)
+            try press(app, "w", .command)
             let pet = app.buttons["赤焰"]
             pet.hover(); app.buttons["pet.compose"].click()
             let quick = app.textViews["pet.composer"]
             XCTAssertTrue(quick.waitForExistence(timeout: 3))
-            quick.click(); quick.typeText("pet greeting"); app.typeKey(.return, modifierFlags: [])
+            quick.click(); try type("pet greeting", into: quick, of: app); try press(app, .return)
             wait("Bottom-edge compact result completes", timeout: 8) {
                 app.buttons["activity.summary"].label.contains("已完成")
             }
@@ -364,7 +418,7 @@ import XCTest
         try withApp { app, _ in
             let editor = composer(app)
             XCTAssertTrue(editor.waitForExistence(timeout: 5))
-            editor.click(); editor.typeText("main draft")
+            composerPoint(app).click(); try type("main draft", into: editor, of: app)
             let pet = app.buttons["赤焰"]
             XCTAssertTrue(pet.waitForExistence(timeout: 5))
             pet.hover()
@@ -373,12 +427,12 @@ import XCTest
             compose.click()
             let quick = app.textViews["pet.composer"]
             XCTAssertTrue(quick.waitForExistence(timeout: 5))
-            quick.click(); quick.typeText("slow pet request")
+            quick.click(); try type("slow pet request", into: quick, of: app)
             XCTAssertEqual(quick.value as? String, "slow pet request")
             XCTAssertEqual(editor.value as? String, "main draft")
-            app.typeKey(.escape, modifierFlags: [])
+            try press(app, .escape)
             wait("Escape closes the pet composer") { !quick.exists }
-            editor.hover()
+            composerPoint(app).hover()
             let draftLine = app.staticTexts["pet.collapsed.draft"]
             wait("The collapsed strip shows the kept draft's start") {
                 draftLine.exists && [draftLine.label, draftLine.value as? String].contains("slow pet request")
@@ -392,15 +446,15 @@ import XCTest
             XCTAssertFalse(compose.exists, "The line never hovers to the pill")
             XCTAssertEqual(quick.value as? String, "slow pet request", "Escape preserves the independent pet draft")
             XCTAssertEqual(quick.value(forKey: "hasKeyboardFocus") as? Bool, false, "Hover does not take the keyboard")
-            editor.hover()
+            composerPoint(app).hover()
             wait("Leaving the hovered composer returns to the line") { !quick.exists && draftLine.exists }
             draftLine.hover()
             XCTAssertTrue(quick.waitForExistence(timeout: 5))
             quick.click()
             XCTAssertEqual(quick.value(forKey: "hasKeyboardFocus") as? Bool, true, "Clicking the hovered composer takes the keyboard")
-            editor.hover()
+            composerPoint(app).hover()
             staysOpen(quick, "Once clicked into, the composer stays when the pointer leaves")
-            app.typeKey(.return, modifierFlags: [])
+            try press(app, .return)
             XCTAssertEqual(editor.value as? String, "main draft")
             wait("Sending closes the empty new-chat composer") { !quick.exists }
             wait("A completed pet result remains visible", timeout: 10) {
@@ -417,34 +471,34 @@ import XCTest
             XCTAssertTrue(collapse.waitForExistence(timeout: 3))
             collapse.click(); pet.hover()
             XCTAssertEqual(bell.value as? String, "1 个已完成任务未查看", "Opening the stack does not acknowledge the result")
-            compose.click(); quick.typeText("kept pet draft")
+            compose.click(); try type("kept pet draft", into: quick, of: app)
             // A draft keeps the composer open when focus moves away; only the caret goes.
-            editor.click()
-            app.typeText(" typed elsewhere")
+            composerPoint(app).click()
+            try type(" typed elsewhere", in: app)
             staysOpen(quick, "Focus loss keeps a composer that holds a draft")
             XCTAssertEqual(quick.value as? String, "kept pet draft")
             XCTAssertEqual(editor.value as? String, "main draft typed elsewhere", "Typing goes to what took the click")
             // A real click on the field takes the keyboard back, with the caret where it landed.
             quick.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 1, dy: 0)).click()
-            app.typeText("A ")
+            try type("A ", in: app)
             XCTAssertEqual(quick.value as? String, "A kept pet draft", "The caret lands at the start where the click was")
             quick.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).click()
-            app.typeText("!")
+            try type("!", in: app)
             XCTAssertEqual(quick.value as? String, "A kept pet draft!", "The caret lands at the end where the click was")
             // Whitespace alone still counts as a draft; only an empty composer collapses.
-            app.typeKey("a", modifierFlags: .command); app.typeText(" ")
-            editor.click()
+            try press(app, "a", .command); try type(" ", in: app)
+            composerPoint(app).click()
             staysOpen(quick, "A whitespace-only draft keeps the composer open")
             quick.click()
-            app.typeKey("a", modifierFlags: .command); app.typeKey(.delete, modifierFlags: [])
+            try press(app, "a", .command); try press(app, .delete)
             XCTAssertEqual(quick.value as? String, "")
-            editor.click()
+            composerPoint(app).click()
             wait("Focus loss collapses an empty composer") { !quick.exists }
-            editor.click()
-            app.typeKey("k", modifierFlags: .command)
+            composerPoint(app).click()
+            try press(app, "k", .command)
             let search = app.searchFields["搜索聊天"]
             XCTAssertTrue(search.waitForExistence(timeout: 3))
-            search.typeText("slow pet request"); app.typeKey(.return, modifierFlags: [])
+            try type("slow pet request", into: search, of: app); try press(app, .return)
             XCTAssertTrue(app.staticTexts["Offline reply: slow pet request"].waitForExistence(timeout: 5))
         }
     }
@@ -454,7 +508,7 @@ import XCTest
             let ids = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("fixture.json")))
             let projectID = try XCTUnwrap(ids["project"])
             // A first launch shows the conversation on its own.
-            app.typeKey("s", modifierFlags: [.control, .command])
+            try press(app, "s", [.control, .command])
             let outline = app.outlines["workspace.sidebar"]
             XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
             @MainActor func label(_ title: String, project: Bool = false) -> XCUIElement {
@@ -481,20 +535,20 @@ import XCTest
             XCTAssertTrue(row("Project Alpha").isSelected)
             XCTAssertFalse(row("Project Alpha", project: true).isSelected)
             row("Recent Delta").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
-            app.typeKey(.downArrow, modifierFlags: [])
+            try press(app, .downArrow)
             opened("Recent Gamma")
-            app.typeKey(.upArrow, modifierFlags: [])
+            try press(app, .upArrow)
             opened("Recent Delta")
-            app.typeKey(.upArrow, modifierFlags: [])
+            try press(app, .upArrow)
             opened("Project Alpha")
             XCTAssertTrue(row("Project Alpha", project: true).isSelected, "Arrows cross the recent/project boundary")
             // Exact first-responder identity and the complete cyclic order are
             // checked by the hosted AppKit case. Here real Tab/Shift-Tab return
             // keyboard navigation to the selected sidebar row.
-            app.typeKey(.tab, modifierFlags: [])
-            app.typeKey(.tab, modifierFlags: .shift)
+            try press(app, .tab)
+            try press(app, .tab, .shift)
             XCTAssertFalse((composer(app).value as? String ?? "").contains("\t"))
-            app.typeKey(.downArrow, modifierFlags: [])
+            try press(app, .downArrow)
             opened("Recent Delta")
             row("Project Alpha").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 2.3)).click()
             opened("Recent Delta")
@@ -506,7 +560,7 @@ import XCTest
             let ids = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("fixture.json")))
             let projectID = try XCTUnwrap(ids["project"])
             // A first launch shows the conversation on its own.
-            app.typeKey("s", modifierFlags: [.control, .command])
+            try press(app, "s", [.control, .command])
             let outline = app.outlines["workspace.sidebar"]
             XCTAssertTrue(outline.waitForExistence(timeout: 5), app.debugDescription)
             @MainActor func label(_ title: String, project: Bool = false) -> XCUIElement {
@@ -540,27 +594,27 @@ import XCTest
             XCTAssertTrue(picker.waitForExistence(timeout: 3))
             XCTAssertTrue(picker.label.contains("Project 00"), picker.label)
             let rowCount = outline.descendants(matching: .outlineRow).count
-            app.typeKey("k", modifierFlags: .command)
+            try press(app, "k", .command)
             let search = app.searchFields["搜索聊天"]
-            XCTAssertTrue(search.waitForExistence(timeout: 3)); search.typeText("Recent Gamma")
+            XCTAssertTrue(search.waitForExistence(timeout: 3)); try type("Recent Gamma", into: search, of: app)
             XCTAssertEqual(outline.descendants(matching: .outlineRow).count, rowCount, "Palette filtering leaves the sidebar intact")
-            app.typeKey(.return, modifierFlags: []); opened("Recent Gamma")
-            app.typeKey("k", modifierFlags: .command)
-            search.typeText("no matching conversation")
+            try press(app, .return); opened("Recent Gamma")
+            try press(app, "k", .command)
+            try type("no matching conversation", into: search, of: app)
             XCTAssertEqual(outline.descendants(matching: .outlineRow).count, rowCount)
-            app.typeKey(.escape, modifierFlags: [])
+            try press(app, .escape)
             wait("One Escape closes the palette, query and all") { !search.exists }
-            app.typeKey("k", modifierFlags: .command)
+            try press(app, "k", .command)
             XCTAssertTrue(search.waitForExistence(timeout: 3))
             XCTAssertEqual(search.value as? String, "", "The palette opens empty again")
-            app.typeKey(.escape, modifierFlags: [])
+            try press(app, .escape)
             wait("Escape closes the empty palette too") { !search.exists }
         }
     }
 
     func testSettingsFullRowsArrowsAndUnsavedEdits() throws {
         try withApp { app, _ in
-            app.typeKey(",", modifierFlags: .command)
+            try press(app, ",", .command)
             let sections = app.outlines["settings.sections"]
             XCTAssertTrue(sections.waitForExistence(timeout: 5), app.debugDescription)
             let names = ["模型", "语音", "星球", "精灵"]
@@ -576,27 +630,27 @@ import XCTest
             }
             row("模型").coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).click()
             for name in names.dropFirst() {
-                app.typeKey(.downArrow, modifierFlags: [])
+                try press(app, .downArrow)
                 XCTAssertTrue(row(name).isSelected)
             }
-            app.typeKey(.upArrow, modifierFlags: [])
-            app.typeKey(.upArrow, modifierFlags: [])
+            try press(app, .upArrow)
+            try press(app, .upArrow)
             XCTAssertTrue(row("语音").isSelected)
             let speaker = app.textFields["voiceSettings.speaker"]
             XCTAssertTrue(speaker.waitForExistence(timeout: 3))
-            speaker.click(); app.typeKey("a", modifierFlags: .command); speaker.typeText("saved-speaker")
-            app.typeKey(.return, modifierFlags: [])
+            speaker.click(); try press(app, "a", .command); try type("saved-speaker", into: speaker, of: app)
+            try press(app, .return)
             wait("Return saves the edited voice section") { !app.buttons["voiceSettings.save"].isEnabled }
-            app.typeKey("a", modifierFlags: .command); speaker.typeText("unsaved-speaker")
-            app.typeKey("w", modifierFlags: .command)
+            try press(app, "a", .command); try type("unsaved-speaker", into: speaker, of: app)
+            try press(app, "w", .command)
             wait("Closing settings leaves the conversation editable") { !sections.exists }
-            composer(app).click(); app.typeText("conversation stays editable")
+            composerPoint(app).click(); try type("conversation stays editable", in: app)
             XCTAssertEqual(composer(app).value as? String, "conversation stays editable")
-            app.typeKey(",", modifierFlags: .command)
+            try press(app, ",", .command)
             XCTAssertTrue(speaker.waitForExistence(timeout: 3))
             XCTAssertEqual(speaker.value as? String, "unsaved-speaker")
             XCTAssertTrue(row("语音").isSelected)
-            app.typeKey(.escape, modifierFlags: [])
+            try press(app, .escape)
             wait("Escape closes settings independently") { !sections.exists }
             XCTAssertTrue(composer(app).exists)
         }

@@ -374,6 +374,29 @@ extension EchoVoiceScenarios {
         engine.emit("取消后迟到结果", final: true); engine.end()
         #expect(!audio.capturing && !dictation.isActive && store.mainDraft == draft, "Discarding commits nothing")
 
+        // Finishing a recording that heard nothing says nothing and leaves the draft as it was.
+        // Finishing it with Send sends the draft that was there, and with no draft sends nothing.
+        // A volatile guess the final then withdraws (an empty or blank final) is the same as silence.
+        let silences: [(sends: Bool, before: String, expected: Int, withdrawn: (guess: String, final: String)?)] = [
+            (false, draft, 0, nil), (true, draft, 1, nil), (true, "", 0, nil), (true, " \n", 0, nil),
+            (false, draft, 0, ("撤回的临时文字", "")), (true, draft, 1, ("撤回的临时文字", " ")),
+            (true, "", 0, ("撤回的临时文字", "")), (true, " \n", 0, ("撤回的临时文字", " "))
+        ]
+        for (sends, before, expected, withdrawn) in silences {
+            store.mainDraft = before
+            try await record()
+            var sent = 0, draftAtSend: String?
+            if let withdrawn { try await segment(withdrawn.guess) }
+            dictation.finishRecording(thenSend: sends ? { sent += 1; draftAtSend = store.mainDraft } : nil)
+            if let withdrawn { engine.emit(withdrawn.final, final: true) }
+            engine.end()
+            try await eventually("the silent recording ends") { !dictation.isActive }
+            #expect(dictation.state == .idle && dictation.error == nil && store.mainDraft == before && sent == expected
+                    && (draftAtSend ?? before) == before && dictation.subtitle.isEmpty,
+                    "A recording that heard nothing (send: \(sends), draft: \(before.debugDescription), withdrawn: \(String(describing: withdrawn))) sent \(sent): \(String(describing: dictation.error))")
+        }
+        store.mainDraft = draft
+
         // A recording stopped without discarding (switching conversations, hiding the window,
         // sleep) keeps the latest transcript once; late segments add nothing.
         var kept = draft

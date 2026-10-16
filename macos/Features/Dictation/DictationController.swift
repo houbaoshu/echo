@@ -143,19 +143,18 @@ import Observation
                             ]) { _, new in new }) }
                             guard let self, self.generation == current, self.isActive else { return }
                             // The Apple adapter provides the cumulative transcript of all segments;
-                            // an empty hypothesis never erases it.
+                            // an empty hypothesis never erases it, but an empty final does.
                             let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                            if !text.isEmpty {
-                                self.subtitle = text
-                                if result.streamFinal { self.finalTranscript = text }
-                            }
+                            if result.streamFinal { self.subtitle = text; self.finalTranscript = text }
+                            else if !text.isEmpty { self.subtitle = text }
                             trace?.record("callback.after", self.diagnosticState.merging([
                                 "callbackIndex": callbackIndex as Any? ?? NSNull()
                             ]) { _, new in new })
                         }
                         trace?.record("recognizer.return", self.diagnosticState)
                         guard self.generation == current, !Task.isCancelled else { return }
-                        let completed = self.state == .finalizing || self.finalTranscript != nil
+                        // An empty final while still recording is the recognizer stopping on its own.
+                        let completed = self.state == .finalizing || self.finalTranscript?.isEmpty == false
                         self.complete(error: completed ? nil : String(localized: "语音识别已提前结束，请重新开始转写。"), finished: completed)
                     } catch {
                         trace?.record("recognizer.error", self.diagnosticState.merging([
@@ -216,6 +215,12 @@ import Observation
         guard isActive else { return }
         complete(discard: discard)
     }
+    /// Escape ends a recording as its ✕ does, and does nothing else; returns whether there was one.
+    func cancelForEscape() -> Bool {
+        guard isActive else { return false }
+        cancel(discard: true)
+        return true
+    }
     private func complete(error: String? = nil, discard: Bool = false, finished: Bool = false) {
         diagnosticTrace?.record("completion.before", diagnosticState.merging([
             "discard": discard, "hasError": error != nil
@@ -243,7 +248,9 @@ import Observation
         finalTranscript = nil; store = nil; conversationID = nil; subtitle = ""
         self.error = error; state = error == nil ? .idle : .failed
         diagnosticTrace?.record("completion.after", diagnosticState.merging(["draft": completedDraft as Any? ?? NSNull()]) { _, new in new })
-        send?()
+        // Send sends the draft as it now stands: what was said if anything was, else the draft
+        // alone. With nothing in either there is nothing to send, and nothing is said about it.
+        if completedDraft?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { send?() }
     }
     private func appendLevels(_ data: Data) {
         // Existing 16 kHz signed little-endian PCM, one RMS envelope per 20 ms.

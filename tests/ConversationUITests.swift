@@ -762,14 +762,23 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(node("conversation.stop") == nil)
         recognizer.emit("丢弃")
         window.makeFirstResponder(nil)
+        // Escape that no control takes reaches the window, which ends just the recording, as ✕
+        // does: the reply goes on and the draft keeps what it had.
+        window.cancelOperation(nil)
+        XCTAssertTrue(!dictation.isActive && agentStore.isGenerating && agentStore.mainDraft == "原草稿",
+                     "Escape cancels the recording alone: \(dictation.isActive), \(agentStore.mainDraft), \(agentStore.isGenerating)")
+        try await eventually("Escape hands focus back to the composer", layingOut: window.contentView) { window.firstResponder is ComposerTextView }
+        dictation.start(conversation: conversation)
+        try await recognizing()
+        recognizer.emit("丢弃")
+        window.makeFirstResponder(nil)
         // Stop ends a turn within a few hops, so what holds while it stops is checked before any:
-        // the window answers Escape synchronously through handleEscape.
+        // the window answers Stop synchronously through handleEscape.
         agentStore.stopTask()
         XCTAssertTrue(agentStore.task?.status == .stopping)
-        XCTAssertTrue(!main.handleEscape(), "Escape does not repeat Stop while stopping")
-        window.cancelOperation(nil)
+        XCTAssertTrue(!main.handleEscape(), "Stop is not repeated while stopping")
         XCTAssertTrue(dictation.isActive && agentStore.mainDraft == "原草稿" && agentStore.task?.status == .stopping,
-                     "Escape neither cancels dictation nor repeats Stop while stopping: \(dictation.isActive), \(agentStore.mainDraft), \(String(describing: agentStore.task?.status))")
+                     "Stopping leaves the recording alone: \(dictation.isActive), \(agentStore.mainDraft), \(String(describing: agentStore.task?.status))")
         try await eventually("The Agent stops") { agentStore.task?.status == .stopped }
         XCTAssertTrue(dictation.isActive && agentStore.mainDraft == "原草稿\nsteer",
                      "The recording outlasts the Stop; the queued follow-up goes back to the draft: \(agentStore.mainDraft)")
@@ -781,9 +790,10 @@ private struct ComposerHeightHost: View {
         recognizer.emit("定稿中也丢弃")
         dictation.finishRecording()
         try await eventually("The recording is finalizing", layingOut: window.contentView) { node("dictation.finish")?.isAccessibilityEnabled?() == false }
-        XCTAssertTrue(!main.handleEscape() && dictation.isActive, "Escape preserves finalizing dictation")
-        XCTAssertTrue(node("dictation.cancel")?.accessibilityPerformPress?() == true)
-        XCTAssertTrue(!dictation.isActive && agentStore.mainDraft == "原草稿\nsteer")
+        XCTAssertTrue(!main.handleEscape() && dictation.isActive, "Stop does not touch a finalizing recording")
+        // Escape ends a finalizing recording too, as its ✕ does.
+        window.cancelOperation(nil)
+        XCTAssertTrue(!dictation.isActive && agentStore.mainDraft == "原草稿\nsteer", "Escape discards the finalizing transcript")
         try await eventually("Cancelling hands focus back to the composer again", layingOut: window.contentView) { window.firstResponder is ComposerTextView }
 
         // Keep native marked text mounted even while the recording preview covers it.
@@ -796,7 +806,7 @@ private struct ComposerHeightHost: View {
         let composing = editor.string
         editor.insertText("不应插入", replacementRange: marked)
         XCTAssertTrue(editor.string == composing && editor.hasMarkedText(), "Recording rejects IME commits beneath the preview")
-        XCTAssertTrue(!main.handleEscape(), "Window Escape protects IME composition")
+        XCTAssertTrue(!main.cancelDictation() && !main.handleEscape() && dictation.isActive, "Window Escape protects IME composition")
         recognizer.emit("追加转写")
         dictation.finishRecording(); recognizer.finish()
         try await eventually("The editor resumes after the recording", layingOut: window.contentView) { !dictation.isActive && !editor.isSuspended }
@@ -981,11 +991,7 @@ private struct ComposerHeightHost: View {
         try await eventually("The recording covers the editor", layingOut: host) { node("dictation.cancel") != nil && !original.isEditable }
         try await eventually("The recording asks for the microphone") { permissionReply != nil }
         key(original, 53)
-        // A check that Escape does nothing: keyDown runs onEscape and AppKit's cancelOperation:
-        // synchronously, so one main-queue turn covers anything they queue.
-        await nextMainTurn()
-        XCTAssertTrue(dictation.isActive, "Escape preserves ordinary dictation")
-        press("dictation.cancel")
+        XCTAssertTrue(!dictation.isActive, "Escape in the composer cancels the recording, as ✕ does")
         permissionReply?.resume(returning: true); permissionReply = nil
         // The late reply resumes the cancelled startup on the main actor; one turn lets it run
         // and find its recording gone before the checks below look for any effect of it.
@@ -1680,6 +1686,82 @@ private struct ComposerHeightHost: View {
     }
 
 
+
+    /// Escape during a recording, typed into one of the pet's fields, ends just the recording, as
+    /// ✕ does: the field keeps focus, stays open and keeps its text. The next Escape is the field's.
+    func testPetEscapeDuringDictationCancelsOnlyTheRecording() async throws {
+        let recognizer = ComposerRecognizer()
+        let dictation = DictationController(audio: ComposerAudio(), recognizer: { _ in recognizer }, permission: { true })
+        let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
+        let (store, _) = puppetStore(), (card, _) = puppetStore()
+        let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
+        defer { card.shutdown(); workspace.shutdown() }
+        let conversation = try XCTUnwrap(workspace.selected)
+        store.mainDraft = "主窗口草稿"
+        func record() async throws {
+            dictation.start(conversation: conversation)
+            try await eventually("The recording recognises") { recognizer.pending != nil }
+            recognizer.emit("丢弃")
+        }
+        func escape(_ window: NSWindow) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                             context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        }
+
+        let presentation = PetControlsPresentation()
+        presentation.isHovered = true
+        let placement = ActivityPlacement()
+        let petHost = NSHostingView(rootView: PetControls(store: workspace.activityStore, voice: voice, presentation: presentation,
+                                                          placement: placement, workspace: workspace, actions: PetControlActions(toggleTray: {})))
+        let petWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: PetSurfacePresentation.canvasWidth, height: PetSurfacePresentation.canvasHeight),
+                                 styleMask: .titled, backing: .buffered, defer: false)
+        petWindow.contentView = petHost
+        petWindow.makeKeyAndOrderFront(nil)
+        defer { petWindow.orderOut(nil) }
+        presentation.openComposer()
+        presentation.draft = "桌宠草稿"
+        try await eventually("The pet composer has focus and the draft", layingOut: petHost) {
+            let editor = findAccessibility("pet.composer", in: petHost) as? ComposerTextView
+            return editor?.string == "桌宠草稿" && petWindow.firstResponder === editor
+        }
+        let quick = try XCTUnwrap(findAccessibility("pet.composer", in: petHost) as? ComposerTextView)
+        try await record()
+        quick.keyDown(with: escape(petWindow))
+        XCTAssertTrue(!dictation.isActive && store.mainDraft == "主窗口草稿", "Escape cancels the recording and discards its text")
+        await nextMainTurn(); petHost.layoutSubtreeIfNeeded()
+        XCTAssertTrue(presentation.isComposerOpen && presentation.draft == "桌宠草稿" && quick.string == "桌宠草稿",
+                     "The pet composer stays open with its draft")
+        XCTAssertTrue(findAccessibility("pet.composer", in: petHost) === quick && petWindow.firstResponder === quick,
+                     "The pet composer keeps focus")
+        quick.keyDown(with: escape(petWindow))
+        XCTAssertTrue(!presentation.isComposerOpen && presentation.draft == "桌宠草稿", "With no recording, Escape closes the composer")
+        petWindow.orderOut(nil)
+
+        var exits = 0
+        card.toggleFollowUp()
+        card.followUpDraft = "跟进草稿"
+        let cardHost = NSHostingView(rootView: ActivityCapsule(store: card, send: {}, placement: placement, exit: { exits += 1 },
+                                                               cancelDictation: { dictation.cancelForEscape() }))
+        let cardWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+        cardWindow.contentView = cardHost
+        cardWindow.makeKeyAndOrderFront(nil)
+        defer { cardWindow.orderOut(nil) }
+        try await eventually("The follow-up shows its draft", layingOut: cardHost) {
+            (findAccessibility("activity.followUp", in: cardHost) as? ComposerTextView)?.string == "跟进草稿"
+        }
+        let followUp = try XCTUnwrap(findAccessibility("activity.followUp", in: cardHost) as? ComposerTextView)
+        XCTAssertTrue(cardWindow.makeFirstResponder(followUp))
+        try await record()
+        followUp.keyDown(with: escape(cardWindow))
+        XCTAssertTrue(!dictation.isActive && store.mainDraft == "主窗口草稿", "Escape in the follow-up cancels the recording")
+        await nextMainTurn(); cardHost.layoutSubtreeIfNeeded()
+        XCTAssertTrue(exits == 0 && card.isFollowUpExpanded && card.followUpDraft == "跟进草稿" && followUp.string == "跟进草稿",
+                     "The follow-up stays open with its draft")
+        XCTAssertTrue(findAccessibility("activity.followUp", in: cardHost) === followUp && cardWindow.firstResponder === followUp,
+                     "The follow-up keeps focus")
+        followUp.keyDown(with: escape(cardWindow))
+        XCTAssertTrue(exits == 1, "With no recording, Escape leaves the follow-up")
+    }
 
     func testPetQuickComposerAndTray() async throws {
         let (store, puppet) = puppetStore()

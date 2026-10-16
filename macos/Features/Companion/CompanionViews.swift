@@ -121,6 +121,8 @@ struct ActivityCapsule: View {
     var exit: (() -> Void)?
     var end: (() -> Void)?
     var stop: (() -> Void)?
+    /// Escape in the follow-up ends a recording, if there is one, instead of leaving the follow-up.
+    var cancelDictation: () -> Bool = { false }
     /// The front card of a stack: `open` opens the list, and the card has no buttons of its own.
     var stacked = false
     @State private var hovered = false
@@ -130,10 +132,12 @@ struct ActivityCapsule: View {
     init(store: TaskStore, send: @escaping () -> Void,
          open: @escaping () -> Void = {}, placement: ActivityPlacement, title: String? = nil,
          followUp: (() -> Void)? = nil, exit: (() -> Void)? = nil, end: (() -> Void)? = nil,
-         stop: (() -> Void)? = nil, stacked: Bool = false, hovered: Bool = false) {
+         stop: (() -> Void)? = nil, cancelDictation: @escaping () -> Bool = { false },
+         stacked: Bool = false, hovered: Bool = false) {
         self.store = store; _hovered = State(initialValue: hovered)
         self.send = send; self.open = open; self.placement = placement
         self.title = title; self.followUp = followUp; self.exit = exit; self.end = end; self.stop = stop
+        self.cancelDictation = cancelDictation
         self.stacked = stacked
     }
     /// Only an ended task gets an icon; while it runs, the reply line already says it is working.
@@ -276,7 +280,10 @@ struct ActivityCapsule: View {
 
     private var followUpComposer: some View {
         NativeComposer(text: $store.followUpDraft, focusRequest: followUpFocusRequest,
-                       onEscape: { (exit ?? store.toggleFollowUp)(); return true },
+                       onEscape: {
+                           if !cancelDictation() { (exit ?? store.toggleFollowUp)() }
+                           return true
+                       },
                        minHeight: 24, maxLines: 1,
                        label: String(localized: "继续跟进输入框"), identifier: "activity.followUp", onSend: send)
             .overlay(alignment: .leading) {
@@ -781,7 +788,10 @@ struct PetControls: View {
                 if let project = workspace.projects.first(where: { $0.id == presentation.projectID }) { projectChip(project) }
             }
             NativeComposer(text: $presentation.draft, focusRequest: presentation.focusRequest,
-                           onEscape: { presentation.closeComposer(); return true },
+                           onEscape: {
+                               if workspace?.dictation.cancelForEscape() != true { presentation.closeComposer() }
+                               return true
+                           },
                            onDropFiles: { presentation.attach($0) },
                            minHeight: 20, maxLines: 1,
                            label: String(localized: "新聊天输入框"), identifier: "pet.composer",
@@ -936,7 +946,8 @@ struct WorkspaceActivityCapsule: View {
             placement: placement, title: conversation.displayTitle,
             followUp: { workspace.enterPetFollowUp(conversation.id) }, exit: { workspace.exitPetFollowUp() },
             end: { workspace.dismissPetActivity(conversationID: conversation.id) },
-            stop: { workspace.stop(conversationID: conversation.id) }, stacked: stacked)
+            stop: { workspace.stop(conversationID: conversation.id) },
+            cancelDictation: { workspace.dictation.cancelForEscape() }, stacked: stacked)
             .id(conversation.id)
     }
     var body: some View {
