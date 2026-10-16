@@ -2,8 +2,8 @@ import Foundation
 import FoundationModels
 
 // web_search for the native Agent: Doubao search, which a Volcengine Ark Agent Plan includes and
-// which takes the plan's own API key. The tool is offered only when the model provider is
-// Volcengine Ark, with the key of the model page; the search is a plain HTTP request, no MCP.
+// which takes the plan's own API key. The tool is offered whenever the model page's Volcengine Ark
+// group has a key, whichever provider writes the reply; the search is a plain HTTP request, no MCP.
 //
 // The service answers HTTP 200 for its own errors, with the error in ResponseMetadata. Every page
 // comes back with its text, needed or not: the model gets it only when it asks for it.
@@ -71,12 +71,9 @@ struct DoubaoSearch: Sendable {
         return AgentTransport(configuration: configuration)
     }
 
-    /// The searcher a turn gets: only Volcengine Ark has one, with the saved model key.
+    /// The searcher a turn gets: one with the saved Volcengine Ark key, and none without it.
     @MainActor static func searcher(for settings: SettingsStore) -> DoubaoSearch? {
-        guard settings.snapshot.activeProvider == .volcengineArk,
-              let key = try? settings.savedModelCredentials().key.trimmingCharacters(in: .whitespacesAndNewlines),
-              !key.isEmpty else { return nil }
-        return DoubaoSearch(key: key)
+        settings.savedArkKey.map { DoubaoSearch(key: $0) }
     }
 
     static func body(_ request: AgentWebSearchRequest) -> [String: Any] {
@@ -222,6 +219,23 @@ enum AgentWebSearchResult {
             return found(request.query, hits, includeContent: request.includeContent)
         } catch {
             return failed(error)
+        }
+    }
+}
+
+/// The Volcengine Ark group's connection test: one search, failing with the words the search card uses.
+struct DoubaoSearchTester: ArkConnectionTesting {
+    func test(key: String) async throws {
+        do { _ = try await DoubaoSearch(key: key).search(AgentWebSearchRequest(query: "火山方舟")) }
+        catch {
+            switch error {
+            case .key(let code): throw SettingsError(localized: "豆包搜索不接受这个 API Key（\(code)）。")
+            case .service(let code, let message): throw SettingsError(localized: "豆包搜索返回错误：\(message)（\(code)）")
+            case .http(let status): throw SettingsError(localized: "豆包搜索返回 HTTP \(status)。")
+            case .network(.timedOut, _): throw SettingsError(localized: "豆包搜索没有及时响应。")
+            case .network(_, let description): throw SettingsError(localized: "无法连接豆包搜索：\(description)")
+            case .response: throw SettingsError(localized: "豆包搜索的返回无法识别。")
+            }
         }
     }
 }

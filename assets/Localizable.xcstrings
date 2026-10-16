@@ -1037,16 +1037,6 @@
         }
       }
     },
-    "原语音密钥尚未读取，请重新填写后保存。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The saved voice key couldn’t be read. Enter it again and click Save."
-          }
-        }
-      }
-    },
     "发送" : {
       "localizations" : {
         "en" : {
@@ -2531,12 +2521,12 @@
         }
       }
     },
-    "无法读取已保存的语音密钥，请检查钥匙串访问权限。" : {
+    "无法读取已保存的火山方舟 API Key，请检查钥匙串访问权限。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Couldn’t read the saved voice key. Check Echo’s keychain access."
+            "value" : "Couldn’t read the saved Volcengine Ark API key. Check Echo’s keychain access."
           }
         }
       }
@@ -3748,6 +3738,16 @@
         }
       }
     },
+    "用于对话" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use for chat"
+          }
+        }
+      }
+    },
     "用所选内容查找" : {
       "localizations" : {
         "en" : {
@@ -4135,6 +4135,16 @@
         }
       }
     },
+    "视觉模型" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Image model"
+          }
+        }
+      }
+    },
     "记住：%@" : {
       "localizations" : {
         "en" : {
@@ -4315,22 +4325,32 @@
         }
       }
     },
+    "语言模型" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat model"
+          }
+        }
+      }
+    },
+    "语言模型：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat model: %@"
+          }
+        }
+      }
+    },
     "语音" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Voice"
-          }
-        }
-      }
-    },
-    "语音 API Key 不能包含换行。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The voice API key can’t contain line breaks."
           }
         }
       }
@@ -4691,22 +4711,12 @@
         }
       }
     },
-    "语音配置已保存，但旧密钥清理失败，请检查钥匙串。" : {
+    "语音鉴权失败，请检查设置的模型页里火山方舟的 API Key 和套餐权限。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Voice settings were saved, but the old key couldn’t be removed from the keychain."
-          }
-        }
-      }
-    },
-    "语音鉴权失败，请检查设置的语音页里的 API Key 和套餐权限。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Voice authentication failed. Check the API key in the Voice section of Settings and your plan permissions."
+            "value" : "Voice authentication failed. Check the Volcengine Ark API key on the Model page in Settings and your plan permissions."
           }
         }
       }
@@ -4761,12 +4771,12 @@
         }
       }
     },
-    "请在设置的语音页填写 API Key。" : {
+    "请在设置的模型页填写并保存火山方舟的 API Key。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Enter an API key in the Voice section of Settings."
+            "value" : "Enter the Volcengine Ark API key on the Model page in Settings and click Save."
           }
         }
       }
@@ -4797,6 +4807,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enter a valid Voice ID."
+          }
+        }
+      }
+    },
+    "请输入火山方舟的语言模型。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a chat model for Volcengine Ark."
           }
         }
       }
@@ -4837,6 +4857,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "reading the microphone format and installing the capture tap"
+          }
+        }
+      }
+    },
+    "豆包搜索不接受这个 API Key（%@）。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Doubao Search didn’t accept this API key (%@)."
           }
         }
       }
@@ -5213,6 +5243,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Connected · tool calling works"
+          }
+        }
+      }
+    },
+    "连接成功，联网搜索和工具调用均正常。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected · web search and tool calling work"
+          }
+        }
+      }
+    },
+    "连接成功，联网搜索已返回结果。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected · web search works"
           }
         }
       }
@@ -5600,26 +5650,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Project unavailable: %@"
-          }
-        }
-      }
-    },
-    "验证当前协议的工具调用能力，不执行命令，也不自动保存" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Checks tool calling with the selected protocol. Runs no commands and doesn’t save."
-          }
-        }
-      }
-    },
-    "验证语音识别与合成连接，使用静音样本，不录音" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Checks speech recognition and synthesis with a silent sample. Nothing is recorded."
           }
         }
       }

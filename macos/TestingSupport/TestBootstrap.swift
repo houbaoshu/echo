@@ -35,6 +35,14 @@ import FoundationModels
         func remove(_ account: String) throws { values[account] = nil }
     }
 
+    /// The settings page's connection tests pass without reaching any service.
+    struct ConnectionTester: ConnectionTesting {
+        func test(configuration: ModelConfiguration, key: String) async throws {}
+    }
+    struct ArkTester: ArkConnectionTesting {
+        func test(key: String) async throws {}
+    }
+
     static func seed(workspace: WorkspaceStore, root: URL) throws {
         guard let fixture = ProcessInfo.processInfo.environment["ECHO_UI_FIXTURE"] else { return }
         guard ["projects", "sidebar"].contains(fixture) else { throw SettingsError("Unknown UI fixture") }

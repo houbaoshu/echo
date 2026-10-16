@@ -282,15 +282,16 @@ import FoundationModels
     }
 
     /// A question only the web answers, in a new chat, for each protocol: the service calls
-    /// web_search, Doubao search answers with pages, and the reply follows them. The saved model key
-    /// must be a Volcengine Ark Agent Plan key; nothing else is searched with.
+    /// web_search, Doubao search answers with pages, and the reply follows them. The model is the saved
+    /// one, whichever provider; the search uses the saved Volcengine Ark key and nothing else.
     static func runWebSearch(protocols: [ModelAPIProtocol]) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
         let (saved, key) = try settings.savedModelCredentials()
+        guard let searchKey = settings.savedArkKey else { throw SettingsError.arkKeyMissing }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         print("Disposable live workspaces: \(root.path)"); fflush(nil)
-        let search = DoubaoSearch(key: key)
+        let search = DoubaoSearch(key: searchKey)
         var failures = 0
         for api in protocols {
             var config = saved; config.apiProtocol = api

@@ -432,7 +432,7 @@ private struct HeldExecutor: LanguageModelExecutor {
                                      secrets: ComposerSecrets())
         settings.draft.model = "test-model"
         settings.apiKey = "test-model"; settings.save()
-        settings.voiceAPIKey = "test-voice"; settings.saveVoice()
+        settings.arkAPIKey = "test-voice"; settings.saveArk()
         let recognizer = ComposerRecognizer()
         var permissionReply: CheckedContinuation<Bool, Never>?
         let dictation = DictationController(audio: ComposerAudio(), recognizer: { _ in recognizer }, permission: {
@@ -748,7 +748,7 @@ private struct HeldExecutor: LanguageModelExecutor {
                                      localModels: LocalModelLocation(models: root.appendingPathComponent("Models")),
                                      secrets: ComposerSecrets())
         settings.draft.model = "test-model"; settings.apiKey = "test-key"; settings.save()
-        settings.voiceAPIKey = "test-voice"; settings.saveVoice()
+        settings.arkAPIKey = "test-voice"; settings.saveArk()
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(voice: voice, harnessFactory: { HeldModel.session() })
         voice.attach(workspace: workspace, settings: settings)
@@ -871,30 +871,21 @@ private struct HeldExecutor: LanguageModelExecutor {
         func isSecureFieldEditor(_ view: NSView?) -> Bool {
             (view as? NSTextView)?.isFieldEditor == true && String(describing: type(of: view!)).contains("Secure")
         }
-        try await tab(until: isSecureFieldEditor(responder()), "the voice API Key secure field")
-        let voiceKey = settings.voiceAPIKey
+        try await tab(until: isFieldEditor(responder()) && !isSecureFieldEditor(responder()), "the voice speaker field")
+        let speaker = settings.voiceDraft.speaker
         // "1" is the keystroke no input method absorbs into a composition, so these
         // assertions hold whichever input source the machine is on.
         try await key("1")
-        XCTAssertTrue(settings.voiceAPIKey != voiceKey && settings.isVoiceDirty, "The voice API Key field takes typed text")
+        XCTAssertTrue(settings.voiceDraft.speaker != speaker, "The voice field takes typed text")
         XCTAssertTrue(conversation.store.mainDraft.isEmpty,
                      "Typing on the settings page must not reach the chat draft: \(conversation.store.mainDraft)")
-        settings.restoreVoice()
-        try await settle()
-        try await tab(until: isFieldEditor(responder()) && !isSecureFieldEditor(responder()), "the voice speaker field")
-        let speaker = settings.voiceDraft.speaker
-        try await key("1")
-        XCTAssertTrue(settings.voiceDraft.speaker != speaker, "The voice field takes typed text")
-        // Return is the section's default action, the way it is in any system form
-        // with a save button — including from inside the field being edited.
-        XCTAssertTrue(settings.isVoiceDirty)
-        // System Return dispatch is covered by EchoUITests. Here the native
-        // button action verifies the form's state without a global keyboard hook.
-        XCTAssertTrue(findAccessibility("voiceSettings.save", in: window.contentView!)?.accessibilityPerformPress?() == true)
+        // The voice page has no save button: leaving the field saves the voice ID.
+        // System Return dispatch is covered by EchoUITests.
+        XCTAssertTrue(settings.isVoiceDirty && findAccessibility("voiceSettings.save", in: window.contentView!) == nil)
+        try await key(TestKey.tab)
         try await settle()
         XCTAssertTrue(!settings.isVoiceDirty && settings.snapshot.voice?.speaker == settings.voiceDraft.speaker,
-                     "The section save action persists the edited text field")
-        settings.restoreVoice()
+                     "Leaving the voice ID field saves it")
 
         // 7. Typing reaches the model fields, including the secure field.
         settings.selectedSection = .model
@@ -965,7 +956,7 @@ private struct HeldExecutor: LanguageModelExecutor {
         XCTAssertTrue(modelTestLabel == "测试连接", "The model page names its connection test 测试连接: \(modelTestLabel ?? "nil")")
         settings.selectedSection = .voice
         try await settle()
-        XCTAssertTrue(settings.canTestVoice, "The voice page's own key enables its tests")
+        XCTAssertTrue(settings.canTestVoice, "The saved Volcengine Ark key enables the voice page's tests")
         let voiceTest = findAccessibility("voiceSettings.test", in: window.contentView!)
         XCTAssertTrue(voiceTest?.accessibilityLabel?() == modelTestLabel,
                      "The voice page names it the same: \(voiceTest?.accessibilityLabel?() ?? "nil")")

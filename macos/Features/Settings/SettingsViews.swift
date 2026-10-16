@@ -81,30 +81,36 @@ struct SettingsView: View {
     }
 }
 
-/// While a section's connection test runs: what is happening, and the one way to
-/// stop it. Both sections show this instead of each inventing its own cancel.
-struct SettingsTestProgress: View {
+/// A group's footer, in the gap below its box: a running test and the way to stop it, or the
+/// group's last report — a test's result, or why it could not be saved. Always one line; a long
+/// report is cut short and shows whole on hover. Every group with a test uses this, so a result
+/// reads the same wherever it came from.
+struct SettingsGroupStatus: View {
+    let testing: Bool
+    let line: SettingsTestLine?
+    /// Prefixes the identifiers of the cancel button and the report.
     let identifier: String
-    var cancel: () -> Void
+    var cancel: @MainActor () -> Void
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text("正在测试…").font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
-            Button("取消", action: cancel).accessibilityIdentifier(identifier)
-        }
+        // The form already leaves a gap below a group's box; the line is drawn in it rather than
+        // added to it, so a report coming or going never moves the groups below.
+        Color.clear.frame(height: 0).overlay(alignment: .topLeading) { content.fixedSize(horizontal: false, vertical: true) }
     }
-}
-
-/// A finished connection test, shown in the same place with the same mark and colours on both
-/// sections, so a result reads the same wherever it came from.
-struct SettingsTestResult: View {
-    let text: String
-    let succeeded: Bool
-    let identifier: String
-    var body: some View {
-        Label(text, systemImage: succeeded ? "checkmark.circle" : "info.circle")
-            .font(WorkspaceStyle.caption).foregroundStyle(succeeded ? WorkspaceStyle.success : WorkspaceStyle.secondary)
-            .textSelection(.enabled).accessibilityIdentifier(identifier)
+    private var content: some View {
+        Group {
+            if testing {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.mini)
+                    Text("正在测试…")
+                    Button("取消", action: cancel).controlSize(.small).accessibilityIdentifier("\(identifier).cancelTest")
+                }
+            } else if let line {
+                Label(line.text, systemImage: line.succeeded ? "checkmark.circle" : "info.circle")
+                    .lineLimit(1).truncationMode(.tail)
+                    .foregroundStyle(line.succeeded ? WorkspaceStyle.success : WorkspaceStyle.secondary)
+                    .help(line.text).accessibilityIdentifier("\(identifier).status")
+            }
+        }.font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
     }
 }
 
@@ -120,6 +126,8 @@ struct SettingsAPIKeyField: View {
     /// takes the first responder with it when it goes. Hand it back to whichever
     /// field replaced it, so the caret does not vanish mid-edit.
     @FocusState private var focused: Bool
+    /// Whether the form around the row lets it be edited.
+    @Environment(\.isEnabled) private var formEnabled
     var body: some View {
         LabeledContent("API Key") {
             HStack(spacing: 8) {
@@ -134,26 +142,32 @@ struct SettingsAPIKeyField: View {
                     // The replacement exists only after this update; asking any
                     // earlier focuses the field that is on its way out.
                     if editing { DispatchQueue.main.async { focused = true } }
-                } label: { Image(systemName: revealed ? "eye.slash" : "eye") }
+                } label: { Image(systemName: revealed ? "eye.slash" : "eye").foregroundStyle(iconColor(formEnabled && enabled)) }
                     .buttonStyle(.borderless).help(revealed ? "隐藏 API Key" : "显示 API Key")
                     .accessibilityLabel(revealed ? "隐藏 API Key" : "显示 API Key")
                     .accessibilityIdentifier("\(identifier).reveal")
-                Button { key = "" } label: { Image(systemName: "xmark.circle") }
+                Button { key = "" } label: { Image(systemName: "xmark.circle").foregroundStyle(iconColor(formEnabled && enabled && !key.isEmpty)) }
                     .buttonStyle(.borderless).disabled(key.isEmpty).help("清除 API Key，保存后生效")
                     .accessibilityLabel("清除 API Key")
                     .accessibilityIdentifier("\(identifier).clear")
             }.disabled(!enabled)
         }
     }
+    /// A borderless icon button keeps its full colour when disabled (measured on macOS 27), so it
+    /// takes the disabled text colour itself, the way the field beside it greys out.
+    private func iconColor(_ active: Bool) -> Color { active ? .primary : Color(nsColor: .disabledControlTextColor) }
 }
 
 struct ModelSettingsView: View {
     @Bindable var settings: SettingsStore
     @State private var revealsKey = false
+    @State private var revealsArkKey = false
     var body: some View {
         // A control that takes its own label keeps it, so the form — not this view —
         // decides where the label column ends and how a narrow pane stacks the row.
         // `LabeledContent` is only for the one row whose control is a composite.
+        // Each group saves, reverts and tests only itself, in its last row; Return saves
+        // the group whose field has the caret.
         Form {
             Section {
                 Picker("Provider", selection: Binding(get: { settings.selectedProvider }, set: { settings.selectProvider($0) })) {
@@ -172,25 +186,21 @@ struct ModelSettingsView: View {
                                     enabled: settings.selectedProvider.requiresKey)
                 TextField("默认模型", text: $settings.draft.model, prompt: Text("输入 Model ID"))
                     .accessibilityLabel("默认模型").accessibilityIdentifier("settings.model")
+                SettingsGroupActions(save: settings.save, canSave: settings.isDirty,
+                                     restore: settings.restore, canRestore: settings.canRestoreModel,
+                                     identifier: "settings") {
+                    Button("测试连接") { settings.testConnection() }
+                        .disabled(settings.testing || !settings.canTestModelService)
+                        .accessibilityIdentifier("settings.test")
+                }
             } header: {
                 Text("模型服务")
+            } footer: {
+                SettingsGroupStatus(testing: settings.testing, line: settings.modelServiceStatus, identifier: "settings",
+                                    cancel: settings.cancelModelServiceTest)
             }
-            Section {
-                ViewThatFits(in: .horizontal) {
-                    HStack { saveActions; Spacer(); testAction }
-                    VStack(alignment: .leading, spacing: 12) { saveActions; testAction }
-                }
-                if settings.testing {
-                    SettingsTestProgress(identifier: "settings.cancelTest") { settings.cancelTest() }
-                }
-                if let result = settings.testResult {
-                    SettingsTestResult(text: result, succeeded: settings.testSucceeded, identifier: "settings.testResult")
-                }
-                if let notice = settings.notice {
-                    Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
-                        .accessibilityIdentifier("settings.notice")
-                }
-            }
+            .onSubmit { if settings.isDirty { settings.save() } }
+            ArkSettingsSection(settings: settings, revealsKey: $revealsArkKey)
             LocalModelSection(settings: settings)
             MemorySection(settings: settings)
         }
@@ -198,22 +208,60 @@ struct ModelSettingsView: View {
         // as a value rather than something editable. These are all credentials and
         // endpoints the user types into, so they keep the bordered field the card used.
         .textFieldStyle(.roundedBorder)
-        .onDisappear { revealsKey = false }
+        .onDisappear { revealsKey = false; revealsArkKey = false }
         .onChange(of: settings.selectedProvider) { _, _ in revealsKey = false }
     }
-    private var saveActions: some View {
+}
+
+/// A group's last row, and only buttons: save and revert, for this group alone, on the left;
+/// the group's own tests on the right.
+struct SettingsGroupActions<Tests: View>: View {
+    var save: @MainActor () -> Void
+    let canSave: Bool
+    var restore: @MainActor () -> Void
+    let canRestore: Bool
+    /// Prefixes the save and revert buttons' identifiers.
+    let identifier: String
+    @ViewBuilder let tests: Tests
+    var body: some View {
         HStack(spacing: 12) {
-            Button("保存") { settings.save() }.buttonStyle(.borderedProminent).disabled(!settings.isDirty)
-                .keyboardShortcut(.defaultAction).accessibilityIdentifier("settings.save")
-            Button("还原修改") { settings.restore() }.disabled(!settings.canRestoreModel)
-                .accessibilityIdentifier("settings.restore")
-        }
+            Button("保存", action: save).disabled(!canSave).accessibilityIdentifier("\(identifier).save")
+            Button("还原修改", action: restore).disabled(!canRestore).accessibilityIdentifier("\(identifier).restore")
+            Spacer(minLength: 0)
+            tests
+        }.fixedSize(horizontal: false, vertical: true)
     }
-    private var testAction: some View {
-        Button("测试连接") { settings.testConnection() }
-            .disabled(settings.testing)
-            .help("验证当前协议的工具调用能力，不执行命令，也不自动保存")
-            .accessibilityIdentifier("settings.test")
+}
+
+/// Volcengine Ark: one key for chat, voice, web_search and image generation, whichever service
+/// chats. Its address and protocol are fixed, so the group shows only what the person chooses.
+struct ArkSettingsSection: View {
+    @Bindable var settings: SettingsStore
+    @Binding var revealsKey: Bool
+    var body: some View {
+        Section {
+            SettingsAPIKeyField(key: $settings.arkAPIKey, revealed: $revealsKey, identifier: "settings.ark.apiKey")
+            TextField("语言模型", text: $settings.arkDraft.languageModel, prompt: Text(ArkSettings.defaultLanguageModel))
+                .accessibilityLabel("语言模型").accessibilityIdentifier("settings.ark.chatModel")
+            TextField("视觉模型", text: $settings.arkDraft.visionModel, prompt: Text(ArkSettings.defaultVisionModel))
+                .accessibilityLabel("视觉模型").accessibilityIdentifier("settings.ark.imageModel")
+            Toggle("用于对话", isOn: $settings.arkDraft.useForChat).toggleStyle(.switch)
+                .disabled(!settings.canUseArkForChat)
+                .accessibilityIdentifier("settings.ark.useForChat")
+            SettingsGroupActions(save: settings.saveArk, canSave: settings.isArkDirty,
+                                 restore: settings.restoreArk, canRestore: settings.isArkDirty,
+                                 identifier: "settings.ark") {
+                Button("测试连接") { settings.testArk() }
+                    .disabled(settings.arkTesting || !settings.canTestArk)
+                    .accessibilityIdentifier("settings.ark.test")
+            }
+        } header: {
+            Text("火山方舟")
+        } footer: {
+            SettingsGroupStatus(testing: settings.arkTesting, line: settings.arkStatus, identifier: "settings.ark",
+                                cancel: settings.cancelArkTest)
+        }
+        .onSubmit { if settings.isArkDirty { settings.saveArk() } }
     }
 }
 

@@ -47,50 +47,40 @@ struct RecordingWaveform: View {
 struct VoiceSettingsView: View {
     @Bindable var settings: SettingsStore
     var voice: VoiceSessionController
-    @State private var revealsKey = false
+    @FocusState private var editingSpeaker: Bool
     private var diagnostics: VoiceDiagnostics { .shared }
+    /// Voice has no key of its own: without the model page's Volcengine Ark key the tests stay grey.
     private var testsDisabled: Bool { voice.testing || voice.isActive || voice.isDictating || !settings.canTestVoice }
+    /// A voice ID that could not be saved says why below the group; otherwise the test's own result,
+    /// which no longer applies once the Volcengine Ark key is gone (it may go while the page is away).
+    private var status: SettingsTestLine? {
+        settings.voiceNotice.map { SettingsTestLine(text: $0, succeeded: false) }
+            ?? (settings.canTestVoice ? voice.testResult.map { SettingsTestLine(text: $0, succeeded: voice.testSucceeded) } : nil)
+    }
     var body: some View {
         // Each group of the section is a `Section`, so the separator between them is the
         // form's own rather than a hand-placed `Divider()`.
         Form {
             Section {
-                SettingsAPIKeyField(key: $settings.voiceAPIKey, revealed: $revealsKey, identifier: "voiceSettings.apiKey")
+                // Saved on Return, when the field is left, or when the page goes; there is no save button.
                 TextField("音色 ID", text: $settings.voiceDraft.speaker, prompt: Text("输入音色 ID"))
+                    .focused($editingSpeaker)
+                    .onSubmit { settings.commitVoice() }
                     .accessibilityLabel("音色 ID")
                     .accessibilityIdentifier("voiceSettings.speaker")
+                // The test and the preview use the voice ID as typed, saved or not.
+                HStack(spacing: 12) {
+                    Spacer(minLength: 0)
+                    Button("测试连接") { test(preview: false) }.disabled(testsDisabled)
+                        .accessibilityIdentifier("voiceSettings.test")
+                    Button("试听音色") { test(preview: true) }.disabled(testsDisabled)
+                        .accessibilityIdentifier("voiceSettings.preview")
+                }
             } header: {
                 Text("豆包语音")
-            }
-            Section {
-                HStack(spacing: 12) {
-                    Button("保存") { settings.saveVoice() }.buttonStyle(.borderedProminent)
-                        .disabled(!settings.isVoiceDirty).keyboardShortcut(.defaultAction)
-                        .accessibilityIdentifier("voiceSettings.save")
-                    Button("还原修改") { settings.restoreVoice() }.disabled(!settings.isVoiceDirty)
-                        .accessibilityIdentifier("voiceSettings.restore")
-                }
-                if let notice = settings.voiceNotice {
-                    Text(notice).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
-                        .accessibilityIdentifier("voiceSettings.notice")
-                }
-            }
-            Section {
-                HStack(spacing: 12) {
-                    Button("测试连接") { test(preview: false) }
-                        .help("验证语音识别与合成连接，使用静音样本，不录音")
-                        .accessibilityIdentifier("voiceSettings.test")
-                    Button("试听音色") { test(preview: true) }
-                        .accessibilityIdentifier("voiceSettings.preview")
-                }.disabled(testsDisabled)
-                if voice.testing {
-                    SettingsTestProgress(identifier: "voiceSettings.cancelTest") { voice.cancelTest() }
-                }
-                // Only the wording differs from the model page's result, because only voice
-                // can report what it did without recording.
-                if let result = voice.testResult {
-                    SettingsTestResult(text: result, succeeded: voice.testSucceeded, identifier: "voiceSettings.testResult")
-                }
+            } footer: {
+                SettingsGroupStatus(testing: voice.testing, line: status, identifier: "voiceSettings",
+                                    cancel: { voice.cancelTest() })
             }
             Section {
                 DisclosureGroup("诊断日志") {
@@ -109,12 +99,14 @@ struct VoiceSettingsView: View {
                 }.accessibilityIdentifier("voiceSettings.diagnostics")
             }
         }.textFieldStyle(.roundedBorder)
-            .onChange(of: settings.voiceAPIKey) { _, _ in voice.invalidateTest() }
-            .onChange(of: settings.voiceDraft) { _, _ in voice.invalidateTest() }
-            .onDisappear { voice.cancelTest(); revealsKey = false }
+            .onChange(of: editingSpeaker) { _, editing in if !editing { settings.commitVoice() } }
+            .onChange(of: settings.savedArkKey) { _, _ in voice.invalidateTest() }
+            .onChange(of: settings.voiceDraft) { _, _ in voice.invalidateTest(); settings.voiceNotice = nil }
+            .onDisappear { settings.commitVoice(); voice.cancelTest() }
     }
     private func test(preview: Bool) {
         guard let key = try? settings.voiceTestKey() else { return }
+        settings.voiceNotice = nil
         voice.test(configuration: settings.voiceDraft, key: key, preview: preview)
     }
 }

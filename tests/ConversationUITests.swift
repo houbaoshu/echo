@@ -1549,8 +1549,8 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(closed == 2, "Escape closes")
     }
 
-    /// A key shown in plain text is hidden again once Settings closes, on the voice section as on
-    /// the model section, and the key typed but not saved stays as it was.
+    /// Keys shown in plain text are hidden again once Settings closes — the model service's and the
+    /// Volcengine Ark group's — and the keys typed but not saved stay as they were.
     func testRevealedAPIKeysHideWhenSettingsCloses() async throws {
         let workspace = WorkspaceStore(initialStore: TaskStore(harness: idleAgent()))
         defer { workspace.shutdown() }
@@ -1560,34 +1560,30 @@ private struct ComposerHeightHost: View {
                                         settings: settingsWindowStore())
         defer { main.shutdown() }
         main.settings.selectProvider(.deepSeek)
-        // The reveal button is addressed by its label, which says what pressing it does.
-        func button(_ label: String, in value: Any, depth: Int = 0) -> AnyObject? {
-            guard depth < 30 else { return nil }
+        // The reveal buttons are addressed by their label, which says what pressing one does.
+        func buttons(_ label: String, in value: Any, depth: Int = 0) -> [AnyObject] {
+            guard depth < 30 else { return [] }
             let object = value as AnyObject
-            if object.accessibilityRole?() == .button, object.accessibilityLabel?() == label { return object }
-            for child in object.accessibilityChildren?() ?? [] {
-                if let found = button(label, in: child, depth: depth + 1) { return found }
-            }
-            return nil
+            if object.accessibilityRole?() == .button, object.accessibilityLabel?() == label { return [object] }
+            return (object.accessibilityChildren?() ?? []).flatMap { buttons(label, in: $0, depth: depth + 1) }
         }
-        for section in [SettingsSection.voice, .model] {
-            main.settings.selectedSection = section
-            if section == .voice { main.settings.voiceAPIKey = "未保存的语音密钥" } else { main.settings.apiKey = "未保存的模型密钥" }
-            main.showSettings()
-            let settingsWindow = try XCTUnwrap(main.settingsController?.window)
-            let content = try XCTUnwrap(settingsWindow.contentView)
-            try await eventually("\(section): the key shows hidden", layingOut: content) { button("显示 API Key", in: content) != nil }
-            XCTAssertTrue(button("显示 API Key", in: content)?.accessibilityPerformPress?() == true)
-            try await eventually("\(section): the key shows in plain text", layingOut: content) { button("隐藏 API Key", in: content) != nil }
-            main.settingsController?.close()
-            main.showSettings()
-            try await eventually("\(section): hidden again after Settings reopens", layingOut: content) {
-                button("显示 API Key", in: content) != nil && button("隐藏 API Key", in: content) == nil
-            }
-            XCTAssertTrue(section == .voice ? main.settings.voiceAPIKey == "未保存的语音密钥" : main.settings.apiKey == "未保存的模型密钥",
-                         "\(section): the unsaved key is kept")
-            main.settingsController?.close()
+        main.settings.selectedSection = .model
+        main.settings.apiKey = "未保存的模型密钥"
+        main.settings.arkAPIKey = "未保存的火山方舟密钥"
+        main.showSettings()
+        let settingsWindow = try XCTUnwrap(main.settingsController?.window)
+        let content = try XCTUnwrap(settingsWindow.contentView)
+        try await eventually("both keys show hidden", layingOut: content) { buttons("显示 API Key", in: content).count == 2 }
+        for reveal in buttons("显示 API Key", in: content) { XCTAssertTrue(reveal.accessibilityPerformPress?() == true) }
+        try await eventually("both keys show in plain text", layingOut: content) { buttons("隐藏 API Key", in: content).count == 2 }
+        main.settingsController?.close()
+        main.showSettings()
+        try await eventually("hidden again after Settings reopens", layingOut: content) {
+            buttons("显示 API Key", in: content).count == 2 && buttons("隐藏 API Key", in: content).isEmpty
         }
+        XCTAssertTrue(main.settings.apiKey == "未保存的模型密钥" && main.settings.arkAPIKey == "未保存的火山方舟密钥",
+                      "the unsaved keys are kept")
+        main.settingsController?.close()
     }
 
     func testSettingsAndCompanionVoiceIntegration() async throws {
@@ -3792,7 +3788,7 @@ private struct ComposerHeightHost: View {
         let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
-        settings.voiceAPIKey = "voice"; settings.saveVoice()
+        settings.arkAPIKey = "voice"; settings.saveArk()
         voice.attach(workspace: workspace, settings: settings)
         defer { workspace.shutdown(); voice.shutdown() }
         let read = workspace.selected!
@@ -5052,7 +5048,7 @@ private struct ComposerHeightHost: View {
         let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
-        settings.voiceAPIKey = "voice"; settings.saveVoice()
+        settings.arkAPIKey = "voice"; settings.saveArk()
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings,
                                             defaults: EchoTestResources.defaults())
         return (companion, workspace, voice)

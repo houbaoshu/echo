@@ -1244,8 +1244,8 @@ extension EchoVoiceScenarios {
         #expect(request?.model == "unavailable-model" && request?.apiProtocol == .responses && key == "test-key",
               "explicit connection test uses current typed configuration")
         await tester.finish(SettingsError("模型不存在"))
-        try await eventually("the failure is reported") { settings.testResult == "模型不存在" }
-        #expect(!settings.testSucceeded && settings.testResult == "模型不存在" && settings.draft.model == "unavailable-model",
+        try await eventually("the failure is reported") { settings.testResult?.text == "模型不存在" }
+        #expect(!(settings.testResult?.succeeded == true) && settings.testResult?.text == "模型不存在" && settings.draft.model == "unavailable-model",
               "failed test reports error without changing typed ID")
         #expect(settings.snapshot.model.model == "typed-model", "testing never saves the draft")
         settings.testConnection()
@@ -1255,7 +1255,7 @@ extension EchoVoiceScenarios {
         // The cancelled test's task resumes after the tester returns and drops the success without a
         // trace (its task is private to SettingsStore), so watch for a late result for a while.
         await observationWindow(.milliseconds(25))
-        #expect(settings.testResult == nil && !settings.testing && settings.draft.model == "newer-input",
+        #expect(settings.testResult?.text == nil && !settings.testing && settings.draft.model == "newer-input",
               "editing input cancels testing and discards late success")
         settings.testConnection()
         try await eventually("the tester receives the request") { await tester.pending != nil }
@@ -1263,15 +1263,15 @@ extension EchoVoiceScenarios {
         await tester.finish()
         // As above: the cancelled test's task drops the late success without a trace.
         await observationWindow(.milliseconds(25))
-        #expect(settings.testResult == "测试已取消。" && !settings.testSucceeded, "cancelled test cannot publish late success")
+        #expect(settings.testResult?.text == "测试已取消。" && !(settings.testResult?.succeeded == true), "cancelled test cannot publish late success")
         settings.testConnection()
         try await eventually("the tester receives the request") { await tester.pending != nil }
         await tester.finish()
-        try await eventually("the test succeeds") { settings.testSucceeded }
-        #expect(settings.testSucceeded && settings.snapshot.model.model == "typed-model", "successful test remains separate from save")
+        try await eventually("the test succeeds") { (settings.testResult?.succeeded == true) }
+        #expect((settings.testResult?.succeeded == true) && settings.snapshot.model.model == "typed-model", "successful test remains separate from save")
         settings.draft.model = "   "
         settings.testConnection()
-        #expect(!settings.testing && settings.testResult == "请输入默认模型。", "blank manual model is rejected before testing")
+        #expect(!settings.testing && settings.testResult?.text == "请输入默认模型。", "blank manual model is rejected before testing")
         settings.save()
         rejects("blank saved model cannot start generation") { _ = try settings.savedModelCredentials() }
     }
@@ -1508,54 +1508,45 @@ extension EchoVoiceScenarios {
         #expect(settings.voiceDraft == VoiceConfiguration(), "settings without voice receive the voice default")
         settings.voiceDraft.speaker = "  custom-voice  "
         #expect(settings.isVoiceDirty && settings.snapshot.voice == nil, "typing voice ID changes only the draft")
-        settings.restoreVoice()
-        #expect(settings.voiceDraft == VoiceConfiguration(), "restore discards unsaved voice edit")
-        settings.voiceDraft.speaker = "  custom-voice  "
-        settings.voiceAPIKey = "voice-test-secret"; settings.saveVoice()
+        settings.commitVoice()
+        #expect(settings.voiceNotice == nil && !settings.isVoiceDirty && settings.snapshot.voice?.speaker == "custom-voice",
+                "Return or leaving the field saves the voice ID, trimmed")
+        rejects("no Volcengine Ark key, no voice") { _ = try settings.savedVoiceCredentials() }
+        #expect(!settings.canTestVoice, "without the Volcengine Ark key the voice test stays off")
+        settings.apiKey = "model-key"; settings.save()
+        rejects("voice never borrows the saved model key") { _ = try settings.savedVoiceCredentials() }
+        settings.arkAPIKey = "ark-key"
+        #expect(!settings.canTestVoice, "a Volcengine Ark key still being typed does not test voice")
+        settings.saveArk()
+        #expect(settings.canTestVoice && (try? settings.voiceTestKey()) == "ark-key")
         let persisted = try String(contentsOf: url, encoding: .utf8)
-        #expect(!persisted.contains("voice-test-secret"), "voice secret never written to JSON")
+        #expect(!persisted.contains("ark-key") && !persisted.contains("model-key"), "keys are never written to JSON")
         let restored = SettingsStore(url: url, secrets: secrets)
         #expect(restored.voiceDraft.speaker == "custom-voice", "trimmed manual voice ID survives relaunch")
-        restored.voiceDraft.speaker = "changed-voice"
-        restored.restoreVoice()
-        #expect(restored.voiceDraft.speaker == "custom-voice", "restore undoes direct voice edit")
         restored.voiceDraft.speaker = " "
-        restored.saveVoice()
+        restored.commitVoice()
         #expect(restored.voiceNotice != nil && restored.snapshot.voice?.speaker == "custom-voice", "empty voice cannot overwrite saved ID")
         restored.voiceDraft.speaker = String(repeating: "x", count: 257)
-        restored.saveVoice()
+        restored.commitVoice()
         #expect(restored.voiceNotice != nil && restored.snapshot.voice?.speaker == "custom-voice", "overlong voice cannot overwrite saved ID")
-        restored.restoreVoice()
-        #expect(try restored.savedVoiceCredentials().key == "voice-test-secret", "voice credentials restored independently")
+        restored.voiceDraft.speaker = "custom-voice"
+        #expect(!restored.isVoiceDirty)
+        let credentials = try restored.savedVoiceCredentials()
+        #expect(credentials.key == "ark-key" && credentials.configuration.speaker == "custom-voice", "voice uses the saved Volcengine Ark key")
         #expect(restored.snapshot.model.model == "test", "voice save preserves text model")
-        restored.voiceAPIKey = "replacement"; restored.saveVoice()
-        #expect(secrets.values.count == 1 && secrets.values.values.first == "replacement", "rotated key cleanup")
-        restored.voiceAPIKey = ""; restored.saveVoice()
-        #expect(secrets.values.isEmpty && restored.snapshot.voiceSecretAccount == nil, "explicit key removal")
-        rejects("missing voice credentials") { _ = try restored.savedVoiceCredentials() }
-        restored.apiKey = "model-key"; restored.save()
-        rejects("voice never borrows the saved model key") { _ = try restored.savedVoiceCredentials() }
-        #expect(!restored.canTestVoice, "without its own key the voice test stays off")
-        restored.voiceAPIKey = "voice-key"
-        #expect(restored.canTestVoice, "the voice test uses the key typed on the voice page")
-        restored.saveVoice()
-        #expect(try restored.savedVoiceCredentials().key == "voice-key", "voice uses its own saved key")
         restored.restore(); restored.apiKey = "rotated-model-key"; restored.save()
-        #expect(try restored.savedVoiceCredentials().key == "voice-key", "model key rotation leaves the voice key alone")
+        #expect(try restored.savedVoiceCredentials().key == "ark-key", "model key rotation leaves voice alone")
         restored.selectProvider(.deepSeek); restored.draft.model = "deepseek-chat"; restored.apiKey = "deepseek-key"; restored.save()
-        #expect(try restored.savedVoiceCredentials().key == "voice-key", "switching model provider leaves the voice key alone")
-        let reloaded = SettingsStore(url: url, secrets: secrets)
-        #expect(try reloaded.savedVoiceCredentials().key == "voice-key", "voice credentials survive relaunch")
+        #expect(try restored.savedVoiceCredentials().key == "ark-key", "switching model provider leaves voice alone")
         let logsBefore = VoiceDiagnostics.shared.lines.count
-        _ = reloaded.canTestVoice; _ = reloaded.canTestVoice
+        _ = restored.canTestVoice; _ = restored.canTestVoice
         #expect(VoiceDiagnostics.shared.lines.count == logsBefore, "SwiftUI credential validation does not publish new logs")
-        #expect(!VoiceDiagnostics.shared.text.contains("voice-key"), "diagnostics never contain saved key values")
-        let secretCount = secrets.values.count
+        #expect(!VoiceDiagnostics.shared.text.contains("ark-key"), "diagnostics never contain saved key values")
         let badURL = dir.appendingPathComponent("not-a-directory/settings.json")
         try Data().write(to: dir.appendingPathComponent("not-a-directory"))
         let failed = SettingsStore(url: badURL, secrets: secrets)
-        failed.voiceAPIKey = "rollback"; failed.saveVoice()
-        #expect(secrets.values.count == secretCount && failed.snapshot.voiceSecretAccount == nil, "failed disk save rolls back newly stored secret")
+        failed.voiceDraft.speaker = "unsaved"; failed.saveVoice()
+        #expect(failed.voiceNotice != nil && failed.snapshot.voice == nil, "a failed disk save keeps the saved voice")
     }
     @Test @MainActor static func playbackDoesNotCreateUserTurn() async throws {
         let audio = FakeAudio(), synth = FakeSynthesizer()
@@ -2230,7 +2221,7 @@ extension EchoVoiceScenarios {
             let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
             let settings = SettingsStore(secrets: FakeSecrets())
             settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
-            settings.voiceAPIKey = "voice"; settings.saveVoice()
+            settings.arkAPIKey = "voice"; settings.saveArk()
             voice.attach(workspace: workspace, settings: settings)
             defer { voice.shutdown(); workspace.shutdown() }
             let a = workspace.selected!

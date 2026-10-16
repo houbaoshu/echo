@@ -76,7 +76,7 @@ import Foundation
         let workspace = WorkspaceStore(voice: voice, harnessFactory: puppets.factory)
         let settings = SettingsStore(secrets: CommandSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
-        settings.voiceAPIKey = "voice"; settings.saveVoice()
+        settings.arkAPIKey = "voice"; settings.saveArk()
         voice.attach(workspace: workspace, settings: settings)
         defer { permission?.resume(returning: false); workspace.shutdown() }
         let a = workspace.selected!, ma = puppets.models[0]
@@ -265,7 +265,7 @@ import Foundation
         let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: CommandSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
-        settings.voiceAPIKey = "voice"; settings.saveVoice()
+        settings.arkAPIKey = "voice"; settings.saveArk()
         voice.attach(workspace: workspace, settings: settings)
         defer { permission?.resume(returning: false); workspace.shutdown() }
 

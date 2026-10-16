@@ -640,7 +640,9 @@ import XCTest
             XCTAssertTrue(speaker.waitForExistence(timeout: 3))
             speaker.click(); try press(app, "a", .command); try type("saved-speaker", into: speaker, of: app)
             try press(app, .return)
-            wait("Return saves the edited voice section") { !app.buttons["voiceSettings.save"].isEnabled }
+            // The voice ID saves itself on Return and on leaving the field; the page has no save button.
+            XCTAssertFalse(app.buttons["voiceSettings.save"].exists)
+            XCTAssertEqual(speaker.value as? String, "saved-speaker")
             try press(app, "a", .command); try type("unsaved-speaker", into: speaker, of: app)
             try press(app, "w", .command)
             wait("Closing settings leaves the conversation editable") { !sections.exists }

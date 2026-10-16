@@ -32,7 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     installMenus()
                     let settings = SettingsStore(url: root.appendingPathComponent("settings.json"),
                         localModels: LocalModelLocation(models: root.appendingPathComponent("Models", isDirectory: true)),
-                        secrets: TestBootstrap.Secrets())
+                        secrets: TestBootstrap.Secrets(), tester: TestBootstrap.ConnectionTester(),
+                        arkTester: TestBootstrap.ArkTester())
                     // Chats answer from TestBootstrap.OfflineModel and never read this model; Live Voice
                     // starts only with a saved one. Ollama needs no key.
                     if settings.draft.model.isEmpty {
@@ -40,8 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         settings.draft.model = "offline-fixture"
                         settings.save()
                     }
-                    settings.voiceAPIKey = "offline-fixture"
-                    settings.saveVoice()
+                    settings.arkAPIKey = "offline-fixture"
+                    settings.saveArk()
                     let pets = PetCatalog(settings: settings,
                         builtinRoot: Bundle.main.resourceURL?.appendingPathComponent("pets"),
                         importedRoot: root.appendingPathComponent("pets"))
