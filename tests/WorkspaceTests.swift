@@ -138,6 +138,27 @@ import FoundationModels
         #expect(workspace.petActivities.isEmpty && workspace.unseenCompletedCount == 0)
     }
 
+    /// Hidden with ⌘H, Echo's main window is still open but nobody sees it: the chat on it that
+    /// finishes meanwhile stays unread on the pet, and showing Echo again is what reads it.
+    @MainActor @Test static func aChatFinishingWhileEchoIsHiddenStaysUnread() async throws {
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(harnessFactory: puppets.factory)
+        defer { workspace.shutdown() }
+        let chat = try #require(workspace.selected)
+        workspace.isMainWindowVisible = true
+        #expect(workspace.send("隐藏期间完成", conversationID: chat.id))
+        workspace.isApplicationHidden = true
+        try await reply(chat, puppets.last, "隐藏时的结果")
+        #expect(chat.store.hasUnseenCompletion && workspace.petActivityIDs == [chat.id] && workspace.unseenCompletedCount == 1,
+                "The open window's chat finished unseen")
+        workspace.isApplicationHidden = false
+        #expect(!chat.store.hasUnseenCompletion && workspace.petActivities.isEmpty && workspace.unseenCompletedCount == 0,
+                "Showing Echo again shows the result in the chat")
+        #expect(workspace.send("显示时完成", conversationID: chat.id))
+        try await reply(chat, puppets.last, "显示时的结果")
+        #expect(!chat.store.hasUnseenCompletion && workspace.petActivities.isEmpty, "A result on screen is read at once")
+    }
+
     /// Clicking the pet opens a hidden main window on a new chat, never on a notification's chat;
     /// a window already showing keeps its chat, and Live Voice still takes it to the call.
     @MainActor @Test static func petOpensTheMainWindowOnANewChat() async throws {

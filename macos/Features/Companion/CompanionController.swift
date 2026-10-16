@@ -198,18 +198,23 @@ import SwiftUI
         voiceObservation = observeChanges({ voice.snapshot.error }, initial: true) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async { [weak self] in
-                guard let self, !self.workspace.isMainWindowVisible else { return }
+                guard let self, !self.workspace.isMainWindowShown else { return }
                 self.showNotice(error.message)
             }
         }
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        // Hiding Echo leaves the main window open but out of sight; the pet stays (canHide = false).
+        workspace.isApplicationHidden = NSApplication.shared.isHidden
+        for name in [NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(applicationHiddenChanged(_:)), name: name, object: nil)
+        }
         // The main window's transcript shows its own planet only for the conversation Live Voice
         // owns; the pet steps aside exactly then, so the two planet-driven animations never
         // render at the same time.
         let workspace = workspace
         petVoicePlanetObservation = observeChanges({
-            workspace.isMainWindowVisible && workspace.selectedID != nil
+            workspace.isMainWindowShown && workspace.selectedID != nil
                 && workspace.selectedID == voice.snapshot.session.owner?.conversationID
         }, initial: true) { [weak self] hidden in
             DispatchQueue.main.async { [weak self] in self?.setPetHidden(forVoicePlanet: hidden) }
@@ -294,7 +299,9 @@ import SwiftUI
         layout()
         if !clusterHidden { controlsPanel.orderFrontRegardless() }
         if workspace.isMainWindowVisible {
-            if mainWindow?.isVisible != true { presentMainWindow() }
+            // Hiding Echo takes the open window off screen (isVisible is false), and showing it
+            // again would activate Echo and so unhide it. AppKit brings it back when Echo is shown.
+            if mainWindow?.isVisible != true, !workspace.isApplicationHidden { presentMainWindow() }
         } else { mainWindow?.orderOut(nil) }
         setActivityVisible(!clusterHidden && workspace.isPetActivityVisible, animated: animated)
         if let notice = taskStore.notice {
@@ -510,6 +517,9 @@ import SwiftUI
         mainController?.present()
     }
     @objc private func screensChanged() { layout() }
+    @objc private func applicationHiddenChanged(_ notification: Notification) {
+        workspace.isApplicationHidden = notification.name == NSApplication.didHideNotification
+    }
 
     /// Voice errors and task notices appear in the bubble for 3 seconds.
     private func showNotice(_ text: String) {

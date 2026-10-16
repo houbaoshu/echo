@@ -602,8 +602,14 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
             messages.append(message)
         }
         activityDismissed = false; onUserAction?(); lifecycle.send(.started(task!.runID))
-        // The input is saved before any model request can see it.
-        guard saveTurn() else { task?.status = .failed; return false }
+        // The input is saved before any model request can see it. A turn whose input could not be
+        // saved never begins; it ends as failed, told like any other ending, so Live Voice, which
+        // stopped listening on `.started`, ends the call with the failure rather than hang.
+        guard saveTurn() else {
+            task?.status = .failed
+            lifecycle.send(.reply(task!.runID, .failed(task?.summary ?? "")))
+            return false
+        }
         harness.begin()
         return true
     }

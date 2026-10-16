@@ -2285,6 +2285,18 @@ extension EchoVoiceScenarios {
         // The companion hands the error to the bubble with DispatchQueue.main.async.
         await nextMainTurn()
         #expect(companion.bubbleState.notice == "主窗口隐藏时的错误" && companion.bubblePanel.isVisible, "error is presented in the companion bubble when main window is hidden")
+        voice.clearError()
+
+        // Case C: the main window is open but Echo is hidden -> nobody sees the chat, so the bubble says it.
+        workspace.isMainWindowVisible = true
+        NotificationCenter.default.post(name: NSApplication.didHideNotification, object: NSApplication.shared)
+        defer { NotificationCenter.default.post(name: NSApplication.didUnhideNotification, object: NSApplication.shared) }
+        voice.start(conversation: conv, configuration: VoiceConfiguration(), key: "test")
+        try await eventually("the call starts capturing") { audio.capturing }
+        audio.onFailure?("Echo 隐藏时的错误", .deviceChange)
+        await nextMainTurn()
+        #expect(companion.bubbleState.notice == "Echo 隐藏时的错误" && companion.bubblePanel.isVisible,
+                "error is presented in the companion bubble while Echo is hidden")
     }
 }
 
@@ -2544,6 +2556,33 @@ extension EchoVoiceScenarios {
 }
 
 extension EchoVoiceScenarios {
+/// Echo hidden while a turn runs, with the real companion. Hiding takes the open main window off
+/// screen (measured: isVisible turns false), so the test does that and posts the notification
+/// instead of hiding the test host.
+@Suite(.serialized) struct HiddenEchoTests {
+    @Test @MainActor static func aTurnEndingWhileHiddenLeavesEchoHidden() async throws {
+        _ = NSApplication.shared
+        let f = AgentVoiceFixture()
+        let companion = CompanionController(petStore: try PetStore(directory: EchoTestResources.resource("pets/chiyan")),
+                                            workspace: f.workspace, settings: f.settings, defaults: EchoTestResources.defaults())
+        defer { companion.shutdown(); f.shutdown() }
+        f.workspace.isMainWindowVisible = true
+        try await eventually("the main window shows") { companion.mainWindow?.isVisible == true }
+        #expect(f.workspace.send("隐藏后完成", conversationID: f.conversation.id))
+        companion.mainWindow?.orderOut(nil)
+        NotificationCenter.default.post(name: NSApplication.didHideNotification, object: NSApplication.shared)
+        defer { NotificationCenter.default.post(name: NSApplication.didUnhideNotification, object: NSApplication.shared) }
+        try await f.puppet.reply("隐藏时的结果")
+        try await eventually("the turn ends", timeout: .seconds(8)) { !f.store.isGenerating }
+        // The companion resynchronizes on the next main-queue turn after what it read changed.
+        await nextMainTurn(); await nextMainTurn()
+        #expect(companion.mainWindow?.isVisible == false,
+                "Showing the window would activate Echo and so unhide it; it stays as AppKit hid it")
+        #expect(f.workspace.isMainWindowVisible && f.store.hasUnseenCompletion && f.workspace.petActivityIDs == [f.conversation.id],
+                "The window stays open for AppKit to bring back, and the result waits on the pet")
+    }
+}
+
 /// One Live Voice session with the real companion and planet: after each step, what the voice
 /// snapshot's observers left on screen and in the workspace.
 @Suite(.serialized) struct VoiceObserverTests {
@@ -2570,6 +2609,12 @@ extension EchoVoiceScenarios {
         try await f.start(); await record("start")
         voice.toggleSpeakerMute(); await record("speakerMute")
         workspace.isMainWindowVisible = true; await record("mainWindowOnTheCall")
+        // Hiding Echo takes the window's planet out of sight while the window stays open. Only the
+        // notifications are posted: nothing is really hidden.
+        NotificationCenter.default.post(name: NSApplication.didHideNotification, object: NSApplication.shared)
+        await record("echoHidden")
+        NotificationCenter.default.post(name: NSApplication.didUnhideNotification, object: NSApplication.shared)
+        await record("echoShown")
         workspace.isMainWindowVisible = false; await record("mainWindowHidden")
         f.holdPlayback(); f.speak("第一轮")
         try await f.puppet.reply("第一轮回复")
@@ -2600,6 +2645,9 @@ extension EchoVoiceScenarios {
             "speakerMute | bubble=false notice=- pet=true planet=idle unseen=false",
             // The main window shows this call's planet, so the pet steps aside.
             "mainWindowOnTheCall | bubble=false notice=- pet=false planet=idle unseen=false",
+            // With Echo hidden nobody sees the window's planet, so the pet comes back.
+            "echoHidden | bubble=false notice=- pet=true planet=idle unseen=false",
+            "echoShown | bubble=false notice=- pet=false planet=idle unseen=false",
             "mainWindowHidden | bubble=false notice=- pet=true planet=idle unseen=false",
             "speaking | bubble=false notice=- pet=true planet=spinning unseen=false",
             // With the speaker muted, the reply's words show in the bubble.

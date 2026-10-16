@@ -293,6 +293,13 @@ struct WorkspaceSnapshot: Codable {
     }
     /// A minimized main window is not visible, but it is still open: it keeps its chat.
     @ObservationIgnored var isMainWindowMinimized = false
+    /// Echo is hidden (⌘H, or Hide Others in another app). The main window stays open, and AppKit
+    /// brings it back when Echo is shown again, so `isMainWindowVisible` is left alone; nobody sees it meanwhile.
+    var isApplicationHidden = false {
+        didSet { if isApplicationHidden != oldValue { markViewedActivitySeen() } }
+    }
+    /// Whether the person can see the main window now: open, and Echo not hidden.
+    var isMainWindowShown: Bool { isMainWindowVisible && !isApplicationHidden }
     var persistenceNotice: String?
     @ObservationIgnored var onRevealVoice: ((UUID) -> Void)?
     @ObservationIgnored var onOpenPetActivity: (() -> Void)?
@@ -419,12 +426,12 @@ struct WorkspaceSnapshot: Codable {
     }
     var runningTaskCount: Int { conversations.filter { $0.store.isGenerating }.count }
     private func markViewedActivitySeen() {
-        guard isMainWindowVisible else { return }
+        guard isMainWindowShown else { return }
         selected?.store.markSeen()
         if let selected, !selected.store.isGenerating, petActivityIDs.contains(selected.id) { removePetActivity(selected.id) }
         if voiceCompletion == selectedID { voiceCompletion = nil }
     }
-    private func isViewing(_ id: UUID) -> Bool { isMainWindowVisible && selectedID == id }
+    private func isViewing(_ id: UUID) -> Bool { isMainWindowShown && selectedID == id }
     private func finishVoiceConversation() {
         guard let id = voiceCompletion else { return }
         voiceCompletion = nil

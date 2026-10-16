@@ -145,6 +145,24 @@ extension VoiceTests {
               "an unsubmittable final becomes neither a message nor a leftover partial: \(f.voice.subtitle)")
     }
 
+    /// Input that would start a turn is refused when its save fails. The call stopped listening as
+    /// the turn started, so it ends with the save's failure, as when a follow-up is refused during a
+    /// turn, rather than stay on without listening. A message typed during the call ends it alike.
+    @Test @MainActor static func agentFirstSaveFailureEndsTheCallTests() async throws {
+        _ = NSApplication.shared
+        for typed in [false, true] {
+            let f = AgentVoiceFixture()
+            defer { f.shutdown() }
+            try await f.start()
+            f.store.checkpoint = { _ in throw CocoaError(.fileWriteNoPermission) }
+            if typed { #expect(!f.workspace.send("打字的第一句", conversationID: f.conversation.id)) }
+            else { f.speak("第一个问题") }
+            #expect(f.store.task?.status == .failed && !f.store.isGenerating, "typed=\(typed): the turn never began")
+            try await eventually("typed=\(typed): the call ends") { f.voice.snapshot.session == .inactive }
+            #expect(f.voice.error?.contains("会话保存失败") == true, "typed=\(typed): \(f.voice.error ?? "no error")")
+        }
+    }
+
     @Test @MainActor static func agentVoiceRecoveryTests() async throws {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
