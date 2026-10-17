@@ -493,8 +493,14 @@ private struct ComposerHeightHost: View {
         let settingsWindow = main.settingsController!.window!
         XCTAssertTrue(settingsWindow !== window && settingsWindow.title == main.settings.selectedSection.title,
                      "Settings has its own window, titled with the open section, got \(settingsWindow.title)")
-        XCTAssertTrue(settingsWindow.toolbarStyle == .unified && settingsWindow.titlebarAppearsTransparent
-                      && settingsWindow.frameAutosaveName.isEmpty)
+        XCTAssertTrue(settingsWindow.toolbarStyle == .unified && settingsWindow.frameAutosaveName.isEmpty)
+        // An opaque titlebar is what has AppKit frost the pane scrolling under it, and an
+        // icon-only toolbar keeps the bar at System Settings' height.
+        let titlebarHeight = settingsWindow.frame.height - settingsWindow.contentLayoutRect.maxY
+        XCTAssertTrue(!settingsWindow.titlebarAppearsTransparent && settingsWindow.toolbar?.displayMode == .iconOnly
+                      && titlebarHeight == 52,
+                      "Settings has System Settings' opaque 52pt titlebar, got transparent \(settingsWindow.titlebarAppearsTransparent), "
+                      + "display mode \(settingsWindow.toolbar.map { "\($0.displayMode.rawValue)" } ?? "none"), height \(titlebarHeight)")
         for section in [SettingsSection.voice, .model] {
             main.settings.selectedSection = section
             XCTAssertTrue(settingsWindow.title == section.title, "The title follows the section, got \(settingsWindow.title)")

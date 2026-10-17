@@ -24,13 +24,17 @@ import SwiftUI
         super.init(window: window)
         // The title is the open section's name, drawn by AppKit in a unified toolbar over
         // the detail column the way System Settings draws its pane's name. The toolbar has
-        // no items; it is there for the toolbar-height titlebar and its title font. A
-        // transparent titlebar drops the hairline under it, which `titlebarSeparatorStyle`
-        // (on the window or the split item) was measured not to remove.
+        // no items; it is there for the toolbar-height titlebar and its title font. Icon
+        // only, as an empty toolbar's default icon-and-label mode makes the bar 66pt, not
+        // System Settings' 52pt. The titlebar stays opaque: only then does AppKit frost the
+        // pane scrolling under it and rule a line once it has scrolled, as System Settings
+        // does (measured on macOS 27: a transparent titlebar draws neither, whatever the
+        // form's scroll edge effect style, and the pane ran sharp into the title).
         window.title = settings.selectedSection.title
         window.toolbarStyle = .unified
-        window.toolbar = NSToolbar(identifier: "chiyan.settings")
-        window.titlebarAppearsTransparent = true
+        let toolbar = NSToolbar(identifier: "chiyan.settings")
+        toolbar.displayMode = .iconOnly
+        window.toolbar = toolbar
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: Self.width, height: 520)
         window.maxSize = NSSize(width: Self.width, height: .greatestFiniteMagnitude)
