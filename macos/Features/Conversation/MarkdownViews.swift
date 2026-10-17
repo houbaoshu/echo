@@ -54,6 +54,9 @@ struct MarkdownBlock {
 struct AssistantMarkdown: View, Equatable {
     let content: String
     var body: some View {
+        // No foreground colour here: the text is already the label colour, and a concrete
+        // colour would make the hierarchical `.secondary` of the quote bar and the code block's
+        // copy button derive from it and draw lighter (measured on macOS 27).
         VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(MarkdownBlock.parse(content).enumerated()), id: \.offset) { _, block in
                 HStack(alignment: .top, spacing: 8) {
@@ -72,7 +75,7 @@ struct AssistantMarkdown: View, Equatable {
                     }
                     .padding(.leading, CGFloat(max(0, block.listDepth - 1)) * 18)
             }
-        }.textSelection(.enabled).foregroundStyle(WorkspaceStyle.primary)
+        }.textSelection(.enabled)
     }
 }
 

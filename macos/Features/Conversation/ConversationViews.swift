@@ -864,20 +864,20 @@ struct ConversationView: View {
                         Button {
                             if let ws = workspace { ws.toggleVoiceSpeakerMute(owner: owner) } else { voice.toggleSpeakerMute() }
                         } label: {
-                            Image(systemName: voice.snapshot.speakerMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                            ComposerTintedIcon(systemName: voice.snapshot.speakerMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                                               color: voice.snapshot.speakerMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
                                 .composerSecondaryLabel()
                         }.composerSecondaryControl().disabled(!presentation.muteEnabled)
-                            .foregroundStyle(voice.snapshot.speakerMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
                             .help(voice.snapshot.speakerMuted ? "开启扬声器" : "静音扬声器")
                             .accessibilityLabel(voice.snapshot.speakerMuted ? "开启扬声器" : "静音扬声器")
                             .accessibilityIdentifier("voice.speaker")
                         Button {
                             if let ws = workspace { ws.toggleVoiceMute(owner: owner) } else { voice.toggleMute() }
                         } label: {
-                            Image(systemName: voice.isMuted ? "mic.slash.fill" : "mic.fill")
+                            ComposerTintedIcon(systemName: voice.isMuted ? "mic.slash.fill" : "mic.fill",
+                                               color: voice.isMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
                                 .composerSecondaryLabel()
                         }.composerSecondaryControl().disabled(!presentation.muteEnabled)
-                            .foregroundStyle(voice.isMuted ? WorkspaceStyle.warning : WorkspaceStyle.secondary)
                             .help(voice.isMuted ? "开启麦克风" : "关闭麦克风")
                             .accessibilityLabel(voice.isMuted ? "开启麦克风" : "关闭麦克风")
                             .accessibilityIdentifier("voice.mute")
@@ -984,6 +984,19 @@ private extension View {
     func composerSecondaryControl() -> some View {
         buttonStyle(.bordered).buttonBorderShape(.circle).controlSize(.regular)
             .frame(height: 32)
+    }
+}
+
+/// A composer circle's symbol in a colour of its own. The colour goes on the symbol, not the button:
+/// a bordered button derives its fill from a concrete foreground, which drew it a step darker than the
+/// circles beside it, or orange (measured on macOS 27). A coloured symbol keeps its colour when the
+/// button is disabled, so it takes the disabled text colour itself, as the API Key field's icons do.
+private struct ComposerTintedIcon: View {
+    let systemName: String
+    let color: Color
+    @Environment(\.isEnabled) private var enabled
+    var body: some View {
+        Image(systemName: systemName).foregroundStyle(enabled ? color : Color(nsColor: .disabledControlTextColor))
     }
 }
 

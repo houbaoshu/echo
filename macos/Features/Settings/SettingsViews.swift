@@ -64,6 +64,12 @@ struct SettingsView: View {
         // title, so the pane carries no heading of its own. The pane sets no font: the
         // form's own body font is the same, and a font set here would also replace the
         // form's semibold group headings (measured on macOS 27: they turn regular).
+        // Nor does it set a foreground colour: given a concrete colour, the form derives its
+        // row separators and button fills from it and draws them a step darker than System
+        // Settings (measured on macOS 27: separators 209 vs 235 on a 247 card).
+        // The grouped form's own background is wallpaper-tinted in dark mode and covers
+        // anything behind it, so it is hidden for the neutral fill System Settings shows
+        // (measured on macOS 27, dark: 30 vs the form's 42,39,38).
         Group {
             // Closing a retained settings window does not unmount its views.
             // Reset revealed credentials and field focus on close/reopen while
@@ -74,10 +80,9 @@ struct SettingsView: View {
             else if section == .voice { VoiceSettingsView(settings: settings, voice: voice).id(settings.presentationRevision) }
             else if section == .planet { PlanetSettingsView(planets: planets) }
             else { PetSettingsView(pets: pets, settings: settings) }
-        }.formStyle(.grouped)
+        }.formStyle(.grouped).scrollContentBackground(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .textBackgroundColor))
-        .foregroundStyle(WorkspaceStyle.primary)
     }
 }
 
@@ -101,7 +106,9 @@ struct SettingsGroupStatus: View {
             if testing {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.mini)
-                    Text("正在测试…")
+                    Text("正在测试…").foregroundStyle(WorkspaceStyle.secondary)
+                    // No colour around the button: a concrete foreground greys its title and
+                    // darkens its fill.
                     Button("取消", action: cancel).controlSize(.small).accessibilityIdentifier("\(identifier).cancelTest")
                 }
             } else if let line {
@@ -110,7 +117,7 @@ struct SettingsGroupStatus: View {
                     .foregroundStyle(line.succeeded ? WorkspaceStyle.success : WorkspaceStyle.secondary)
                     .help(line.text).accessibilityIdentifier("\(identifier).status")
             }
-        }.font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+        }.font(WorkspaceStyle.caption)
     }
 }
 
