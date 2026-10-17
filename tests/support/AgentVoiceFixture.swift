@@ -13,12 +13,14 @@ import Foundation
     var synths: [FakeSynthesizer] = []
     var finishDrain: CheckedContinuation<Void, Never>?
     var permission: @MainActor () async -> Bool = { true }
+    /// How long the bubble keeps a finished tool's words; set before the call starts.
+    var statusLinger: Duration = .seconds(1)
     lazy var store = TaskStore(harness: harness)
     lazy var voice = VoiceSessionController(audio: audio, recognizer: { [unowned self] in
         let client = FakeRecognizer(); recognizers.append(client); return client
     }, synthesizer: { [unowned self] in
         let client = FakeSynthesizer(); client.emitsAudio = true; synths.append(client); return client
-    }, tailProtectionDuration: .milliseconds(40), bargeInTimeout: .milliseconds(200),
+    }, tailProtectionDuration: .milliseconds(40), bargeInTimeout: .milliseconds(200), statusLinger: statusLinger,
        permission: { [unowned self] in await permission() })
     lazy var workspace = WorkspaceStore(initialStore: store, voice: voice, harnessFactory: { [unowned self] in harnessFactory() })
     lazy var conversation = workspace.selected!

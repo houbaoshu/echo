@@ -272,7 +272,7 @@ extension EchoVoiceScenarios {
         f.speak("介绍一下")
         try await f.puppet.waitForRequests(1)
         let reply = "## 天气\n\n今天**天气**很好，适合散步。"
-        #expect(bubble() == .none && !shown(), "requesting the model shows no bubble")
+        #expect(bubble() == .status("正在思考…") && shown(), "requesting the model shows it thinking")
         f.audio.playbackFrames = 4800
         try await f.puppet.reply(reply)
         try await eventually("reply synthesized", timeout: .seconds(8)) { f.synths.count == 1 && f.audio.played.count == 1 }
@@ -302,10 +302,10 @@ extension EchoVoiceScenarios {
         f.holdPlayback()
         f.speak("再说一个", start: 400)
         try await f.puppet.waitForRequests(2)
-        #expect(bubble() == .reply(reply, heard: nil), "the next request keeps the previous reply")
+        #expect(f.voice.spoken == nil && bubble() == .status("正在思考…"), "the next turn replaces the previous reply with its status")
         try await f.puppet.reply("好的，下午见。")
         try await eventually("second reply synthesized", timeout: .seconds(8)) { f.synths.count == 2 && f.audio.played.count == 2 }
-        #expect(bubble() == .reply(reply, heard: nil), "new audio without subtitles keeps the previous reply")
+        #expect(bubble() == .none && !shown(), "new audio without subtitles shows nothing yet")
         f.synths[1].subtitle([("好", 0), ("的，", 0.2), ("下", 0.6), ("午", 0.8), ("见。", 1.0)])
         f.audio.playbackFrames += 7200
         #expect(bubble() == .reply("好的，下午见。", heard: "好的，"), "the next reply's first subtitle replaces the previous one")
@@ -328,12 +328,63 @@ extension EchoVoiceScenarios {
         f.speak("第三个问题", start: 800)
         try await f.puppet.reply("没有字幕的回复。")
         try await eventually("third reply synthesized", timeout: .seconds(8)) { f.synths.count == 3 && f.audio.played.count == 3 }
-        #expect(bubble() == .reply("好的，下午见。", heard: "好的，"), "until playback finishes the previous reply stays")
+        #expect(bubble() == .none && !shown(), "the new turn took away the previous reply, and nothing of this one is heard yet")
         f.releasePlayback()
         try await eventually("the reply without subtitles finishes playing") { f.voice.spoken?.source == "没有字幕的回复。" }
         #expect(bubble() == .reply("没有字幕的回复。", heard: nil) && shown(), "a reply without subtitles appears whole after playback")
         f.voice.end()
         #expect(f.voice.spoken == nil, "ending Live Voice forgets the spoken reply")
+    }
+
+    /// The bubble says what the agent is doing in a call: thinking from the start of a turn, each
+    /// tool as it runs, with the text changing in place from one to the next, and nothing a moment
+    /// after the last tool, when the turn ends or when it is stopped.
+    @Test @MainActor static func agentVoiceStatusTests() async throws {
+        _ = NSApplication.shared
+        let finder = HeldFinder()
+        let f = AgentVoiceFixture(finder: finder)
+        f.statusLinger = .milliseconds(500)
+        defer { finder.gate.open(); f.shutdown() }
+        try await f.start()
+        func bubble() -> CompanionBubbleContent {
+            CompanionBubbleContent(voice: f.voice.snapshot, spoken: f.voice.spoken, position: f.voice.spokenPosition, notice: nil)
+        }
+        var shownLog: [Bool] = []
+        let shownObservation = observeChanges({
+            CompanionBubbleContent.isShown(voice: f.voice.snapshot, spoken: f.voice.spoken, notice: nil)
+        }) { shownLog.append($0) }
+        defer { shownObservation.cancel() }
+        #expect(bubble() == .none, "listening shows no status")
+
+        f.speak("访达里有什么")
+        try await f.puppet.waitForRequests(1)
+        #expect(bubble() == .status("正在思考…"), "a turn starts out thinking")
+        try await f.puppet.answer(.call(name: "finder_location", arguments: "{}"))
+        try await eventually("Finder is asked", timeout: .seconds(8)) { finder.gate.arrivals == 1 }
+        #expect(bubble() == .status("正在查看访达位置"), "a running tool names itself")
+        finder.gate.open()
+        try await f.puppet.waitForRequests(2)
+        #expect(bubble() == .status("正在查看访达位置"), "a finished tool stays a moment")
+        try await f.puppet.answer(.call(name: "list_files", arguments: #"{"path":"notes"}"#))
+        try await eventually("the next tool replaces the text") { bubble() == .status("正在列出文件 · notes") }
+        try await f.puppet.waitForRequests(3)
+        try await eventually("the bubble closes a moment after the last tool", timeout: .seconds(3)) { bubble() == .none }
+        #expect(shownLog == [true, false], "from thinking through both tools the bubble never closed: \(shownLog)")
+        #expect(f.voice.snapshot.agentActivity == "正在列出文件 · notes", "the planet still thinks on the last tool")
+
+        try await f.puppet.reply("访达里没有打开的文件夹。")
+        try await eventually("listening resumes after the reply", timeout: .seconds(8)) {
+            f.store.task?.status == .completed && f.voice.snapshot.recognition == .listening && f.voice.snapshot.replyAudio == .none
+        }
+        f.speak("再想想", start: 400)
+        try await f.puppet.waitForRequests(4)
+        #expect(bubble() == .status("正在思考…"), "the next turn thinks again")
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(bubble() == .status("正在思考…"), "thinking lasts until something happens, however long")
+        f.store.stopTask()
+        #expect(bubble() == .none, "stopping closes the bubble at once")
+        try await eventually("the stopped turn settles") { f.store.task?.status == .stopped }
+        #expect(bubble() == .none, "a stopped turn shows no status")
     }
 
     /// While Live Voice runs its conversation is in progress; ending the session makes it unseen.

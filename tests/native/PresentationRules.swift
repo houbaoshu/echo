@@ -224,6 +224,19 @@ import Testing
         voice.speakerMuted = true
         #expect(bubble(voice, notice: "麦克风不可用") == .notice("麦克风不可用"), "Errors outrank the muted reply")
 
+        // What the agent is doing shows in a call, behind errors and the muted reply.
+        var working = VoiceSessionSnapshot(); working.agentStatus = "正在搜索 · 天气"
+        #expect(bubble(working) == .none && !shown(working), "Without a session no status shows")
+        working.session = .starting(owner)
+        #expect(bubble(working) == .none && !shown(working), "Connecting shows no status")
+        working.session = .active(owner)
+        #expect(bubble(working) == .status("正在搜索 · 天气") && shown(working), "An active call shows the status")
+        #expect(bubble(working, notice: "麦克风不可用") == .notice("麦克风不可用"), "Errors outrank the status")
+        working.speakerMuted = true
+        #expect(bubble(working) == .reply("今天**天气**好。", heard: "今天天气好。"), "The muted reply outranks the status")
+        #expect(bubble(working, spoken: silent) == .status("正在搜索 · 天气") && shown(working, spoken: silent),
+                     "A reply nothing of which was heard yet leaves the bubble to the status")
+
         // Heard speech maps onto the rendered Markdown, skipping unvoiced markers.
         let heardRendered = CompanionBubble.renderedReply("## 结果\n\n- **构建**通过，运行 `swift test`：3 项")
         let plain = String(heardRendered.characters)

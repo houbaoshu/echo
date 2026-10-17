@@ -3190,6 +3190,15 @@ private struct ComposerHeightHost: View {
         let notice = "语音连接已断开：服务端在等待识别结果时关闭了连接。请检查网络和语音密钥设置，然后在桌宠上重新开始 Live Voice，已经说过的内容会保留在会话里。"
         try await show(CompanionBubble(content: .notice(notice), tailOnTop: false, petCenterX: canvas.width / 2), reading: notice)
         XCTAssertTrue(node()?.accessibilityLabel?() == notice, "Errors show in the bubble, limited to three lines")
+        let oneLine = node()?.accessibilityFrame?().height ?? 0
+        try await show(CompanionBubble(content: .reply("一行回复", heard: nil), tailOnTop: false, petCenterX: canvas.width / 2),
+                       reading: "一行回复")
+        let replyLine = node()?.accessibilityFrame?().height ?? 0
+        let status = "正在搜索 · 今天北京的天气怎么样，明天会不会下雨，周末适不适合出门爬山"
+        try await show(CompanionBubble(content: .status(status), tailOnTop: false, petCenterX: canvas.width / 2), reading: status)
+        let statusLine = node()?.accessibilityFrame?().height ?? 0
+        XCTAssertTrue(oneLine > replyLine && abs(statusLine - replyLine) < 0.5,
+                     "A long status stays on one line, cut at its end: \(statusLine) vs a one-line reply \(replyLine)")
 
         // The layout: content up to three lines sets the height; taller content keeps its newest lines in view.
         let lineBox = CompanionBubble.replyHeight

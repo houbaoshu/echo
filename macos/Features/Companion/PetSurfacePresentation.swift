@@ -183,12 +183,15 @@ struct PetSurfacePresentation: Equatable {
 
 /// The bubble between the pet and its activity card. Live Voice is spoken: the bubble shows no
 /// transcript, connection or progress text, and no reply text while the reply is heard. It shows
-/// errors and, while the speaker is muted, the reply as far as speech has actually played it.
+/// errors, while the speaker is muted the reply as far as speech has actually played it, and
+/// otherwise in one line what the agent is doing.
 enum CompanionBubbleContent: Equatable {
     case none
     case notice(String)
     /// The reply's Markdown, and the words heard so far; `nil` once all of it was played.
     case reply(String, heard: String?)
+    /// What the agent is doing: thinking, or the tool it runs.
+    case status(String)
 
     static let width: CGFloat = 236
     static let canvasHeight: CGFloat = 80
@@ -196,16 +199,21 @@ enum CompanionBubbleContent: Equatable {
     /// `position` is how far the reply's audio has played, in seconds.
     init(voice snapshot: VoiceSessionSnapshot, spoken: SpokenReply?, position: TimeInterval, notice: String?) {
         if let notice, !notice.isEmpty { self = .notice(notice); return }
-        guard case .active = snapshot.session, snapshot.speakerMuted, let spoken,
-              !spoken.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { self = .none; return }
-        let heard = spoken.heard(at: position)
-        self = heard?.isEmpty == true ? .none : .reply(spoken.source, heard: heard)
+        guard case .active = snapshot.session else { self = .none; return }
+        if snapshot.speakerMuted, let spoken, !spoken.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let heard = spoken.heard(at: position)
+            if heard?.isEmpty != true { self = .reply(spoken.source, heard: heard); return }
+        }
+        // A reply nothing of which was heard yet leaves the bubble to the status.
+        self = snapshot.agentStatus.map(Self.status) ?? .none
     }
 
     /// Whether the bubble has anything to show; the controller reserves its space only then.
     static func isShown(voice snapshot: VoiceSessionSnapshot, spoken: SpokenReply?, notice: String?) -> Bool {
         guard notice?.isEmpty != false else { return true }
-        guard case .active = snapshot.session, snapshot.speakerMuted, let spoken else { return false }
+        guard case .active = snapshot.session else { return false }
+        if snapshot.agentStatus != nil { return true }
+        guard snapshot.speakerMuted, let spoken else { return false }
         return !spoken.words.isEmpty || spoken.stoppedAt == .infinity
     }
 }

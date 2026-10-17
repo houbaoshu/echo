@@ -1888,26 +1888,30 @@ extension AgentToolRecord {
         default: return text
         }
     }
-    static func summary(_ call: Transcript.ToolCall) -> String {
-        switch call.toolName {
-        case "list_files": String(localized: "正在列出文件 · \(String(display(call).prefix(60)))")
-        case "read_file": String(localized: "正在读取文件 · \(String(display(call).prefix(60)))")
+    static func summary(_ call: Transcript.ToolCall) -> String { summary(tool: call.toolName, display: display(call)) }
+    /// What a running call is doing, from what its card shows of it.
+    var summary: String { Self.summary(tool: tool ?? "bash", display: command) }
+    private static func summary(tool: String, display: String) -> String {
+        let shown = String(display.prefix(60))
+        return switch tool {
+        case "list_files": String(localized: "正在列出文件 · \(shown)")
+        case "read_file": String(localized: "正在读取文件 · \(shown)")
         case "finder_location": String(localized: "正在查看访达位置")
-        case "write_file": String(localized: "正在写入文件 · \(String(display(call).prefix(60)))")
-        case "edit_file": String(localized: "正在修改文件 · \(String(display(call).prefix(60)))")
+        case "write_file": String(localized: "正在写入文件 · \(shown)")
+        case "edit_file": String(localized: "正在修改文件 · \(shown)")
         case "list_reminders": String(localized: "正在查看提醒事项")
-        case "create_reminder": String(localized: "正在新建提醒 · \(String(display(call).prefix(60)))")
+        case "create_reminder": String(localized: "正在新建提醒 · \(shown)")
         case "complete_reminder": String(localized: "正在完成提醒")
         case "list_events": String(localized: "正在查看日程")
-        case "create_event": String(localized: "正在新建日程 · \(String(display(call).prefix(60)))")
-        case "open_app": String(localized: "正在打开应用 · \(String(display(call).prefix(60)))")
-        case "open_url": String(localized: "正在打开网址 · \(String(display(call).prefix(60)))")
-        case "web_search": String(localized: "正在搜索 · \(String(display(call).prefix(60)))")
-        case "web_fetch": String(localized: "正在读取网页 · \(String(display(call).prefix(60)))")
-        case "generate_image": String(localized: "正在生成图片 · \(String(display(call).prefix(60)))")
-        case "remember": String(localized: "正在记住 · \(String(display(call).prefix(60)))")
-        case "update_memory": String(localized: "正在更新记忆 · \(String(display(call).prefix(60)))")
-        default: String(localized: "正在调用工具 · \(call.toolName)")
+        case "create_event": String(localized: "正在新建日程 · \(shown)")
+        case "open_app": String(localized: "正在打开应用 · \(shown)")
+        case "open_url": String(localized: "正在打开网址 · \(shown)")
+        case "web_search": String(localized: "正在搜索 · \(shown)")
+        case "web_fetch": String(localized: "正在读取网页 · \(shown)")
+        case "generate_image": String(localized: "正在生成图片 · \(shown)")
+        case "remember": String(localized: "正在记住 · \(shown)")
+        case "update_memory": String(localized: "正在更新记忆 · \(shown)")
+        default: String(localized: "正在调用工具 · \(tool)")
         }
     }
     /// A change tool's result that says what it did is finished; any other that ran ended with

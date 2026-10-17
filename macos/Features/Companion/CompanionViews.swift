@@ -1166,7 +1166,7 @@ struct CompanionBubble: View, Equatable {
                     }
                     .offset(x: center - canvasWidth / 2)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(reply.map { String($0.characters) } ?? accessibilityNotice)
+                    .accessibilityLabel(reply.map { String($0.characters) } ?? accessibilityMessage)
                     .accessibilityIdentifier("companion.bubble")
             }
         }
@@ -1195,6 +1195,8 @@ struct CompanionBubble: View, Equatable {
             .clipped()
         } else if case .notice(let message) = content {
             Text(message).lineLimit(3).truncationMode(.tail).fixedSize(horizontal: false, vertical: true)
+        } else if case .status(let status) = content {
+            Text(status).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
         }
     }
 
@@ -1218,9 +1220,11 @@ struct CompanionBubble: View, Equatable {
         return result
     }
 
-    private var accessibilityNotice: String {
-        if case .notice(let text) = content { return text }
-        return ""
+    private var accessibilityMessage: String {
+        switch content {
+        case .notice(let text), .status(let text): text
+        case .none, .reply: ""
+        }
     }
 }
 

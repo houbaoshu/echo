@@ -3560,7 +3560,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Searching · %@"
+            "value" : "Searching the web · %@"
           }
         }
       }

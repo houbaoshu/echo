@@ -59,6 +59,10 @@ struct VoiceSessionSnapshot: Equatable {
     var subtitle = ""
     var error: Failure?
     var agentActivity: String?
+    /// What the pet's bubble says the agent is doing: thinking from the start of a turn, then each
+    /// tool as it runs. Unlike `agentActivity` it clears a moment after the last tool ends, and
+    /// when the turn ends or is stopped.
+    var agentStatus: String?
 
     /// One projection for all surfaces; never infer microphone preference from ASR.
     func presentation(modelIsGenerating: Bool) -> VoiceSessionPresentation {

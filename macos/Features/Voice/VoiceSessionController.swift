@@ -99,6 +99,8 @@ enum VoiceCaptureWatchdog {
     @ObservationIgnored private var recoveryID = UUID()
     @ObservationIgnored private var observation: AnyCancellable?
     @ObservationIgnored private var taskObservation: ObservationHandle?
+    @ObservationIgnored private var toolObservation: ObservationHandle?
+    @ObservationIgnored private var statusLingerTask: Task<Void, Never>?
     @ObservationIgnored private var handledFinalRunID: UUID?
     @ObservationIgnored private var submissionHadAudio = false
     @ObservationIgnored private var dictationObservation: ObservationHandle?
@@ -122,6 +124,8 @@ enum VoiceCaptureWatchdog {
     private let tailProtectionDuration: Duration
     private let bargeInTimeout: Duration
     private let bargeInActivityWindow: Duration
+    /// How long the bubble keeps a finished tool's words in case another tool follows.
+    private let statusLinger: Duration
 
     init(audio: any VoiceAudioHandling = VoiceAudio(),
          recognizer: @escaping () -> any VoiceRecognizing = { DoubaoRecognizer() },
@@ -131,10 +135,12 @@ enum VoiceCaptureWatchdog {
          tailProtectionDuration: Duration = .seconds(2),
          bargeInTimeout: Duration = .seconds(3),
          bargeInActivityWindow: Duration = .milliseconds(800),
+         statusLinger: Duration = .seconds(1),
          permission: @escaping () async -> Bool = { await AVCaptureDevice.requestAccess(for: .audio) }) {
         self.audio = audio; makeRecognizer = recognizer; makeSynthesizer = synthesizer; self.permission = permission
         self.probeTimeout = probeTimeout; self.captureTimeout = captureTimeout; self.tailProtectionDuration = tailProtectionDuration
         self.bargeInTimeout = bargeInTimeout; self.bargeInActivityWindow = bargeInActivityWindow
+        self.statusLinger = statusLinger
         super.init()
         // The audio side words its failure in the source language: shown localized, logged as is.
         audio.onFailure = { [weak self] message, failure in
@@ -219,6 +225,7 @@ enum VoiceCaptureWatchdog {
         taskObservation = observeChanges({ store.task }, initial: true) { [weak self] task in
             guard let self else { return }
             self.updateSnapshot { $0.agentActivity = task?.status == .running || task?.status == .stopping ? task?.summary : nil }
+            if task?.status != .running { self.clearAgentStatus() }
             if task?.status == .stopping {
                 self.cancelRecovery()
                 self.stopRecognition(reason: .stopping)
@@ -226,6 +233,10 @@ enum VoiceCaptureWatchdog {
                 self.updateSnapshot { $0.subtitle = "" }
             }
         }
+        let runningTool: @MainActor () -> String? = { store.tools.last { $0.state == .running }?.summary }
+        toolObservation = observeChanges(runningTool) { [weak self] summary in self?.runningToolChanged(summary) }
+        // A call joining a turn already under way shows where the turn is.
+        if store.task?.status == .running { updateSnapshot { $0.agentStatus = runningTool() ?? String(localized: "正在思考…") } }
         startup = Task { [weak self] in
             guard let self, self.sessionID == call, !Task.isCancelled else { return }
             VoiceDiagnostics.shared.mark("startup Task 开始，请求麦克风权限")
@@ -471,6 +482,10 @@ enum VoiceCaptureWatchdog {
         switch event {
         case .started(let id):
             interruptReply(); runID = id; handledFinalRunID = nil
+            // The bubble turns from the last reply, even one still muted on screen, to the new turn.
+            spoken = nil
+            statusLingerTask?.cancel(); statusLingerTask = nil
+            updateSnapshot { $0.agentStatus = String(localized: "正在思考…") }
             delta = VoiceTextDelta(); playedAudioForCurrentRun = false
             resumeListening()
         case .reply(let id, let reply):
@@ -489,6 +504,24 @@ enum VoiceCaptureWatchdog {
             scheduleListeningRecovery(runID: nil, playedAudio: hadAudio)
         case .retired: end(reason: .retired)
         }
+    }
+    /// A running tool names itself in the bubble at once. Once none runs its words stay a moment,
+    /// so the next tool only changes the text, and then the bubble closes.
+    private func runningToolChanged(_ summary: String?) {
+        statusLingerTask?.cancel(); statusLingerTask = nil
+        guard store?.task?.status == .running else { return }
+        if let summary { updateSnapshot { $0.agentStatus = summary }; return }
+        let call = sessionID, linger = statusLinger
+        statusLingerTask = Task { [weak self] in
+            try? await Task.sleep(for: linger)
+            guard let self, !Task.isCancelled, self.sessionID == call else { return }
+            self.statusLingerTask = nil
+            self.updateSnapshot { $0.agentStatus = nil }
+        }
+    }
+    private func clearAgentStatus() {
+        statusLingerTask?.cancel(); statusLingerTask = nil
+        updateSnapshot { $0.agentStatus = nil }
     }
     private func speakFinal(_ id: UUID) {
         guard handledFinalRunID != id else { return }
@@ -540,7 +573,7 @@ enum VoiceCaptureWatchdog {
                     if !data.isEmpty {
                         if !self.playedAudioForCurrentRun { self.speechBaseFrames = self.audio.playbackFrames }
                         self.playedAudioForCurrentRun = true
-                        self.updateSnapshot { $0.replyAudio = .playing(runID) }
+                        self.updateSnapshot { $0.replyAudio = .playing(runID); $0.agentStatus = nil }
                         if self.snapshot.bargeIn == .off { self.armBargeIn() }
                     }
                     try await self.audio.play(data)
@@ -710,7 +743,8 @@ enum VoiceCaptureWatchdog {
         }
         captureWatchdog?.cancel(); captureWatchdog = nil
         cancelRecovery()
-        sessionID = UUID(); observation = nil; taskObservation = nil
+        sessionID = UUID(); observation = nil; taskObservation = nil; toolObservation = nil
+        statusLingerTask?.cancel(); statusLingerTask = nil
         startup?.cancel(); startup = nil; captureTask?.cancel(); captureTask = nil
         stopRecognition(reason: .ending); interruptReply()
         audio.stop()
