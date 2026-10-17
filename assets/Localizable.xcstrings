@@ -2467,6 +2467,26 @@
         }
       }
     },
+    "无法先换回赤焰，未移到废纸篓。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t switch back to 赤焰 first, so nothing was moved to the Trash."
+          }
+        }
+      }
+    },
+    "无法先换回默认星球，未移到废纸篓。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t switch back to the default planet first, so nothing was moved to the Trash."
+          }
+        }
+      }
+    },
     "无法创建第 %u 帧图像。" : {
       "localizations" : {
         "en" : {
@@ -2603,6 +2623,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t remove the old key from the keychain."
+          }
+        }
+      }
+    },
+    "无法移到废纸篓：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t move to the Trash: %@"
           }
         }
       }
@@ -3900,6 +3930,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hover to make it jump, drag to make it run, and move away to have it face the pointer. Click to open the chat; right-click to hide the pet or open Settings."
+          }
+        }
+      }
+    },
+    "移到废纸篓" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to Trash"
           }
         }
       }

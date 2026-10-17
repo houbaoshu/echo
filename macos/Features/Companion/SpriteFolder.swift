@@ -58,6 +58,17 @@ enum SpriteFolder {
         return Contents(manifest: data, sheet: sheet, sheetPath: relative, description: manifest.description)
     }
 
+    /// The folder an id's name points at, which may only be a direct child of `root`. Ids come from
+    /// `settings.json` and from the settings grid, so the name is untrusted.
+    static func child(named name: String, of root: URL) -> URL? {
+        guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/") else { return nil }
+        let directory = root.appendingPathComponent(name, isDirectory: true)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return directory
+    }
+
     /// Copy a folder into `root` under a fresh UUID name. The copy is staged in a hidden folder and
     /// only moved into place once `entry` accepts it, so a source that changed after its checks
     /// cannot install a broken sprite. `entry` reads a folder the way the caller lists it: first the

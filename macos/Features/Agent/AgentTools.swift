@@ -1040,7 +1040,8 @@ struct AgentBackupStore {
     }
 }
 
-/// Moves a file a write created to the Trash when its change is undone.
+/// Moves a file a write created to the Trash when its change is undone, and an imported pet or
+/// planet's folder when it is deleted from settings.
 struct AgentTrash: Sendable {
     let move: @Sendable (URL) throws -> Void
     static let system = AgentTrash { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }

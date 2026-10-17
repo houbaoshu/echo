@@ -19,7 +19,7 @@ struct PlanetEntry: Identifiable {
 /// snapshot rather than from a view: two views driving it would fight over the animation clock,
 /// because every `set_animation` restarts it.
 @MainActor @Observable final class PlanetStore {
-    /// Filled the first time the settings page asks; the app itself only needs the selected one.
+    /// Filled when the settings page opens; the app itself only needs the selected one.
     private(set) var entries: [PlanetEntry] = []
     private(set) var selectedID: String
     /// The card an import added or found already listed, so the grid can scroll to it.
@@ -35,15 +35,16 @@ struct PlanetEntry: Identifiable {
     private let settings: SettingsStore?
     private let root: URL?
     private let importedRoot: URL?
-    @ObservationIgnored private var loadedEntries = false
+    private let trash: AgentTrash
     @ObservationIgnored private var current: PetSurfacePresentation.VoiceIndicator = .inactive
     @ObservationIgnored private weak var voice: VoiceSessionController?
     @ObservationIgnored private var voiceObservation: ObservationHandle?
     @ObservationIgnored private var reduceMotionObservation: AnyCancellable?
 
     init(settings: SettingsStore? = nil, root: URL? = nil, importedRoot: URL? = nil, voice: VoiceSessionController? = nil,
-         endingDuration: Duration = .milliseconds(1030)) {
+         endingDuration: Duration = .milliseconds(1030), trash: AgentTrash = .system) {
         self.endingDuration = endingDuration
+        self.trash = trash
         self.settings = settings
         self.root = root
         self.importedRoot = importedRoot
@@ -129,16 +130,17 @@ struct PlanetEntry: Identifiable {
         }
     }
 
-    /// Read the bundled planets, then the imported ones, for the settings grid.
+    /// Read the bundled planets, then the imported ones, for the settings grid. Each time the page
+    /// opens, so a folder put back from the Trash shows up without a relaunch. A planet already
+    /// listed is kept as it is rather than decoded again; the planet in use is never touched.
     func loadEntries() {
-        guard !loadedEntries else { return }
-        loadedEntries = true
         var loaded: [PlanetEntry] = []
         var skipped = false
         for (root, prefix) in [(root, "builtin"), (importedRoot, "imported")] {
             guard let root else { continue }
             for directory in directories(in: root) {
-                if let entry = entry(at: directory, id: "\(prefix):\(directory.lastPathComponent)") {
+                let id = "\(prefix):\(directory.lastPathComponent)"
+                if let entry = entries.first(where: { $0.id == id }) ?? entry(at: directory, id: id) {
                     loaded.append(entry)
                 } else { skipped = true }
             }
@@ -167,6 +169,28 @@ struct PlanetEntry: Identifiable {
         } catch {
             notice = String(localized: "导入失败：%@|星球", defaultValue: "导入失败：\(error.localizedDescription)"); return nil
         }
+    }
+
+    /// Move an imported planet's folder to the Trash, under its own name so Put Back restores it.
+    /// The planet in use first gives way to the default one, swapped in at once during a call.
+    @discardableResult func moveToTrash(_ id: String) -> Bool {
+        guard id.hasPrefix("imported:") else { return false }
+        if id == selectedID {
+            select(SettingsSnapshot.defaultPlanetID)
+            guard selectedID == SettingsSnapshot.defaultPlanetID else {
+                notice = String(localized: "无法先换回默认星球，未移到废纸篓。"); return false
+            }
+        }
+        do {
+            guard let directory = directory(for: id) else { throw CocoaError(.fileNoSuchFile) }
+            try trash.move(directory)
+        } catch {
+            notice = String(localized: "无法移到废纸篓：\(error.localizedDescription)"); return false
+        }
+        entries.removeAll { $0.id == id }
+        if highlightedID == id { highlightedID = nil }
+        notice = nil
+        return true
     }
 
     /// What a folder must pass to be imported: the shared folder checks, a sprite the runtime
@@ -236,13 +260,7 @@ struct PlanetEntry: Identifiable {
     private func directory(for id: String) -> URL? {
         let roots = [("builtin:", root), ("imported:", importedRoot)]
         guard let (prefix, root) = roots.first(where: { id.hasPrefix($0.0) }), let root else { return nil }
-        let name = String(id.dropFirst(prefix.count))
-        guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/") else { return nil }
-        let directory = root.appendingPathComponent(name, isDirectory: true)
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else { return nil }
-        return directory
+        return SpriteFolder.child(named: String(id.dropFirst(prefix.count)), of: root)
     }
 
     // MARK: - Manifest

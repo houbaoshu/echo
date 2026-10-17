@@ -2543,6 +2543,152 @@ extension EchoVoiceScenarios {
               "a missing imported planet falls back to a bundled one and says so")
         voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
     }
+
+    /// A Trash that is a folder in the sandbox, and one that refuses.
+    static func trash(_ folder: URL) -> AgentTrash {
+        AgentTrash { url in
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: url, to: folder.appendingPathComponent(url.lastPathComponent))
+        }
+    }
+    static let refusingTrash = AgentTrash { _ in throw CocoaError(.fileWriteNoPermission) }
+
+    /// 移到废纸篓 on an imported pet's card, and the list finding it again once it is put back.
+    @Test @MainActor static func petMoveToTrashTests() throws {
+        _ = NSApplication.shared
+        let sandbox = try Sandbox()
+        defer { sandbox.remove() }
+        let fm = FileManager.default
+        let settings = SettingsStore(url: sandbox.root.appendingPathComponent("settings.json"), secrets: FakeSecrets())
+        let builtin = EchoTestResources.resource("pets")
+        let trashed = sandbox.root.appendingPathComponent("trash")
+        let pets = PetCatalog(settings: settings, builtinRoot: builtin, importedRoot: sandbox.imported, trash: trash(trashed))
+        _ = try pets.loadInitial()
+        defer { pets.stop() }
+        let kept = try #require(pets.importPet(from: try sandbox.folder("kept", from: "pets/chiyan") { $0["displayName"] = "保留" }))
+        let other = try #require(pets.importPet(from: try sandbox.folder("other", from: "pets/cangcang") { $0["displayName"] = "其他" }))
+        let keptName = String(kept.dropFirst("imported:".count)), otherName = String(other.dropFirst("imported:".count))
+
+        // Not in use: only its folder goes, under its own name.
+        #expect(pets.highlightedID == other && pets.moveToTrash(other), "an imported pet not in use is moved")
+        #expect(!pets.entries.contains { $0.id == other } && pets.highlightedID == nil && pets.selectedID == PetCatalog.defaultID
+              && sandbox.installed() == [keptName] && fm.fileExists(atPath: trashed.appendingPathComponent("\(otherName)/pet.json").path),
+              "the card and the highlight go, and the folder lands in the Trash under its UUID")
+
+        // In use: 赤焰 takes over on the desktop first.
+        #expect(pets.activate(kept) && settings.snapshot.selectedPetID == kept)
+        var shown: PetStore?
+        pets.onActivate = { shown = $0 }
+        #expect(pets.moveToTrash(kept), "the pet in use is moved")
+        #expect(pets.selectedID == PetCatalog.defaultID && settings.snapshot.selectedPetID == PetCatalog.defaultID
+              && shown === pets.activeStore && pets.activeStore?.displayName == "赤焰" && pets.notice == nil,
+              "the desktop switches to 赤焰 and the choice is saved")
+        #expect(sandbox.installed().isEmpty && !pets.entries.contains { $0.id == kept }, "its folder and card are gone")
+
+        // Bundled pets have no menu, and the call refuses them as well.
+        let count = pets.entries.count
+        #expect(!pets.moveToTrash("builtin:cangcang") && !pets.moveToTrash(PetCatalog.defaultID) && pets.entries.count == count
+              && fm.fileExists(atPath: builtin.appendingPathComponent("cangcang/pet.json").path), "a bundled pet cannot be moved")
+
+        // Put back from the Trash: the next listing finds it under the same id, and a listed pet is not read again.
+        try fm.moveItem(at: trashed.appendingPathComponent(keptName), to: sandbox.imported.appendingPathComponent(keptName))
+        let otherFolder = trashed.appendingPathComponent(otherName)
+        try fm.moveItem(at: otherFolder, to: sandbox.imported.appendingPathComponent(otherName))
+        pets.reload()
+        #expect(pets.entries.suffix(2).map(\.id) == [kept, other].sorted() && pets.entries.first(where: { $0.id == kept })?.name == "保留"
+              && pets.selectedID == PetCatalog.defaultID && pets.activeStore?.displayName == "赤焰",
+              "put-back pets are listed again; the pet in use stays")
+        try Data("not a webp".utf8).write(to: sandbox.imported.appendingPathComponent("\(keptName)/spritesheet.webp"))
+        pets.notice = nil
+        pets.reload()
+        #expect(pets.entries.contains { $0.id == kept } && pets.notice == nil, "a pet already listed is not read again")
+
+        // The Trash refuses: nothing changes but the notice.
+        let refused = PetCatalog(settings: settings, builtinRoot: builtin, importedRoot: sandbox.imported, trash: refusingTrash)
+        #expect(!refused.moveToTrash(other) && refused.entries.contains { $0.id == other }
+              && sandbox.installed().contains(otherName), "a refused move keeps the card and folder")
+        let notice = refused.notice ?? ""
+        #expect(notice.hasPrefix("无法移到废纸篓：") && notice.count > "无法移到废纸篓：".count, "and says why: \(notice)")
+
+        // 赤焰 cannot be loaded: the pet in use is not moved.
+        let bundled = sandbox.root.appendingPathComponent("bundled")
+        try fm.createDirectory(at: bundled, withIntermediateDirectories: true)
+        try fm.copyItem(at: builtin.appendingPathComponent("cangcang"), to: bundled.appendingPathComponent("cangcang"))
+        let stranded = PetCatalog(settings: settings, builtinRoot: bundled, importedRoot: sandbox.imported, trash: trash(trashed))
+        #expect(stranded.activate(other))
+        defer { stranded.stop() }
+        #expect(!stranded.moveToTrash(other) && stranded.selectedID == other && stranded.entries.contains { $0.id == other }
+              && sandbox.installed().contains(otherName) && stranded.notice == "无法先换回赤焰，未移到废纸篓。",
+              "a pet in use that cannot give way stays")
+    }
+
+    /// 移到废纸篓 on an imported planet's card, during a call too.
+    @Test @MainActor static func planetMoveToTrashTests() throws {
+        _ = NSApplication.shared
+        let sandbox = try Sandbox()
+        defer { sandbox.remove() }
+        let fm = FileManager.default
+        let settings = SettingsStore(url: sandbox.root.appendingPathComponent("settings.json"), secrets: FakeSecrets())
+        let builtin = EchoTestResources.resource("planets")
+        let voice = VoiceSessionController()
+        defer { voice.shutdown() }
+        let trashed = sandbox.root.appendingPathComponent("trash")
+        let planets = PlanetStore(settings: settings, root: builtin, importedRoot: sandbox.imported, voice: voice, trash: trash(trashed))
+        planets.loadEntries()
+        let kept = try #require(planets.importPlanet(from: try sandbox.folder("kept", from: "planets/ember-planet") { $0["displayName"] = "保留" }))
+        let other = try #require(planets.importPlanet(from: try sandbox.folder("other", from: "planets/quiet-planet") { $0["displayName"] = "其他" }))
+        let keptName = String(kept.dropFirst("imported:".count)), otherName = String(other.dropFirst("imported:".count))
+
+        #expect(planets.highlightedID == other && planets.moveToTrash(other), "an imported planet not in use is moved")
+        #expect(!planets.entries.contains { $0.id == other } && planets.highlightedID == nil
+              && planets.selectedID == SettingsSnapshot.defaultPlanetID && sandbox.installed() == [keptName]
+              && fm.fileExists(atPath: trashed.appendingPathComponent("\(otherName)/pet.json").path),
+              "the card and the highlight go, and the folder lands in the Trash under its UUID")
+
+        // In use during a call: the default planet is swapped in at once.
+        planets.select(kept)
+        let owner = VoiceSessionSnapshot.Owner(sessionID: UUID(), conversationID: UUID())
+        voice.updateSnapshot { $0.session = .active(owner); $0.replyAudio = .playing(UUID()) }
+        #expect(planets.active?.displayName == "保留" && planets.playing == "spinning")
+        #expect(planets.moveToTrash(kept), "the planet in use is moved")
+        #expect(planets.selectedID == SettingsSnapshot.defaultPlanetID && settings.snapshot.selectedPlanetID == SettingsSnapshot.defaultPlanetID
+              && planets.active?.displayName == "烬星" && planets.playing == "spinning" && planets.notice == nil,
+              "the call switches to the default planet and keeps its state")
+        #expect(sandbox.installed().isEmpty && !planets.entries.contains { $0.id == kept }, "its folder and card are gone")
+        voice.updateSnapshot { $0 = VoiceSessionSnapshot() }
+
+        let count = planets.entries.count
+        #expect(!planets.moveToTrash("builtin:quiet-planet") && !planets.moveToTrash(SettingsSnapshot.defaultPlanetID)
+              && planets.entries.count == count && fm.fileExists(atPath: builtin.appendingPathComponent("quiet-planet/pet.json").path),
+              "a bundled planet cannot be moved")
+
+        // Put back: opening the page again lists it, and a listed planet is not decoded again.
+        try fm.moveItem(at: trashed.appendingPathComponent(keptName), to: sandbox.imported.appendingPathComponent(keptName))
+        try fm.moveItem(at: trashed.appendingPathComponent(otherName), to: sandbox.imported.appendingPathComponent(otherName))
+        planets.loadEntries()
+        #expect(planets.entries.suffix(2).map(\.id) == [kept, other].sorted() && planets.entries.first(where: { $0.id == kept })?.name == "保留"
+              && planets.selectedID == SettingsSnapshot.defaultPlanetID, "put-back planets are listed again")
+        try Data("not a webp".utf8).write(to: sandbox.imported.appendingPathComponent("\(keptName)/spritesheet.webp"))
+        planets.notice = nil
+        planets.loadEntries()
+        #expect(planets.entries.contains { $0.id == kept } && planets.notice == nil, "a planet already listed is not decoded again")
+
+        let refused = PlanetStore(settings: settings, root: builtin, importedRoot: sandbox.imported, voice: voice, trash: refusingTrash)
+        refused.loadEntries()
+        #expect(!refused.moveToTrash(other) && refused.entries.contains { $0.id == other }
+              && sandbox.installed().contains(otherName), "a refused move keeps the card and folder")
+        let notice = refused.notice ?? ""
+        #expect(notice.hasPrefix("无法移到废纸篓：") && notice.count > "无法移到废纸篓：".count, "and says why: \(notice)")
+
+        // The default planet is missing: the planet in use is not moved.
+        let bundled = sandbox.root.appendingPathComponent("bundled")
+        try fm.createDirectory(at: bundled, withIntermediateDirectories: true)
+        try fm.copyItem(at: builtin.appendingPathComponent("quiet-planet"), to: bundled.appendingPathComponent("quiet-planet"))
+        let stranded = PlanetStore(settings: settings, root: bundled, importedRoot: sandbox.imported, voice: voice, trash: trash(trashed))
+        stranded.select(other)
+        #expect(!stranded.moveToTrash(other) && stranded.selectedID == other && sandbox.installed().contains(otherName)
+              && stranded.notice == "无法先换回默认星球，未移到废纸篓。", "a planet in use that cannot give way stays")
+    }
 }
 }
 

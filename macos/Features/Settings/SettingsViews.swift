@@ -78,7 +78,7 @@ struct SettingsView: View {
             // rejoins the key view loop (NativeAppKitEventTests.testSettingsKeyboardAndFocus).
             if section == .model { ModelSettingsView(settings: settings).id(settings.presentationRevision) }
             else if section == .voice { VoiceSettingsView(settings: settings, voice: voice).id(settings.presentationRevision) }
-            else if section == .planet { PlanetSettingsView(planets: planets) }
+            else if section == .planet { PlanetSettingsView(planets: planets, settings: settings) }
             else { PetSettingsView(pets: pets, settings: settings) }
         }.formStyle(.grouped).scrollContentBackground(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -361,7 +361,8 @@ struct PetSettingsView: View {
                     LazyVGrid(columns: SpriteCard.columns, spacing: 16) {
                         ForEach(pets.entries) { pet in
                             SpriteCard(name: pet.name, preview: pet.preview, selected: pets.selectedID == pet.id,
-                                       currentLabel: String(localized: "\(pet.name)，当前精灵"), identifier: "settings.pet.\(pet.id)") { pets.activate(pet.id) }
+                                       currentLabel: String(localized: "\(pet.name)，当前精灵"), identifier: "settings.pet.\(pet.id)",
+                                       moveToTrash: pet.builtin ? nil : { pets.moveToTrash(pet.id) }) { pets.activate(pet.id) }
                                 .id(pet.id)
                         }
                     }.onChange(of: pets.highlightedID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
@@ -376,6 +377,9 @@ struct PetSettingsView: View {
                 }
             }
         }
+        // Listed again each time the window opens or the page is switched to, so a pet put back
+        // from the Trash shows up; listed pets are not read again.
+        .task(id: settings.presentationRevision) { pets.reload() }
     }
 }
 
@@ -383,6 +387,7 @@ struct PetSettingsView: View {
 /// the voice mark, not a second pet, so it gets its own section rather than a row in 精灵.
 struct PlanetSettingsView: View {
     var planets: PlanetStore
+    var settings: SettingsStore
     var body: some View {
         Form {
             Section {
@@ -394,7 +399,8 @@ struct PlanetSettingsView: View {
                     LazyVGrid(columns: SpriteCard.columns, spacing: 16) {
                         ForEach(planets.entries) { planet in
                             SpriteCard(name: planet.name, preview: planet.preview, selected: planets.selectedID == planet.id,
-                                       currentLabel: String(localized: "\(planet.name)，当前星球"), identifier: "settings.planet.\(planet.id)") { planets.select(planet.id) }
+                                       currentLabel: String(localized: "\(planet.name)，当前星球"), identifier: "settings.planet.\(planet.id)",
+                                       moveToTrash: planet.id.hasPrefix("imported:") ? { planets.moveToTrash(planet.id) } : nil) { planets.select(planet.id) }
                                 .id(planet.id)
                         }
                     }.onChange(of: planets.highlightedID) { _, id in if let id { proxy.scrollTo(id, anchor: .center) } }
@@ -409,9 +415,9 @@ struct PlanetSettingsView: View {
                 }
             }
         }
-        // The settings window is retained rather than unmounted, so this runs once and the
-        // sprite sheets are never decoded for a page nobody opened.
-        .task { planets.loadEntries() }
+        // Listed each time the window opens or the page is switched to, so a planet put back from
+        // the Trash shows up, and never for a page nobody opened; listed planets are not decoded again.
+        .task(id: settings.presentationRevision) { planets.loadEntries() }
     }
 }
 
@@ -425,8 +431,15 @@ struct SpriteCard: View {
     /// as one localized sentence, since the two halves do not join the same way in every language.
     let currentLabel: String
     let identifier: String
+    /// Only an imported card has a menu, and its one item moves the folder to the Trash.
+    var moveToTrash: (() -> Void)?
     let action: () -> Void
     var body: some View {
+        if let moveToTrash {
+            card.contextMenu { Button("移到废纸篓", action: moveToTrash) }
+        } else { card }
+    }
+    private var card: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 12) {
                 Image(decorative: preview, scale: 1).resizable().interpolation(.high).scaledToFit()

@@ -13,26 +13,39 @@ struct PetEntry: Identifiable {
 @MainActor @Observable final class PetCatalog {
     private(set) var entries: [PetEntry] = []
     var notice: String?
-    private(set) var selectedID = "builtin:chiyan"
+    private(set) var selectedID = PetCatalog.defaultID
     private(set) var highlightedID: String?
     @ObservationIgnored private(set) var activeStore: PetStore?
     @ObservationIgnored var onActivate: ((PetStore) -> Void)?
     @ObservationIgnored var onFailure: ((Error) -> Void)?
     private let settings: SettingsStore
+    private let builtinRoot: URL?
     private let importedRoot: URL?
-    init(settings: SettingsStore, builtinRoot: URL? = nil, importedRoot: URL? = nil) {
-        self.settings = settings; self.importedRoot = importedRoot
+    private let trash: AgentTrash
+    /// The pet a deleted pet in use gives way to, as on a first launch.
+    static let defaultID = "builtin:chiyan"
+    init(settings: SettingsStore, builtinRoot: URL? = nil, importedRoot: URL? = nil, trash: AgentTrash = .system) {
+        self.settings = settings; self.builtinRoot = builtinRoot; self.importedRoot = importedRoot; self.trash = trash
         selectedID = settings.snapshot.selectedPetID
+        reload()
+    }
+    /// List the bundled pets, then the imported ones, so a folder put back from the Trash shows up
+    /// without a relaunch. A pet already listed is kept as it is rather than read again, so opening
+    /// the page never re-reads its sheet; the pet in use is never touched.
+    func reload() {
+        var loaded: [PetEntry] = []
         for (root, builtin) in [(builtinRoot, true), (importedRoot, false)] {
             guard let root else { continue }
             let directories = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
             for directory in directories.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where !directory.lastPathComponent.hasPrefix(".") {
+                let id = "\(builtin ? "builtin" : "imported"):\(directory.lastPathComponent)"
+                if let listed = entries.first(where: { $0.id == id }) { loaded.append(listed); continue }
                 do {
-                    let id = "\(builtin ? "builtin" : "imported"):\(directory.lastPathComponent)"
-                    entries.append(try read(directory, id: id, builtin: builtin))
+                    loaded.append(try read(directory, id: id, builtin: builtin))
                 } catch { notice = String(localized: "部分精灵素材无法加载，已跳过。可重新导入有效的精灵文件夹。") }
             }
         }
+        entries = loaded
     }
     private func read(_ directory: URL, id: String, builtin: Bool) throws -> PetEntry {
         let contents = try SpriteFolder.read(directory)
@@ -45,7 +58,7 @@ struct PetEntry: Identifiable {
         if let selected = entries.first(where: { $0.id == selectedID }), let store = try? PetStore(directory: selected.directory) {
             activeStore = store; store.onFailure = onFailure; return store
         }
-        guard let fallback = entries.first(where: { $0.id == "builtin:chiyan" }) else { throw SettingsError(localized: "应用内缺少有效的赤焰精灵素材。") }
+        guard let fallback = entries.first(where: { $0.id == Self.defaultID }) else { throw SettingsError(localized: "应用内缺少有效的赤焰精灵素材。") }
         let store = try PetStore(directory: fallback.directory)
         activeStore = store; store.onFailure = onFailure; selectedID = fallback.id
         notice = String(localized: "上次选择的精灵无法加载，已恢复为赤焰。")
@@ -82,6 +95,25 @@ struct PetEntry: Identifiable {
         } catch {
             notice = String(localized: "导入失败：%@|精灵", defaultValue: "导入失败：\(error.localizedDescription)"); return nil
         }
+    }
+    /// Move an imported pet's folder to the Trash, under its own name so Put Back restores it. The
+    /// pet in use first gives way to 赤焰, so the desktop never shows a pet whose folder is gone.
+    @discardableResult func moveToTrash(_ id: String) -> Bool {
+        guard let entry = entries.first(where: { $0.id == id }), !entry.builtin, id.hasPrefix("imported:") else { return false }
+        if id == selectedID, !activate(Self.defaultID) {
+            notice = String(localized: "无法先换回赤焰，未移到废纸篓。"); return false
+        }
+        do {
+            guard let importedRoot, let directory = SpriteFolder.child(named: String(id.dropFirst("imported:".count)), of: importedRoot)
+            else { throw CocoaError(.fileNoSuchFile) }
+            try trash.move(directory)
+        } catch {
+            notice = String(localized: "无法移到废纸篓：\(error.localizedDescription)"); return false
+        }
+        entries.removeAll { $0.id == id }
+        if highlightedID == id { highlightedID = nil }
+        notice = nil
+        return true
     }
     func stop() { activeStore?.stop() }
 }
