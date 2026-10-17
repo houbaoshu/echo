@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import FoundationModels
@@ -184,7 +185,7 @@ import UniformTypeIdentifiers
         #expect(Self.json(tool.result) as NSDictionary == ["action": "created", "path": chat.pictures.path + "/" + Self.base + ".jpeg",
                                                          "format": "jpeg", "width": 64, "height": 48, "bytes": jpeg.count])
         let card = AgentImageCard(tool: tool)
-        #expect(card.title == "生成图片 · 一只橘猫坐在木窗台上，午后阳光" && card.lines == [Self.base + ".jpeg · 64 × 48"])
+        #expect(card.title == "已生成图片 · 一只橘猫坐在木窗台上，午后阳光" && card.lines == [Self.base + ".jpeg · 64 × 48"])
         #expect(card.file?.path == file.path)
         // The model hears where the image went.
         #expect(chat.model.requests.last.map(ChatAttachmentTests.everything)?.contains(Self.base + ".jpeg") == true)
@@ -269,6 +270,66 @@ import UniformTypeIdentifiers
         #expect(AgentImageCard(tool: tool).file == nil && AgentImageCard(tool: tool).title == "已撤销 · 生成图片 · 一只橘猫坐在木窗台上，午后阳光")
         #expect((Self.json(tool.result)["undone"] as? String)?.contains("moved to the Trash") == true)
         #expect(chat.native.undoNotices.first?.contains("the file your generate_image call created was moved to the Trash") == true)
+    }
+
+    @Test func anImageMovedAwayKeepsItsCardAndShowsAsMissing() async throws {
+        let chat = try await Self.chat(Self.cat, replies: [Self.made(Self.encoded(.jpeg))])
+        defer { Self.remove(chat) }
+        let file = try #require(AgentImageCard(tool: chat.store.tools[0]).file)
+        guard case .loaded(_, let pixels) = AgentImageView.Load.read(file, maxPixels: 512) else {
+            Issue.record("A saved image reads"); return
+        }
+        #expect(pixels == 512)
+        try FileManager.default.removeItem(at: file)
+        // The card still points at the file, so the chat shows the note rather than nothing.
+        let card = AgentImageCard(tool: chat.store.tools[0])
+        #expect(card.file == file && card.title == "已生成图片 · 一只橘猫坐在木窗台上，午后阳光")
+        guard case .missing = AgentImageView.Load.read(file, maxPixels: 512) else {
+            Issue.record("A file that has gone reads as missing"); return
+        }
+    }
+
+    // MARK: In the chat
+
+    @Test func copyImagePutsTheImageNotTheFileOnThePasteboard() async throws {
+        let jpeg = Self.encoded(.jpeg)
+        let chat = try await Self.chat(Self.cat, replies: [Self.made(jpeg)])
+        defer { Self.remove(chat) }
+        let file = try #require(AgentImageCard(tool: chat.store.tools[0]).file)
+        let pasteboard = NSPasteboard(name: .init("io.github.houbaoshu.echo.tests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        #expect(AgentImageView.copy(file, to: pasteboard))
+        #expect(pasteboard.data(forType: .init(UTType.jpeg.identifier)) == jpeg, "The file's own encoding, as saved")
+        #expect(pasteboard.data(forType: .tiff).flatMap(NSImage.init(data:))?.size == CGSize(width: 64, height: 48))
+        #expect(pasteboard.types?.contains(.fileURL) == false, "An image, not the file")
+        try FileManager.default.removeItem(at: file)
+        #expect(!AgentImageView.copy(file, to: pasteboard), "A file that has gone copies nothing")
+    }
+
+    /// Half of a 760pt column and six tenths of a 700pt window.
+    static let room = AgentImageView.bounds(column: 760, window: 700)
+
+    @Test func theRoomIsHalfTheColumnAndSixTenthsOfTheWindow() {
+        #expect(Self.room == CGSize(width: 380, height: 420))
+        #expect(AgentImageView.bounds(column: 501, window: 801) == CGSize(width: 251, height: 481))
+    }
+
+    @Test func aPortraitImageStopsAtTheHeight() {
+        #expect(AgentImageView.size(pixels: CGSize(width: 1728, height: 2304), bounds: Self.room) == CGSize(width: 315, height: 420))
+        #expect(AgentImageView.size(pixels: CGSize(width: 1440, height: 2560), bounds: Self.room) == CGSize(width: 236, height: 420))
+    }
+
+    @Test func aLandscapeImageStopsAtTheWidth() {
+        #expect(AgentImageView.size(pixels: CGSize(width: 2304, height: 1728), bounds: Self.room) == CGSize(width: 380, height: 285))
+        #expect(AgentImageView.size(pixels: CGSize(width: 2560, height: 1440), bounds: Self.room) == CGSize(width: 380, height: 214))
+    }
+
+    @Test func aSquareImageStopsAtWhicheverLimitIsNearer() {
+        let square = CGSize(width: 2048, height: 2048)
+        #expect(AgentImageView.size(pixels: square, bounds: Self.room) == CGSize(width: 380, height: 380), "A tall window: the width")
+        let short = AgentImageView.bounds(column: 760, window: 500)
+        #expect(AgentImageView.size(pixels: square, bounds: short) == CGSize(width: 300, height: 300), "A short window: the height")
+        #expect(AgentImageView.size(pixels: .zero, bounds: short) == CGSize(width: 300, height: 300), "An unknown size is a square")
     }
 
     @Test func undoTakesAnImageOverTheTextLimitAndRefusesOneChangedSince() async throws {

@@ -153,7 +153,7 @@ private struct ProjectFileBrowserView: View {
     @ViewBuilder private func entryMenu(_ paths: Set<String>) -> some View {
         let urls = browser.inTreeOrder(paths).compactMap { browser.url(for: $0) }
         if !urls.isEmpty {
-            Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
             Button("拷贝路径") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
@@ -208,7 +208,7 @@ private struct ProjectFileBrowserView: View {
             case .information(let message), .failed(let message):
                 VStack(alignment: .leading, spacing: 12) {
                     Text(message).foregroundStyle(.secondary).textSelection(.enabled)
-                    Button("在 Finder 中显示") {
+                    Button("在访达中显示") {
                         guard let path = browser.state.selectedPath, let url = browser.url(for: path) else { return }
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }

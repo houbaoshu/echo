@@ -304,7 +304,7 @@ struct WorkspaceSidebar: View {
     @ViewBuilder private func projectMenu(_ project: WorkspaceProject) -> some View {
         Button("新对话") { newProjectConversation(project.id) }
         Button("重命名") { WorkspaceActions.rename(project.name) { workspace.renameProject(project.id, to: $0) } }
-        Button("在 Finder 中显示") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
+        Button("在访达中显示") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
             .disabled(!workspace.isAvailable(project))
         Button("重新定位文件夹…") { WorkspaceActions.chooseFolder { workspace.relocateProject(project.id, to: $0) } }
         Divider()
@@ -474,6 +474,10 @@ struct ConversationView: View {
     /// a scroller to the right of the chat.
     @State private var scrollerWidth: CGFloat = 0
     @State private var cardHeight: CGFloat = 0
+    /// The text column's width and the transcript's height, which is the window's: the room a
+    /// generated image has.
+    @State private var columnWidth: CGFloat = 760
+    @State private var transcriptHeight: CGFloat = 600
     /// The captions between the bar's top and the card's: the bar is 8pt of padding on either
     /// side of the card, and 8pt of spacing above it once there is anything to space from.
     private var captionsHeight: CGFloat { max(0, transcriptInsets.bottom - cardHeight - 16 - 8) }
@@ -535,7 +539,9 @@ struct ConversationView: View {
                 // forms at the very tail. Reserving its height here is what keeps the words
                 // being said from sitting underneath it.
                 if isVoiceOwner { Color.clear.frame(height: Self.planetSize + 16) }
-            }.frame(maxWidth: 760).padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
+            }.frame(maxWidth: 760)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { columnWidth = $0 }
+                .padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 20)
                 .frame(maxWidth: .infinity)
         }
         // Leave short conversations at the top; .alignment would pin them to the composer.
@@ -566,6 +572,10 @@ struct ConversationView: View {
         }
         .scrollPosition($scrollPosition)
         .onScrollGeometryChange(for: EdgeInsets.self) { $0.contentInsets } action: { transcriptInsets = $1 }
+        // The window's height: the transcript runs on under the toolbar and the composer bar.
+        .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height + $0.contentInsets.top + $0.contentInsets.bottom } action: {
+            transcriptHeight = $1
+        }
         .onScrollGeometryChange(for: CGFloat.self) { max(0, $0.containerSize.width - $0.contentSize.width) } action: {
             scrollerWidth = $1
         }
@@ -935,8 +945,18 @@ struct ConversationView: View {
             workspace?.requestComposerFocus(conversationID: conversationID)
         }
     }
-    private func toolCard(_ tool: AgentToolRecord) -> AgentToolView {
-        AgentToolView(tool: tool, undo: store.offersUndo(tool) ? { store.undo(tool.id) } : nil, canUndo: store.canUndo(tool))
+    /// A tool's card; a generated image follows its card, shown in the chat rather than on it.
+    @ViewBuilder private func toolCard(_ tool: AgentToolRecord) -> some View {
+        let card = AgentToolView(tool: tool, undo: store.offersUndo(tool) ? { store.undo(tool.id) } : nil, canUndo: store.canUndo(tool))
+        if AgentImageCard.applies(to: tool), let file = AgentImageCard(tool: tool).file {
+            VStack(alignment: .leading, spacing: 10) {
+                card
+                AgentImageView(url: file, pixels: AgentImageCard(tool: tool).pixels,
+                               bounds: AgentImageView.bounds(column: columnWidth, window: transcriptHeight))
+            }
+        } else {
+            card
+        }
     }
     private func performPrimary() {
         guard presentation.primaryEnabled else { return }
@@ -988,10 +1008,6 @@ struct AgentToolView: View {
                     Button("撤销", action: undo).controlSize(.small).disabled(!canUndo)
                         .accessibilityIdentifier("tool.undo")
                 }
-            }
-            // A generated image shows whether or not the card is open.
-            if AgentImageCard.applies(to: tool), let file = AgentImageCard(tool: tool).file {
-                AgentImageThumbnail(url: file, pixels: AgentImageCard(tool: tool).pixels)
             }
             if case .refused(let reason) = tool.undo {
                 Text(reason.message).font(.caption).foregroundStyle(.secondary)
@@ -1066,7 +1082,7 @@ struct AgentToolView: View {
                 if let finderTitle { Label(finderTitle, systemImage: icon) }
                 else if let ownCard { Label(ownCard.title, systemImage: ownCard.icon) }
                 else { Label("\(stateLabel) · \(action)\(tool.command.prefix(90))", systemImage: icon) }
-            }.font(.caption).lineLimit(2)
+            }.font(.caption).lineLimit(AgentImageCard.applies(to: tool) ? 1 : 2)
         }
     }
     /// Reminders and calendar cards, the cards of the tools that open an app or a page, search

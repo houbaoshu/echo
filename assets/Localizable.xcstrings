@@ -1247,6 +1247,16 @@
         }
       }
     },
+    "图片文件已移走或删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The image file was moved or deleted"
+          }
+        }
+      }
+    },
     "图片服务不接受这个 API Key（%@）。请在设置的模型页检查火山方舟的 API Key。" : {
       "localizations" : {
         "en" : {
@@ -1313,16 +1323,6 @@
         }
       }
     },
-    "在 Finder 中显示" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Show in Finder"
-          }
-        }
-      }
-    },
     "在新聊天里发出问题，回答显示在桌宠卡片上。" : {
       "localizations" : {
         "en" : {
@@ -1349,6 +1349,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New chat in this project"
+          }
+        }
+      }
+    },
+    "在访达中显示" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show in Finder"
           }
         }
       }
@@ -1777,6 +1787,16 @@
         }
       }
     },
+    "已生成图片 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Generated image · %@"
+          }
+        }
+      }
+    },
     "已记住 · %@" : {
       "localizations" : {
         "en" : {
@@ -1967,6 +1987,16 @@
         }
       }
     },
+    "快速查看" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quick Look"
+          }
+        }
+      }
+    },
     "忽略任务通知" : {
       "localizations" : {
         "en" : {
@@ -2093,6 +2123,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Brings the pet back to the desktop."
+          }
+        }
+      }
+    },
+    "拷贝图像" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Image"
           }
         }
       }

@@ -287,7 +287,7 @@ struct LocalModelSection: View {
             HStack(spacing: 12) {
                 Button("导入模型…") { importing = true }.disabled(settings.importingLocalModel)
                     .accessibilityIdentifier("settings.localModel.import")
-                Button("在 Finder 中显示", action: reveal).accessibilityIdentifier("settings.localModel.reveal")
+                Button("在访达中显示", action: reveal).accessibilityIdentifier("settings.localModel.reveal")
                 if settings.importingLocalModel { ProgressView().controlSize(.small) }
             }
             if let notice = settings.localModelNotice {
