@@ -1099,8 +1099,8 @@ struct AgentToolView: View {
         }
     }
     /// Reminders and calendar cards, the cards of the tools that open an app or a page, search
-    /// cards, memory cards and image cards say what was done in words of their own. A search card
-    /// also lists the pages it found.
+    /// and page-reading cards, memory cards and image cards say what was done in words of their own.
+    /// A search card also lists the pages it found, and a page-reading card the page it read.
     private var ownCard: (title: String, icon: String, lines: [String]?, links: [AgentSearchCard.Link])? {
         if AgentCalendarCard.applies(to: tool) {
             let card = AgentCalendarCard(tool: tool, locale: locale)
@@ -1112,6 +1112,10 @@ struct AgentToolView: View {
         }
         if AgentSearchCard.applies(to: tool) {
             let card = AgentSearchCard(tool: tool)
+            return (card.title, card.icon, card.lines, card.links)
+        }
+        if AgentFetchCard.applies(to: tool) {
+            let card = AgentFetchCard(tool: tool)
             return (card.title, card.icon, card.lines, card.links)
         }
         if AgentMemoryCard.applies(to: tool) {

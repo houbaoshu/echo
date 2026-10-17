@@ -200,6 +200,9 @@ enum AgentInstructions {
         if tools.contains("create_reminder") || tools.contains("create_event") {
             parts.append("list_reminders, create_reminder and complete_reminder work with the person's Reminders; list_events and create_event with their calendars, adding events to the default calendar. A title names the thing to do or the event alone; its date, time, place and list each have their own argument. Times are ISO 8601 with a UTC offset, such as 2026-10-13T10:00:00+08:00, or a date alone for a whole day; results give times in the person's time zone with the weekday. The first use asks the person for access.")
         }
+        if tools.contains("web_fetch") {
+            parts.append("web_fetch reads the web page or PDF at an address and gives you its main text as Markdown.")
+        }
         if tools.contains("remember") || tools.contains("update_memory") {
             parts.append("The memory is what the person asked you to remember about them: a file Echo keeps on this Mac and gives you at the start of every chat. remember adds one line to it; update_memory replaces a passage that appears exactly once in it, and an empty new_text removes the passage. It holds at most \(AgentMemoryFile.maxCharacters.formatted(.number.locale(Locale(identifier: "en_US")))) characters. Each line is \(AgentMemoryForm.rule). \(AgentMemoryForm.quote) The person can also see it in Echo's settings, open the file there and edit it themselves.")
         }
@@ -285,6 +288,8 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     private let webSearch: @MainActor () -> DoubaoSearch?
     /// The running turn's searcher; nil offers no web_search.
     private var searcher: DoubaoSearch?
+    /// Reads pages for web_fetch, which every turn with tools offers.
+    private let fetcher: any AgentWebFetching
     /// Read when a turn starts: the generator generate_image uses, when the Volcengine Ark key is saved.
     private let imageGeneration: @MainActor () -> ArkImageGenerator?
     /// The running turn's generator; nil offers no generate_image.
@@ -330,6 +335,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
          writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
          trash: AgentTrash = .system, calendar: any AgentCalendarStore = EventKitCalendarStore.shared, clock: AgentClock = .system,
          opener: any AgentOpener = WorkspaceOpener.shared, webSearch: @escaping @MainActor () -> DoubaoSearch? = { nil },
+         fetcher: any AgentWebFetching = WebPageFetcher(),
          imageGenerator: @escaping @MainActor () -> ArkImageGenerator? = { nil }, picturesFolder: URL = AgentImageFiles.picturesFolder,
          memory: AgentMemoryFile? = nil, memoryEnabled: @escaping @MainActor () -> Bool = { true }) {
         self.resolveModel = resolveModel
@@ -344,6 +350,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         self.clock = clock
         self.opener = opener
         self.webSearch = webSearch
+        self.fetcher = fetcher
         self.imageGeneration = imageGenerator
         self.picturesFolder = picturesFolder
         self.memory = memory
@@ -1285,6 +1292,24 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         }
     }
 
+    /// One web_fetch call. Nothing on the Mac changes, so it waits for no other call and is not
+    /// saved first; a Stop or newer input stops the page loading and drops the result.
+    fileprivate func fetch(_ arguments: Result<String, AgentInvalidArguments>) async throws -> String {
+        guard isRunning, !stopRequested, storageFailure == nil else { throw CancellationError() }
+        if steering.isPending { return AgentToolResult.superseded }
+        let address: String
+        switch arguments {
+        case .failure(let invalid): return invalid.result
+        case .success(let valid): address = valid
+        }
+        let fetcher = fetcher
+        do {
+            return try await cancellingUnlessInterrupted { await AgentWebFetchResult.run(address, with: fetcher) }
+        } catch is WriteSuperseded {
+            return AgentToolResult.superseded
+        }
+    }
+
     /// One generate_image call, in its turn: after every call written before it in its batch. When
     /// the image goes in the chat's folder, the folder is found first, so a chat without one
     /// generates nothing. A Stop or newer input cancels the request at once. Once the image is in,
@@ -1472,7 +1497,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 WriteFileTool(access: writes), EditFileTool(access: writes),
                 ListRemindersTool(access: calendar), CreateReminderTool(access: calendar), CompleteReminderTool(access: calendar),
                 ListEventsTool(access: calendar), CreateEventTool(access: calendar),
-                OpenAppTool(access: open), OpenURLTool(access: open)]
+                OpenAppTool(access: open), OpenURLTool(access: open), WebFetchTool(access: HarnessFetchAccess(harness: self))]
             + (searcher == nil ? [] : [WebSearchTool(access: HarnessSearchAccess(harness: self))])
             + (imageGenerator == nil ? [] : [GenerateImageTool(access: HarnessImageAccess(harness: self))])
             + (turnMemory == nil ? [] : [RememberTool(access: HarnessMemoryAccess(harness: self)), UpdateMemoryTool(access: HarnessMemoryAccess(harness: self))])
@@ -1741,6 +1766,14 @@ private struct HarnessSearchAccess: AgentWebSearchAccess {
     }
 }
 
+private struct HarnessFetchAccess: AgentWebFetchAccess {
+    weak var harness: AgentHarness?
+    func fetch(_ address: Result<String, AgentInvalidArguments>) async throws -> String {
+        guard let harness else { throw CancellationError() }
+        return try await harness.fetch(address)
+    }
+}
+
 private struct HarnessImageAccess: AgentImageAccess {
     weak var harness: AgentHarness?
     func generate(call: GenerationID?, _ request: Result<AgentImageRequest, AgentInvalidArguments>) async throws -> String {
@@ -1845,6 +1878,7 @@ extension AgentToolRecord {
         case "open_app": return object?["name"] as? String ?? text
         case "open_url": return object?["url"] as? String ?? text
         case "web_search": return object?["query"] as? String ?? text
+        case "web_fetch": return object?["url"] as? String ?? text
         case "generate_image": return object?["prompt"] as? String ?? text
         // What the memory card names: the line remembered, the passage's new text, or the passage removed.
         case "remember": return (object?["text"] as? String).map(AgentMemoryEdit.line) ?? text
@@ -1869,6 +1903,7 @@ extension AgentToolRecord {
         case "open_app": String(localized: "正在打开应用 · \(String(display(call).prefix(60)))")
         case "open_url": String(localized: "正在打开网址 · \(String(display(call).prefix(60)))")
         case "web_search": String(localized: "正在搜索 · \(String(display(call).prefix(60)))")
+        case "web_fetch": String(localized: "正在读取网页 · \(String(display(call).prefix(60)))")
         case "generate_image": String(localized: "正在生成图片 · \(String(display(call).prefix(60)))")
         case "remember": String(localized: "正在记住 · \(String(display(call).prefix(60)))")
         case "update_memory": String(localized: "正在更新记忆 · \(String(display(call).prefix(60)))")
@@ -1878,8 +1913,8 @@ extension AgentToolRecord {
     /// A change tool's result that says what it did is finished; any other that ran ended with
     /// nothing changed, so its card says so even folded: a write as not written, a reminder or event
     /// change, or an app or page not opened, as failed. A reminders or calendar call that had no
-    /// access failed too, a read as well, and so did a search that could not search. Other tools'
-    /// failures show as finished.
+    /// access failed too, a read as well, and so did a search that could not search and a page
+    /// that could not be read. Other tools' failures show as finished.
     static func state(forResult result: String, tool: String?) -> State {
         struct ResultStatus: Decodable { var status: String?; var action: String? }
         let decoded = try? JSONDecoder().decode(ResultStatus.self, from: Data(result.utf8))
@@ -1888,8 +1923,9 @@ extension AgentToolRecord {
         case "unknown": return .unknown
         case "failed" where AgentHarness.calendarTools.contains(tool ?? "") && AgentCalendarResult.missingAccess(result) != nil:
             return .failed
-        // A search that found nothing to return failed, whatever kept it from searching.
-        case "failed" where tool == "web_search":
+        // A search that found nothing to return failed, whatever kept it from searching, and so
+        // did a page that could not be read.
+        case "failed" where tool == "web_search" || tool == "web_fetch":
             return .failed
         default:
             guard decoded?.action == nil, let tool else { return .finished }

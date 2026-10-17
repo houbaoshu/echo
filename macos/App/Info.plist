@@ -16,6 +16,7 @@
     <key>NSRemindersFullAccessUsageDescription</key><string>Echo 在你让它查看、新建或完成提醒事项时使用提醒事项。</string>
     <key>NSAppTransportSecurity</key><dict>
         <key>NSAllowsLocalNetworking</key><true/>
+        <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
     </dict>
     <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

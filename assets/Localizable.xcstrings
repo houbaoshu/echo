@@ -81,6 +81,16 @@
         }
       }
     },
+    "%@ 是本机或局域网地址，不读取。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ is this Mac or on the local network, so it wasn’t read."
+          }
+        }
+      }
+    },
     "%@ 的 Live Voice" : {
       "localizations" : {
         "en" : {
@@ -380,6 +390,16 @@
         }
       }
     },
+    "PDF 超过 %lld MB，没有读取。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The PDF is larger than %lld MB, so it wasn’t read."
+          }
+        }
+      }
+    },
     "Provider" : {
       "localizations" : {
         "en" : {
@@ -529,6 +549,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unavailable"
+          }
+        }
+      }
+    },
+    "不支持通过 http 读取 PDF，没有读取。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PDFs over plain http aren’t supported, so it wasn’t read."
           }
         }
       }
@@ -1123,6 +1153,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Only http and https addresses are opened. A “%@:” address can make another app take an action, so it wasn’t opened."
+          }
+        }
+      }
+    },
+    "只读取 http 和 https 网址，没有读取“%@:”网址。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only http and https addresses are read, so the “%@:” address wasn’t read."
           }
         }
       }
@@ -2127,6 +2167,16 @@
         }
       }
     },
+    "找不到 %@ 的地址。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t find the server %@."
+          }
+        }
+      }
+    },
     "找不到这次改动的备份，没有撤销。" : {
       "localizations" : {
         "en" : {
@@ -2527,6 +2577,16 @@
         }
       }
     },
+    "无法加载网页：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t load the webpage: %@"
+          }
+        }
+      }
+    },
     "无法启动桌面精灵" : {
       "localizations" : {
         "en" : {
@@ -2733,6 +2793,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t read the pet’s frame information."
+          }
+        }
+      }
+    },
+    "无法读取这个 PDF。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read this PDF."
           }
         }
       }
@@ -3593,6 +3663,16 @@
         }
       }
     },
+    "正在读取网页 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reading webpage · %@"
+          }
+        }
+      }
+    },
     "正在调用工具 · %@" : {
       "localizations" : {
         "en" : {
@@ -4291,6 +4371,16 @@
         }
       }
     },
+    "网址前面没有 http:// 或 https://，没有读取。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The address doesn’t start with http:// or https://, so it wasn’t read."
+          }
+        }
+      }
+    },
     "网络已断开，本轮已有输出或执行过工具，未自动改用本地模型。联网后点“继续处理”。" : {
       "localizations" : {
         "en" : {
@@ -4307,6 +4397,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t connect. Check Base URL, the server’s certificate, and your network."
+          }
+        }
+      }
+    },
+    "网页没有及时加载出来。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The webpage didn’t load in time."
+          }
+        }
+      }
+    },
+    "网页返回 HTTP %lld。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The webpage returned HTTP %lld."
+          }
+        }
+      }
+    },
+    "网页里没有可读的文字。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The webpage has no text to read."
           }
         }
       }
@@ -5077,6 +5197,16 @@
         }
       }
     },
+    "读取网页 · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Read webpage · %@"
+          }
+        }
+      }
+    },
     "读取麦克风格式并安装采集 tap" : {
       "localizations" : {
         "en" : {
@@ -5349,6 +5479,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This isn’t a web address, so it wasn’t opened."
+          }
+        }
+      }
+    },
+    "这不是网址，没有读取。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This isn’t a web address, so it wasn’t read."
+          }
+        }
+      }
+    },
+    "这不是网页或 PDF（%@），没有读取。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This isn’t a webpage or PDF (%@), so it wasn’t read."
           }
         }
       }
@@ -5776,6 +5926,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hide Sidebar"
+          }
+        }
+      }
+    },
+    "需要验证或登录，没有读到网页内容。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The site asked for verification or sign-in, so the webpage couldn’t be read."
           }
         }
       }

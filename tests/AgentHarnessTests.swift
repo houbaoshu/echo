@@ -34,7 +34,8 @@ import Testing
              finder: FakeFinder = FakeFinder(), writePolicy: AgentWritePolicy = AgentWritePolicy(),
              writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
              trash: AgentTrash? = nil, calendar: FakeCalendarStore = FakeCalendarStore(), clock: AgentClock = AgentCalendarTests.clock,
-             opener: FakeOpener = FakeOpener(), webSearch: DoubaoSearch? = nil, imageGenerator: ArkImageGenerator? = nil,
+             opener: FakeOpener = FakeOpener(), webSearch: DoubaoSearch? = nil, fetcher: any AgentWebFetching = FakeFetcher(),
+             imageGenerator: ArkImageGenerator? = nil,
              memoryEnabled: @escaping @MainActor () -> Bool = { true }) {
             let model = ScriptedAgentModel(step: step)
             self.model = model
@@ -43,7 +44,7 @@ import Testing
             self.opener = opener
             let harness = AgentHarness(resolveModel: { model.factory }, finder: finder, writePolicy: writePolicy, writeHooks: writeHooks,
                                        attachmentHooks: attachmentHooks, trash: trash ?? AgentTrash.into(self.trash),
-                                       calendar: calendar, clock: clock, opener: opener, webSearch: { webSearch },
+                                       calendar: calendar, clock: clock, opener: opener, webSearch: { webSearch }, fetcher: fetcher,
                                        imageGenerator: { imageGenerator }, picturesFolder: pictures, memory: memory,
                                        memoryEnabled: memoryEnabled)
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
@@ -106,7 +107,8 @@ import Testing
 
     /// Every tool a cloud turn offers, sorted.
     static let offeredTools = ["complete_reminder", "create_event", "create_reminder", "edit_file", "finder_location", "list_events",
-                               "list_files", "list_reminders", "open_app", "open_url", "read_file", "remember", "update_memory", "write_file"]
+                               "list_files", "list_reminders", "open_app", "open_url", "read_file", "remember", "update_memory", "web_fetch",
+                               "write_file"]
 
     static func project() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-harness-\(UUID())").resolvingSymlinksInPath()
