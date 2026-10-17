@@ -66,6 +66,9 @@ import SwiftUI
     private var observation: ObservationHandle?
     private var voiceObservation: ObservationHandle?
     private var petVoicePlanetObservation: ObservationHandle?
+    private var petCallObservation: ObservationHandle?
+    /// A task's clip was set on the pet and nothing has set it back to idle since.
+    private var petShowsTask = false
     private var layingOut = false
     private var visibilityRevision = 0
     private var activityShown = false
@@ -218,6 +221,18 @@ import SwiftUI
                 && workspace.selectedID == voice.snapshot.session.owner?.conversationID
         }, initial: true) { [weak self] hidden in
             DispatchQueue.main.async { [weak self] in self?.setPetHidden(forVoicePlanet: hidden) }
+        }
+        // The pet shows every chat's task as it changes, and nothing of a Live Voice call's.
+        workspace.onPetTaskEvent = { [weak self] event in
+            guard let self, let animation = PetStore.taskAnimation(for: event) else { return }
+            self.petPanel.play(animation)
+            self.petShowsTask = true
+        }
+        // A call cuts short a task's clip still playing, so none plays on into the call.
+        petCallObservation = observeChanges({ voice.snapshot.session.owner != nil }) { [weak self] inCall in
+            guard let self, inCall, self.petShowsTask else { return }
+            self.petPanel.play("idle")
+            self.petShowsTask = false
         }
         petPanel.orderFrontRegardless()
         // The cluster mirrors the workspace: synchronize reruns, on the next main-queue turn, after
@@ -540,6 +555,7 @@ import SwiftUI
     }
     func shutdown() {
         workspace.voice.shutdown(); voiceObservation = nil; bubbleObservation = nil; petVoicePlanetObservation = nil
+        petCallObservation = nil; workspace.onPetTaskEvent = nil
         settings.cancelTest(); pets.stop(); pets.onActivate = nil
         observation = nil
         controlsPresentation.onComposerOpenChange = nil; controlsPresentation.onProjectPickerOpenChange = nil

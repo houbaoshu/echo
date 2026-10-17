@@ -52,6 +52,67 @@ import FoundationModels
         #expect(!workspace.keepsPetControlsExpanded, "Without cards the controls follow hover again")
     }
 
+    /// What the pet hears of a task: each change of every chat once, wherever it was sent. A stop
+    /// is told too (the pet shows nothing for it); a deleted chat and a reopened workspace tell nothing.
+    @MainActor @Test static func petHearsEveryChatsTaskChanges() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("echo-workspace-tests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = WorkspacePersistence(url: directory.appendingPathComponent("workspace.json"))
+        let puppets = PuppetSessions()
+        let workspace = WorkspaceStore(persistence: persistence, harnessFactory: puppets.factory)
+        defer { workspace.shutdown() }
+        let main = try #require(workspace.selected)
+        let mainModel = try #require(puppets.last)
+        var heard: [(String, UUID?)] = []
+        func record(_ event: TaskLifecycleEvent) {
+            switch event {
+            case .started(let run): heard.append(("started", run))
+            case .reply(let run, .completed): heard.append(("completed", run))
+            case .reply(let run, .failed): heard.append(("failed", run))
+            case .stopped(let run): heard.append(("stopped", run))
+            case .retired: heard.append(("retired", nil))
+            }
+        }
+        workspace.onPetTaskEvent = record
+        var told: [String] { heard.map(\.0) }
+
+        #expect(workspace.sendQuickMessage("快速输入框"))
+        let quick = try #require(workspace.activity)
+        let quickModel = try #require(puppets.last)
+        try await reply(quick, quickModel, "完成")
+        #expect(workspace.send("再来", conversationID: quick.id))
+        try await finish(quick, quickModel, .fail(AgentModelError(message: "失败")))
+        #expect(workspace.send("停下", conversationID: quick.id))
+        quick.store.stopTask()
+        try await eventually("stopped") { !quick.store.isGenerating }
+        #expect(told == ["started", "completed", "started", "failed", "started", "stopped"], "\(told)")
+
+        // Two chats at once: each change is told as it happens, the later one last.
+        heard = []
+        main.store.mainDraft = "主窗口"
+        #expect(workspace.sendMainMessage(conversationID: main.id))
+        #expect(workspace.send("同时", conversationID: quick.id))
+        try await reply(quick, quickModel, "先完成")
+        try await reply(main, mainModel, "后完成")
+        #expect(heard.map(\.0) == ["started", "started", "completed", "completed"]
+                && heard[2].1 == quick.store.task?.runID && heard[3].1 == main.store.task?.runID, "\(told)")
+
+        heard = []
+        workspace.deleteConversation(quick.id)
+        #expect(heard.isEmpty, "Deleting a chat tells the pet nothing: \(told)")
+
+        // A turn saved while it ran comes back interrupted, untold.
+        main.store.send("还在跑")
+        try await mainModel.waitForRequests(2)
+        workspace.flush()
+        let reopened = WorkspaceStore(persistence: persistence, harnessFactory: { idleAgent() })
+        defer { reopened.shutdown() }
+        var reopenedHeard: [TaskLifecycleEvent] = []
+        reopened.onPetTaskEvent = { reopenedHeard.append($0) }
+        await nextMainTurn()
+        #expect(reopened.conversation(id: main.id)?.store.task?.status == .interrupted && reopenedHeard.isEmpty)
+    }
+
     @MainActor @Test static func completionKeepsATrayCollapsedDuringTheRun() async throws {
         let puppets = PuppetSessions()
         let workspace = WorkspaceStore(harnessFactory: puppets.factory)

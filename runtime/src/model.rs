@@ -278,8 +278,12 @@ fn looping(frames: Vec<AnimationFrame>) -> Animation {
 }
 
 fn app_state_animation(row: usize, count: usize, ms: u64, final_ms: u64) -> Animation {
-    let primary = row_frames(row, count, ms, final_ms);
-    // Reference behavior: play the action three times, then loop the idle tail.
+    three_runs(row_frames(row, count, ms, final_ms))
+}
+
+/// Reference behavior: play the action three times, then loop the idle tail.
+fn three_runs(primary: Vec<AnimationFrame>) -> Animation {
+    let count = primary.len();
     Animation {
         frames: primary
             .iter()
@@ -291,6 +295,11 @@ fn app_state_animation(row: usize, count: usize, ms: u64, final_ms: u64) -> Anim
         loop_start: Some(count * 3),
         fallback: "idle".into(),
     }
+}
+
+/// The working row, shared by Live Voice's thinking and the pet's task.
+fn running_frames() -> Vec<AnimationFrame> {
+    row_frames(7, 6, 120, 220)
 }
 
 fn default_animations() -> HashMap<String, Animation> {
@@ -307,7 +316,9 @@ fn default_animations() -> HashMap<String, Animation> {
         animations.insert(name.into(), app_state_animation(row, count, ms, final_ms));
     }
     // Live Voice thinking lasts as long as the agent runs; keep this state cycling.
-    animations.insert("running".into(), looping(row_frames(7, 6, 120, 220)));
+    animations.insert("running".into(), looping(running_frames()));
+    // The pet's task starting is told three times like the other states, then rests.
+    animations.insert("task-running".into(), three_runs(running_frames()));
     for (alias, name) in [
         ("move_right", "running-right"),
         ("move_left", "running-left"),

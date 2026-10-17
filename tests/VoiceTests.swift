@@ -2720,6 +2720,37 @@ extension EchoVoiceScenarios {
     }
 }
 
+/// The real companion shows a chat's task on the pet, and a Live Voice call cuts short the clip
+/// still playing. Sprites of the bundled sheet: running 56–61, review 64–69.
+@Suite(.serialized) struct PetTaskAnimationTests {
+    @Test @MainActor static func thePetShowsTasksButNotCalls() async throws {
+        _ = NSApplication.shared
+        let run = UUID()
+        let clips = [TaskLifecycleEvent.started(run), .reply(run, .completed("")), .reply(run, .failed("")), .stopped(run), .retired]
+            .map { PetStore.taskAnimation(for: $0) }
+        #expect(clips == ["task-running", "review", "failed", nil, nil])
+
+        let f = AgentVoiceFixture()
+        let other = PuppetModel()
+        f.harnessFactory = { AgentHarness(resolveModel: { other.factory }, finder: NoFinder()) }
+        let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+        let companion = CompanionController(petStore: pet, workspace: f.workspace, settings: f.settings,
+                                            defaults: EchoTestResources.defaults())
+        defer { companion.shutdown(); f.shutdown() }
+        _ = f.conversation
+        #expect(f.workspace.sendQuickMessage("桌宠上的任务"))
+        // A pointer that happens to rest on the pet makes it jump first; the clip starts after.
+        try await eventually("the pet runs", timeout: .seconds(4)) { (56...61).contains(pet.spriteIndex) }
+        f.begin()
+        #expect(!(56...61).contains(pet.spriteIndex), "A call cuts the task's clip short, sprite \(pet.spriteIndex)")
+        f.voice.end()
+        try await other.reply("完成")
+        try await eventually("the pet reviews the chat that finished after the call", timeout: .seconds(4)) {
+            (64...69).contains(pet.spriteIndex)
+        }
+    }
+}
+
 /// One Live Voice session with the real companion and planet: after each step, what the voice
 /// snapshot's observers left on screen and in the workspace.
 @Suite(.serialized) struct VoiceObserverTests {

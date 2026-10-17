@@ -121,6 +121,17 @@ final class PetStore {
         }
     }
 
+    /// The clip a task's change asks the pet for, each played three times before it rests. A stop
+    /// asks for none: the person stopping it is already watching.
+    static func taskAnimation(for event: TaskLifecycleEvent) -> String? {
+        switch event {
+        case .started: "task-running"
+        case .reply(_, .completed): "review"
+        case .reply(_, .failed): "failed"
+        case .stopped, .retired: nil
+        }
+    }
+
     func play(_ animation: String) {
         guard let handle else { return }
         guard echo_set_animation(handle.pointer, animation) else {

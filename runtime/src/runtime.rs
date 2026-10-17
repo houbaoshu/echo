@@ -53,7 +53,7 @@ enum Shown<'a> {
 
 pub struct PetRuntime {
     pet: Pet,
-    /// The state the app sets: idle, or a Live Voice state on a planet.
+    /// The state the app sets: idle, a task's state on the pet, or a Live Voice state on a planet.
     base: String,
     /// None while a state set under something else waits to show for the first time.
     base_started_at: Option<Duration>,
@@ -136,6 +136,8 @@ impl PetRuntime {
             "unknown animation: {name}"
         );
         self.base = name.into();
+        // Unstarted while it is judged, so the old state's time never counts toward the new one.
+        self.base_started_at = None;
         self.base_started_at = matches!(self.shown(now), Shown::Base).then_some(now);
         Ok(())
     }
@@ -153,9 +155,15 @@ impl PetRuntime {
         Ok(())
     }
 
-    /// Only idle lets the pet look at the pointer. A state that should allow it joins idle here.
-    fn base_takes_look(&self) -> bool {
+    /// Idle lets the pet look at the pointer, and so does a state that has played its runs and
+    /// rests in its idle tail. One that only loops, as Live Voice's do, never does.
+    fn base_takes_look(&self, now: Duration) -> bool {
         self.base == "idle"
+            || self.base_started_at.is_some_and(|started_at| {
+                let animation = &self.pet.animations[&self.base];
+                animation.loop_start.is_some_and(|start| start > 0)
+                    && now >= started_at + once_length(animation)
+            })
     }
 
     /// The one place that orders what the pet shows: a drag, then a one-shot, then hovering,
@@ -180,7 +188,7 @@ impl PetRuntime {
                 _ => Shown::Base,
             };
         }
-        if self.base_takes_look()
+        if self.base_takes_look(now)
             && let (Some(sprite_index), Some(moved_at)) = (self.look_frame, self.pointer_moved_at)
             && now < moved_at + LOOK_HOLD
         {
@@ -279,6 +287,9 @@ mod tests {
     const RUN_LEFT: RangeInclusive<usize> = 16..=23;
     const WAVE: RangeInclusive<usize> = 24..=27;
     const JUMP: RangeInclusive<usize> = 32..=36;
+    const FAILED: RangeInclusive<usize> = 40..=47;
+    const RUNNING: RangeInclusive<usize> = 56..=61;
+    const REVIEW: RangeInclusive<usize> = 64..=69;
     const LOOK: RangeInclusive<usize> = 72..=87;
 
     fn load(kind: &str, name: &str) -> Pet {
@@ -500,6 +511,10 @@ mod tests {
             runtime.set_animation(name, ms(0)).unwrap();
             runtime.look_at(300.0, 0.0, ms(100)).unwrap();
             assert!(frames.contains(&sprite(&mut runtime, 100)), "{name} shows under a moving pointer");
+            if name == "running" {
+                runtime.look_at(300.0, 1.0, ms(10_000)).unwrap();
+                assert!(frames.contains(&sprite(&mut runtime, 10_000)), "Looping, running never rests");
+            }
             // Back to idle while the pointer moves: the look shows, and idle starts after it.
             runtime.look_at(300.0, 5.0, ms(200)).unwrap();
             runtime.set_animation("idle", ms(200)).unwrap();
@@ -509,6 +524,57 @@ mod tests {
                 FrameTick { sprite_index: 0, next_frame_in: Some(ms(1680)) }
             );
         }
+    }
+
+    #[test]
+    fn task_running_plays_three_runs_then_rests() {
+        let mut runtime = pet();
+        runtime.set_animation("task-running", ms(0)).unwrap();
+        assert_eq!(runtime.advance(ms(0)), FrameTick { sprite_index: 56, next_frame_in: Some(ms(120)) });
+        assert_eq!(sprite(&mut runtime, 820), 56, "The second run");
+        assert!(RUNNING.contains(&sprite(&mut runtime, 2459)));
+        assert_eq!(
+            runtime.advance(ms(2460)),
+            FrameTick { sprite_index: 0, next_frame_in: Some(ms(1680)) },
+            "Three runs, then the idle tail"
+        );
+        assert_eq!(once_length(&runtime.pet.animations["task-running"]), ms(2460));
+    }
+
+    #[test]
+    fn look_returns_once_a_state_has_played_its_runs() {
+        for (name, frames, runs) in [("task-running", RUNNING, 2460), ("review", REVIEW, 3090), ("failed", FAILED, 3660)] {
+            let mut runtime = pet();
+            runtime.set_animation(name, ms(0)).unwrap();
+            runtime.look_at(300.0, 0.0, ms(runs - 1)).unwrap();
+            assert!(frames.contains(&sprite(&mut runtime, runs - 1)), "{name}'s last run shows under a moving pointer");
+            runtime.look_at(0.0, -300.0, ms(runs)).unwrap();
+            assert_eq!(
+                runtime.advance(ms(runs)),
+                FrameTick { sprite_index: 72, next_frame_in: Some(LOOK_HOLD) },
+                "Resting after {name}, the pet faces the pointer"
+            );
+            // The idle tail kept its own time: 2 s into it is its second frame, as for idle.
+            assert_eq!(
+                runtime.advance(ms(runs + 2000)),
+                FrameTick { sprite_index: 1, next_frame_in: Some(ms(340)) }
+            );
+        }
+    }
+
+    #[test]
+    fn a_state_set_while_the_pet_looks_starts_at_once() {
+        let mut runtime = pet();
+        runtime.look_at(300.0, 0.0, ms(0)).unwrap();
+        runtime.set_animation("task-running", ms(500)).unwrap();
+        assert_eq!(runtime.advance(ms(500)), FrameTick { sprite_index: 56, next_frame_in: Some(ms(120)) });
+        // Looking after a finished review, the next state still starts at once: the review's
+        // start does not count toward it.
+        runtime.set_animation("review", ms(1000)).unwrap();
+        runtime.look_at(300.0, 5.0, ms(5000)).unwrap();
+        assert!(LOOK.contains(&sprite(&mut runtime, 5000)));
+        runtime.set_animation("failed", ms(5000)).unwrap();
+        assert_eq!(runtime.advance(ms(5100)), FrameTick { sprite_index: 40, next_frame_in: Some(ms(40)) });
     }
 
     #[test]
@@ -532,6 +598,16 @@ mod tests {
         runtime.set_animation("review", ms(1000)).unwrap();
         assert!(WAVE.contains(&sprite(&mut runtime, 2099)));
         assert_eq!(sprite(&mut runtime, 2100), 64);
+
+        let mut runtime = pet();
+        runtime.set_interaction(true, 0, ms(0)).unwrap();
+        runtime.set_animation("task-running", ms(500)).unwrap();
+        assert!(JUMP.contains(&sprite(&mut runtime, 2519)));
+        assert_eq!(
+            runtime.advance(ms(2520)),
+            FrameTick { sprite_index: 56, next_frame_in: Some(ms(120)) },
+            "A task started under the jump runs from its start"
+        );
     }
 
     #[test]

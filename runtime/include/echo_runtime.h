@@ -18,7 +18,7 @@ bool echo_info(const EchoRuntime *handle, EchoInfo *out);
 // Borrowed RGBA8, straight alpha, top-to-bottom rows. Valid until destroy.
 // The caller must copy data before retaining it beyond the handle's lifetime.
 bool echo_frame(const EchoRuntime *handle, uint32_t index, EchoFrame *out);
-// The pet's state: idle, or a Live Voice state on a planet.
+// The pet's state: idle, a task's state on the pet, or a Live Voice state on a planet.
 bool echo_set_animation(EchoRuntime *handle, const char *name);
 // A clip played once over that state, such as the wave on a click; a drag ends it.
 bool echo_play_once(EchoRuntime *handle, const char *name);

@@ -303,6 +303,8 @@ struct WorkspaceSnapshot: Codable {
     var persistenceNotice: String?
     @ObservationIgnored var onRevealVoice: ((UUID) -> Void)?
     @ObservationIgnored var onOpenPetActivity: (() -> Void)?
+    /// A chat's task changed, for the pet to show; never during a Live Voice call. See `showsOnPet`.
+    @ObservationIgnored var onPetTaskEvent: ((TaskLifecycleEvent) -> Void)?
     private let emptyActivity = TaskStore()
     private let harnessFactory: (() -> AgentHarness)?
     private let persistence: WorkspacePersistence?
@@ -319,6 +321,10 @@ struct WorkspaceSnapshot: Codable {
     /// unseen completion only when the voice session ends; until then the conversation is in progress.
     @ObservationIgnored private var voiceCompletion: UUID?
     @ObservationIgnored private var voiceObservation: ObservationHandle?
+    /// Runs a Live Voice call took part in, whose endings the pet never shows. A call's failed
+    /// turn ends the call, which may let go of its conversation before its ending reaches here:
+    /// a TaskStore's lifecycle tells its subscribers in no fixed order.
+    @ObservationIgnored private var voiceRunIDs: Set<UUID> = []
     @ObservationIgnored private var saveBlocked = false
     // Keep display timestamps fixed for this app session. Persist actual interaction
     // times separately so only the next launch applies the new order.
@@ -356,7 +362,7 @@ struct WorkspaceSnapshot: Codable {
         self.persistence = persistence
         self.harnessFactory = harnessFactory
         voiceObservation = observeChanges({ voice.snapshot.session.owner == nil }, initial: true) { [weak self] ended in
-            if ended { self?.finishVoiceConversation() }
+            if ended { self?.finishVoiceConversation() } else { self?.adoptVoiceRun() }
         }
         if let initialStore {
             let conversation = WorkspaceConversation(store: initialStore)
@@ -437,6 +443,26 @@ struct WorkspaceSnapshot: Codable {
         voiceCompletion = nil
         guard !shuttingDown, !isViewing(id), let store = conversation(id: id)?.store else { return }
         store.recordCompletion(unseen: true)
+    }
+    /// A call that starts on a running turn takes it over.
+    private func adoptVoiceRun() {
+        guard let id = voice.conversationID, let store = conversation(id: id)?.store,
+              store.isGenerating, let runID = store.task?.runID else { return }
+        voiceRunIDs.insert(runID)
+    }
+    /// Whether the pet shows `event` of conversation `id`: not while a Live Voice call is on, and
+    /// not for a run the call took part in, even once it is over.
+    private func showsOnPet(_ event: TaskLifecycleEvent, conversationID id: UUID) -> Bool {
+        let inCall = voice.snapshot.session.owner != nil
+        switch event {
+        case .started(let runID):
+            if voice.conversationID == id { voiceRunIDs.insert(runID) }
+            return !inCall
+        case .reply(let runID, _), .stopped(let runID):
+            return voiceRunIDs.remove(runID) == nil && !inCall
+        case .retired:
+            return false
+        }
     }
     private func synchronizeFileBrowser() {
         fileBrowser.select(project: selectedID.flatMap { project(for: $0) })
@@ -629,6 +655,7 @@ struct WorkspaceSnapshot: Codable {
                 self.fileBrowser.refresh(projectID: target.projectID)
             default: break
             }
+            if self.showsOnPet(event, conversationID: id) { self.onPetTaskEvent?(event) }
         }
     }
     @ObservationIgnored private var persistedSessionIDs: Set<UUID> = []

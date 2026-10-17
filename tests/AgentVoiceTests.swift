@@ -386,6 +386,53 @@ extension EchoVoiceScenarios {
         #expect(f.workspace.unseenCompletedCount == 0, "an empty Live Voice session creates no unseen item")
     }
 
+    /// The pet hears nothing of a call: not its turns, not another chat ending meanwhile, not the
+    /// failed turn that ends it (this fixture has no planet, so the call lets go at once), and
+    /// nothing once it is over. A call that starts on a running turn takes that turn along.
+    /// Whether the call or the workspace hears that failure first changes from run to run (Combine
+    /// keeps a subject's subscribers unordered), so the short case repeats to meet both orders.
+    @Test @MainActor static func agentVoicePetHearsNothingOfACall() async throws {
+        _ = NSApplication.shared
+        for adopted in [false] + Array(repeating: true, count: 10) {
+            let f = AgentVoiceFixture()
+            let other = PuppetModel()
+            f.harnessFactory = { AgentHarness(resolveModel: { other.factory }, finder: NoFinder()) }
+            defer { f.shutdown() }
+            _ = f.conversation
+            var told: [String] = []
+            f.workspace.onPetTaskEvent = { told.append(PetStore.taskAnimation(for: $0) ?? "-") }
+            #expect(f.workspace.sendQuickMessage("通话前开始"))
+            let chat = try #require(f.workspace.activity)
+            if adopted { #expect(f.store.send("通话前开始的本会话任务")) }
+            #expect(told == Array(repeating: "task-running", count: adopted ? 2 : 1), "\(told)")
+            told = []
+            try await f.start()
+            if !adopted {
+                f.holdPlayback(); f.speak("第一轮")
+                try await f.puppet.reply("第一轮回复")
+                try await eventually("the call's reply plays", timeout: .seconds(8)) { f.synths.count == 1 }
+                let recognizers = f.recognizers.count
+                f.releasePlayback()
+                try await eventually("listening resumes", timeout: .seconds(8)) {
+                    f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
+                }
+                f.speak("第二轮", start: 400)
+                try await eventually("the call's second turn runs") { f.store.isGenerating }
+            }
+            try await other.reply("通话期间完成")
+            try await eventually("the other chat ends") { !chat.store.isGenerating }
+            try await f.puppet.answer(.fail(AgentModelError(message: "通话里失败")))
+            try await eventually("the failure ends the call", timeout: .seconds(8)) { f.voice.snapshot.session.owner == nil }
+            #expect(told.isEmpty, "Nothing of the call reaches the pet: \(told)")
+            await nextMainTurn()
+            #expect(told.isEmpty, "Nor once it is over: \(told)")
+            #expect(f.workspace.send("通话后", conversationID: chat.id))
+            try await other.reply("通话后完成")
+            try await eventually("the chat ends after the call") { !chat.store.isGenerating }
+            #expect(told == ["task-running", "review"], "\(told)")
+        }
+    }
+
     @Test @MainActor static func agentFinalAudioTests() async throws {
         _ = NSApplication.shared
         for finalFirst in [false, true] {

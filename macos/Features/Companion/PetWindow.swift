@@ -106,6 +106,12 @@ final class PetPanel: NSPanel {
         (contentView as? PetInteractionView)?.setPaused(paused)
     }
 
+    /// Sets the sprite's state, as a task's progress does, whichever sprite is showing now. A
+    /// sprite without the clip rests in idle rather than stopping.
+    func play(_ animation: String) {
+        (contentView as? PetInteractionView)?.play(animation)
+    }
+
     override func close() {
         if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor) }
         if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor) }
@@ -262,6 +268,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     }
 
     func setPaused(_ paused: Bool) { store.isPaused = paused }
+    func play(_ animation: String) { store.play(animation, fallback: "idle") }
 
     // The pan recognizer begins on the first drag event and fails the click recognizer,
     // so it applies the 4pt click threshold itself.
