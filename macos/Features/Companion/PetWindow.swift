@@ -149,7 +149,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel(store.displayName)
-        setAccessibilityHelp(String(localized: "移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键可隐藏精灵或打开设置"))
+        setAccessibilityHelp(String(localized: "移入跳跃，拖动时按方向跑动，光标移动时朝向光标，点击挥手并打开会话，右键可隐藏精灵或打开设置"))
         let primaryClick = NSClickGestureRecognizer(target: self, action: #selector(primaryClicked(_:)))
         primaryClick.buttonMask = 0x1
         primaryClick.delegate = self

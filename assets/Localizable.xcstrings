@@ -4126,12 +4126,12 @@
         }
       }
     },
-    "移入跳跃，拖动时按方向跑动，移出朝向光标，点击打开会话，右键可隐藏精灵或打开设置" : {
+    "移入跳跃，拖动时按方向跑动，光标移动时朝向光标，点击挥手并打开会话，右键可隐藏精灵或打开设置" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hover to make it jump, drag to make it run, and move away to have it face the pointer. Click to open the chat; right-click to hide the pet or open Settings."
+            "value" : "Hover to make it jump and drag to make it run; it faces the pointer while the pointer moves. Click to wave and open the chat; right-click to hide the pet or open Settings."
           }
         }
       }

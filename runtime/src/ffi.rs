@@ -142,7 +142,8 @@ pub unsafe extern "C" fn echo_frame(
     true
 }
 
-/// Restart a named animation at the runtime's current monotonic time.
+/// Set the pet's state animation. It restarts at the runtime's current monotonic time, or when it
+/// first shows if a drag, a one-shot or the hover jump covers it now.
 /// # Safety
 /// `handle` must be live, and `name` a NUL-terminated UTF-8 string.
 /// Do not call concurrently with another operation on this handle.
@@ -162,6 +163,29 @@ pub unsafe extern "C" fn echo_set_animation(
         handle
             .runtime
             .set_animation(name, handle.clock.elapsed())
+            .is_ok()
+    }))
+    .unwrap_or(false)
+}
+
+/// Play a named animation once over the pet's state, as a click's wave does: the part before
+/// its loop. Hovering and the pointer cannot cut it short; a drag ends it.
+/// # Safety
+/// `handle` must be live, and `name` a NUL-terminated UTF-8 string.
+/// Do not call concurrently with another operation on this handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn echo_play_once(handle: *mut EchoRuntime, name: *const c_char) -> bool {
+    if handle.is_null() || name.is_null() {
+        return false;
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { &mut *handle };
+        let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
+            return false;
+        };
+        handle
+            .runtime
+            .play_once(name, handle.clock.elapsed())
             .is_ok()
     }))
     .unwrap_or(false)
@@ -188,7 +212,8 @@ pub unsafe extern "C" fn echo_set_interaction(
     .unwrap_or(false)
 }
 
-/// Set a pointer offset from the pet center, with positive Y pointing down.
+/// Set a pointer offset from the pet center, with positive Y pointing down. A changed offset is
+/// the pointer moving: an idle pet faces it until it has been still for two seconds.
 /// # Safety
 /// The handle must be live and accessed serially.
 #[unsafe(no_mangle)]

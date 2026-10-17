@@ -43,6 +43,19 @@ extension EchoIntegrationScenarios {
       #expect(store.image === retained)
     }
 
+    /// A click's wave goes through the runtime's one-shot, which shows over looking at the
+    /// pointer and over hovering. The runtime's own tests cover the timing.
+    @Test static func waveShowsOverLookingAndHovering() throws {
+      let store = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
+      defer { store.stop() }
+      store.look(at: NSPoint(x: 300, y: 0))
+      #expect(store.spriteIndex == 76, "A moving pointer to the right turns the pet that way")
+      store.wave()
+      #expect((24...27).contains(store.spriteIndex), "The wave shows over the look, sprite \(store.spriteIndex)")
+      store.interact(hovered: true, direction: 0)
+      #expect((24...27).contains(store.spriteIndex), "Hovering does not cut the wave, sprite \(store.spriteIndex)")
+    }
+
     @Test static func runtimeFailureStopsTheStoreAndReportsOnce() throws {
       let store = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
       defer { store.stop() }

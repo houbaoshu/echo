@@ -78,8 +78,15 @@ final class PetStore {
 
     func start() { refresh() }
 
+    /// Waves once over hovering and looking at the pointer, then gives way to them again.
     func wave() {
-        play("waving")
+        let animation = "waving"
+        guard let handle else { return }
+        guard echo_play_once(handle.pointer, animation) else {
+            fail(PetError(message: String(localized: "无法播放动画：\(animation)。")))
+            return
+        }
+        refresh()
     }
 
     func interact(hovered: Bool, direction: Int32) {
