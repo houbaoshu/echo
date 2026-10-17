@@ -831,7 +831,7 @@ private struct HeldExecutor: LanguageModelExecutor {
         XCTAssertTrue(isSectionList(responder()),
                      "Opening settings focuses its section list, not the host: \(String(describing: responder()))")
         try await key(TestKey.down)
-        XCTAssertTrue(settings.selectedSection == .voice, "↓ moves sections as soon as the page opens")
+        XCTAssertTrue(settings.selectedSection == .memory, "↓ moves sections as soon as the page opens")
         try await key(TestKey.up)
         XCTAssertTrue(settings.selectedSection == .model)
 
@@ -842,7 +842,7 @@ private struct HeldExecutor: LanguageModelExecutor {
         }
         XCTAssertTrue(list.selectedRow == 0 && settings.selectedSection == .model)
         // The identifiers stay in Chinese whatever the interface language is.
-        for name in ["模型", "语音", "星球", "精灵"] {
+        for name in ["模型", "记忆", "语音", "星球", "精灵"] {
             XCTAssertTrue(findAccessibility("settings.section.\(name)", in: window.contentView!) != nil,
                          "Section row \(name) is missing from the list")
         }
@@ -858,14 +858,16 @@ private struct HeldExecutor: LanguageModelExecutor {
 
         // 5. Arrow keys move the selection the way a source list does.
         try await key(TestKey.down)
-        XCTAssertTrue(settings.selectedSection == .voice && list.selectedRow == 1, "Down arrow selects the next section")
+        XCTAssertTrue(settings.selectedSection == .memory && list.selectedRow == 1, "Down arrow selects the next section")
         try await key(TestKey.down)
-        XCTAssertTrue(settings.selectedSection == .planet && list.selectedRow == 2)
+        XCTAssertTrue(settings.selectedSection == .voice && list.selectedRow == 2)
         try await key(TestKey.down)
-        XCTAssertTrue(settings.selectedSection == .pet && list.selectedRow == 3)
+        XCTAssertTrue(settings.selectedSection == .planet && list.selectedRow == 3)
+        try await key(TestKey.down)
+        XCTAssertTrue(settings.selectedSection == .pet && list.selectedRow == 4)
         try await key(TestKey.up)
         try await key(TestKey.up)
-        XCTAssertTrue(settings.selectedSection == .voice && list.selectedRow == 1, "Up arrow selects the previous section")
+        XCTAssertTrue(settings.selectedSection == .voice && list.selectedRow == 2, "Up arrow selects the previous section")
 
         // 6. The swapped pane rejoins the key view loop, so Tab still leaves the list.
         func isSecureFieldEditor(_ view: NSView?) -> Bool {

@@ -201,7 +201,7 @@ enum AgentInstructions {
             parts.append("list_reminders, create_reminder and complete_reminder work with the person's Reminders; list_events and create_event with their calendars, adding events to the default calendar. A title names the thing to do or the event alone; its date, time, place and list each have their own argument. Times are ISO 8601 with a UTC offset, such as 2026-10-13T10:00:00+08:00, or a date alone for a whole day; results give times in the person's time zone with the weekday. The first use asks the person for access.")
         }
         if tools.contains("remember") || tools.contains("update_memory") {
-            parts.append("The memory is what the person asked you to remember about them: a file Echo keeps on this Mac and gives you at the start of every chat. remember adds one line to it; update_memory replaces a passage that appears exactly once in it, and an empty new_text removes the passage. It holds at most \(AgentMemoryFile.maxCharacters.formatted(.number.locale(Locale(identifier: "en_US")))) characters. The person can also open the file from Echo's settings and edit it themselves.")
+            parts.append("The memory is what the person asked you to remember about them: a file Echo keeps on this Mac and gives you at the start of every chat. remember adds one line to it; update_memory replaces a passage that appears exactly once in it, and an empty new_text removes the passage. It holds at most \(AgentMemoryFile.maxCharacters.formatted(.number.locale(Locale(identifier: "en_US")))) characters. Each line is \(AgentMemoryForm.rule). \(AgentMemoryForm.quote) The person can also see it in Echo's settings, open the file there and edit it themselves.")
         }
         parts.append("You may explain what you are doing alongside a tool call. Finish the turn with a useful text reply and no tool call.")
         parts.append("Use the actual tool results to decide what to do next. Do not claim that an action happened when its result says it was not executed. When a result is unknown or interrupted, inspect the current state before relying on it.")
@@ -291,8 +291,13 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     private var imageGenerator: ArkImageGenerator?
     /// Where generated images go unless the person asks for the chat's folder.
     private let picturesFolder: URL
-    /// What the person asked the Agent to remember; nil offers no memory tools and gives no memory.
+    /// The file of what the person asked the Agent to remember; nil offers no memory tools and gives
+    /// no memory. Undo finds the memory's changes by it whether or not the memory is in use.
     private let memory: AgentMemoryFile?
+    /// Read when a turn starts: whether the person has the memory in use.
+    private let memoryEnabled: @MainActor () -> Bool
+    /// The running turn's memory; nil offers no memory tools and gives no memory.
+    private var turnMemory: AgentMemoryFile?
     /// Write calls this turn that left a record their card can undo from.
     private var undoableCalls: Set<String> = []
     /// Undos under way. A turn must not start meanwhile: an undo amends the transcript when it ends.
@@ -326,7 +331,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
          trash: AgentTrash = .system, calendar: any AgentCalendarStore = EventKitCalendarStore.shared, clock: AgentClock = .system,
          opener: any AgentOpener = WorkspaceOpener.shared, webSearch: @escaping @MainActor () -> DoubaoSearch? = { nil },
          imageGenerator: @escaping @MainActor () -> ArkImageGenerator? = { nil }, picturesFolder: URL = AgentImageFiles.picturesFolder,
-         memory: AgentMemoryFile? = nil) {
+         memory: AgentMemoryFile? = nil, memoryEnabled: @escaping @MainActor () -> Bool = { true }) {
         self.resolveModel = resolveModel
         self.local = local
         self.localOnly = localOnly
@@ -342,6 +347,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         self.imageGeneration = imageGenerator
         self.picturesFolder = picturesFolder
         self.memory = memory
+        self.memoryEnabled = memoryEnabled
     }
 
     /// Reads the model settings saved when each turn starts. `ECHO_LOCAL_CHAT=always` sends every
@@ -355,7 +361,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: session, ledger: ledger, budget: budget) }
         }, local: local, localOnly: { alwaysLocal || settings.snapshot.localModelOnly },
                   webSearch: { DoubaoSearch.searcher(for: settings) }, imageGenerator: { ArkImageGenerator.generator(for: settings) },
-                  memory: settings.memoryFile)
+                  memory: settings.memoryFile, memoryEnabled: { settings.snapshot.memoryEnabled })
     }
 
     var isRunning: Bool { turn != nil }
@@ -541,9 +547,10 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             }
             catch { return finish(.failed(error.localizedDescription, notice: true)) }
         }
-        // The local model has no tools, so no search or images either.
+        // The local model has no tools, so no search, images or memory either.
         searcher = route.isLocal ? nil : webSearch()
         imageGenerator = route.isLocal ? nil : imageGeneration()
+        turnMemory = route.isLocal || !memoryEnabled() ? nil : memory
 
         let budget = GenerationBudget(limit: Self.generationLimit, steering: steering)
         state.turns.append(.init(start: state.entries.count))
@@ -598,7 +605,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             case .cloud(let factory):
                 session = LanguageModelSession(
                     profile: AgentProfile(model: factory(ledger, budget), tools: tools(), attachments: state.attachments.map(\.name),
-                                          memory: memory?.read(), harness: self),
+                                          memory: turnMemory?.read(), harness: self),
                     history: history)
             case .local(let service):
                 do {
@@ -1206,7 +1213,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
         case .failure(let invalid): return invalid.result
         case .success(let valid): change = valid
         }
-        guard let memory else { return AgentToolResult.failed("the memory is not available in this chat") }
+        guard let memory = turnMemory else { return AgentToolResult.failed("the memory is not available in this chat") }
 
         let hooks = writeHooks
         let prepared: Result<(root: String, plan: AgentFileWriter.Plan), AgentInvalidArguments>
@@ -1468,7 +1475,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 OpenAppTool(access: open), OpenURLTool(access: open)]
             + (searcher == nil ? [] : [WebSearchTool(access: HarnessSearchAccess(harness: self))])
             + (imageGenerator == nil ? [] : [GenerateImageTool(access: HarnessImageAccess(harness: self))])
-            + (memory == nil ? [] : [RememberTool(access: HarnessMemoryAccess(harness: self)), UpdateMemoryTool(access: HarnessMemoryAccess(harness: self))])
+            + (turnMemory == nil ? [] : [RememberTool(access: HarnessMemoryAccess(harness: self)), UpdateMemoryTool(access: HarnessMemoryAccess(harness: self))])
     }
 
     @concurrent private static func consume(

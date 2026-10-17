@@ -181,6 +181,8 @@ struct SettingsSnapshot: Codable {
     var legacyArkSecretAccount: String?
     /// Every new turn goes to the local model, never the cloud.
     var localModelOnly = false
+    /// Turns get the memory and its tools. Off leaves the memory file as it is.
+    var memoryEnabled = true
 
     var model: ModelConfiguration { settings(for: activeProvider).model }
     var secretAccount: String? { settings(for: activeProvider).secretAccount }
@@ -188,7 +190,7 @@ struct SettingsSnapshot: Codable {
         providers[provider.rawValue] ?? ProviderSettings(model: provider.defaults)
     }
     private enum CodingKeys: String, CodingKey {
-        case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, ark, arkSecretAccount, localModelOnly
+        case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, ark, arkSecretAccount, localModelOnly, memoryEnabled
         case legacyVoiceSecretAccount = "voiceSecretAccount", legacyArkSecretAccount
     }
     /// What Volcengine Ark was called when it was one of the model service's providers.
@@ -207,6 +209,7 @@ struct SettingsSnapshot: Codable {
         legacyArkSecretAccount = try values.decodeIfPresent(String.self, forKey: .legacyArkSecretAccount)
         ark = try values.decodeIfPresent(ArkSettings.self, forKey: .ark) ?? ArkSettings()
         localModelOnly = try values.decodeIfPresent(Bool.self, forKey: .localModelOnly) ?? false
+        memoryEnabled = try values.decodeIfPresent(Bool.self, forKey: .memoryEnabled) ?? true
         let active = try values.decode(String.self, forKey: .activeProvider)
         providers = try values.decode([String: ProviderSettings].self, forKey: .providers)
         // Volcengine Ark used to be a provider. Chosen, it becomes the switch turned on, its default
@@ -236,10 +239,11 @@ struct SettingsSnapshot: Codable {
 enum SettingsSection: String, CaseIterable, Hashable {
     /// Raw values only name the section in accessibility identifiers (`settings.section.模型`),
     /// which must not follow the interface language; what the sidebar shows is `title`.
-    case model = "模型", voice = "语音", planet = "星球", pet = "精灵"
+    case model = "模型", memory = "记忆", voice = "语音", planet = "星球", pet = "精灵"
     var title: String {
         switch self {
         case .model: String(localized: "模型")
+        case .memory: String(localized: "记忆")
         case .voice: String(localized: "语音")
         case .planet: String(localized: "星球")
         case .pet: String(localized: "精灵")
@@ -315,8 +319,16 @@ struct SettingsTestLine: Equatable {
     private let url: URL?
     /// What the person asked the Agent to remember, beside settings.json; nil when the store is off disk.
     var memoryFile: AgentMemoryFile? { url.map { AgentMemoryFile(folder: $0.deletingLastPathComponent()) } }
-    /// Why the memory file could not be opened, beneath its button.
+    /// Why the memory file could not be opened or cleared, or the switch saved, beneath the buttons.
     var memoryNotice: String?
+    /// The memory as the memory page last read it; nil when it holds nothing.
+    private(set) var memoryContents: MemoryContents?
+    struct MemoryContents: Equatable {
+        let modified: Date?
+        let lines: [AgentMemoryLine]
+    }
+    /// Where clearing the memory moves its file.
+    private let trash: AgentTrash
     /// Where the offline model is imported and looked for. Like `url`, nil keeps the store off
     /// disk: there is no model.
     let localModels: LocalModelLocation?
@@ -354,9 +366,9 @@ struct SettingsTestLine: Equatable {
     }
     init(url: URL? = nil, localModels: LocalModelLocation? = nil, secrets: any SecretStore = KeychainSecretStore(),
          tester: any ConnectionTesting = NativeConnectionTester(),
-         arkTester: any ArkConnectionTesting = DoubaoSearchTester()) {
+         arkTester: any ArkConnectionTesting = DoubaoSearchTester(), trash: AgentTrash = .system) {
         self.url = url; self.localModels = localModels; self.secrets = secrets; self.tester = tester
-        self.arkTester = arkTester
+        self.arkTester = arkTester; self.trash = trash
         if let url, FileManager.default.fileExists(atPath: url.path) {
             do {
                 let decoded = try JSONDecoder().decode(SettingsSnapshot.self, from: Data(contentsOf: url))
@@ -517,6 +529,23 @@ struct SettingsTestLine: Equatable {
             return nil
         }
     }
+    /// Reads the memory again, as the Agent's next turn would get it.
+    func reloadMemory() {
+        guard let memoryFile, let text = memoryFile.read() else { memoryContents = nil; return }
+        let lines = AgentMemoryLine.lines(of: text)
+        memoryContents = lines.isEmpty ? nil : MemoryContents(modified: memoryFile.modified(), lines: lines)
+    }
+    /// Moves the memory file to the Trash, so Put Back restores it.
+    func clearMemory() {
+        guard let memoryFile else { return }
+        do {
+            try trash.move(memoryFile.url)
+            memoryNotice = nil
+        } catch {
+            memoryNotice = String(localized: "无法清空记忆：\(error.localizedDescription)")
+        }
+        reloadMemory()
+    }
     func savedModelCredentials() throws -> (configuration: ModelConfiguration, key: String) {
         if snapshot.ark.useForChat {
             guard !snapshot.ark.languageModel.isEmpty else { throw SettingsError.modelNotConfigured }
@@ -571,6 +600,12 @@ struct SettingsTestLine: Equatable {
         guard enabled != snapshot.localModelOnly else { return }
         do { try update { $0.localModelOnly = enabled } }
         catch { localModelNotice = error is SettingsError ? error.localizedDescription : String(localized: "设置保存失败，请检查目录写入权限。") }
+    }
+    /// Takes effect from the next turn; a reply being written keeps the memory it started with.
+    func setMemoryEnabled(_ enabled: Bool) {
+        guard enabled != snapshot.memoryEnabled else { return }
+        do { try update { $0.memoryEnabled = enabled } }
+        catch { memoryNotice = error is SettingsError ? error.localizedDescription : String(localized: "设置保存失败，请检查目录写入权限。") }
     }
     func selectPet(_ id: String) throws { try update { $0.selectedPetID = id } }
     func selectPlanet(_ id: String) throws { try update { $0.selectedPlanetID = id } }

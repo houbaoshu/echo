@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import FoundationModels
+import SwiftUI
 import Testing
 
 /// The memory's content after each kind of call, worked out without a turn.
@@ -77,6 +79,21 @@ import Testing
 }
 
 /// What the memory does not accept, kind by kind: what is caught, and what looks like it but is not.
+/// The memory as the settings page lists it.
+@Suite struct AgentMemoryLineTests {
+    @Test func listItemsLoseTheirMarkerAndOtherLinesStayAsWritten() {
+        let raw = ["- 喜欢喝美式", "*  住在上海", "  + 回答尽量简短（“说重点就行”）  ", "常用项目是 Echo", "**粗体**不是条目", "-不是条目", "# 偏好"]
+        let lines = AgentMemoryLine.lines(of: "\n" + raw.joined(separator: "\n\n") + "\n- \n*\n   \n")
+        #expect(lines == [.item("喜欢喝美式"), .item("住在上海"), .item("回答尽量简短（“说重点就行”）"), .text("常用项目是 Echo"),
+                          .text("**粗体**不是条目"), .text("-不是条目"), .text("# 偏好")],
+                "Blank lines and markers with nothing after them go; every other line is kept")
+        for (line, shown) in zip(raw.prefix(3), lines) {
+            #expect(shown == .item(AgentMemoryEdit.line(line)), "A list item loses its marker the way remember takes it off: \(line)")
+        }
+        #expect(AgentMemoryLine.lines(of: "  \n\n") == [] && AgentMemoryLine.lines(of: "") == [])
+    }
+}
+
 @Suite struct AgentMemorySensitiveTests {
     typealias Kind = AgentMemorySensitive
     static func kinds(_ text: String) -> [Kind] { AgentMemorySensitive.kinds(in: text) }
@@ -223,7 +240,7 @@ import Testing
         let paragraphs = without.components(separatedBy: "\n\n").filter { $0.contains("remember") }
         #expect(paragraphs.count == 1, "\(paragraphs)")
         let paragraph = paragraphs.first ?? ""
-        #expect(paragraph == "The memory is what the person asked you to remember about them: a file Echo keeps on this Mac and gives you at the start of every chat. remember adds one line to it; update_memory replaces a passage that appears exactly once in it, and an empty new_text removes the passage. It holds at most 8,000 characters. The person can also open the file from Echo's settings and edit it themselves.")
+        #expect(paragraph == "The memory is what the person asked you to remember about them: a file Echo keeps on this Mac and gives you at the start of every chat. remember adds one line to it; update_memory replaces a passage that appears exactly once in it, and an empty new_text removes the passage. It holds at most 8,000 characters. " + Self.form + " The person can also see it in Echo's settings, open the file there and edit it themselves.")
         for word in ["must", "never", "always", "Never", "Always", "Do not", "do not", "should", "only when"] {
             #expect(!paragraph.contains(word), "The paragraph states facts, not orders: \(word)")
         }
@@ -233,11 +250,19 @@ import Testing
         #expect(with.hasPrefix(without), "Everything before it reads the same")
         #expect(!AgentInstructions.text(tools: ["read_file"]).contains("remember"), "Without the tools, no paragraph about them")
         let note = "The memory does not accept ID card numbers, bank card numbers, passwords, API keys or tokens, phone numbers, email addresses or street addresses."
-        #expect(RememberTool(access: NoMemory()).description == "Add one line to what the person asked you to remember about them. " + note)
+        #expect(RememberTool(access: NoMemory()).description == "Add one line to what the person asked you to remember about them: "
+                + Self.rule + ". " + Self.quote + " " + note)
         #expect(UpdateMemoryTool(access: NoMemory()).description
-                == "Replace one exact passage of what the person asked you to remember about them; an empty new_text removes it. " + note)
+                == "Replace one exact passage of what the person asked you to remember about them; an empty new_text removes it. Each line new_text writes is "
+                + Self.rule + ". " + Self.quote + " " + note)
         #expect(!without.contains("phone"), "The instructions say nothing of it")
     }
+
+    /// How every line is written: a rule that stands alone, as wide as what the person said, in their
+    /// language, with their words only when the rule rewords them.
+    static let rule = "one rule that reads on its own, without the chat it came from, and covers exactly what the person said, no more and no less, in the language they said it in"
+    static let quote = "When the rule is worded quite differently from what the person said, the line ends with their own words in parentheses, quoted exactly as they said them; otherwise it has no parentheses."
+    static var form: String { "Each line is " + rule + ". " + quote }
 
     struct NoMemory: AgentMemoryAccess {
         func change(call: GenerationID?, _ request: Result<AgentMemoryChange, AgentInvalidArguments>) async throws -> String { "" }
@@ -263,6 +288,30 @@ import Testing
         try await FinderRootTests.run(chat, "现在呢")
         #expect(Self.instructions(try #require(chat.model.requests.last)).hasSuffix("- 喜欢喝拿铁\n</memory>"), "The person's edit, at once")
         #expect(chat.native.entries.allSatisfy { if case .instructions = $0 { false } else { true } }, "The memory is never saved with the chat")
+    }
+
+    /// With the memory switched off a turn offers no memory tools and carries no memory, and the
+    /// file is left as it is; the switch is read as each turn starts.
+    @Test func aTurnWithTheMemoryOffNeitherOffersNorCarriesIt() async throws {
+        let enabled = MemorySwitch(false)
+        let chat = Chat({ _, emit, _ in try await emit.text("好的") }, memoryEnabled: { enabled.on })
+        defer { Self.remove(chat) }
+        try Self.write(chat, "- 喜欢喝美式\n")
+        try await FinderRootTests.run(chat, "我喜欢喝什么")
+        let off = try #require(chat.model.requests.last)
+        let offered = off.enabledToolDefinitions.map(\.name)
+        #expect(!offered.contains("remember") && !offered.contains("update_memory"), "No memory tools: \(offered)")
+        let instructions = Self.instructions(off)
+        #expect(!instructions.contains("<memory>") && !instructions.contains("喜欢喝美式") && !instructions.contains("remember"),
+                "Neither the memory nor the paragraph about its tools")
+        #expect(Self.text(chat) == "- 喜欢喝美式\n", "The file stays as it was")
+
+        enabled.on = true
+        try await FinderRootTests.run(chat, "再说一次")
+        let on = try #require(chat.model.requests.last)
+        let all = on.enabledToolDefinitions.map(\.name)
+        #expect(all.suffix(2) == ["remember", "update_memory"] && Array(all.dropLast(2)) == offered, "The next turn has them again: \(all)")
+        #expect(Self.instructions(on).hasSuffix(Self.memoryParagraph + "- 喜欢喝美式\n</memory>"))
     }
 
     @Test func rememberAndUpdateThroughATurn() async throws {
@@ -433,6 +482,86 @@ import Testing
         #expect(SettingsStore(secrets: MemorySecrets()).memoryFile == nil, "A store off disk has no memory")
     }
 
+    @Test func theMemorySwitchIsOnUntilTurnedOffAndSaved() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("echo-memory-switch-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("settings.json")
+        try Data(#"{"version":2,"activeProvider":"openAI","providers":{"openAI":{"model":{"baseURL":"https://api.openai.com/v1","model":"","apiProtocol":"chatCompletions"}}},"selectedPetID":"builtin:chiyan"}"#.utf8).write(to: url)
+        try Data("- 喜欢喝美式\n".utf8).write(to: folder.appendingPathComponent("memory.md"))
+        let settings = SettingsStore(url: url, secrets: MemorySecrets())
+        #expect(settings.snapshot.memoryEnabled, "Settings saved before the switch have the memory on")
+        settings.setMemoryEnabled(false)
+        #expect(!settings.snapshot.memoryEnabled && settings.memoryNotice == nil)
+        #expect(!SettingsStore(url: url, secrets: MemorySecrets()).snapshot.memoryEnabled, "The choice is saved")
+        #expect((try? String(contentsOf: folder.appendingPathComponent("memory.md"), encoding: .utf8)) == "- 喜欢喝美式\n",
+                "Turning it off leaves the file alone")
+        settings.setMemoryEnabled(true)
+        #expect(SettingsStore(url: url, secrets: MemorySecrets()).snapshot.memoryEnabled)
+    }
+
+    /// The page reads the file as the Agent's next turn would get it, and 清空记忆 moves it to the Trash.
+    @Test func settingsReadsAndClearsTheMemory() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("echo-memory-page-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let trash = folder.appendingPathComponent("trash")
+        let settings = SettingsStore(url: folder.appendingPathComponent("settings.json"), secrets: MemorySecrets(), trash: AgentTrash.into(trash))
+        let file = try #require(settings.memoryFile)
+        settings.reloadMemory()
+        #expect(settings.memoryContents == nil, "No file, nothing to show")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data(" \n\n".utf8).write(to: file.url)
+        settings.reloadMemory()
+        #expect(settings.memoryContents == nil, "An empty file, nothing to show")
+
+        try Data("- 喜欢喝美式\n常用项目是 Echo\n".utf8).write(to: file.url)
+        let modified = Date(timeIntervalSince1970: 1_790_000_000)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: file.url.path)
+        settings.reloadMemory()
+        #expect(settings.memoryContents == .init(modified: modified, lines: [.item("喜欢喝美式"), .text("常用项目是 Echo")]))
+
+        // The Trash refuses: the file and what the page shows stay, and the page says why.
+        let refused = SettingsStore(url: folder.appendingPathComponent("settings.json"), secrets: MemorySecrets(),
+                                    trash: AgentTrash { _ in throw CocoaError(.fileWriteNoPermission) })
+        refused.reloadMemory()
+        refused.clearMemory()
+        let notice = refused.memoryNotice ?? ""
+        #expect(notice.hasPrefix("无法清空记忆：") && notice.count > "无法清空记忆：".count, "\(notice)")
+        #expect(refused.memoryContents?.lines.count == 2 && FileManager.default.fileExists(atPath: file.url.path))
+
+        settings.clearMemory()
+        #expect(settings.memoryNotice == nil && settings.memoryContents == nil)
+        #expect(!FileManager.default.fileExists(atPath: file.url.path)
+                && (try? String(contentsOf: trash.appendingPathComponent("memory.md"), encoding: .utf8)) == "- 喜欢喝美式\n常用项目是 Echo\n",
+                "The file goes to the Trash whole, so Put Back restores it")
+    }
+
+    /// The page reads the file each time it is shown, so an edit made meanwhile appears.
+    @Test func theMemoryPageReadsTheFileEachTimeItIsShown() async throws {
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("echo-memory-view-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let settings = SettingsStore(url: folder.appendingPathComponent("settings.json"), secrets: MemorySecrets(),
+                                     trash: AgentTrash.into(folder.appendingPathComponent("trash")))
+        let file = try #require(settings.memoryFile)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("- 喜欢喝美式\n".utf8).write(to: file.url)
+        let host = NSHostingView(rootView: MemorySettingsView(settings: settings).formStyle(.grouped).frame(width: 520, height: 400))
+        host.frame = NSRect(x: 0, y: 0, width: 520, height: 400)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        try await eventually("the page reads the file when it appears") { settings.memoryContents?.lines == [.item("喜欢喝美式")] }
+
+        try Data("- 喜欢喝美式\n- 住在上海\n".utf8).write(to: file.url)
+        settings.presentationRevision += 1
+        try await eventually("shown again, the page reads it again") { settings.memoryContents?.lines == [.item("喜欢喝美式"), .item("住在上海")] }
+        try FileManager.default.removeItem(at: file.url)
+        settings.presentationRevision += 1
+        try await eventually("a removed file leaves nothing to show") { settings.memoryContents == nil }
+    }
+
     @Test func settingsOpensTheFileCreatingItEmpty() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("echo-memory-settings-\(UUID())")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -456,4 +585,9 @@ import Testing
     func read(_ account: String) throws -> String { throw SettingsError("No key in this test") }
     func write(_ value: String, account: String) throws {}
     func remove(_ account: String) throws {}
+}
+
+@MainActor private final class MemorySwitch {
+    var on: Bool
+    init(_ on: Bool) { self.on = on }
 }

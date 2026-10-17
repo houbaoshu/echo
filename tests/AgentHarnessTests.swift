@@ -34,7 +34,8 @@ import Testing
              finder: FakeFinder = FakeFinder(), writePolicy: AgentWritePolicy = AgentWritePolicy(),
              writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
              trash: AgentTrash? = nil, calendar: FakeCalendarStore = FakeCalendarStore(), clock: AgentClock = AgentCalendarTests.clock,
-             opener: FakeOpener = FakeOpener(), webSearch: DoubaoSearch? = nil, imageGenerator: ArkImageGenerator? = nil) {
+             opener: FakeOpener = FakeOpener(), webSearch: DoubaoSearch? = nil, imageGenerator: ArkImageGenerator? = nil,
+             memoryEnabled: @escaping @MainActor () -> Bool = { true }) {
             let model = ScriptedAgentModel(step: step)
             self.model = model
             self.project = project
@@ -43,7 +44,8 @@ import Testing
             let harness = AgentHarness(resolveModel: { model.factory }, finder: finder, writePolicy: writePolicy, writeHooks: writeHooks,
                                        attachmentHooks: attachmentHooks, trash: trash ?? AgentTrash.into(self.trash),
                                        calendar: calendar, clock: clock, opener: opener, webSearch: { webSearch },
-                                       imageGenerator: { imageGenerator }, picturesFolder: pictures, memory: memory)
+                                       imageGenerator: { imageGenerator }, picturesFolder: pictures, memory: memory,
+                                       memoryEnabled: memoryEnabled)
             store = snapshot.map { TaskStore(snapshot: $0, harness: harness) } ?? TaskStore(harness: harness)
             store.backupDirectory = backups
             // As the workspace answers: a project whose folder is gone is missing.

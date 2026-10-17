@@ -493,6 +493,16 @@
         }
       }
     },
+    "上次更新" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last Updated"
+          }
+        }
+      }
+    },
     "上次选择的星球无法加载，已换成另一颗。" : {
       "localizations" : {
         "en" : {
@@ -689,6 +699,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use local model"
+          }
+        }
+      }
+    },
+    "使用记忆" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use memory"
           }
         }
       }
@@ -1349,6 +1369,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New chat in this project"
+          }
+        }
+      }
+    },
+    "在编辑器中打开" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open in Editor"
           }
         }
       }
@@ -2067,16 +2097,6 @@
         }
       }
     },
-    "打开记忆文件" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Open Memory File"
-          }
-        }
-      }
-    },
     "执行中" : {
       "localizations" : {
         "en" : {
@@ -2613,6 +2633,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t update where the pet is looking."
+          }
+        }
+      }
+    },
+    "无法清空记忆：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t clear the memory: %@"
           }
         }
       }
@@ -3854,6 +3884,16 @@
         }
       }
     },
+    "清空记忆" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear Memory"
+          }
+        }
+      }
+    },
     "清除 API Key" : {
       "localizations" : {
         "en" : {
@@ -4337,6 +4377,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Memory"
+          }
+        }
+      }
+    },
+    "记忆内容" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memory Contents"
           }
         }
       }
@@ -5269,6 +5319,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nothing has been remembered yet, so nothing was changed."
+          }
+        }
+      }
+    },
+    "还没有记忆。在对话里说“记住……”即可添加。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing remembered yet. Say “Remember…” in a chat to add something."
           }
         }
       }

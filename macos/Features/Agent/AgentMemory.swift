@@ -2,11 +2,11 @@ import Foundation
 import FoundationModels
 
 // What the person asked the Agent to remember about them: one Markdown file beside settings.json,
-// a line each. Every cloud request carries the whole file in its instructions, read as the request
-// is built, so an edit the person makes in their editor reaches the next one; a file that did not
-// change leaves the instructions byte-identical for a service's prompt cache. The model changes it
-// only through remember and update_memory, which run as the write tools do: in their turn, saved
-// before the change, with a record kept for the card's Undo.
+// a line each. While the person has it in use, every cloud request carries the whole file in its
+// instructions, read as the request is built, so an edit the person makes in their editor reaches
+// the next one; a file that did not change leaves the instructions byte-identical for a service's
+// prompt cache. The model changes it only through remember and update_memory, which run as the
+// write tools do: in their turn, saved before the change, with a record kept for the card's Undo.
 
 /// The memory file. Its folder is Echo's own, which the write tools never write in.
 struct AgentMemoryFile: Sendable, Equatable {
@@ -28,6 +28,11 @@ struct AgentMemoryFile: Sendable, Equatable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    /// When the file last changed, or nil when there is none.
+    func modified() -> Date? {
+        try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+    }
+
     /// The file, created empty when there is none, for the person to open.
     func prepareForEditing() throws -> URL {
         let fm = FileManager.default
@@ -39,6 +44,32 @@ struct AgentMemoryFile: Sendable, Equatable {
         }
         return url
     }
+}
+
+/// One line of the memory as settings shows it: a list item without its marker, or any other
+/// line as it is written.
+enum AgentMemoryLine: Equatable, Sendable {
+    case item(String)
+    case text(String)
+
+    /// The non-blank lines of `text`, each trimmed; a list marker with nothing after it is no line.
+    static func lines(of text: String) -> [AgentMemoryLine] {
+        text.split(whereSeparator: \.isNewline).compactMap { raw in
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty, !AgentMemoryEdit.markers.contains(line + " ") else { return nil }
+            guard AgentMemoryEdit.markers.contains(where: { line.hasPrefix($0) }) else { return .text(line) }
+            let item = AgentMemoryEdit.unmarked(line)
+            return item.isEmpty ? nil : .item(item)
+        }
+    }
+}
+
+/// How the memory's lines are written, for the instructions and the tools that write them.
+enum AgentMemoryForm {
+    /// What every line is.
+    static let rule = "one rule that reads on its own, without the chat it came from, and covers exactly what the person said, no more and no less, in the language they said it in"
+    /// When a line also carries what the person said.
+    static let quote = "When the rule is worded quite differently from what the person said, the line ends with their own words in parentheses, quoted exactly as they said them; otherwise it has no parentheses."
 }
 
 /// What a memory call asks for.
@@ -57,12 +88,13 @@ protocol AgentMemoryAccess: Sendable {
 
 struct RememberTool: Tool {
     let name = "remember"
-    let description = "Add one line to what the person asked you to remember about them. " + AgentMemorySensitive.toolNote
+    let description = "Add one line to what the person asked you to remember about them: \(AgentMemoryForm.rule). \(AgentMemoryForm.quote) "
+        + AgentMemorySensitive.toolNote
     let access: any AgentMemoryAccess
 
     @Generable
     struct Input {
-        @Guide(description: "What to remember about the person, as one short line")
+        @Guide(description: "What to remember about the person, as one rule on one short line")
         var text: String
     }
 
@@ -80,7 +112,7 @@ struct RememberTool: Tool {
 struct UpdateMemoryTool: Tool {
     let name = "update_memory"
     let description = "Replace one exact passage of what the person asked you to remember about them; an empty new_text removes it. "
-        + AgentMemorySensitive.toolNote
+        + "Each line new_text writes is \(AgentMemoryForm.rule). \(AgentMemoryForm.quote) " + AgentMemorySensitive.toolNote
     let access: any AgentMemoryAccess
 
     @Generable
@@ -111,10 +143,18 @@ enum AgentMemoryEdit {
 
     /// What a remember call adds: the text on one line, as a Markdown list item.
     static func line(_ text: String) -> String {
-        var line = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }.joined(separator: " ")
         // The model may write the list marker itself.
-        for marker in ["- ", "* ", "+ "] where line.hasPrefix(marker) { line = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces) }
+        unmarked(text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.joined(separator: " "))
+    }
+
+    /// The Markdown list markers a line may start with.
+    static let markers = ["- ", "* ", "+ "]
+
+    /// `line` without the list markers it starts with.
+    static func unmarked(_ line: String) -> String {
+        var line = line
+        for marker in markers where line.hasPrefix(marker) { line = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces) }
         return line
     }
 

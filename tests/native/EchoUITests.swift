@@ -617,7 +617,7 @@ import XCTest
             try press(app, ",", .command)
             let sections = app.outlines["settings.sections"]
             XCTAssertTrue(sections.waitForExistence(timeout: 5), app.debugDescription)
-            let names = ["模型", "语音", "星球", "精灵"]
+            let names = ["模型", "记忆", "语音", "星球", "精灵"]
             @MainActor func row(_ name: String) -> XCUIElement {
                 sections.descendants(matching: .outlineRow).containing(.any, identifier: "settings.section.\(name)").firstMatch
             }
