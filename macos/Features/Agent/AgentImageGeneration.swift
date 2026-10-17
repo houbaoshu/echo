@@ -3,8 +3,8 @@ import FoundationModels
 import ImageIO
 
 // generate_image for the native Agent: text to image with the Volcengine Ark group's vision model,
-// through the Agent Plan's /images/generations with the group's key. Like web_search, the tool is
-// offered whenever that key is saved, whichever service writes the reply.
+// through the Agent Plan's /images/generations with the group's key. The tool is offered whenever
+// that key is saved, whichever service writes the reply.
 //
 // Measured on the Agent Plan (probe, 2026-10-16): both spellings of the model name are accepted; a
 // "宽x高" size comes back exactly as asked, while "2K" lets the model choose the aspect ratio; one

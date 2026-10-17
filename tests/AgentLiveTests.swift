@@ -283,16 +283,19 @@ import ImageIO
     }
 
     /// A question only the web answers, in a new chat, for each protocol: the service calls
-    /// web_search, Doubao search answers with pages, and the reply follows them. The model is the saved
-    /// one, whichever provider; the search uses the saved Volcengine Ark key and nothing else.
+    /// web_search, the search answers with pages, and the reply follows them. The model is the saved
+    /// one, and the search the one that goes with it: Doubao search while Volcengine Ark chats,
+    /// DeepSeek Search while DeepSeek does.
     static func runWebSearch(protocols: [ModelAPIProtocol]) async throws {
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
         let (saved, key) = try settings.savedModelCredentials()
-        guard let searchKey = settings.savedArkKey else { throw SettingsError.arkKeyMissing }
+        guard let search = AgentWebSearcher.searcher(for: settings) else {
+            throw SettingsError("保存的设置没有联网搜索：需要火山方舟用于对话，或模型服务是 DeepSeek 且有 Key。")
+        }
+        print("Search: \(search.service.name)"); fflush(nil)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         print("Disposable live workspaces: \(root.path)"); fflush(nil)
-        let search = DoubaoSearch(key: searchKey)
         var failures = 0
         for api in protocols {
             var config = saved; config.apiProtocol = api

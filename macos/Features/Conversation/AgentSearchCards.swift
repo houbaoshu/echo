@@ -60,18 +60,33 @@ struct AgentSearchCard {
             return (result["detail"] as? String).map { [$0] }
         }
         let code = result["code"] as? String ?? "", message = result["message"] as? String ?? ""
+        let status = result["http_status"] as? Int ?? 0
+        // A result without a service is from Doubao search, as every one was before DeepSeek Search.
+        if AgentWebSearchService(rawValue: result["service"] as? String ?? "") == .deepSeek {
+            switch reason {
+            case .key: return [String(localized: "DeepSeek 搜索不接受这个 API Key（\(code)）。请在设置的模型页检查 DeepSeek 的 API Key。")]
+            case .service: return [String(localized: "DeepSeek 搜索返回错误：\(message)（\(code)）")]
+            case .queryTooLong:
+                return [String(localized: "搜索词太长（\(result["length"] as? Int ?? 0) 个字符），DeepSeek 搜索最多接受 \(result["limit"] as? Int ?? 0) 个。")]
+            case .http: return [String(localized: "DeepSeek 搜索返回 HTTP \(status)。")]
+            case .timeout: return [String(localized: "DeepSeek 搜索没有及时响应。")]
+            case .network: return [String(localized: "无法连接 DeepSeek 搜索：\(message)")]
+            case .response: return [String(localized: "DeepSeek 搜索的返回无法识别。")]
+            }
+        }
         switch reason {
         case .key:
             return [String(localized: "豆包搜索不接受这个 API Key（\(code)）。请在设置的模型页检查火山方舟的 API Key。")]
         case .service:
             return [String(localized: "豆包搜索返回错误：\(message)（\(code)）")]
         case .http:
-            return [String(localized: "豆包搜索返回 HTTP \(result["http_status"] as? Int ?? 0)。")]
+            return [String(localized: "豆包搜索返回 HTTP \(status)。")]
         case .timeout:
             return [String(localized: "豆包搜索没有及时响应。")]
         case .network:
             return [String(localized: "无法连接豆包搜索：\(message)")]
-        case .response:
+        // Doubao search takes a query of any length: only DeepSeek Search fails this way.
+        case .queryTooLong, .response:
             return [String(localized: "豆包搜索的返回无法识别。")]
         }
     }

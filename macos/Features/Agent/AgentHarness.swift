@@ -284,10 +284,10 @@ private final class ResumeOnce<T: Sendable>: Sendable {
     /// The person's clock: for the time each message carries, and the time zone of the calendar tools.
     private let clock: AgentClock
     private let opener: any AgentOpener
-    /// Read when a turn starts: the searcher web_search uses, when the model provider has one.
-    private let webSearch: @MainActor () -> DoubaoSearch?
+    /// Read when a turn starts: the searcher web_search uses, when whoever chats has one.
+    private let webSearch: @MainActor () -> AgentWebSearcher?
     /// The running turn's searcher; nil offers no web_search.
-    private var searcher: DoubaoSearch?
+    private var searcher: AgentWebSearcher?
     /// Reads pages for web_fetch, which every turn with tools offers.
     private let fetcher: any AgentWebFetching
     /// Read when a turn starts: the generator generate_image uses, when the Volcengine Ark key is saved.
@@ -334,7 +334,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
          finder: any FinderLocating = AppleEventFinderLocator.shared, writePolicy: AgentWritePolicy = AgentWritePolicy(),
          writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
          trash: AgentTrash = .system, calendar: any AgentCalendarStore = EventKitCalendarStore.shared, clock: AgentClock = .system,
-         opener: any AgentOpener = WorkspaceOpener.shared, webSearch: @escaping @MainActor () -> DoubaoSearch? = { nil },
+         opener: any AgentOpener = WorkspaceOpener.shared, webSearch: @escaping @MainActor () -> AgentWebSearcher? = { nil },
          fetcher: any AgentWebFetching = WebPageFetcher(),
          imageGenerator: @escaping @MainActor () -> ArkImageGenerator? = { nil }, picturesFolder: URL = AgentImageFiles.picturesFolder,
          memory: AgentMemoryFile? = nil, memoryEnabled: @escaping @MainActor () -> Bool = { true }) {
@@ -367,7 +367,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
             let session = AgentTransport.make(for: endpoint)
             return { ledger, budget in EchoLanguageModel(endpoint: endpoint, transport: session, ledger: ledger, budget: budget) }
         }, local: local, localOnly: { alwaysLocal || settings.snapshot.localModelOnly },
-                  webSearch: { DoubaoSearch.searcher(for: settings) }, imageGenerator: { ArkImageGenerator.generator(for: settings) },
+                  webSearch: { AgentWebSearcher.searcher(for: settings) }, imageGenerator: { ArkImageGenerator.generator(for: settings) },
                   memory: settings.memoryFile, memoryEnabled: { settings.snapshot.memoryEnabled })
     }
 
@@ -1498,7 +1498,7 @@ private final class ResumeOnce<T: Sendable>: Sendable {
                 ListRemindersTool(access: calendar), CreateReminderTool(access: calendar), CompleteReminderTool(access: calendar),
                 ListEventsTool(access: calendar), CreateEventTool(access: calendar),
                 OpenAppTool(access: open), OpenURLTool(access: open), WebFetchTool(access: HarnessFetchAccess(harness: self))]
-            + (searcher == nil ? [] : [WebSearchTool(access: HarnessSearchAccess(harness: self))])
+            + (searcher.map { [WebSearchTool(access: HarnessSearchAccess(harness: self), service: $0.service)] } ?? [])
             + (imageGenerator == nil ? [] : [GenerateImageTool(access: HarnessImageAccess(harness: self))])
             + (turnMemory == nil ? [] : [RememberTool(access: HarnessMemoryAccess(harness: self)), UpdateMemoryTool(access: HarnessMemoryAccess(harness: self))])
     }

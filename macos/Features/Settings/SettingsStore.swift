@@ -49,7 +49,7 @@ struct SettingsError: LocalizedError, Equatable {
     var errorDescription: String? { message }
     /// No default model is saved: a turn may use the local model instead.
     static let modelNotConfigured = SettingsError(localized: "请先在设置中配置并保存默认模型。")
-    /// Voice, web_search and chat with Volcengine Ark all wait for the one Volcengine Ark key.
+    /// Voice and chat with Volcengine Ark, and with it Doubao search, all wait for the one Volcengine Ark key.
     static let arkKeyMissing = SettingsError(localized: "请在设置的模型页填写并保存火山方舟的 API Key。")
 }
 
@@ -122,8 +122,9 @@ enum ModelProvider: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// Volcengine Ark's group on the model page. Its one key pays for chat, voice, web_search and
-/// image generation, so it stands apart from the model service rather than among its providers.
+/// Volcengine Ark's group on the model page. Its one key pays for voice and image generation, and
+/// for chat and web_search while it chats, so it stands apart from the model service rather than
+/// among its providers.
 /// The address and protocol are the Agent Plan's and are not shown.
 struct ArkSettings: Codable, Equatable, Sendable {
     static let defaultLanguageModel = "doubao-seed-2.0-mini"
@@ -172,7 +173,7 @@ struct SettingsSnapshot: Codable {
     static let defaultPlanetID = "builtin:ember-planet"
     var voice: VoiceConfiguration?
     var ark = ArkSettings()
-    /// The Volcengine Ark key: voice and web_search always use it, and chat does when
+    /// The Volcengine Ark key: voice always uses it, and chat and Doubao search do when
     /// `ark.useForChat` is on.
     var arkSecretAccount: String?
     /// The keys voice and Volcengine Ark chat kept before the Volcengine Ark group took their
@@ -451,9 +452,9 @@ struct SettingsTestLine: Equatable {
             voiceNotice = nil
         } catch { voiceNotice = error is SettingsError ? error.localizedDescription : String(localized: "语音配置保存失败，请检查目录写入权限。") }
     }
-    /// The saved Volcengine Ark key, trimmed; nil when there is none or it cannot be read. Voice,
-    /// web_search and chat with Volcengine Ark use this key whichever provider chats, and no other
-    /// key ever stands in for it.
+    /// The saved Volcengine Ark key, trimmed; nil when there is none or it cannot be read. Voice
+    /// uses this key whichever service chats; chat with Volcengine Ark and Doubao search use it
+    /// while Volcengine Ark chats. No other key ever stands in for it.
     var savedArkKey: String? {
         let key = savedArkKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard arkKeyLoaded, !key.isEmpty, !key.contains("\r"), !key.contains("\n") else { return nil }
@@ -545,6 +546,13 @@ struct SettingsTestLine: Equatable {
             memoryNotice = String(localized: "无法清空记忆：\(error.localizedDescription)")
         }
         reloadMemory()
+    }
+    /// The model service's saved key, trimmed; nil when there is none or it cannot be read. Unlike
+    /// `savedModelCredentials`, it is the model service's whether or not Volcengine Ark chats.
+    var savedModelServiceKey: String? {
+        let key = savedKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard keyLoaded, !key.isEmpty, !key.contains("\r"), !key.contains("\n") else { return nil }
+        return key
     }
     func savedModelCredentials() throws -> (configuration: ModelConfiguration, key: String) {
         if snapshot.ark.useForChat {

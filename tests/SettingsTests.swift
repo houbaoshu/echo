@@ -36,10 +36,10 @@ import Testing
 }
 
 @Suite(.serialized) enum SettingsTests {
-    /// With a Volcengine Ark key, search and voice use it whether or not Ark chats; chat goes to
-    /// Volcengine Ark — its key, its language model, the Agent Plan's address — only with the switch
-    /// on, and to the model service otherwise. Without a key the switch will not turn on, and the
-    /// model service's key never stands in for search or voice.
+    /// With a Volcengine Ark key, voice uses it whether or not Ark chats; chat goes to Volcengine
+    /// Ark — its key, its language model, the Agent Plan's address — and search to Doubao search
+    /// only with the switch on, and both to the model service, here DeepSeek, otherwise. Without a
+    /// key the switch will not turn on, and the model service's key never stands in for voice.
     @Test(arguments: [false, true], [nil, " ark-key "] as [String?])
     @MainActor static func theArkKeyAndSwitchDecideWhatEachServiceUses(useForChat: Bool, arkKey: String?) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ark-key-\(UUID())")
@@ -58,14 +58,15 @@ import Testing
         #expect(settings.arkDraft.useForChat == on, "The switch turns on only with a key")
         #expect(settings.canTestArk == (arkKey != nil) && settings.canTestModelService, "Each group's test needs its own key")
         if arkKey != nil {
-            #expect(DoubaoSearch.searcher(for: settings) == nil && ArkImageGenerator.generator(for: settings) == nil && !settings.canTestVoice,
+            #expect(AgentWebSearcher.searcher(for: settings) == nil && ArkImageGenerator.generator(for: settings) == nil && !settings.canTestVoice,
                     "An unsaved key is not used yet")
         }
         settings.save(); settings.saveArk()
         try #require(settings.notice == nil && settings.arkNotice == nil && !settings.isDirty && !settings.isArkDirty)
         for store in [settings, SettingsStore(url: url, secrets: secrets)] {
             let saved = arkKey == nil ? nil : "ark-key"
-            #expect(DoubaoSearch.searcher(for: store)?.key == saved, "search")
+            let search = AgentWebSearcher.searcher(for: store)
+            #expect(search?.service == (on ? .doubao : .deepSeek) && search?.key == (on ? "ark-key" : "model-page-key"), "search")
             let images = ArkImageGenerator.generator(for: store)
             #expect(images?.key == saved && images.map { $0.model == "doubao-seedream-5.0-pro" } != false, "images, with the vision model")
             #expect((try? store.savedVoiceCredentials().key) == saved, "voice")
@@ -78,6 +79,51 @@ import Testing
                 #expect(chat.key == "model-page-key" && chat.configuration.model == "deepseek-chat", "The model service chats")
             }
         }
+    }
+
+    /// web_search follows whoever chats: Doubao search with the Volcengine Ark key while Volcengine
+    /// Ark chats, DeepSeek Search with the DeepSeek key while DeepSeek does, and none with any other
+    /// model service. Neither key stands in for the other, and a key not saved is not used.
+    @Test @MainActor static func webSearchFollowsWhoeverChats() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("search-route-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("settings.json"), secrets = ProviderSecrets()
+        let settings = SettingsStore(url: url, secrets: secrets)
+        func route(_ store: SettingsStore = settings) -> String? {
+            AgentWebSearcher.searcher(for: store).map { "\($0.service.rawValue) \($0.key)" }
+        }
+        settings.selectProvider(.deepSeek); settings.draft.model = "deepseek-chat"; settings.save()
+        #expect(route() == nil, "DeepSeek without a key of its own")
+        settings.apiKey = " deepseek-key "
+        #expect(route() == nil, "A key not saved yet")
+        settings.save()
+        #expect(route() == "deepseek deepseek-key")
+        settings.arkAPIKey = "ark-key"; settings.saveArk()
+        #expect(!settings.snapshot.ark.useForChat && route() == "deepseek deepseek-key", "An Ark key alone changes nothing")
+        settings.arkDraft.useForChat = true; settings.saveArk()
+        #expect(route() == "doubao ark-key", "Volcengine Ark chats")
+        #expect(route(SettingsStore(url: url, secrets: secrets)) == "doubao ark-key")
+
+        settings.arkDraft.useForChat = false; settings.saveArk()
+        settings.selectProvider(.custom); settings.draft.baseURL = "https://llm.example.com/v1"; settings.draft.model = "m"
+        settings.apiKey = "custom-key"; settings.save()
+        try #require(settings.notice == nil && settings.snapshot.activeProvider == .custom)
+        #expect(route() == nil, "A custom service has no search, even with both other keys saved")
+        settings.selectProvider(.openAI); settings.draft.model = "gpt"; settings.apiKey = "openai-key"; settings.save()
+        #expect(route() == nil && route(SettingsStore(url: url, secrets: secrets)) == nil)
+        settings.arkDraft.useForChat = true; settings.saveArk()
+        #expect(route() == "doubao ark-key", "Volcengine Ark chats, whatever the model service")
+
+        // A key that cannot be read leaves no search: the other key does not stand in.
+        settings.selectProvider(.deepSeek); settings.save()
+        secrets.unreadable = [try #require(settings.snapshot.arkSecretAccount)]
+        let unreadable = SettingsStore(url: url, secrets: secrets)
+        #expect(unreadable.snapshot.ark.useForChat && route(unreadable) == nil)
+        secrets.unreadable = []
+        settings.arkDraft.useForChat = false; settings.saveArk()
+        secrets.unreadable = [try #require(settings.snapshot.secretAccount)]
+        #expect(route(SettingsStore(url: url, secrets: secrets)) == nil)
     }
 
     /// Emptying the Volcengine Ark key turns the switch back off, so chat returns to the model

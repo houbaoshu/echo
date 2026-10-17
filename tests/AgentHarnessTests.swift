@@ -34,7 +34,7 @@ import Testing
              finder: FakeFinder = FakeFinder(), writePolicy: AgentWritePolicy = AgentWritePolicy(),
              writeHooks: AgentWriteHooks = AgentWriteHooks(), attachmentHooks: AgentAttachmentHooks = AgentAttachmentHooks(),
              trash: AgentTrash? = nil, calendar: FakeCalendarStore = FakeCalendarStore(), clock: AgentClock = AgentCalendarTests.clock,
-             opener: FakeOpener = FakeOpener(), webSearch: DoubaoSearch? = nil, fetcher: any AgentWebFetching = FakeFetcher(),
+             opener: FakeOpener = FakeOpener(), webSearch: AgentWebSearcher? = nil, fetcher: any AgentWebFetching = FakeFetcher(),
              imageGenerator: ArkImageGenerator? = nil,
              memoryEnabled: @escaping @MainActor () -> Bool = { true }) {
             let model = ScriptedAgentModel(step: step)

@@ -330,6 +330,62 @@
         }
       }
     },
+    "DeepSeek 搜索不接受这个 API Key（%@）。请在设置的模型页检查 DeepSeek 的 API Key。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DeepSeek Search didn’t accept this API key (%@). Check the DeepSeek API key on the Model page in Settings."
+          }
+        }
+      }
+    },
+    "DeepSeek 搜索没有及时响应。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DeepSeek Search didn’t respond in time."
+          }
+        }
+      }
+    },
+    "DeepSeek 搜索的返回无法识别。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DeepSeek Search returned a response Echo couldn’t read."
+          }
+        }
+      }
+    },
+    "DeepSeek 搜索返回 HTTP %lld。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DeepSeek Search returned HTTP %lld."
+          }
+        }
+      }
+    },
+    "DeepSeek 搜索返回错误：%@（%@）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DeepSeek Search returned an error: %1$@ (%2$@)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "DeepSeek 搜索返回错误：%1$@（%2$@）"
+          }
+        }
+      }
+    },
     "Echo 只能添加日程，不能读取。可以在“系统设置 > 隐私与安全性 > 日历”里改为完全访问。" : {
       "localizations" : {
         "en" : {
@@ -2237,6 +2293,22 @@
         }
       }
     },
+    "搜索词太长（%lld 个字符），DeepSeek 搜索最多接受 %lld 个。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The search query is too long (%1$lld characters). DeepSeek Search takes at most %2$lld."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "搜索词太长（%1$lld 个字符），DeepSeek 搜索最多接受 %2$lld 个。"
+          }
+        }
+      }
+    },
     "搜索项目名称或路径" : {
       "localizations" : {
         "en" : {
@@ -2823,6 +2895,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t read the API key from the keychain (OSStatus %d). Check Echo’s keychain access."
+          }
+        }
+      }
+    },
+    "无法连接 DeepSeek 搜索：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t connect to DeepSeek Search: %@"
           }
         }
       }
