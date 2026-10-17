@@ -208,7 +208,7 @@ private struct HeldExecutor: LanguageModelExecutor {
         let opened = OpenedMenus()
         let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
                                                               object: nil, queue: nil) { note in
-            guard let menu = note.object as? NSMenu, menu.items.map(\.title) == ["隐藏精灵", "设置…"] else { return }
+            guard let menu = note.object as? NSMenu, menu.items.map(\.title) == ["设置…", "隐藏精灵"] else { return }
             opened.count += 1
             menu.perform(#selector(NSMenu.cancelTracking), with: nil, afterDelay: 0.1, inModes: [.common])
         }
@@ -259,7 +259,7 @@ private struct HeldExecutor: LanguageModelExecutor {
             let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: local, modifierFlags: flags, timestamp: 0,
                 windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
             let menu = view.menu(for: event)
-            XCTAssertTrue(menu?.items.map(\.title) == ["隐藏精灵", "设置…"], "The context menu offers hiding the pet and Settings, type=\(type)")
+            XCTAssertTrue(menu?.items.map(\.title) == ["设置…", "隐藏精灵"], "The context menu offers Settings and hiding the pet, type=\(type)")
             XCTAssertTrue(menu?.items.allSatisfy { $0.target === view } == true, "Both items go through the pet view, type=\(type)")
             for item in menu?.items ?? [] { _ = item.target?.perform(item.action, with: item) }
         }

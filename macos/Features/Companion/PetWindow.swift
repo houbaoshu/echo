@@ -217,8 +217,8 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     // AppKit asks on right-click and Control+click, and presents the menu itself.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        menu.addItem(withTitle: String(localized: "隐藏精灵"), action: #selector(hideFromMenu(_:)), keyEquivalent: "").target = self
         menu.addItem(withTitle: String(localized: "设置…"), action: #selector(showSettingsFromMenu(_:)), keyEquivalent: "").target = self
+        menu.addItem(withTitle: String(localized: "隐藏精灵"), action: #selector(hideFromMenu(_:)), keyEquivalent: "").target = self
         return menu
     }
 
