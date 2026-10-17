@@ -40,8 +40,8 @@ struct SettingsSidebar: View {
     @ViewBuilder private func icon(_ section: SettingsSection) -> some View {
         switch section {
         case .model: Image(systemName: "slider.horizontal.3")
-        // brain is wider and heavier than the other symbols, so it is scaled down to about their
-        // width, framed the way custom.capsule is.
+        // brain is wider and heavier than the other symbols, so resizable + scaledToFit inside a
+        // fixed frame shrinks it to about the width of the other rows.
         case .memory: Image(systemName: "brain").resizable().scaledToFit().frame(width: 17, height: 17)
         case .voice: Image(systemName: "waveform")
         case .planet: Image("custom.spaceship")
