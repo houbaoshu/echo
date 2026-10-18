@@ -474,9 +474,11 @@ struct SettingsTestLine: Equatable {
             guard arkKeyLoaded || !key.isEmpty else { throw SettingsError(localized: "原 API Key 尚未读取，请重新填写密钥后保存。") }
             let changed = key != savedArkKeyValue || !arkKeyLoaded
             let oldAccount = snapshot.arkSecretAccount
-            // The first key saved while the model service has none of its own turns Volcengine Ark
-            // chat on, once; from then on the switch is the person's.
-            if snapshot.arkSecretAccount == nil, !key.isEmpty, selectedProvider.requiresKey,
+            // The first key saved while the model service has no key of its own, neither saved nor
+            // typed, turns Volcengine Ark chat on, once, when there is a language model to chat with;
+            // from then on the switch is the person's.
+            if snapshot.arkSecretAccount == nil, !key.isEmpty, !value.languageModel.isEmpty,
+               snapshot.activeProvider.requiresKey, savedModelServiceKey == nil, selectedProvider.requiresKey,
                apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { value.useForChat = true }
             var next = snapshot; next.ark = value
             if changed {

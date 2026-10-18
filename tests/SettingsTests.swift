@@ -549,6 +549,25 @@ import Testing
         other.draft.model = "deepseek-chat"; other.apiKey = "deepseek-key"; other.arkAPIKey = "ark-key"
         other.save(); other.saveArk()
         #expect(!other.snapshot.ark.useForChat && other.savedArkKey == "ark-key", "A model service key keeps it off")
+
+        // Codex review #4: with the language model emptied, chat would have no model, so it stays
+        // off and what is saved is valid.
+        let emptied = SettingsStore(url: directory.appendingPathComponent("emptied.json"), secrets: ProviderSecrets())
+        emptied.arkDraft.languageModel = " "; emptied.arkAPIKey = "ark-key"; emptied.saveArk()
+        #expect(emptied.arkNotice == nil && !emptied.snapshot.ark.useForChat && emptied.savedArkKey == "ark-key")
+
+        // Codex review #3: the model service as saved decides, not one picked and not saved.
+        let picked = SettingsStore(url: directory.appendingPathComponent("picked.json"), secrets: ProviderSecrets())
+        picked.draft.model = "deepseek-chat"; picked.apiKey = "deepseek-key"; picked.save()
+        picked.selectProvider(.openAI)
+        picked.arkAPIKey = "ark-key"; picked.saveArk()
+        #expect(!picked.snapshot.ark.useForChat && (try? picked.savedModelCredentials().key) == "deepseek-key",
+                "A saved DeepSeek key keeps it off while another provider without one is only picked")
+        let ollama = SettingsStore(url: directory.appendingPathComponent("ollama.json"), secrets: ProviderSecrets())
+        ollama.selectProvider(.ollama); ollama.draft.model = "llama"; ollama.save()
+        ollama.selectProvider(.deepSeek)
+        ollama.arkAPIKey = "ark-key"; ollama.saveArk()
+        #expect(!ollama.snapshot.ark.useForChat, "Ollama, saved, needs no key, while DeepSeek is only picked")
     }
 
     private final class RecordingTester: ConnectionTesting, @unchecked Sendable {
