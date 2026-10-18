@@ -224,6 +224,7 @@ struct ProjectSelectionPanel: View {
 /// A sidebar icon button that shows while its row or header is hovered, and while it holds
 /// keyboard focus, so Tab still reaches it on rows nobody is pointing at.
 struct HoverRevealButton: View {
+    static let size: CGFloat = 24
     let symbol: String
     let label: LocalizedStringKey
     var help: LocalizedStringKey?
@@ -232,7 +233,7 @@ struct HoverRevealButton: View {
     @FocusState private var focused: Bool
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.body).frame(width: 24, height: 24).contentShape(Rectangle())
+            Image(systemName: symbol).font(.body).frame(width: Self.size, height: Self.size).contentShape(Rectangle())
         }.buttonStyle(.plain).focused($focused).foregroundStyle(.secondary)
             .opacity(visible || focused ? 1 : 0).allowsHitTesting(visible || focused)
             .help(help ?? label).accessibilityLabel(label)

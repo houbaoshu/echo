@@ -257,16 +257,23 @@ struct WorkspaceSidebar: View {
         } label: {
             HStack(spacing: 8) {
                 Label {
-                    name(project.name, renaming: .project(project.id))
+                    // The row it replaces was as tall as the button with the list's margins.
+                    name(project.name, renaming: .project(project.id),
+                         height: HoverRevealButton.size + 2 * SidebarRenameField.listInset)
+                        // The source list draws a selected project's name semibold. Xcode keeps the
+                        // weight, and so the name keeps its width as the rename field takes its place.
+                        .fontWeight(.regular)
                 } icon: {
                     Image(systemName: workspace.isAvailable(project) ? "folder" : "folder.badge.questionmark")
                         .accessibilityHidden(true)
                 }
-                Spacer(minLength: 0)
-                HoverRevealButton(symbol: "square.and.pencil", label: "新聊天", help: "在此项目中新建聊天",
-                                  visible: hoveredProject == project.id) {
-                    newProjectConversation(project.id)
-                }.accessibilityIdentifier("workspace.project.newConversation.\(project.id)")
+                // Gone while the name is edited, for the field to run on to the row's end.
+                if renaming != .project(project.id) {
+                    HoverRevealButton(symbol: "square.and.pencil", label: "新聊天", help: "在此项目中新建聊天",
+                                      visible: hoveredProject == project.id) {
+                        newProjectConversation(project.id)
+                    }.accessibilityIdentifier("workspace.project.newConversation.\(project.id)")
+                }
             }.frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 // A click anywhere on it also opens or closes its chats.
@@ -282,6 +289,7 @@ struct WorkspaceSidebar: View {
                 .accessibilityAction(named: "在此项目中新建聊天") { newProjectConversation(project.id) }
                 .accessibilityIdentifier("workspace.project.\(project.id)")
                 .tag(SidebarRow.project(project.id))
+                .listRowInsets(renameInsets(.project(project.id)))
                 .modifier(ProjectFolderDropTarget(drop: projectFolderDrop))
         }
     }
@@ -294,7 +302,6 @@ struct WorkspaceSidebar: View {
             let rowID = RowID(conversationID: conversation.id, projectID: projectID)
             HStack(spacing: 8) {
                 name(conversation.displayTitle, renaming: .conversation(rowID))
-                Spacer(minLength: 0)
                 if conversation.store.task?.status == .running,
                    projectID != nil || conversation.projectID == nil {
                     ConversationActivityIndicator()
@@ -305,18 +312,30 @@ struct WorkspaceSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .tag(SidebarRow.conversation(rowID))
+            .listRowInsets(renameInsets(.conversation(rowID)))
             .modifier(ProjectFolderDropTarget(drop: projectID == nil ? nil : projectFolderDrop))
             .help(conversation.displayTitle)
             .accessibilityIdentifier("conversation.\(projectID?.uuidString ?? "recent").\(conversation.id)")
         }
     }
-    /// A row's name, or the field it turns into while it is renamed.
-    @ViewBuilder private func name(_ name: String, renaming target: SidebarRow) -> some View {
+    /// A row's name, or the field it turns into while it is renamed. Either takes the row's free
+    /// width, up to whatever follows it.
+    /// The field keeps the row at least `height` tall, the height of the row it replaces when that
+    /// is taller than the name alone makes it.
+    @ViewBuilder private func name(_ name: String, renaming target: SidebarRow, height: CGFloat = 0) -> some View {
         if renaming == target {
+            // The field sets its text where the name's was, a caret's room into its box.
             SidebarRenameField(text: $renameDraft) { finishRename(target, $0) }
+                .padding(.leading, -SidebarRenameField.Box.textInset)
+                .frame(minHeight: height)
         } else {
-            Text(name).lineLimit(1)
+            Text(name).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+    /// The row being renamed gives the field its whole height, for the box to fill. The list
+    /// insets a row's content only from the top and bottom, so the name stays where it was.
+    private func renameInsets(_ row: SidebarRow) -> EdgeInsets? {
+        renaming == row ? EdgeInsets() : nil
     }
     /// The menu's Rename and Return both start here. Starting a rename while another row is
     /// being renamed keeps what was typed there.
@@ -445,8 +464,16 @@ struct SidebarListFocusBinding: ViewModifier {
 /// A sidebar row's name while it is renamed. An AppKit field rather than a SwiftUI one for its
 /// delegate: the field itself reports how its editing ended, including when the keyboard moves
 /// to another column of the window, which the sidebar's focus state never sees.
+///
+/// It looks the way a rename does in Finder and Xcode: no focus ring and no border, the name's
+/// text standing where the row showed it, on a box of text background as tall as the row. The
+/// box runs on to the end of the row's room, as far inside the selection highlight's end as a
+/// top-level row's box starts inside its beginning; a spinner after the name stops it sooner.
 struct SidebarRenameField: NSViewRepresentable {
     enum Ending { case commit, cancel, elsewhere }
+    /// How far the list insets a row's content from its top and bottom. The renamed row gives
+    /// that up to the field, for the box to fill the row.
+    static let listInset: CGFloat = 4
     @Binding var text: String
     let end: (Ending) -> Void
     /// The row's own text size, which follows the sidebar size setting.
@@ -459,33 +486,106 @@ struct SidebarRenameField: NSViewRepresentable {
         }
     }
     func makeCoordinator() -> Coordinator { Coordinator(field: self) }
-    func makeNSView(context: Context) -> Field {
+    func makeNSView(context: Context) -> Box {
         let field = Field(string: text)
-        // Drawn on its own text background, as Finder and Xcode draw a rename, so the name stays
-        // readable over a selected row's accent fill. No bezel: it draws a translucent fill of its
-        // own instead of the background colour.
+        // The box draws the background, so the name stays readable over a selected row's accent
+        // fill. No bezel: it draws a translucent fill of its own instead of the background colour.
         field.isBezeled = false
-        field.drawsBackground = true
-        field.backgroundColor = .textBackgroundColor
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
         field.textColor = .textColor
         field.usesSingleLineMode = true
         field.cell?.wraps = false
         field.cell?.isScrollable = true
         field.lineBreakMode = .byClipping
         field.delegate = context.coordinator
-        return field
+        return Box(field: field)
     }
-    func updateNSView(_ field: Field, context: Context) {
+    func updateNSView(_ box: Box, context: Context) {
         context.coordinator.field = self
-        field.font = .systemFont(ofSize: fontSize)
+        let field = box.field
+        if field.font?.pointSize != fontSize {
+            field.font = .systemFont(ofSize: fontSize)
+            box.needsLayout = true
+        }
         // Typing already reports through the delegate; while it does, the field is the source.
         if field.currentEditor() == nil, field.stringValue != text { field.stringValue = text }
+    }
+    /// The row's height, which SwiftUI offers, and whatever width it gives.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView box: Box, context: Context) -> CGSize? {
+        let line = box.field.intrinsicContentSize.height
+        let height = proposal.height.flatMap { $0.isFinite ? max($0, line) : nil } ?? line
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? box.field.fittingSize.width
+        return CGSize(width: width, height: height)
+    }
+    /// The box behind the text, holding the field on the name's line.
+    final class Box: NSView {
+        /// How far into its line the field editor sets the text: its line fragment padding.
+        static let textInset: CGFloat = 2
+        let field: Field
+        /// The part of the view the box fills, in its own coordinates.
+        private(set) var boxRect = NSRect.zero
+        init(field: Field) {
+            self.field = field
+            super.init(frame: .zero)
+            addSubview(field)
+        }
+        @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            needsLayout = true
+        }
+        override func layout() {
+            super.layout()
+            boxRect = bounds
+            boxRect.size.width = max(min(bounds.width, rowEnd() - bounds.minX), 0)
+            // Centred as the row centres the name, so the text keeps its baseline.
+            let line = field.intrinsicContentSize.height
+            field.frame = backingAlignedRect(
+                NSRect(x: boxRect.minX, y: bounds.midY - line / 2, width: boxRect.width, height: line),
+                options: .alignAllEdgesNearest)
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+        /// Where the box has to end, in this view's coordinates: as far before the row's end as a
+        /// top-level row's box starts after its beginning, so it sits evenly inside the selection
+        /// highlight. Without a row, wherever the view does.
+        private func rowEnd() -> CGFloat {
+            var row = superview
+            while let view = row, !(view is NSTableRowView) { row = view.superview }
+            var list = row?.superview
+            while let view = list, !(view is NSOutlineView) { list = view.superview }
+            guard let row, let outline = list as? NSOutlineView else { return bounds.maxX }
+            let index = outline.row(for: row)
+            guard index >= 0 else { return bounds.maxX }
+            // The sections are level 0, so their rows are level 1 and a project's chats level 2.
+            let indent = CGFloat(max(outline.level(forRow: index) - 1, 0)) * outline.indentationPerLevel
+            let rowFrame = outline.rect(ofRow: index)
+            let start = outline.frameOfCell(atColumn: 0, row: index).minX - indent - rowFrame.minX - Self.textInset
+            return convert(NSPoint(x: rowFrame.maxX - start, y: rowFrame.midY), from: outline).x
+        }
+        override func draw(_ dirtyRect: NSRect) {
+            NSColor.textBackgroundColor.setFill()
+            boxRect.fill()
+        }
+        /// Clicks anywhere in the box go to the text; past it, to the row.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let superview, boxRect.contains(convert(point, from: superview)) else { return nil }
+            return (field.currentEditor() as NSView?) ?? field
+        }
+        override func resetCursorRects() {
+            addCursorRect(boxRect, cursor: .iBeam)
+        }
     }
     /// Takes the keyboard once it is on screen, and selects the name it shows.
     final class Field: NSTextField {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             window?.makeFirstResponder(self)
+            // The box draws the background. The field editor draws one of its own otherwise, which
+            // in a dark sidebar comes out lighter than the box around it.
+            currentEditor()?.drawsBackground = false
         }
     }
     @MainActor final class Coordinator: NSObject, NSTextFieldDelegate {

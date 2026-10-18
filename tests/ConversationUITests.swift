@@ -4951,10 +4951,11 @@ private struct ComposerHeightHost: View {
         // selection colours, rather than the row's accent fill showing through it.
         editor = try await s.rename("conversation.recent.\(alpha)", from: "Alpha")
         let field = try XCTUnwrap(s.editing()?.field)
-        // The field on its own: an opaque background is what hides the row's fill. The system
+        let box = try XCTUnwrap(field.superview as? SidebarRenameField.Box)
+        // The box on its own: an opaque background is what hides the row's fill. The system
         // bezel draws a fill of its own instead, slightly translucent, whatever the colour is set to.
-        let image = try XCTUnwrap(field.bitmapImageRepForCachingDisplay(in: field.bounds))
-        field.cacheDisplay(in: field.bounds, to: image)
+        let image = try XCTUnwrap(box.bitmapImageRepForCachingDisplay(in: box.boxRect))
+        box.cacheDisplay(in: box.boxRect, to: image)
         var background: NSColor?, selection: NSColor?
         field.effectiveAppearance.performAsCurrentDrawingAppearance {
             background = NSColor.textBackgroundColor.usingColorSpace(.sRGB)
@@ -5002,6 +5003,119 @@ private struct ComposerHeightHost: View {
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         try await s.listHasKeyboard("Return in the project row")
         XCTAssertTrue(s.projectName() == "项目改名", "The project takes the name, got \(String(describing: s.projectName()))")
+    }
+
+    /// The rename field edits the way Finder and Xcode do: no focus ring and no border, its box as
+    /// tall as the row, starting a caret's room before the name and running on to the row's end, or
+    /// to the spinner of a chat that is replying. The name's text stays exactly where it was, and
+    /// the row keeps its height, at each of the sidebar's sizes.
+    func testSidebarRenameFieldKeepsTheNameInPlace() async throws {
+        // The size is a setting, NSTableViewDefaultSizeMode, which AppKit reads once and keeps. Its
+        // observer reads it again, as when System Settings changes it; set here for this process alone.
+        let original = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+        func sidebarSize(_ mode: Int?) {
+            var domain = original
+            if let mode { domain["NSTableViewDefaultSizeMode"] = mode }
+            UserDefaults.standard.setVolatileDomain(domain, forName: UserDefaults.argumentDomain)
+            _ = (NSClassFromString("NSTableViewSidebarDefaultIconSizeObserver") as AnyObject?)?
+                .perform(Selector(("defaultRowSizeStyleChanged:")), with: nil)
+        }
+        defer { sidebarSize(nil) }
+        for (mode, fontSize) in [(2, 13), (1, 11), (3, 15)] as [(Int, CGFloat)] {
+            sidebarSize(mode)
+            try await renameFieldKeepsTheNameInPlace(size: mode, fontSize: fontSize)
+        }
+    }
+    private func renameFieldKeepsTheNameInPlace(size: Int, fontSize: CGFloat) async throws {
+        let s = try SidebarFixture(self)
+        defer { s.close() }
+        try await s.present()
+        guard s.list.effectiveRowSizeStyle.rawValue == size else {
+            throw stopTest("Sidebar size \(size) did not take, got \(s.list.effectiveRowSizeStyle.rawValue)")
+        }
+        s.window.appearance = NSAppearance(named: .aqua)
+        // A name the row shows whole, as the field does.
+        s.workspace.renameProject(s.projectID, to: "Delta")
+        let inset = SidebarRenameField.Box.textInset
+        // Where a top-level row's name starts: Beta's, a chat in 最近.
+        let topStart = s.list.frameOfCell(atColumn: 0, row: try s.row("conversation.recent.\(s.beta)")).minX
+        func snapshot(_ row: NSRect) throws -> NSBitmapImageRep {
+            s.content.layoutSubtreeIfNeeded()
+            let image = try XCTUnwrap(s.list.bitmapImageRepForCachingDisplay(in: row))
+            s.list.cacheDisplay(in: row, to: image)
+            return image
+        }
+        /// The bounds of the dark pixels between `minX` and `maxX` in the row, in pixels.
+        func ink(_ image: NSBitmapImageRep, _ row: NSRect, from minX: CGFloat, to maxX: CGFloat) throws
+            -> (x: ClosedRange<Int>, y: ClosedRange<Int>) {
+            let scale = CGFloat(image.pixelsWide) / row.width
+            var xs: [Int] = [], ys: [Int] = []
+            for y in 0..<image.pixelsHigh {
+                for x in Int(((minX - row.minX) * scale).rounded())..<Int(((maxX - row.minX) * scale).rounded()) {
+                    guard let c = image.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.5,
+                          (c.redComponent + c.greenComponent + c.blueComponent) / 3 < 0.5 else { continue }
+                    xs.append(x); ys.append(y)
+                }
+            }
+            guard let x0 = xs.min(), let x1 = xs.max(), let y0 = ys.min(), let y1 = ys.max() else {
+                throw stopTest("No text drawn in the row")
+            }
+            return (x0...x1, y0...y1)
+        }
+        for (key, name) in [("conversation.recent.\(s.beta)", "Beta"),
+                           ("workspace.project.\(s.projectID)", "Delta"),
+                           ("conversation.\(s.projectID).\(s.gamma)", "Gamma")] {
+            let index = try s.row(key)
+            let row = s.list.rect(ofRow: index)
+            let next = s.list.rect(ofRow: index + 1)
+            let before = try snapshot(row)
+            let editor = try await s.rename(key, from: name)
+            let field = try XCTUnwrap(s.editing()?.field)
+            let id = "\(key) at size \(size)"
+            XCTAssertTrue(field.font?.pointSize == fontSize, "\(id): the field takes the row's \(fontSize)pt, got \(String(describing: field.font))")
+            XCTAssertTrue(s.list.rect(ofRow: index) == row && s.list.rect(ofRow: index + 1) == next,
+                          "\(id): the row keeps its height and the rows after it stay, \(row) became \(s.list.rect(ofRow: index))")
+            let box = try XCTUnwrap(field.superview as? SidebarRenameField.Box)
+            XCTAssertTrue(field.focusRingType == .none, "\(id): no focus ring")
+            // In a dark sidebar the field editor's own background comes out lighter than the box,
+            // a band across it; the hosted window does not draw it so, hence no pixels here.
+            XCTAssertTrue(!field.isBordered && !field.isBezeled && !field.drawsBackground && !editor.drawsBackground,
+                          "\(id): no border, and only the box behind the text")
+            let rect = s.list.convert(box.boxRect, from: box)
+            XCTAssertTrue(abs(rect.minY - row.minY) < 0.5 && abs(rect.height - row.height) < 0.5,
+                          "\(id): the box is as tall as the row \(row), got \(rect)")
+            // The text starts on the name's line where the editor sets it, a caret's room into the box.
+            let origin = s.list.convert(editor.layoutManager!.location(forGlyphAt: 0), from: editor).x
+                + editor.textContainerOrigin.x
+            XCTAssertTrue(abs(origin - rect.minX - inset) < 0.5, "\(id): the text starts \(inset)pt into the box, at \(origin) in \(rect)")
+            if key.hasPrefix("conversation.recent") {
+                XCTAssertTrue(abs(origin - topStart) < 0.5, "\(id): the text starts where the name did, \(topStart), got \(origin)")
+            }
+            // A replying chat's box stops a spacing before its spinner; a project's runs on to the
+            // row's end, as far inside it as a top-level row's box starts.
+            let rowView = try XCTUnwrap(s.list.rowView(atRow: index, makeIfNecessary: false))
+            if let spinner = findView(rowView, { $0 is NSProgressIndicator }) {
+                let left = s.list.convert(spinner.bounds, from: spinner).minX
+                XCTAssertTrue(abs(rect.maxX - (left - 8)) < 0.5, "\(id): the box stops before the spinner at \(left), got \(rect)")
+            } else {
+                let end = row.maxX - (topStart - inset - row.minX)
+                XCTAssertTrue(abs(rect.maxX - end) < 0.5, "\(id): the box ends at \(end), got \(rect)")
+            }
+            // Clicks anywhere in the box reach the text, from its top to its bottom.
+            for y in [rect.minY + 1, rect.midY, rect.maxY - 1] {
+                let point = s.content.superview!.convert(NSPoint(x: rect.maxX - 2, y: y), from: s.list)
+                XCTAssertTrue(s.content.hitTest(point) === editor, "\(id): a click at \(y) in the box reaches the text, got \(String(describing: s.content.hitTest(point)))")
+            }
+            // In the box: past a project's folder icon, short of a spinner.
+            let shown = try ink(before, row, from: rect.minX, to: rect.maxX)
+            let during = try ink(snapshot(row), row, from: rect.minX, to: rect.maxX)
+            XCTAssertTrue(shown.x == during.x && shown.y == during.y,
+                          "\(id): the name stays in place, \(shown) before and \(during) while edited")
+            editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+            try await s.listHasKeyboard("Esc in \(id)")
+            let after = try ink(snapshot(row), row, from: rect.minX, to: rect.maxX)
+            XCTAssertTrue(after.x == shown.x && after.y == shown.y, "\(id): the name is back in place, got \(after)")
+        }
     }
 
     /// Return on the selected row renames it, chat or project, as the menu's Rename does; Return
