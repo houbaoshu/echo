@@ -4925,6 +4925,9 @@ private struct ComposerHeightHost: View {
         let s = try SidebarFixture(self)
         defer { s.close() }
         try await s.present()
+        // The colours below are read in the light appearance, whatever the system's is. In a dark
+        // sidebar the box draws the text background vibrant, lighter than the colour resolves.
+        s.window.appearance = NSAppearance(named: .aqua)
         let (alpha, beta, gamma, projectID) = (s.alpha, s.beta, s.gamma, s.projectID)
 
         // A row that is not selected; the selection stays where it was.
@@ -5005,10 +5008,10 @@ private struct ComposerHeightHost: View {
         XCTAssertTrue(s.projectName() == "项目改名", "The project takes the name, got \(String(describing: s.projectName()))")
     }
 
-    /// The rename field edits the way Finder and Xcode do: no focus ring and no border, its box as
-    /// tall as the row, starting a caret's room before the name and running on to the row's end, or
-    /// to the spinner of a chat that is replying. The name's text stays exactly where it was, and
-    /// the row keeps its height, at each of the sidebar's sizes.
+    /// The rename field edits the way Xcode does: no focus ring and no border, its box leaving a thin
+    /// edge of the selection highlight around it. It starts a caret's room before the name and runs
+    /// to the highlight's end, or to the spinner of a chat that is replying. The name's text stays
+    /// exactly where it was, and the row keeps its height, at each of the sidebar's sizes.
     func testSidebarRenameFieldKeepsTheNameInPlace() async throws {
         // The size is a setting, NSTableViewDefaultSizeMode, which AppKit reads once and keeps. Its
         // observer reads it again, as when System Settings changes it; set here for this process alone.
@@ -5082,29 +5085,35 @@ private struct ComposerHeightHost: View {
             XCTAssertTrue(!field.isBordered && !field.isBezeled && !field.drawsBackground && !editor.drawsBackground,
                           "\(id): no border, and only the box behind the text")
             let rect = s.list.convert(box.boxRect, from: box)
-            XCTAssertTrue(abs(rect.minY - row.minY) < 0.5 && abs(rect.height - row.height) < 0.5,
-                          "\(id): the box is as tall as the row \(row), got \(rect)")
-            // The text starts on the name's line where the editor sets it, a caret's room into the box.
+            // The highlight, as measured in a real window at each size: 10pt inside the row view on
+            // either side, and as tall as it. Xcode's box leaves 6pt of it at the sides, 3pt above and below.
+            let rowView = try XCTUnwrap(s.list.rowView(atRow: index, makeIfNecessary: false))
+            let highlight = s.list.convert(rowView.bounds, from: rowView).insetBy(dx: 10, dy: 0)
+            XCTAssertTrue(abs(rect.minY - (highlight.minY + 3)) < 0.5 && abs(rect.maxY - (highlight.maxY - 3)) < 0.5,
+                          "\(id): the box leaves 3pt of the highlight \(highlight) above and below, got \(rect)")
+            // The text starts on the name's line where the editor sets it, a caret's room into the
+            // box, which leaves a project's folder icon and a chat's indent in the highlight.
             let origin = s.list.convert(editor.layoutManager!.location(forGlyphAt: 0), from: editor).x
                 + editor.textContainerOrigin.x
             XCTAssertTrue(abs(origin - rect.minX - inset) < 0.5, "\(id): the text starts \(inset)pt into the box, at \(origin) in \(rect)")
             if key.hasPrefix("conversation.recent") {
                 XCTAssertTrue(abs(origin - topStart) < 0.5, "\(id): the text starts where the name did, \(topStart), got \(origin)")
             }
-            // A replying chat's box stops a spacing before its spinner; a project's runs on to the
-            // row's end, as far inside it as a top-level row's box starts.
-            let rowView = try XCTUnwrap(s.list.rowView(atRow: index, makeIfNecessary: false))
+            // A replying chat's box stops a spacing before its spinner; any other runs to 6pt before
+            // the highlight's end.
             if let spinner = findView(rowView, { $0 is NSProgressIndicator }) {
                 let left = s.list.convert(spinner.bounds, from: spinner).minX
                 XCTAssertTrue(abs(rect.maxX - (left - 8)) < 0.5, "\(id): the box stops before the spinner at \(left), got \(rect)")
             } else {
-                let end = row.maxX - (topStart - inset - row.minX)
-                XCTAssertTrue(abs(rect.maxX - end) < 0.5, "\(id): the box ends at \(end), got \(rect)")
+                XCTAssertTrue(abs(rect.maxX - (highlight.maxX - 6)) < 0.5, "\(id): the box ends 6pt before the highlight's end \(highlight), got \(rect)")
             }
-            // Clicks anywhere in the box reach the text, from its top to its bottom.
-            for y in [rect.minY + 1, rect.midY, rect.maxY - 1] {
-                let point = s.content.superview!.convert(NSPoint(x: rect.maxX - 2, y: y), from: s.list)
-                XCTAssertTrue(s.content.hitTest(point) === editor, "\(id): a click at \(y) in the box reaches the text, got \(String(describing: s.content.hitTest(point)))")
+            // Clicks anywhere in the box reach the text, from its top to its bottom and from one end
+            // to the other.
+            for x in [rect.minX + 2, rect.maxX - 2] {
+                for y in [rect.minY + 1, rect.midY, rect.maxY - 1] {
+                    let point = s.content.superview!.convert(NSPoint(x: x, y: y), from: s.list)
+                    XCTAssertTrue(s.content.hitTest(point) === editor, "\(id): a click at \(x), \(y) in the box reaches the text, got \(String(describing: s.content.hitTest(point)))")
+                }
             }
             // In the box: past a project's folder icon, short of a spinner.
             let shown = try ink(before, row, from: rect.minX, to: rect.maxX)

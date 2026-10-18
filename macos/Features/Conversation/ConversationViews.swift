@@ -332,8 +332,9 @@ struct WorkspaceSidebar: View {
             Text(name).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
-    /// The row being renamed gives the field its whole height, for the box to fill. The list
-    /// insets a row's content only from the top and bottom, so the name stays where it was.
+    /// The row being renamed gives the field its whole height, for clicks anywhere on the box to
+    /// reach the text. The list insets a row's content only from the top and bottom, so the name
+    /// stays where it was.
     private func renameInsets(_ row: SidebarRow) -> EdgeInsets? {
         renaming == row ? EdgeInsets() : nil
     }
@@ -465,14 +466,15 @@ struct SidebarListFocusBinding: ViewModifier {
 /// delegate: the field itself reports how its editing ended, including when the keyboard moves
 /// to another column of the window, which the sidebar's focus state never sees.
 ///
-/// It looks the way a rename does in Finder and Xcode: no focus ring and no border, the name's
-/// text standing where the row showed it, on a box of text background as tall as the row. The
-/// box runs on to the end of the row's room, as far inside the selection highlight's end as a
-/// top-level row's box starts inside its beginning; a spinner after the name stops it sooner.
+/// It looks the way a rename does in Xcode: no focus ring and no border, the name's text standing
+/// where the row showed it, on a box of text background that leaves a thin edge of the selection
+/// highlight showing around it. It starts a caret's room before the name, leaving whatever comes
+/// before the name in the highlight, and ends where the row's content does, which the list keeps
+/// as far inside the highlight as Xcode's box; a spinner after the name stops it a spacing sooner.
 struct SidebarRenameField: NSViewRepresentable {
     enum Ending { case commit, cancel, elsewhere }
     /// How far the list insets a row's content from its top and bottom. The renamed row gives
-    /// that up to the field, for the box to fill the row.
+    /// that up to the field, for clicks anywhere on the box to reach the text.
     static let listInset: CGFloat = 4
     @Binding var text: String
     let end: (Ending) -> Void
@@ -523,6 +525,8 @@ struct SidebarRenameField: NSViewRepresentable {
     final class Box: NSView {
         /// How far into its line the field editor sets the text: its line fragment padding.
         static let textInset: CGFloat = 2
+        /// How much of the selection highlight the box leaves showing above and below it, as in Xcode.
+        static let verticalMargin: CGFloat = 3
         let field: Field
         /// The part of the view the box fills, in its own coordinates.
         private(set) var boxRect = NSRect.zero
@@ -532,38 +536,17 @@ struct SidebarRenameField: NSViewRepresentable {
             addSubview(field)
         }
         @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            needsLayout = true
-        }
         override func layout() {
             super.layout()
-            boxRect = bounds
-            boxRect.size.width = max(min(bounds.width, rowEnd() - bounds.minX), 0)
+            // The view is as tall as the row: the renamed row gives up its list insets.
+            boxRect = bounds.insetBy(dx: 0, dy: Self.verticalMargin)
             // Centred as the row centres the name, so the text keeps its baseline.
             let line = field.intrinsicContentSize.height
             field.frame = backingAlignedRect(
-                NSRect(x: boxRect.minX, y: bounds.midY - line / 2, width: boxRect.width, height: line),
+                NSRect(x: 0, y: bounds.midY - line / 2, width: bounds.width, height: line),
                 options: .alignAllEdgesNearest)
             needsDisplay = true
             window?.invalidateCursorRects(for: self)
-        }
-        /// Where the box has to end, in this view's coordinates: as far before the row's end as a
-        /// top-level row's box starts after its beginning, so it sits evenly inside the selection
-        /// highlight. Without a row, wherever the view does.
-        private func rowEnd() -> CGFloat {
-            var row = superview
-            while let view = row, !(view is NSTableRowView) { row = view.superview }
-            var list = row?.superview
-            while let view = list, !(view is NSOutlineView) { list = view.superview }
-            guard let row, let outline = list as? NSOutlineView else { return bounds.maxX }
-            let index = outline.row(for: row)
-            guard index >= 0 else { return bounds.maxX }
-            // The sections are level 0, so their rows are level 1 and a project's chats level 2.
-            let indent = CGFloat(max(outline.level(forRow: index) - 1, 0)) * outline.indentationPerLevel
-            let rowFrame = outline.rect(ofRow: index)
-            let start = outline.frameOfCell(atColumn: 0, row: index).minX - indent - rowFrame.minX - Self.textInset
-            return convert(NSPoint(x: rowFrame.maxX - start, y: rowFrame.midY), from: outline).x
         }
         override func draw(_ dirtyRect: NSRect) {
             NSColor.textBackgroundColor.setFill()
