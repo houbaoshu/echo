@@ -226,15 +226,17 @@ final class FakeFetcher: AgentWebFetching, Sendable {
         </script></body></html>
         """
 
-    /// An article that asks 127.0.0.1 for an image, a frame, a style sheet and a request of its own.
+    /// An article that asks 127.0.0.1 for an image, a frame, a style sheet and a request of its own,
+    /// and this Mac again by a name that resolves to it and by an IPv4 address written as IPv6.
     static func embedsHTML(_ port: UInt16) -> String {
-        let local = "http://127.0.0.1:\(port)"
+        let local = "http://127.0.0.1:\(port)", named = "http://localhost.:\(port)", mapped = "http://[::ffff:7f00:1]:\(port)"
         return """
             <!doctype html><html><head><meta charset="utf-8"><title>嵌入本机</title>
             <link rel="stylesheet" href="\(local)/style.css"></head><body><article><h1>嵌入本机</h1>
             \(String(repeating: "<p>这篇正文里嵌着发往本机的图片、框架、样式表和请求，它们都不应该发出去。</p>\n", count: 8))
             <img src="\(local)/pixel.png"><iframe src="\(local)/frame"></iframe>
-            </article><script>fetch("\(local)/xhr").catch(() => {});</script></body></html>
+            <img src="\(named)/named.png"><iframe src="\(named)/named-frame"></iframe>
+            </article><script>fetch("\(local)/xhr").catch(() => {}); fetch("\(mapped)/mapped").catch(() => {});</script></body></html>
             """
     }
 
@@ -319,8 +321,11 @@ final class FakeFetcher: AgentWebFetching, Sendable {
 
     /// What a page asks of this Mac while it loads goes nowhere; without the rules, the same page
     /// does ask for all of it, so the test page really makes the requests.
+    /// Codex review #1: a rule list cannot resolve names, so a name that leads to this Mac, here
+    /// "localhost.", and an address written another way, here [::ffff:7f00:1], are stopped by
+    /// going nowhere over plain http at all.
     @Test func aPageCannotReachThisMacThroughWhatItLoads() async throws {
-        let embedded = ["/style.css", "/pixel.png", "/frame", "/xhr"]
+        let embedded = ["/style.css", "/pixel.png", "/frame", "/xhr", "/named.png", "/named-frame", "/mapped"]
         let open = try Self.server(); defer { open.stop() }
         _ = try await WebPageFetcher(policy: Self.loopbackOnly, blocksLocalSubresources: false).fetch(open.url("/embeds")).get()
         #expect(Set(embedded).isSubset(of: Set(open.paths)), "\(open.paths)")
@@ -329,6 +334,27 @@ final class FakeFetcher: AgentWebFetching, Sendable {
         let page = try await WebPageFetcher(policy: Self.loopbackOnly).fetch(server.url("/embeds")).get()
         #expect(page.text.contains("它们都不应该发出去"), "The page itself is read")
         #expect(server.paths.filter { embedded.contains($0) }.isEmpty, "\(server.paths)")
+    }
+
+    /// Codex review #1: what the rules stop, read as regular expressions. Plain http and ws go
+    /// nowhere, whatever the host; https and wss go anywhere but to an address written as this Mac or
+    /// a local network, a trailing dot and any IPv6 address included.
+    @Test func theRulesStopPlainHTTPAndLocalAddressesWrittenAnyWay() throws {
+        let rules = try #require(try JSONSerialization.jsonObject(with: Data(WebFetchLocalBlock.encoded.utf8)) as? [[String: Any]])
+        let filters = try rules.map { rule in
+            let trigger = try #require(rule["trigger"] as? [String: Any])
+            return try NSRegularExpression(pattern: try #require(trigger["url-filter"] as? String), options: .caseInsensitive)
+        }
+        func stopped(_ url: String) -> Bool {
+            filters.contains { $0.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil }
+        }
+        for url in ["http://example.com/x", "ws://example.com/s", "https://localhost.:8443/", "https://foo.local.:1/",
+                    "wss://[::ffff:7f00:1]:9/", "https://[fd00::1]/", "https://127.0.0.1/", "https://foo.localhost/"] {
+            #expect(stopped(url), "\(url)")
+        }
+        for url in ["https://example.com/", "https://localhost.example.com/", "wss://example.com/s", "https://1.1.1.1/"] {
+            #expect(!stopped(url), "\(url)")
+        }
     }
 
     /// A redirect is checked as the address asked for is: to the local network, or to a host that

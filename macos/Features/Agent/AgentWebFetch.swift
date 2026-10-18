@@ -20,7 +20,9 @@ import WebKit
 //
 // Only addresses on the public internet are read: every address a fetch goes to, each redirect
 // and each page the main frame loads, is checked by the IP addresses its host resolves to, so a
-// page cannot lead the reader to this Mac or the local network.
+// page cannot lead the reader to this Mac or the local network. What the page itself asks for
+// goes out only over https or wss, and not to an address written as this Mac or the local network
+// (`WebFetchLocalBlock`). Plain http pages therefore load without their scripts, styles and images.
 
 /// A page web_fetch read.
 struct AgentWebPage: Sendable, Equatable {
@@ -127,27 +129,34 @@ struct WebFetchAddressPolicy: Sendable {
     }
 }
 
-/// What a page asks of this Mac or the local network while it loads, such as an image, a frame, a
-/// script or a request of its own, goes nowhere: a content blocker refuses it by address, before
-/// any request is made. A rule list cannot resolve names, so it goes by the addresses and names
-/// written in the URL. 198.18.0.0/15 is let through, as for the page itself. The page itself is
-/// checked by `WebFetchAddressPolicy` instead, as is each page the main frame loads.
+/// What a page asks for while it loads, such as an image, a frame, a script or a request of its own,
+/// goes nowhere over plain http or ws, and nowhere written as this Mac or the local network over
+/// https or wss: a content blocker refuses it before any request is made. A rule list cannot
+/// resolve names, and over plain http any name can lead to this Mac or the local network; over
+/// https the service there would also need a certificate for that name, so there only the
+/// addresses and names written in the URL are refused. 198.18.0.0/15 is let through, as for the
+/// page itself. The page itself is checked by `WebFetchAddressPolicy` instead, as is each page the
+/// main frame loads.
 @MainActor enum WebFetchLocalBlock {
     static let identifier = "io.github.houbaoshu.echo.web-fetch.local-subresources"
 
-    /// Hosts as they appear in a URL WebKit has parsed, which writes any IPv4 address in dotted form.
+    /// Schemes that go nowhere, whatever the host.
+    static let plainSchemes = [#"^http:"#, #"^ws:"#]
+
+    /// Hosts as they appear in a URL WebKit has parsed, which writes any IPv4 address in dotted form:
+    /// names with or without a trailing dot, and every IPv6 address.
     static let hosts = [
-        #"([^/:?#@]*\.)?localhost"#, #"127\.[0-9]+\.[0-9]+\.[0-9]+"#, #"10\.[0-9]+\.[0-9]+\.[0-9]+"#,
+        #"([^/:?#@]*\.)?localhost\.?"#, #"127\.[0-9]+\.[0-9]+\.[0-9]+"#, #"10\.[0-9]+\.[0-9]+\.[0-9]+"#,
         #"172\.1[6-9]\.[0-9]+\.[0-9]+"#, #"172\.2[0-9]\.[0-9]+\.[0-9]+"#, #"172\.3[01]\.[0-9]+\.[0-9]+"#,
-        #"192\.168\.[0-9]+\.[0-9]+"#, #"169\.254\.[0-9]+\.[0-9]+"#, #"\[::1\]"#, #"[^/:?#@]*\.local"#,
+        #"192\.168\.[0-9]+\.[0-9]+"#, #"169\.254\.[0-9]+\.[0-9]+"#, #"\[[0-9a-f:.]*\]"#, #"[^/:?#@]*\.local\.?"#,
     ]
 
-    /// Two rules per host, as content blockers have no alternation: every kind of subresource, and
+    /// Two rules per filter, as content blockers have no alternation: every kind of subresource, and
     /// documents loading in a frame inside the page. The page's own document is not one of them.
     static var encoded: String {
         let subresources = ["image", "style-sheet", "script", "font", "raw", "svg-document", "media", "popup", "ping", "fetch", "websocket", "other"]
-        let rules: [[String: Any]] = hosts.flatMap { host -> [[String: Any]] in
-            let filter = #"^[a-z][a-z0-9+.-]*://([^/?#@]*@)?"# + host + "[:/]"
+        let filters = plainSchemes + hosts.map { #"^[a-z][a-z0-9+.-]*://([^/?#@]*@)?"# + $0 + "[:/]" }
+        let rules: [[String: Any]] = filters.flatMap { filter -> [[String: Any]] in
             return [["trigger": ["url-filter": filter, "resource-type": subresources], "action": ["type": "block"]],
                     ["trigger": ["url-filter": filter, "resource-type": ["document"], "load-context": ["child-frame"]], "action": ["type": "block"]]]
         }
@@ -185,8 +194,8 @@ struct WebPageFetcher: AgentWebFetching {
     /// Whether PDFs are read over http: only for tests, which serve them from 127.0.0.1, where App
     /// Transport Security allows it.
     let httpPDFs: Bool
-    /// Whether a page's requests to this Mac and the local network are blocked; off only to show
-    /// in a test that a page makes them.
+    /// Whether a page's own requests are kept to https and wss away from this Mac and the local
+    /// network (`WebFetchLocalBlock`); off only to show in a test that a page makes them.
     let blocksLocalSubresources: Bool
 
     init(policy: WebFetchAddressPolicy = WebFetchAddressPolicy(), pdfLimit: Int = WebPageFetcher.pdfLimit,
