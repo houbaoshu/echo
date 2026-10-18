@@ -4784,7 +4784,7 @@ private struct ComposerHeightHost: View {
         }
         let project = try XCTUnwrap(row, "The project row is exposed to accessibility")
         let actions: [NSAccessibilityCustomAction] = project.accessibilityCustomActions?() ?? []
-        let action = try XCTUnwrap(actions.first { $0.name == "在此项目中新建对话" },
+        let action = try XCTUnwrap(actions.first { $0.name == "在此项目中新建聊天" },
                                    "The row offers its new chat by name: \(actions.map(\.name))")
         XCTAssertTrue(action.handler?() ?? (action.target?.perform(action.selector, with: action) != nil))
         let opened = try XCTUnwrap(workspace.selected)
@@ -5033,16 +5033,16 @@ private struct ComposerHeightHost: View {
         // A running Agent turn has no reply message until the reply is written, so it saves one message.
         let expected = [
             "launch | title=(hidden) | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=1",
-            "showMain | title=新对话 | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=0",
-            "newChat | title=新对话 | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=1",
-            "project | title=新对话 | pet=true activity=false controls=true | \(project) chats=[] drafts=1 selected=draft0 | flushes=1",
+            "showMain | title=新聊天 | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=0",
+            "newChat | title=新聊天 | pet=true activity=false controls=true | projects=[] chats=[] drafts=1 selected=draft0 | flushes=1",
+            "project | title=新聊天 | pet=true activity=false controls=true | \(project) chats=[] drafts=1 selected=draft0 | flushes=1",
             "send | title=你好 | pet=true activity=true controls=true | \(project) chats=[\"你好 msgs=1 task=running project=true\"] drafts=0 selected=chat0 | flushes=1",
             "reply | title=你好 | pet=true activity=false controls=true | \(project) chats=[\"你好 msgs=2 task=completed project=true\"] drafts=0 selected=chat0 | flushes=1",
             "rename | title=改过的名字 | pet=true activity=false controls=true | \(project) chats=[\"改过的名字 msgs=2 task=completed project=true\"] drafts=0 selected=chat0 | flushes=1",
-            "delete | title=新对话 | pet=true activity=false controls=true | \(project) chats=[] drafts=1 selected=draft0 | flushes=2",
-            "cardShow | title=新对话 | pet=true activity=true controls=true | \(project) chats=[\"桌宠里的问题 msgs=1 task=running project=false\"] drafts=1 selected=draft0 | flushes=1",
-            "cardReply | title=新对话 | pet=true activity=true controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=completed project=false\"] drafts=1 selected=draft0 | flushes=1",
-            "cardHide | title=新对话 | pet=true activity=false controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=completed project=false\"] drafts=1 selected=draft0 | flushes=1",
+            "delete | title=新聊天 | pet=true activity=false controls=true | \(project) chats=[] drafts=1 selected=draft0 | flushes=2",
+            "cardShow | title=新聊天 | pet=true activity=true controls=true | \(project) chats=[\"桌宠里的问题 msgs=1 task=running project=false\"] drafts=1 selected=draft0 | flushes=1",
+            "cardReply | title=新聊天 | pet=true activity=true controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=completed project=false\"] drafts=1 selected=draft0 | flushes=1",
+            "cardHide | title=新聊天 | pet=true activity=false controls=true | \(project) chats=[\"桌宠里的问题 msgs=2 task=completed project=false\"] drafts=1 selected=draft0 | flushes=1",
         ]
         for (index, outcome) in outcomes.enumerated() {
             XCTAssertEqual(outcome, index < expected.count ? expected[index] : "(none)")

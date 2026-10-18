@@ -175,7 +175,7 @@ enum VoiceCaptureWatchdog {
         VoiceDiagnostics.shared.beginTimeline(entry)
         guard let conversation, let settings else {
             VoiceDiagnostics.shared.cancelTimeline()
-            let failure = SettingsError(localized: "无法开始语音：缺少会话或设置。")
+            let failure = SettingsError(localized: "无法开始语音：缺少聊天或设置。")
             reportError(failure, conversationID: conversation?.id)
             VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", failure.diagnostic)
             return false

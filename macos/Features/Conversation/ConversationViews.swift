@@ -115,7 +115,7 @@ extension NSFont {
     }
     static func delete(_ conversation: WorkspaceConversation, workspace: WorkspaceStore) {
         let alert = NSAlert(); alert.messageText = String(localized: "删除“\(conversation.displayTitle)”？")
-        alert.informativeText = String(localized: "此会话的消息和草稿将被删除，正在进行的模型请求也会停止。")
+        alert.informativeText = String(localized: "此聊天的消息和草稿将被删除，正在进行的模型请求也会停止。")
         alert.addButton(withTitle: String(localized: "删除")); alert.addButton(withTitle: String(localized: "取消"))
         alert.buttons.first?.hasDestructiveAction = true
         guard let window = NSApp.keyWindow else { return }
@@ -231,19 +231,22 @@ struct WorkspaceSidebar: View {
                     if expanded { collapsedProjects.remove(project.id) } else { collapsedProjects.insert(project.id) }
                 })
     }
-    /// The system disclosure supplies the triangle, the child indentation and ← / → ;
-    /// the folder icon keeps its own open-flap and missing-folder meaning.
+    /// The system disclosure supplies the triangle, the child indentation and ← / → , so the
+    /// triangle alone says whether the project is open. As a Label in a source list, the folder
+    /// takes the sidebar's icon size and tint; a missing folder reads as a badged question mark.
     private func projectRow(_ project: WorkspaceProject) -> some View {
         DisclosureGroup(isExpanded: projectExpansion(project)) {
             rows(workspace.filteredConversations(projectID: project.id), projectID: project.id)
         } label: {
             HStack(spacing: 8) {
-                ProjectFolderIcon(isExpanded: projectExpanded(project), isAvailable: workspace.isAvailable(project))
-                    .foregroundStyle(.secondary).frame(width: 18, height: 16)
-                    .accessibilityHidden(true)
-                Text(project.name).lineLimit(1)
+                Label {
+                    Text(project.name).lineLimit(1)
+                } icon: {
+                    Image(systemName: workspace.isAvailable(project) ? "folder" : "folder.badge.questionmark")
+                        .accessibilityHidden(true)
+                }
                 Spacer(minLength: 0)
-                HoverRevealButton(symbol: "square.and.pencil", label: "新对话", help: "在此项目中新建对话",
+                HoverRevealButton(symbol: "square.and.pencil", label: "新聊天", help: "在此项目中新建聊天",
                                   visible: hoveredProject == project.id) {
                     newProjectConversation(project.id)
                 }.accessibilityIdentifier("workspace.project.newConversation.\(project.id)")
@@ -260,7 +263,7 @@ struct WorkspaceSidebar: View {
                 .accessibilityHint("点击展开或收起项目聊天")
                 // The pencil button never reaches accessibility on its own: SwiftUI folds it
                 // into this row. The row offers what it does as an action instead.
-                .accessibilityAction(named: "在此项目中新建对话") { newProjectConversation(project.id) }
+                .accessibilityAction(named: "在此项目中新建聊天") { newProjectConversation(project.id) }
                 .accessibilityIdentifier("workspace.project.\(project.id)")
                 .contextMenu { projectMenu(project) }
                 .modifier(ProjectFolderDropTarget(drop: projectFolderDrop))
@@ -297,18 +300,18 @@ struct WorkspaceSidebar: View {
     /// that would silently pick one of them.
     @ViewBuilder private func conversationMenu(_ rows: Set<RowID>) -> some View {
         if rows.count == 1, let row = rows.first, let conversation = workspace.conversation(id: row.conversationID) {
-            Button("重命名") { WorkspaceActions.rename(conversation.displayTitle) { workspace.renameConversation(conversation.id, to: $0) } }
-            Button("删除会话…", role: .destructive) { WorkspaceActions.delete(conversation, workspace: workspace) }
+            Button("重命名…") { WorkspaceActions.rename(conversation.displayTitle) { workspace.renameConversation(conversation.id, to: $0) } }
+            Button("删除聊天…", role: .destructive) { WorkspaceActions.delete(conversation, workspace: workspace) }
         }
     }
     @ViewBuilder private func projectMenu(_ project: WorkspaceProject) -> some View {
-        Button("新对话") { newProjectConversation(project.id) }
-        Button("重命名") { WorkspaceActions.rename(project.name) { workspace.renameProject(project.id, to: $0) } }
+        Button("新聊天") { newProjectConversation(project.id) }
+        Button("重命名…") { WorkspaceActions.rename(project.name) { workspace.renameProject(project.id, to: $0) } }
         Button("在访达中显示") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
             .disabled(!workspace.isAvailable(project))
         Button("重新定位文件夹…") { WorkspaceActions.chooseFolder { workspace.relocateProject(project.id, to: $0) } }
         Divider()
-        Button("移除项目，保留会话") { workspace.removeProject(project.id) }
+        Button("移除项目，保留聊天") { workspace.removeProject(project.id) }
     }
 }
 
@@ -379,36 +382,6 @@ private struct ConversationActivityIndicator: View {
         // Reduce Motion behaviour, so it needs no TimelineView of its own.
         ProgressView().progressViewStyle(.circular).controlSize(.small).tint(tint)
             .accessibilityLabel("正在回复")
-    }
-}
-
-// SF Symbols supplies the closed folder; the open flap repeats the disclosure state
-// beside the system triangle, and a missing folder reads as a badged question mark.
-struct ProjectFolderIcon: View {
-    let isExpanded: Bool
-    let isAvailable: Bool
-    var body: some View {
-        if !isAvailable {
-            Image(systemName: "folder.badge.questionmark").font(.body)
-        } else if isExpanded {
-            Path { path in
-                path.move(to: CGPoint(x: 1, y: 13))
-                path.addLine(to: CGPoint(x: 1, y: 3))
-                path.addQuadCurve(to: CGPoint(x: 2.5, y: 1.5), control: CGPoint(x: 1, y: 1.5))
-                path.addLine(to: CGPoint(x: 6.5, y: 1.5))
-                path.addLine(to: CGPoint(x: 8.5, y: 3.5))
-                path.addLine(to: CGPoint(x: 14.5, y: 3.5))
-                path.addQuadCurve(to: CGPoint(x: 16, y: 5), control: CGPoint(x: 16, y: 3.5))
-                path.move(to: CGPoint(x: 1, y: 13))
-                path.addLine(to: CGPoint(x: 4.5, y: 6.5))
-                path.addLine(to: CGPoint(x: 17.5, y: 6.5))
-                path.addLine(to: CGPoint(x: 14, y: 14))
-                path.addLine(to: CGPoint(x: 2, y: 14))
-                path.addQuadCurve(to: CGPoint(x: 1, y: 13), control: CGPoint(x: 1, y: 14))
-            }.stroke(style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
-        } else {
-            Image(systemName: "folder").font(.body)
-        }
     }
 }
 
@@ -590,7 +563,7 @@ struct ConversationView: View {
         // friends reach nobody. SwiftUI's own path is the one that works.
         .onKeyPress(keys: [.upArrow, .downArrow, .pageUp, .pageDown, .home, .end]) { transcriptKey($0) }
         .accessibilityIdentifier("conversation.transcript")
-        .accessibilityLabel("会话记录")
+        .accessibilityLabel("聊天记录")
         .overlay(alignment: .bottom) {
             if isVoiceOwner {
                 VoicePlanet(store: planet, indicator: PetSurfacePresentation.indicator(for: voice.snapshot),
@@ -831,18 +804,15 @@ struct ConversationView: View {
                         .accessibilityIdentifier("dictation.finish")
                 } else {
                     Button(action: chooseFiles) {
-                        Image(systemName: "plus").font(.body.weight(.medium)).foregroundStyle(.primary)
-                            .frame(width: 28, height: 28)
-                            .background { Circle().fill(.primary.opacity(0.06)) }
-                            .contentShape(Circle())
-                    }.buttonStyle(.plain).disabled(!canAttach)
+                        Image(systemName: "plus").composerSecondaryLabel()
+                    }.composerSecondaryControl().disabled(!canAttach)
                         .help(Self.addFilesLabel).accessibilityLabel(Self.addFilesLabel).accessibilityIdentifier("conversation.addFiles")
                     if isBackgroundVoice, let owner = voiceOwner, let ws = workspace {
                         Button { ws.revealVoice(owner: owner) } label: {
                             HStack(spacing: 4) {
                                 VoiceWaveform().frame(width: 14, height: 14)
                                 // Includes drafts: a pet-started session owns one until it speaks.
-                                Text("\(ws.conversation(id: owner.conversationID)?.displayTitle ?? String(localized: "会话")) 的 Live Voice")
+                                Text("\(ws.conversation(id: owner.conversationID)?.displayTitle ?? String(localized: "聊天|Live Voice 所属", defaultValue: "聊天")) 的 Live Voice")
                                     .font(WorkspaceStyle.caption).lineLimit(1).truncationMode(.middle)
                                 Image(systemName: "arrow.right").font(.caption2)
                             }
@@ -1202,6 +1172,18 @@ final class ComposerUndoManager: UndoManager, @unchecked Sendable {
 
 final class ComposerTextView: NSTextView {
     var isSuspended = false
+    /// Spelling is checked while typing, as in Messages and Notes, until Edit > Spelling and Grammar
+    /// turns it off. AppKit keeps that choice per text view, and a composer is rebuilt for every chat,
+    /// so the choice is kept here for all of them. Smart quotes, text replacement and the rest are
+    /// left at the text view's defaults, which follow System Settings.
+    private static let checksSpellingKey = "ComposerChecksSpellingWhileTyping"
+    static var checksSpellingWhileTyping: Bool {
+        UserDefaults.standard.object(forKey: checksSpellingKey) as? Bool ?? true
+    }
+    override func toggleContinuousSpellChecking(_ sender: Any?) {
+        super.toggleContinuousSpellChecking(sender)
+        UserDefaults.standard.set(isContinuousSpellCheckingEnabled, forKey: Self.checksSpellingKey)
+    }
     var onSend: (() -> Void)?
     var onEscape: (() -> Bool)?
     /// Files dragged onto the editor join the draft instead of being typed in as their paths; a
@@ -1332,7 +1314,7 @@ struct NativeComposer: NSViewRepresentable {
     var fontSize = WorkspaceStyle.bodySize
     var minHeight: CGFloat = 44
     var maxLines = 6
-    var label = String(localized: "会话输入框")
+    var label = String(localized: "聊天输入框")
     var identifier = "conversation.composer"
     var onFocusChange: ((Bool) -> Void)?
     /// Nil keeps the system caret, which follows the accent color.
@@ -1346,6 +1328,7 @@ struct NativeComposer: NSViewRepresentable {
         // file states which engine the composer runs on, and the downgrade is silent.
         let editor = ComposerTextView(usingTextLayoutManager: true)
         editor.isRichText = false; editor.allowsUndo = true; editor.drawsBackground = false
+        editor.isContinuousSpellCheckingEnabled = ComposerTextView.checksSpellingWhileTyping
         editor.font = .systemFont(ofSize: fontSize); editor.textColor = .labelColor
         editor.isVerticallyResizable = true; editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]; editor.textContainer?.widthTracksTextView = true

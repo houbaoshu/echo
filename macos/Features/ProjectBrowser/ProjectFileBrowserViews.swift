@@ -224,29 +224,22 @@ private struct ProjectFileBrowserView: View {
 
 /// One row of the tree. The list draws the selection, the triangle, the indentation and
 /// the context menu; the row supplies the icon, the name, and what a click, Return or a
-/// press means.
+/// press means. As a Label in a source list, the icon follows the sidebar's icon size.
 private struct ProjectFileRow: View {
     let entry: ProjectFileEntry
     let isExpanded: Bool
     let activate: () -> Void
-    /// The source list raises this on the row it fills with the accent colour, so the
-    /// icons switch to the selected-row tint the way a label does.
-    @Environment(\.backgroundProminence) private var prominence
-    private var secondary: AnyShapeStyle {
-        prominence == .increased ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor)) : AnyShapeStyle(.secondary)
-    }
     var body: some View {
-        HStack(spacing: 6) {
-            Group {
-                if entry.kind == .directory {
-                    ProjectFolderIcon(isExpanded: isExpanded, isAvailable: true).foregroundStyle(secondary)
-                } else if entry.kind == .symbolicLink {
-                    Image(systemName: "link").foregroundStyle(secondary)
+        HStack(spacing: 0) {
+            Label {
+                Text(entry.name).lineLimit(1).truncationMode(.middle)
+            } icon: {
+                if entry.kind == .symbolicLink {
+                    Image(systemName: "link")
                 } else {
-                    ProjectFileIcon(name: entry.name)
+                    ProjectFileIcon(name: entry.name, isDirectory: entry.kind == .directory)
                 }
-            }.frame(width: 18, height: 16)
-            Text(entry.name).lineLimit(1).truncationMode(.middle)
+            }
             Spacer(minLength: 0)
         }.frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -310,15 +303,23 @@ struct ProjectFileDrag: ViewModifier {
     }
 }
 
-/// Finder's own icon for the file's type, so the browser reads like the Finder sidebar.
-/// Keyed by extension — the icon describes the type, so one lookup serves every file of it.
+/// Finder's own icon for a folder or the file's type, so the browser reads like Finder's list view.
+/// Keyed by extension — the icon describes the type, so one lookup serves every file of it. The
+/// icon fills the box the source list gives a symbol in this row, so it follows the sidebar's icon
+/// size as a symbol does.
 private struct ProjectFileIcon: View {
     let name: String
+    var isDirectory = false
     @MainActor private static var cache: [String: NSImage] = [:]
     var body: some View {
-        Image(nsImage: Self.icon(forExtension: (name as NSString).pathExtension.lowercased()))
-            .resizable().scaledToFit().accessibilityHidden(true)
+        Image(systemName: "square").hidden()
+            .overlay {
+                Image(nsImage: isDirectory ? Self.folder : Self.icon(forExtension: (name as NSString).pathExtension.lowercased()))
+                    .resizable().scaledToFit()
+            }
+            .accessibilityHidden(true)
     }
+    @MainActor private static let folder = NSWorkspace.shared.icon(for: .folder)
     @MainActor private static func icon(forExtension pathExtension: String) -> NSImage {
         if let cached = cache[pathExtension] { return cached }
         let icon = NSWorkspace.shared.icon(for: UTType(filenameExtension: pathExtension) ?? .data)
@@ -352,13 +353,18 @@ struct ProjectReadOnlyText: NSViewRepresentable {
         var language: PreviewSyntaxHighlighter.Language?
     }
     func makeCoordinator() -> Coordinator { Coordinator() }
+    /// The body text style in its monospaced design, as the chat's code blocks use.
+    static var font: NSFont {
+        let body = NSFont.preferredFont(forTextStyle: .body)
+        return body.fontDescriptor.withDesign(.monospaced).flatMap { NSFont(descriptor: $0, size: 0) } ?? body
+    }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true; scroll.drawsBackground = false
         let view = NSTextView(frame: .zero)
         view.isEditable = false; view.isSelectable = true; view.isRichText = false
-        view.drawsBackground = false; view.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        view.drawsBackground = false; view.font = Self.font
         view.textColor = .labelColor; view.textContainerInset = NSSize(width: 12, height: 12)
         view.isVerticallyResizable = true; view.isHorizontallyResizable = true
         view.minSize = .zero; view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)

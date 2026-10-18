@@ -9,9 +9,11 @@
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
     <key>LSMinimumSystemVersion</key><string>27.0</string>
     <key>NSAppleEventsUsageDescription</key><string>Echo 在你问到访达里正在看的文件夹时，向访达询问最前面窗口的位置。</string>
     <key>NSCalendarsFullAccessUsageDescription</key><string>Echo 在你让它查看日程或新建日程时使用日历。</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 houbaoshu</string>
     <key>NSMicrophoneUsageDescription</key><string>Echo 使用麦克风将讲话转写到输入框或进行语音通话。普通转写使用 Apple 本地识别；语音通话使用豆包识别。</string>
     <key>NSRemindersFullAccessUsageDescription</key><string>Echo 在你让它查看、新建或完成提醒事项时使用提醒事项。</string>
     <key>NSAppTransportSecurity</key><dict>

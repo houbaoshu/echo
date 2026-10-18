@@ -181,11 +181,11 @@ struct ModelSettingsView: View {
         // the group whose field has the caret.
         Form {
             Section {
-                Picker("Provider", selection: Binding(get: { settings.selectedProvider }, set: { settings.selectProvider($0) })) {
+                Picker("提供商", selection: Binding(get: { settings.selectedProvider }, set: { settings.selectProvider($0) })) {
                     ForEach(ModelProvider.allCases, id: \.self) { provider in
                         Text(provider.title).tag(provider)
                     }
-                }.accessibilityLabel("Provider").accessibilityIdentifier("settings.provider")
+                }.accessibilityLabel("提供商").accessibilityIdentifier("settings.provider")
                 Picker("协议", selection: $settings.draft.apiProtocol) {
                     ForEach(ModelAPIProtocol.allCases, id: \.self) { apiProtocol in
                         Text(apiProtocol.title).tag(apiProtocol)
@@ -256,7 +256,7 @@ struct ArkSettingsSection: View {
                 .accessibilityLabel("语言模型").accessibilityIdentifier("settings.ark.chatModel")
             TextField("视觉模型", text: $settings.arkDraft.visionModel, prompt: Text(ArkSettings.defaultVisionModel))
                 .accessibilityLabel("视觉模型").accessibilityIdentifier("settings.ark.imageModel")
-            Toggle("用于对话", isOn: $settings.arkDraft.useForChat).toggleStyle(.switch)
+            Toggle("用于聊天", isOn: $settings.arkDraft.useForChat).toggleStyle(.switch)
                 .disabled(!settings.canUseArkForChat)
                 .accessibilityIdentifier("settings.ark.useForChat")
             SettingsGroupActions(save: settings.saveArk, canSave: settings.isArkDirty,
@@ -354,7 +354,7 @@ struct MemorySettingsView: View {
                     }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityElement(children: .combine).accessibilityIdentifier("settings.memory.contents")
                 } else {
-                    Text("还没有记忆。在对话里说“记住……”即可添加。").foregroundStyle(WorkspaceStyle.secondary)
+                    Text("还没有记忆。在聊天里说“记住……”即可添加。").foregroundStyle(WorkspaceStyle.secondary)
                         .accessibilityIdentifier("settings.memory.empty")
                 }
                 HStack(spacing: 12) {

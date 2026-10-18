@@ -583,7 +583,7 @@ struct AgentToolRecord: Identifiable, Codable, Equatable {
     }
     /// Keeps a failed save's message: once a save fails, nothing more runs this turn.
     private func recordSaveFailure(_ error: any Error) -> String {
-        let failure = String(localized: "会话保存失败，已停止后续执行：\(error.localizedDescription)")
+        let failure = String(localized: "聊天保存失败，已停止后续执行：\(error.localizedDescription)")
         storageFailure = failure; notice = failure
         return failure
     }

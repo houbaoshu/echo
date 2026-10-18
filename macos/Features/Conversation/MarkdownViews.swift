@@ -8,8 +8,8 @@ struct MarkdownBlock {
     var listDepth = 0
     var marker: String?
 
-    /// `codeSize` sizes inline and block code, so compact surfaces can match their body text.
-    static func parse(_ source: String, codeSize: CGFloat = WorkspaceStyle.bodySize) -> [Self] {
+    /// `codeStyle` is the text style of inline and block code, so compact surfaces can match their body text.
+    static func parse(_ source: String, codeStyle: Font.TextStyle = .body) -> [Self] {
         guard let parsed = try? AttributedString(markdown: source,
             options: .init(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)) else {
             return [Self(text: AttributedString(source))]
@@ -39,7 +39,7 @@ struct MarkdownBlock {
             // Text renders formatting and links, never remote images or executable HTML.
             for run in block.text.runs {
                 if run.inlinePresentationIntent?.contains(.code) == true {
-                    block.text[run.range].font = .system(size: codeSize, design: .monospaced)
+                    block.text[run.range].font = .system(codeStyle, design: .monospaced)
                 }
                 if let link = run.link, !["http", "https", "mailto"].contains(link.scheme?.lowercased() ?? "") {
                     block.text[run.range].link = nil

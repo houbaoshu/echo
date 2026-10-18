@@ -845,7 +845,7 @@ import FoundationModels
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
         ws.deleteConversation(unsaved.id)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
-        #expect(ws.persistenceNotice?.contains("会话保存失败") == true
+        #expect(ws.persistenceNotice?.contains("聊天保存失败") == true
                      && FileManager.default.fileExists(atPath: persistence.sessionURL(unsaved.id).path)
                      && persistence.load().0?.conversations.contains { $0.id == unsaved.id } == true,
                      "A failed manifest save keeps the sidecar it still references")

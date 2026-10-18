@@ -27,8 +27,8 @@ struct WorkspaceProject: Identifiable, Codable, Equatable {
         self.id = id; self.projectID = projectID; self.title = title
         self.manuallyNamed = manuallyNamed; self.untitled = untitled; self.lastUsed = lastUsed; self.store = store
     }
-    /// A title, not the 新对话 command, so the two can be translated apart.
-    static var untitledTitle: String { String(localized: "新对话|未命名会话标题", defaultValue: "新对话") }
+    /// A title, not the 新聊天 command, so the two can be translated apart.
+    static var untitledTitle: String { String(localized: "新聊天|未命名聊天标题", defaultValue: "新聊天") }
     var displayTitle: String { untitled ? Self.untitledTitle : title }
 }
 
@@ -76,7 +76,7 @@ struct WorkspaceSnapshot: Codable {
     func sessionURL(_ id: UUID) -> URL {
         sessionsDirectory.appendingPathComponent("\(id.uuidString).json")
     }
-    static var unreadableHistory: String { String(localized: "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。") }
+    static var unreadableHistory: String { String(localized: "Agent 历史无法读取，已禁止执行。请恢复聊天文件后重新打开应用。") }
     func saveSession(_ state: TaskStore.Snapshot, id: UUID) throws {
         let target = sessionURL(id)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -158,9 +158,9 @@ struct WorkspaceSnapshot: Codable {
         case unreadable
         var message: String {
             switch self {
-            case .preservationFailed(let reason): String(localized: "无法备份损坏的会话文件：\(reason)")
-            case .restoredFromBackup: String(localized: "会话文件无法读取，已从备份恢复；原文件已保留。")
-            case .unreadable: String(localized: "会话文件无法读取，原文件已保留。已打开空白工作区。")
+            case .preservationFailed(let reason): String(localized: "无法备份损坏的聊天文件：\(reason)")
+            case .restoredFromBackup: String(localized: "聊天文件无法读取，已从备份恢复；原文件已保留。")
+            case .unreadable: String(localized: "聊天文件无法读取，原文件已保留。已打开空白工作区。")
             }
         }
     }
@@ -727,7 +727,7 @@ struct WorkspaceSnapshot: Codable {
         guard flush(), let persistence else { return }
         persistedSessionIDs.remove(id)
         do { try persistence.refreshBackup(); try persistence.removeSession(id); try persistence.removeBackups(id) }
-        catch { persistenceNotice = String(localized: "会话记录删除失败：\(error.localizedDescription)") }
+        catch { persistenceNotice = String(localized: "聊天记录删除失败：\(error.localizedDescription)") }
     }
     /// The sidebar always lists everything. Searching is a separate surface — a palette
     /// with its own query and its own results — so the column never hides chats behind a
@@ -854,7 +854,7 @@ struct WorkspaceSnapshot: Codable {
             }
             return true
         }
-        catch { persistenceNotice = String(localized: "会话保存失败：\(error.localizedDescription)"); return false }
+        catch { persistenceNotice = String(localized: "聊天保存失败：\(error.localizedDescription)"); return false }
     }
     /// Reads what a save writes with tracking armed: the first later change to any of it schedules
     /// a save, inside that write, the way an explicit `scheduleSave()` after it would. Every flush
@@ -874,7 +874,7 @@ struct WorkspaceSnapshot: Codable {
             }
         }
     }
-    private static var saveBlockedNotice: String { String(localized: "无法备份损坏的会话文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。") }
+    private static var saveBlockedNotice: String { String(localized: "无法备份损坏的聊天文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。") }
     func shutdown() {
         fileBrowser.select(project: nil)
         dictation.shutdown()

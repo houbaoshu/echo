@@ -776,7 +776,7 @@ struct PetControls: View {
     private static var connectingLabel: String { String(localized: "正在连接 Live Voice，点按取消") }
 
     private var composeSegment: some View {
-        PetSegment(label: String(localized: "新聊天"), identifier: "pet.compose", action: presentation.openComposer) {
+        PetSegment(label: String(localized: "新聊天|桌宠按钮", defaultValue: "新聊天"), identifier: "pet.compose", action: presentation.openComposer) {
             Image(systemName: "square.and.pencil")
         }
     }
@@ -803,12 +803,11 @@ struct PetControls: View {
                     }
                 }
             Button(action: send) {
-                Image(systemName: "arrow.up").font(.system(.subheadline, weight: .semibold)).foregroundStyle(.white)
-                    .frame(width: 22, height: 22)
-                    .background(Color.accentColor.opacity(surface.canSend ? 1 : 0.35), in: Circle())
-                    .contentShape(Circle())
+                Image(systemName: "arrow.up").font(.system(.body, weight: .semibold))
+                    .frame(width: 28 - systemButtonInset, height: 28 - systemButtonInset)
             }
-            .buttonStyle(.plain).disabled(!surface.canSend)
+            .buttonStyle(.borderedProminent).buttonBorderShape(.circle).companionControlAppearsActive()
+            .disabled(!surface.canSend)
             .help("发送").accessibilityLabel("发送").accessibilityIdentifier("pet.send")
         }
         .padding(.leading, workspace == nil ? 14 : 5).padding(.trailing, 5)
@@ -833,14 +832,14 @@ struct PetControls: View {
         .accessibilityIdentifier("pet.attachments")
     }
 
+    /// The system draws the press; while the panel is open the button looks as it always does, and
+    /// the panel's arrow pointing at it is what says it is open, as with the main composer's +.
     private func projectButton(_ workspace: WorkspaceStore) -> some View {
         Button { presentation.isProjectPickerOpen.toggle() } label: {
-            Image(systemName: "plus").font(.system(.callout, weight: .medium)).foregroundStyle(.primary)
-                .frame(width: 22, height: 22)
-                .background { Circle().fill(.primary.opacity(presentation.isProjectPickerOpen ? 0.12 : 0.06)) }
-                .contentShape(Circle())
+            Image(systemName: "plus").font(.system(.body, weight: .medium))
+                .frame(width: 28 - systemButtonInset, height: 28 - systemButtonInset)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.bordered).buttonBorderShape(.circle).companionControlAppearsActive()
         .popover(isPresented: $presentation.isProjectPickerOpen, arrowEdge: .bottom) {
             ProjectSelectionPanel(workspace: workspace, selectedProjectID: presentation.projectID,
                                   select: { presentation.projectID = $0 }, addFolder: actions.addProjectFolder,
@@ -1204,7 +1203,7 @@ struct CompanionBubble: View, Equatable {
     /// inline styles and code keep their formatting, headings turn bold, list items keep their markers.
     static func renderedReply(_ markdown: String) -> AttributedString {
         var result = AttributedString()
-        for block in MarkdownBlock.parse(markdown, codeSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize) {
+        for block in MarkdownBlock.parse(markdown, codeStyle: .subheadline) {
             var text = block.text
             while text.characters.last?.isNewline == true { text.characters.removeLast() }
             guard !text.characters.isEmpty else { continue }

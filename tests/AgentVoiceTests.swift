@@ -160,7 +160,7 @@ extension EchoVoiceScenarios {
             else { f.speak("第一个问题") }
             #expect(f.store.task?.status == .failed && !f.store.isGenerating, "typed=\(typed): the turn never began")
             try await eventually("typed=\(typed): the call ends") { f.voice.snapshot.session == .inactive }
-            #expect(f.voice.error?.contains("会话保存失败") == true, "typed=\(typed): \(f.voice.error ?? "no error")")
+            #expect(f.voice.error?.contains("聊天保存失败") == true, "typed=\(typed): \(f.voice.error ?? "no error")")
         }
     }
 

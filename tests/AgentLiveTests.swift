@@ -290,7 +290,7 @@ import ImageIO
         let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
         let (saved, key) = try settings.savedModelCredentials()
         guard let search = AgentWebSearcher.searcher(for: settings) else {
-            throw SettingsError("保存的设置没有联网搜索：需要火山方舟用于对话，或模型服务是 DeepSeek 且有 Key。")
+            throw SettingsError("保存的设置没有联网搜索：需要火山方舟用于聊天，或模型服务是 DeepSeek 且有 Key。")
         }
         print("Search: \(search.service.name)"); fflush(nil)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")

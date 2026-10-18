@@ -166,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: String(localized: "文件"))
         let editMenu = makeEditMenu()
         let viewMenu = NSMenu(title: String(localized: "显示"))
-        let conversationMenu = NSMenu(title: String(localized: "对话"))
+        let conversationMenu = NSMenu(title: String(localized: "聊天|菜单栏", defaultValue: "聊天"))
         let windowMenu = NSMenu(title: String(localized: "窗口"))
         let helpMenu = NSMenu(title: String(localized: "帮助"))
         for submenu in [fileMenu, editMenu, viewMenu, conversationMenu, windowMenu, helpMenu] {
@@ -176,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⌘K, not ⌘F: this opens a palette that switches between chats, which is what ⌘K
         // means across editors. ⌘F on macOS means "find inside what I am looking at", so it
         // stays free for a find in the open conversation.
-        let quickOpen = fileMenu.addItem(withTitle: String(localized: "快速打开会话…"), action: #selector(search), keyEquivalent: "k")
+        let quickOpen = fileMenu.addItem(withTitle: String(localized: "搜索聊天…"), action: #selector(search), keyEquivalent: "k")
         quickOpen.keyEquivalentModifierMask = [.command]
         quickOpen.target = self
         fileMenu.addItem(withTitle: String(localized: "添加项目文件夹…|菜单栏", defaultValue: "添加项目文件夹…"), action: #selector(addProject), keyEquivalent: "").target = self
@@ -206,8 +206,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                        (String(localized: "全选"), "selectAll:", "a")] {
             editMenu.addItem(withTitle: title, action: NSSelectorFromString(selector), keyEquivalent: key)
         }
+        editMenu.addItem(.separator())
         editMenu.addItem(withTitle: String(localized: "查找"), action: nil, keyEquivalent: "").submenu = Self.makeFindMenu()
+        for (title, items) in Self.textSubmenus {
+            let submenu = NSMenu(title: title)
+            for item in items {
+                guard let (itemTitle, selector, key) = item else { submenu.addItem(.separator()); continue }
+                submenu.addItem(withTitle: itemTitle, action: NSSelectorFromString(selector), keyEquivalent: key)
+            }
+            editMenu.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = submenu
+        }
         return editMenu
+    }
+
+    /// The system's Spelling and Grammar, Substitutions, Transformations and Speech submenus, in
+    /// TextEdit's order and words. Like Find, the items have no target: the text view that has the
+    /// keyboard enables them, checks the toggles that are on for it, and does the work. A nil entry
+    /// is a separator.
+    static var textSubmenus: [(String, [(String, String, String)?])] {
+        [(String(localized: "拼写和语法"), [
+            (String(localized: "显示拼写和语法"), "showGuessPanel:", ":"),
+            (String(localized: "立即检查文稿"), "checkSpelling:", ";"),
+            nil,
+            (String(localized: "键入时检查拼写"), "toggleContinuousSpellChecking:", ""),
+            (String(localized: "检查拼写和语法"), "toggleGrammarChecking:", ""),
+            (String(localized: "自动纠正拼写"), "toggleAutomaticSpellingCorrection:", ""),
+         ]),
+         (String(localized: "替换"), [
+            (String(localized: "显示替换"), "orderFrontSubstitutionsPanel:", ""),
+            nil,
+            (String(localized: "智能拷贝/粘贴"), "toggleSmartInsertDelete:", ""),
+            (String(localized: "智能引号"), "toggleAutomaticQuoteSubstitution:", ""),
+            (String(localized: "智能破折号"), "toggleAutomaticDashSubstitution:", ""),
+            (String(localized: "智能链接"), "toggleAutomaticLinkDetection:", ""),
+            (String(localized: "数据检测器"), "toggleAutomaticDataDetection:", ""),
+            (String(localized: "文本替换"), "toggleAutomaticTextReplacement:", ""),
+         ]),
+         (String(localized: "转换"), [
+            (String(localized: "变为大写"), "uppercaseWord:", ""),
+            (String(localized: "变为小写"), "lowercaseWord:", ""),
+            (String(localized: "首字母大写"), "capitalizeWord:", ""),
+         ]),
+         (String(localized: "语音|菜单栏", defaultValue: "语音"), [
+            (String(localized: "开始朗读"), "startSpeaking:", ""),
+            (String(localized: "停止朗读"), "stopSpeaking:", ""),
+         ])]
     }
 
     /// The system Find submenu. Items have no target, so the responder chain decides:

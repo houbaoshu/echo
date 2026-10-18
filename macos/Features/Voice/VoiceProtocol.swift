@@ -180,7 +180,7 @@ struct VoiceTextDelta {
     private(set) var previous = ""
     mutating func append(_ cumulative: String) throws -> String {
         guard cumulative.hasPrefix(previous) else {
-            throw SettingsError(localized: "模型改写了已播报的文本，语音通话已结束；完整回复保留在会话中。")
+            throw SettingsError(localized: "模型改写了已播报的文本，语音通话已结束；完整回复保留在聊天中。")
         }
         let delta = String(cumulative.dropFirst(previous.count))
         previous = cumulative

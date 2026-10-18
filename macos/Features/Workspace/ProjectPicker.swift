@@ -15,7 +15,9 @@ struct ConversationProjectPicker: View {
         HStack {
             HStack(spacing: 0) {
                 Button { isPresented.toggle() } label: { label }
-                    .buttonStyle(.plain).focused($focused)
+                    // An accessory bar button, as in Finder's search scope bar: no bezel until the
+                    // pointer is over it, then the system's own hover and pressed bezel.
+                    .buttonStyle(.accessoryBar).focused($focused)
                     .popover(isPresented: $isPresented,
                              attachmentAnchor: .rect(.rect(CGRect(x: 0, y: 0, width: 320, height: 28)))) {
                         ProjectSelectionPanel(workspace: workspace,
@@ -54,7 +56,6 @@ struct ConversationProjectPicker: View {
                         .accessibilityIdentifier("conversation.project.detach")
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 7).fill(WorkspaceStyle.primary.opacity(hovered || focused || detachFocused ? 0.06 : 0)))
             .onHover { hovered = $0 }
             Spacer(minLength: 0)
         }
@@ -77,7 +78,6 @@ struct ConversationProjectPicker: View {
             if project.map(workspace.isAvailable) == false { Text("不可用").foregroundStyle(WorkspaceStyle.warning) }
             if editable { Image(systemName: "chevron.down").font(.caption2) }
         }.font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
-            .padding(.horizontal, 7).frame(height: 28).contentShape(Rectangle())
     }
 }
 

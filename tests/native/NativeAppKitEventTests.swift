@@ -448,7 +448,7 @@ private struct HeldExecutor: LanguageModelExecutor {
             main.showWorkspace()
             workspace.newConversation(projectID: workspace.selected?.projectID)
         })
-        let menu = NSMenu(title: ""), file = NSMenu(title: "文件"), view = NSMenu(title: "显示"), chat = NSMenu(title: "对话")
+        let menu = NSMenu(title: ""), file = NSMenu(title: "文件"), view = NSMenu(title: "显示"), chat = NSMenu(title: "聊天")
         for submenu in [file, view, chat] {
             let item = NSMenuItem(); item.submenu = submenu; menu.addItem(item)
         }
@@ -629,7 +629,7 @@ private struct HeldExecutor: LanguageModelExecutor {
         let edit = AppDelegate().makeEditMenu()
         let titles = edit.items.map(\.title)
         let index = try XCTUnwrap(titles.firstIndex(of: "查找"))
-        XCTAssertEqual(titles[index - 1], "全选")
+        XCTAssertTrue(edit.items[index - 1].isSeparatorItem && titles[index - 2] == "全选")
         let find = try XCTUnwrap(edit.items[index].submenu)
         let finderAction = #selector(NSResponder.performTextFinderAction(_:))
         let expected: [(String, Selector, Int, String, NSEvent.ModifierFlags)] = [
@@ -647,6 +647,34 @@ private struct HeldExecutor: LanguageModelExecutor {
             XCTAssertEqual(item.keyEquivalentModifierMask, modifiers, title)
             XCTAssertNil(item.target, title)
         }
+    }
+
+    /// The system text submenus follow Find, untargeted, so the text view with the keyboard
+    /// enables them and checks its own toggles.
+    func testEditMenuTextSubmenus() throws {
+        let edit = AppDelegate().makeEditMenu()
+        let index = try XCTUnwrap(edit.items.map(\.title).firstIndex(of: "查找"))
+        let expected: [(String, [String])] = [
+            ("拼写和语法", ["showGuessPanel:", "checkSpelling:", "", "toggleContinuousSpellChecking:",
+                          "toggleGrammarChecking:", "toggleAutomaticSpellingCorrection:"]),
+            ("替换", ["orderFrontSubstitutionsPanel:", "", "toggleSmartInsertDelete:", "toggleAutomaticQuoteSubstitution:",
+                     "toggleAutomaticDashSubstitution:", "toggleAutomaticLinkDetection:", "toggleAutomaticDataDetection:",
+                     "toggleAutomaticTextReplacement:"]),
+            ("转换", ["uppercaseWord:", "lowercaseWord:", "capitalizeWord:"]),
+            ("语音", ["startSpeaking:", "stopSpeaking:"]),
+        ]
+        XCTAssertEqual(Array(edit.items[(index + 1)...].map(\.title)), expected.map(\.0))
+        let probe = NSTextView()
+        for (item, (title, selectors)) in zip(edit.items[(index + 1)...], expected) {
+            let submenu = try XCTUnwrap(item.submenu, title)
+            XCTAssertEqual(submenu.items.map { $0.action.map(NSStringFromSelector) ?? "" }, selectors, title)
+            for entry in submenu.items where !entry.isSeparatorItem {
+                XCTAssertNil(entry.target, entry.title)
+                XCTAssertTrue(entry.action.map(probe.responds(to:)) == true, "A text view answers \(entry.title)")
+            }
+        }
+        let spelling = try XCTUnwrap(edit.items[index + 1].submenu)
+        XCTAssertEqual(spelling.items.prefix(2).map(\.keyEquivalent), [":", ";"])
     }
 
     /// The native picker keeps its keyboard highlight scrolled into view.

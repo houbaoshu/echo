@@ -200,7 +200,7 @@ struct ChatSearchPalette: View {
                 // Under the query whether or not anything matched, and as wide as a result row.
                 Divider().padding(.horizontal, Self.rowInset).allowsHitTesting(false)
                 if results.isEmpty {
-                    Text("没有匹配的会话").font(WorkspaceStyle.caption).foregroundStyle(.secondary)
+                    Text("没有匹配的聊天").font(WorkspaceStyle.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, Self.contentInset).padding(.vertical, 12)
                         .allowsHitTesting(false)

@@ -17,7 +17,7 @@ import AppKit
             item.keyEquivalentModifierMask = modifiers
             item.target = self
         }
-        add(fileMenu, String(localized: "新对话|菜单栏", defaultValue: "新对话"), #selector(newConversation), "n", .command)
+        add(fileMenu, String(localized: "新聊天|菜单栏", defaultValue: "新聊天"), #selector(newConversation), "n", .command)
         // Titled by validateMenuItem from the column's state. These keep their own target
         // rather than leaving the selectors to AppKit, which would retitle them in its own words.
         add(viewMenu, String(localized: "显示边栏"), #selector(toggleSidebar), "s", [.control, .command])

@@ -250,7 +250,7 @@
         }
       }
     },
-    "Agent 历史无法读取，已禁止执行。请恢复会话文件后重新打开应用。" : {
+    "Agent 历史无法读取，已禁止执行。请恢复聊天文件后重新打开应用。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -452,16 +452,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The PDF is larger than %lld MB, so it wasn’t read."
-          }
-        }
-      }
-    },
-    "Provider" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Provider"
           }
         }
       }
@@ -699,86 +689,6 @@
         }
       }
     },
-    "会话" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chat"
-          }
-        }
-      }
-    },
-    "会话保存失败，已停止后续执行：%@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t save the chat, so the run stopped: %@"
-          }
-        }
-      }
-    },
-    "会话保存失败：%@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t save the chat: %@"
-          }
-        }
-      }
-    },
-    "会话文件无法读取，原文件已保留。已打开空白工作区。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t read your chats, so Echo started empty. The original file was kept."
-          }
-        }
-      }
-    },
-    "会话文件无法读取，已从备份恢复；原文件已保留。" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t read your chats, so Echo restored them from a backup. The original file was kept."
-          }
-        }
-      }
-    },
-    "会话记录" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Transcript"
-          }
-        }
-      }
-    },
-    "会话记录删除失败：%@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn’t delete the chat history: %@"
-          }
-        }
-      }
-    },
-    "会话输入框" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Message"
-          }
-        }
-      }
-    },
     "使用本地模型" : {
       "localizations" : {
         "en" : {
@@ -852,6 +762,16 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "停止回复"
+          }
+        }
+      }
+    },
+    "停止朗读" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop Speaking"
           }
         }
       }
@@ -1073,7 +993,7 @@
         }
       }
     },
-    "删除会话…" : {
+    "删除聊天…" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1199,6 +1119,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cancel dictation"
+          }
+        }
+      }
+    },
+    "变为大写" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Make Upper Case"
+          }
+        }
+      }
+    },
+    "变为小写" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Make Lower Case"
           }
         }
       }
@@ -1459,7 +1399,7 @@
         }
       }
     },
-    "在此项目中新建对话" : {
+    "在此项目中新建聊天" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -1555,16 +1495,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mark as completed: %@"
-          }
-        }
-      }
-    },
-    "对话" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chat"
           }
         }
       }
@@ -2003,6 +1933,16 @@
         }
       }
     },
+    "开始朗读" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Speaking"
+          }
+        }
+      }
+    },
     "当前离线，本地模型不完整（%@）。请联网后重试，或在设置中重新导入本地模型。" : {
       "localizations" : {
         "en" : {
@@ -2099,16 +2039,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Pending"
-          }
-        }
-      }
-    },
-    "快速打开会话…" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Search Chats…"
           }
         }
       }
@@ -2273,6 +2203,26 @@
         }
       }
     },
+    "拼写和语法" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spelling and Grammar"
+          }
+        }
+      }
+    },
+    "提供商" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Provider"
+          }
+        }
+      }
+    },
     "搜索 · %@" : {
       "localizations" : {
         "en" : {
@@ -2289,6 +2239,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search chats"
+          }
+        }
+      }
+    },
+    "搜索聊天…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search Chats…"
           }
         }
       }
@@ -2419,6 +2379,16 @@
         }
       }
     },
+    "数据检测器" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data Detectors"
+          }
+        }
+      }
+    },
     "文件" : {
       "localizations" : {
         "en" : {
@@ -2479,56 +2449,22 @@
         }
       }
     },
+    "文本替换" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text Replacement"
+          }
+        }
+      }
+    },
     "新增" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Added"
-          }
-        }
-      }
-    },
-    "新对话" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "New Chat"
-          }
-        }
-      }
-    },
-    "新对话|未命名会话标题" : {
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "New Chat"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "新对话"
-          }
-        }
-      }
-    },
-    "新对话|菜单栏" : {
-      "extractionState" : "extracted_with_value",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "New Chat"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "新对话"
           }
         }
       }
@@ -2568,7 +2504,56 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
+            "value" : "New Chat"
+          }
+        }
+      }
+    },
+    "新聊天|未命名聊天标题" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Chat"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新聊天"
+          }
+        }
+      }
+    },
+    "新聊天|桌宠按钮" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
             "value" : "Start new chat"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "新聊天"
+          }
+        }
+      }
+    },
+    "新聊天|菜单栏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Chat"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新聊天"
           }
         }
       }
@@ -2689,7 +2674,7 @@
         }
       }
     },
-    "无法备份损坏的会话文件：%@" : {
+    "无法备份损坏的聊天文件：%@" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2699,7 +2684,7 @@
         }
       }
     },
-    "无法备份损坏的会话文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。" : {
+    "无法备份损坏的聊天文件；为保留原件，保存已暂停。请恢复目录写入权限后重新打开应用。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2719,7 +2704,7 @@
         }
       }
     },
-    "无法开始语音：缺少会话或设置。" : {
+    "无法开始语音：缺少聊天或设置。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3009,6 +2994,26 @@
         }
       }
     },
+    "显示拼写和语法" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Spelling and Grammar"
+          }
+        }
+      }
+    },
+    "显示替换" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Substitutions"
+          }
+        }
+      }
+    },
     "显示桌宠" : {
       "localizations" : {
         "en" : {
@@ -3059,6 +3064,46 @@
         }
       }
     },
+    "智能引号" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smart Quotes"
+          }
+        }
+      }
+    },
+    "智能拷贝/粘贴" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smart Copy/Paste"
+          }
+        }
+      }
+    },
+    "智能破折号" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smart Dashes"
+          }
+        }
+      }
+    },
+    "智能链接" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Smart Links"
+          }
+        }
+      }
+    },
     "暂停聆听" : {
       "localizations" : {
         "en" : {
@@ -3075,6 +3120,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Update memory: %@"
+          }
+        }
+      }
+    },
+    "替换" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Substitutions"
           }
         }
       }
@@ -3325,6 +3380,16 @@
         }
       }
     },
+    "检查拼写和语法" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check Grammar With Spelling"
+          }
+        }
+      }
+    },
     "模型" : {
       "localizations" : {
         "en" : {
@@ -3345,7 +3410,7 @@
         }
       }
     },
-    "模型改写了已播报的文本，语音通话已结束；完整回复保留在会话中。" : {
+    "模型改写了已播报的文本，语音通话已结束；完整回复保留在聊天中。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3795,7 +3860,7 @@
         }
       }
     },
-    "此会话的消息和草稿将被删除，正在进行的模型请求也会停止。" : {
+    "此聊天的消息和草稿将被删除，正在进行的模型请求也会停止。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3805,7 +3870,7 @@
         }
       }
     },
-    "没有匹配的会话" : {
+    "没有匹配的聊天" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4106,7 +4171,7 @@
         }
       }
     },
-    "用于对话" : {
+    "用于聊天" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4126,7 +4191,7 @@
         }
       }
     },
-    "移入跳跃，拖动时按方向跑动，光标移动时朝向光标，点击挥手并打开会话，右键可隐藏精灵或打开设置" : {
+    "移入跳跃，拖动时按方向跑动，光标移动时朝向光标，点击挥手并打开聊天，右键可隐藏精灵或打开设置" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4156,7 +4221,7 @@
         }
       }
     },
-    "移除项目，保留会话" : {
+    "移除项目，保留聊天" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -4192,6 +4257,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Window"
+          }
+        }
+      }
+    },
+    "立即检查文稿" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check Document Now"
           }
         }
       }
@@ -4523,6 +4598,120 @@
         }
       }
     },
+    "聊天|Live Voice 所属" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "聊天"
+          }
+        }
+      }
+    },
+    "聊天|菜单栏" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "聊天"
+          }
+        }
+      }
+    },
+    "聊天保存失败，已停止后续执行：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t save the chat, so the run stopped: %@"
+          }
+        }
+      }
+    },
+    "聊天保存失败：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t save the chat: %@"
+          }
+        }
+      }
+    },
+    "聊天文件无法读取，原文件已保留。已打开空白工作区。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read your chats, so Echo started empty. The original file was kept."
+          }
+        }
+      }
+    },
+    "聊天文件无法读取，已从备份恢复；原文件已保留。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read your chats, so Echo restored them from a backup. The original file was kept."
+          }
+        }
+      }
+    },
+    "聊天记录" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcript"
+          }
+        }
+      }
+    },
+    "聊天记录删除失败：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t delete the chat history: %@"
+          }
+        }
+      }
+    },
+    "聊天输入框" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Message"
+          }
+        }
+      }
+    },
+    "自动纠正拼写" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Correct Spelling Automatically"
+          }
+        }
+      }
+    },
     "自定义（兼容 API）" : {
       "localizations" : {
         "en" : {
@@ -4779,6 +4968,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Voice"
+          }
+        }
+      }
+    },
+    "语音|菜单栏" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speech"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "语音"
           }
         }
       }
@@ -5415,6 +5621,16 @@
         }
       }
     },
+    "转换" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transformations"
+          }
+        }
+      }
+    },
     "输入 API Key" : {
       "localizations" : {
         "en" : {
@@ -5535,7 +5751,7 @@
         }
       }
     },
-    "还没有记忆。在对话里说“记住……”即可添加。" : {
+    "还没有记忆。在聊天里说“记住……”即可添加。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -5865,16 +6081,6 @@
         }
       }
     },
-    "重命名" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Rename…"
-          }
-        }
-      }
-    },
     "重命名|对话框标题" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
@@ -5888,6 +6094,16 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "重命名"
+          }
+        }
+      }
+    },
+    "重命名…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rename…"
           }
         }
       }
@@ -5918,6 +6134,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Retry Save"
+          }
+        }
+      }
+    },
+    "键入时检查拼写" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check Spelling While Typing"
           }
         }
       }
@@ -6128,6 +6354,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Project unavailable: %@"
+          }
+        }
+      }
+    },
+    "首字母大写" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capitalize"
           }
         }
       }
