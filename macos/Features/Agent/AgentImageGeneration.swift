@@ -217,13 +217,18 @@ enum AgentImageFiles {
         return result.trimmingCharacters(in: .whitespaces)
     }
 
-    /// `base.ext`, or `base 2.ext`, `base 3.ext`… for the first name not taken in `directory`.
-    static func freeName(in directory: Int32, base: String, ext: String) -> String {
+    /// `base.ext`, or `base 2.ext`, `base 3.ext`… for the first name not taken in `directory`. A
+    /// name that cannot be looked up for any other reason than that nothing has it, such as one too
+    /// long or a folder that cannot be searched, ends the search with what the system said.
+    static func freeName(in directory: Int32, base: String, ext: String) -> Result<String, AgentFileWriter.Errno> {
         var number = 1
         while true {
             let name = number == 1 ? "\(base).\(ext)" : "\(base) \(number).\(ext)"
             var info = stat()
-            if fstatat(directory, name, &info, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT { return name }
+            guard fstatat(directory, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {
+                let code = errno
+                return code == ENOENT ? .success(name) : .failure(.init(code: code))
+            }
             number += 1
         }
     }
@@ -242,7 +247,11 @@ enum AgentImageFiles {
             defer { close(fd) }
             // Another process can take the name between the look and the write; the next name then.
             for _ in 0..<5 {
-                let name = freeName(in: fd, base: base, ext: image.format.fileExtension)
+                let name: String
+                switch freeName(in: fd, base: base, ext: image.format.fileExtension) {
+                case .success(let free): name = free
+                case .failure(let error): return failure(error.code)
+                }
                 do { try record(name) } catch { return .failure(.init(message: error.localizedDescription)) }
                 switch AgentFileWriter.replace(in: fd, name: name, with: image.data, like: nil, skipping: []) {
                 case .none: return .success(name)

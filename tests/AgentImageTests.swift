@@ -258,6 +258,36 @@ import UniformTypeIdentifiers
         #expect(try Data(contentsOf: chat.pictures.appendingPathComponent(Self.base + ".jpeg")) == Data("taken".utf8), "Nothing is replaced")
     }
 
+    /// Codex review #2: a name that cannot be looked up for a reason other than being free, here one
+    /// too long for the file system, ends the save with what the system said, and every write after
+    /// it still gets the lock.
+    @Test func aNameThatCannotBeLookedUpEndsTheSave() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("echo-image-names-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let root = try #require(ProjectPath.canonical(folder.path))
+        let image = AgentGeneratedImage(data: Self.encoded(.jpeg), format: .jpeg, width: 64, height: 48)
+        #expect(AgentImageFiles.save(image, in: root, base: String(repeating: "a", count: 300)) { _ in }
+                == .failure(.init(message: String(cString: strerror(ENAMETOOLONG)))))
+        #expect(AgentImageFiles.save(image, in: root, base: "猫") { _ in } == .success("猫.jpeg"))
+    }
+
+    /// Codex review #2: Pictures/Echo that can be read but not searched: the image is not saved, the
+    /// card says why, and the turn ends rather than looking for a free name for ever.
+    @Test func aFolderThatCannotBeSearchedEndsTheTurnWithTheImageNotSaved() async throws {
+        let chat = Chat(FinderRootTests.oneByOne([("generate_image", Self.cat)]), imageGenerator: Self.generator([Self.made(Self.encoded(.jpeg))]))
+        defer { Self.remove(chat) }
+        try FileManager.default.createDirectory(at: chat.pictures, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: chat.pictures.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: chat.pictures.path) }
+        #expect(chat.store.send("画一张"))
+        try await chat.idle()
+        let tool = try #require(chat.store.tools.first)
+        let result = Self.json(tool.result)
+        #expect(tool.state == .failed && result["reason"] as? String == "save" && result["message"] as? String == String(cString: strerror(EACCES)))
+        #expect(AgentImageCard(tool: tool).lines == ["图片已生成，但没能保存：\(String(cString: strerror(EACCES)))"] && tool.undo == nil)
+    }
+
     // MARK: Undo
 
     @Test func undoMovesTheImageToTheTrashAsForANewFile() async throws {
