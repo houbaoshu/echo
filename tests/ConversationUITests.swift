@@ -4792,6 +4792,318 @@ private struct ComposerHeightHost: View {
                      "The action opens a new chat in the project, got \(String(describing: opened.projectID))")
     }
 
+    /// The main window over a workspace with chats Alpha and Beta in 最近 and Gamma in a project,
+    /// Alpha open, and the ways the sidebar tests reach it: a row's menu as a right click raises
+    /// it, the rename field through the field editor, and keys as the window delivers them. Text
+    /// goes in with insertText and a field's Return and Esc as the field editor's commands, so
+    /// neither the keyboard layout nor an input method is involved; the list has no input
+    /// context, so keys sent to it reach it as they are.
+    @MainActor private final class SidebarFixture {
+        unowned let test: ConversationViewTests
+        let root: URL
+        let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
+        let projectID: UUID
+        var alpha = UUID(), beta = UUID(), gamma = UUID()
+        let main: MainWindowController
+        var window: NSWindow!, content: NSView!, list: NSOutlineView!, composer: NSView!
+        var sidebar: NSView { main.sidebarItem.viewController.view }
+
+        init(_ test: ConversationViewTests) throws {
+            self.test = test
+            root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-sidebar-\(UUID())")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            projectID = workspace.addProject(url: root)
+            main = MainWindowController(workspace: workspace, defaults: EchoTestResources.defaults(),
+                                        settings: SettingsStore(secrets: ComposerSecrets()))
+        }
+        func present() async throws {
+            alpha = chat("Alpha"); beta = chat("Beta"); gamma = chat("Gamma", projectID: projectID)
+            workspace.select(alpha)
+            main.sidebarItem.isCollapsed = false
+            main.present()
+            guard let window = main.window, let content = window.contentView else { throw stopTest("No window") }
+            self.window = window; self.content = content
+            try await eventually("The sidebar lists the chats", layingOut: content) {
+                test.findAccessibility("conversation.recent.\(beta)", in: sidebar) != nil
+            }
+            guard let list = test.findView(sidebar, { $0 is NSOutlineView }) as? NSOutlineView else {
+                throw stopTest("The sidebar must be a system source list")
+            }
+            guard let composer = test.findAccessibility("conversation.composer", in: content) as? NSView else {
+                throw stopTest("The composer must be on screen")
+            }
+            self.list = list; self.composer = composer
+        }
+        func close() {
+            main.shutdown(); workspace.shutdown()
+            try? FileManager.default.removeItem(at: root)
+        }
+        private func chat(_ title: String, projectID: UUID? = nil) -> UUID {
+            let id = workspace.newConversation(projectID: projectID).id
+            XCTAssertTrue(workspace.send(title, conversationID: id), "\(title) becomes a sidebar chat")
+            return id
+        }
+        func title(_ id: UUID) -> String? { workspace.conversation(id: id)?.displayTitle }
+        func projectName() -> String? { workspace.projects.first { $0.id == projectID }?.name }
+
+        func row(_ id: String) throws -> Int {
+            guard let node = test.findAccessibility(id, in: sidebar), let screen = node.accessibilityFrame?() else {
+                throw stopTest("No row \(id)")
+            }
+            let point = list.convert(window.convertFromScreen(screen), from: nil)
+            let row = list.row(at: NSPoint(x: point.midX, y: point.midY))
+            guard row >= 0 else { throw stopTest("\(id) is not over a row") }
+            return row
+        }
+        /// The field being edited, through the field editor that holds the keyboard.
+        func editing() -> (field: SidebarRenameField.Field, editor: NSTextView)? {
+            guard let editor = window.firstResponder as? NSTextView,
+                  let field = editor.delegate as AnyObject? as? SidebarRenameField.Field else { return nil }
+            return (field, editor)
+        }
+        /// Waits for the row to turn into a field holding the keyboard, with the whole name selected.
+        func field(in index: Int, holding name: String, _ label: String) async throws -> NSTextView {
+            try await eventually("\(label): the row turns into a field holding the keyboard", layingOut: content) {
+                guard let (field, _) = editing() else { return false }
+                let frame = list.convert(field.bounds, from: field)
+                return list.row(at: NSPoint(x: frame.midX, y: frame.midY)) == index
+            }
+            let editor = editing()!.editor
+            XCTAssertTrue(editor.string == name, "\(label): the field starts from the name, got \(editor.string)")
+            XCTAssertTrue(editor.selectedRange() == NSRange(location: 0, length: (name as NSString).length),
+                          "\(label): the whole name is selected, got \(editor.selectedRange())")
+            return editor
+        }
+        /// Raises the menu a right click raises over the row, as AppKit does from the view under
+        /// the pointer, and chooses Rename.
+        func rename(_ id: String, from name: String) async throws -> NSTextView {
+            let index = try row(id)
+            let rect = list.rect(ofRow: index)
+            let point = list.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+            let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            var view = content.hitTest(content.convert(point, from: nil))
+            var menu: NSMenu?
+            while let current = view, menu == nil { menu = current.menu(for: event); view = current.superview }
+            guard let menu else { throw stopTest("No menu over \(id)") }
+            menu.delegate?.menuNeedsUpdate?(menu)
+            guard let item = menu.items.firstIndex(where: { $0.title == "重新命名" }) else {
+                throw stopTest("No Rename over \(id): \(menu.items.map(\.title))")
+            }
+            menu.performActionForItem(at: item)
+            return try await field(in: index, holding: name, "Rename from the menu over \(id)")
+        }
+        func type(_ text: String, into editor: NSTextView) {
+            editor.insertText(text, replacementRange: editor.selectedRange())
+        }
+        func listHasKeyboard(_ label: String) async throws {
+            try await eventually("\(label): the list takes the keyboard back", layingOut: content) {
+                window.firstResponder === list && editing() == nil
+            }
+        }
+        /// A key as the window delivers it to whatever holds the keyboard.
+        func key(_ code: UInt16, _ characters: String) {
+            window.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!)
+        }
+        /// Selects the row as a click on it does, with the list holding the keyboard.
+        func select(_ id: String) async throws {
+            let index = try row(id)
+            XCTAssertTrue(window.makeFirstResponder(list))
+            list.selectRowIndexes([index], byExtendingSelection: false)
+            try await eventually("\(id) is selected", layingOut: content) { list.selectedRow == index }
+        }
+    }
+
+    /// Renaming in place from a sidebar row's menu: the row the menu was raised over turns into a
+    /// field holding its name, all selected, whichever row is selected. Return keeps what was typed,
+    /// Esc and an empty name keep the old name, and both hand the keyboard back to the list. The
+    /// keyboard moving elsewhere, as a click does, keeps what was typed and stays where it went, and
+    /// starting another rename keeps the first one's.
+    func testSidebarRenamesRowsInPlace() async throws {
+        let s = try SidebarFixture(self)
+        defer { s.close() }
+        try await s.present()
+        let (alpha, beta, gamma, projectID) = (s.alpha, s.beta, s.gamma, s.projectID)
+
+        // A row that is not selected; the selection stays where it was.
+        var editor = try await s.rename("conversation.recent.\(beta)", from: "Beta")
+        s.type("Beta 改", into: editor)
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        try await s.listHasKeyboard("Return")
+        XCTAssertTrue(s.title(beta) == "Beta 改", "Return keeps the typed name, got \(String(describing: s.title(beta)))")
+        XCTAssertTrue(s.workspace.selectedID == alpha, "Renaming another row leaves the selection alone")
+
+        editor = try await s.rename("conversation.recent.\(beta)", from: "Beta 改")
+        s.type("不要", into: editor)
+        editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        try await s.listHasKeyboard("Esc")
+        XCTAssertTrue(s.title(beta) == "Beta 改", "Esc keeps the old name, got \(String(describing: s.title(beta)))")
+
+        editor = try await s.rename("conversation.recent.\(beta)", from: "Beta 改")
+        s.type("  ", into: editor)
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        try await s.listHasKeyboard("An empty name")
+        XCTAssertTrue(s.title(beta) == "Beta 改", "An empty name keeps the old one, got \(String(describing: s.title(beta)))")
+
+        // The selected row: the field draws its own text background, in the standard text and
+        // selection colours, rather than the row's accent fill showing through it.
+        editor = try await s.rename("conversation.recent.\(alpha)", from: "Alpha")
+        let field = try XCTUnwrap(s.editing()?.field)
+        // The field on its own: an opaque background is what hides the row's fill. The system
+        // bezel draws a fill of its own instead, slightly translucent, whatever the colour is set to.
+        let image = try XCTUnwrap(field.bitmapImageRepForCachingDisplay(in: field.bounds))
+        field.cacheDisplay(in: field.bounds, to: image)
+        var background: NSColor?, selection: NSColor?
+        field.effectiveAppearance.performAsCurrentDrawingAppearance {
+            background = NSColor.textBackgroundColor.usingColorSpace(.sRGB)
+            selection = NSColor.selectedTextBackgroundColor.usingColorSpace(.sRGB)
+        }
+        // Past the end of the name, where only the background is drawn.
+        let drawn = image.colorAt(x: image.pixelsWide - 6, y: image.pixelsHigh / 2)?.usingColorSpace(.sRGB)
+        func close(_ a: NSColor?, _ b: NSColor?) -> Bool {
+            guard let a, let b else { return false }
+            return abs(a.redComponent - b.redComponent) < 0.02 && abs(a.greenComponent - b.greenComponent) < 0.02
+                && abs(a.blueComponent - b.blueComponent) < 0.02 && a.alphaComponent > 0.999
+        }
+        XCTAssertTrue(close(drawn, background), "The field is drawn on the text background, got \(String(describing: drawn))")
+        XCTAssertTrue(field.textColor == .textColor, "The name is in the standard text colour")
+        let selected = (editor.selectedTextAttributes[.backgroundColor] as? NSColor).flatMap { color in
+            var resolved: NSColor?
+            field.effectiveAppearance.performAsCurrentDrawingAppearance { resolved = color.usingColorSpace(.sRGB) }
+            return resolved
+        }
+        XCTAssertTrue(close(selected, selection), "The selected text is in the system selection colour, got \(String(describing: selected))")
+
+        // The keyboard moving to the composer, as a click on it moves it.
+        s.type("Alpha 改", into: editor)
+        XCTAssertTrue(s.window.makeFirstResponder(s.composer))
+        try await eventually("A click elsewhere ends the rename", layingOut: s.content) {
+            s.title(alpha) == "Alpha 改" && s.editing() == nil
+        }
+        // The list would take the keyboard one main-queue turn later, and SwiftUI applies that
+        // focus on its next update.
+        await observationWindow(.milliseconds(300))
+        XCTAssertTrue(s.window.firstResponder === s.composer, "The keyboard stays where the click put it")
+
+        // Another rename while one is open: the first keeps what was typed. The chat in its
+        // project's group is a row of its own, apart from the same chat in 最近.
+        editor = try await s.rename("conversation.\(projectID).\(gamma)", from: "Gamma")
+        s.type("Gamma 组内", into: editor)
+        editor = try await s.rename("conversation.recent.\(alpha)", from: "Alpha 改")
+        XCTAssertTrue(s.title(gamma) == "Gamma 组内", "The first rename keeps its name, got \(String(describing: s.title(gamma)))")
+        s.type("Alpha 二", into: editor)
+
+        // The project row, also while a chat is being renamed.
+        editor = try await s.rename("workspace.project.\(projectID)", from: s.root.lastPathComponent)
+        XCTAssertTrue(s.title(alpha) == "Alpha 二", "The chat keeps its name, got \(String(describing: s.title(alpha)))")
+        s.type("项目改名", into: editor)
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        try await s.listHasKeyboard("Return in the project row")
+        XCTAssertTrue(s.projectName() == "项目改名", "The project takes the name, got \(String(describing: s.projectName()))")
+    }
+
+    /// Return on the selected row renames it, chat or project, as the menu's Rename does; Return
+    /// in the field keeps the name. Picking a project leaves the open chat open, and a chat
+    /// opened from elsewhere takes the selection back. With nothing selected, Return does nothing.
+    func testSidebarReturnRenamesTheSelectedRow() async throws {
+        let s = try SidebarFixture(self)
+        defer { s.close() }
+        try await s.present()
+        let (alpha, beta, projectID) = (s.alpha, s.beta, s.projectID)
+
+        try await s.select("conversation.recent.\(beta)")
+        XCTAssertTrue(s.workspace.selectedID == beta, "Selecting the row opens the chat")
+        s.key(36, "\r")
+        var editor = try await s.field(in: try s.row("conversation.recent.\(beta)"), holding: "Beta", "Return on a chat")
+        s.type("Beta 回车", into: editor)
+        s.key(36, "\r")
+        try await s.listHasKeyboard("Return in the field")
+        XCTAssertTrue(s.title(beta) == "Beta 回车", "Return in the field keeps the name, got \(String(describing: s.title(beta)))")
+
+        try await s.select("workspace.project.\(projectID)")
+        XCTAssertTrue(s.workspace.selectedID == beta, "Picking a project leaves the open chat open")
+        s.key(36, "\r")
+        editor = try await s.field(in: try s.row("workspace.project.\(projectID)"), holding: s.root.lastPathComponent,
+                                   "Return on a project")
+        s.type("回车项目", into: editor)
+        s.key(36, "\r")
+        try await s.listHasKeyboard("Return in the project field")
+        XCTAssertTrue(s.projectName() == "回车项目", "The project takes the name, got \(String(describing: s.projectName()))")
+
+        s.workspace.select(alpha)
+        try await eventually("A chat opened elsewhere takes the selection back", layingOut: s.content) {
+            s.list.selectedRow == (try? s.row("conversation.recent.\(alpha)"))
+        }
+
+        // A new chat has no row, so nothing is selected. It hands its composer the keyboard first.
+        s.workspace.newConversation()
+        try await eventually("Nothing is selected", layingOut: s.content) { s.list.selectedRow == -1 }
+        try await eventually("The new chat's composer takes the keyboard", layingOut: s.content) {
+            s.window.firstResponder is ComposerTextView
+        }
+        XCTAssertTrue(s.window.makeFirstResponder(s.list))
+        s.key(36, "\r")
+        await observationWindow(.milliseconds(300))
+        XCTAssertTrue(s.editing() == nil, "Return with nothing selected renames nothing")
+        XCTAssertTrue(s.window.firstResponder === s.list, "The list keeps the keyboard, got \(String(describing: s.window.firstResponder))")
+    }
+
+    /// ⌫ and Edit › Delete on the selected chat ask before deleting it, with the alert its menu's
+    /// 删除聊天… raises. On a selected project they do nothing, and in a rename field they edit
+    /// the name. Edit › Delete is sent the way its menu item sends it: down the responder chain
+    /// from whatever holds the keyboard.
+    func testSidebarDeleteAsksAboutTheSelectedChat() async throws {
+        let s = try SidebarFixture(self)
+        defer { s.close() }
+        try await s.present()
+        let (alpha, beta, projectID) = (s.alpha, s.beta, s.projectID)
+        func editDelete() -> Bool { s.window.firstResponder?.tryToPerform(NSSelectorFromString("delete:"), with: nil) ?? false }
+        func sheetText(_ sheet: NSWindow) -> [String] {
+            var found: [String] = []
+            func visit(_ view: NSView) {
+                if let field = view as? NSTextField { found.append(field.stringValue) }
+                view.subviews.forEach(visit)
+            }
+            sheet.contentView.map(visit)
+            return found
+        }
+
+        try await s.select("conversation.recent.\(beta)")
+        s.key(51, "\u{7f}")
+        try await eventually("⌫ asks before deleting", layingOut: s.content) { s.window.attachedSheet != nil }
+        var sheet = try XCTUnwrap(s.window.attachedSheet)
+        XCTAssertTrue(sheetText(sheet).contains { $0.contains("Beta") }, "The alert names the chat: \(sheetText(sheet))")
+        s.window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
+        try await eventually("Cancel closes the alert", layingOut: s.content) { s.window.attachedSheet == nil }
+        XCTAssertTrue(s.title(beta) == "Beta", "Cancel keeps the chat")
+
+        XCTAssertTrue(s.window.makeFirstResponder(s.list))
+        XCTAssertTrue(editDelete(), "The list answers Edit › Delete")
+        try await eventually("Edit › Delete asks too", layingOut: s.content) { s.window.attachedSheet != nil }
+        sheet = try XCTUnwrap(s.window.attachedSheet)
+        s.window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        try await eventually("Delete removes the chat", layingOut: s.content) { s.workspace.conversation(id: beta) == nil }
+
+        try await s.select("workspace.project.\(projectID)")
+        s.key(51, "\u{7f}")
+        _ = editDelete()
+        await observationWindow(.milliseconds(300))
+        XCTAssertTrue(s.window.attachedSheet == nil, "Nothing asks on a project")
+        XCTAssertTrue(s.projectName() != nil && s.title(alpha) == "Alpha" && s.title(s.gamma) == "Gamma",
+                      "Deleting on a project changes nothing")
+
+        let editor = try await s.rename("conversation.recent.\(alpha)", from: "Alpha")
+        XCTAssertTrue(editDelete(), "The field editor answers Edit › Delete")
+        XCTAssertTrue(editor.string.isEmpty, "Edit › Delete removes the selected name, got \(editor.string)")
+        await observationWindow(.milliseconds(300))
+        XCTAssertTrue(s.window.attachedSheet == nil, "Nothing asks while a name is edited")
+        editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        try await s.listHasKeyboard("Esc")
+        XCTAssertTrue(s.title(alpha) == "Alpha", "The chat is still there, with its name")
+    }
+
     /// Several rows of the project tree selected at once: ⇧↓ extends the selection, Return
     /// opens nothing, and the menu acts on the selection when raised over a selected row and on
     /// the row alone when raised over another. Expects the tree to show folder (open),

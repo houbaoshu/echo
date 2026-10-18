@@ -102,23 +102,12 @@ extension NSFont {
               }) else { return nil }
         return urls
     }
-    static func rename(_ current: String, completion: @escaping (String) -> Void) {
-        let alert = NSAlert(); alert.messageText = String(localized: "重命名|对话框标题", defaultValue: "重命名")
-        let field = NSTextField(string: current); field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: String(localized: "保存")); alert.addButton(withTitle: String(localized: "取消"))
-        guard let window = NSApp.keyWindow else { return }
-        alert.beginSheetModal(for: window) { response in
-            if response == .alertFirstButtonReturn { completion(field.stringValue) }
-        }
-        alert.window.makeFirstResponder(field); field.selectText(nil)
-    }
-    static func delete(_ conversation: WorkspaceConversation, workspace: WorkspaceStore) {
+    static func delete(_ conversation: WorkspaceConversation, workspace: WorkspaceStore, in window: NSWindow?) {
         let alert = NSAlert(); alert.messageText = String(localized: "删除“\(conversation.displayTitle)”？")
         alert.informativeText = String(localized: "此聊天的消息和草稿将被删除，正在进行的模型请求也会停止。")
         alert.addButton(withTitle: String(localized: "删除")); alert.addButton(withTitle: String(localized: "取消"))
         alert.buttons.first?.hasDestructiveAction = true
-        guard let window = NSApp.keyWindow else { return }
+        guard let window else { return }
         alert.beginSheetModal(for: window) { response in
             if response == .alertFirstButtonReturn { workspace.deleteConversation(conversation.id) }
         }
@@ -134,26 +123,48 @@ struct WorkspaceSidebar: View {
     /// Owned by the window controller, so anything outside this view can hand the
     /// keyboard back to the chat list.
     let listFocus: SidebarListFocus
+    /// The window the sidebar is in, which its alerts attach to. Not `NSApp.keyWindow`: that is
+    /// nil whenever Echo is not the active app.
+    let window: () -> NSWindow?
     @State private var collapsedProjects: Set<UUID> = []
     @State private var projectsExpanded = true
     @State private var recentExpanded = true
     @State private var projectHeaderHovered = false
     @State private var hoveredProject: UUID?
     @State private var selectedRow: RowID?
-    private var selection: Binding<RowID?> {
+    /// A row of the list. A chat that is also in its project shows in two rows, so a chat row is
+    /// named by where it is, not only by the chat.
+    private enum SidebarRow: Hashable {
+        case conversation(RowID)
+        case project(UUID)
+    }
+    /// A project picked in the list. The chat that was open stays open beside it, until another
+    /// chat opens.
+    @State private var selectedProject: UUID?
+    /// The one row whose name is a field, and what is typed in it.
+    @State private var renaming: SidebarRow?
+    @State private var renameDraft = ""
+    private var selection: Binding<SidebarRow?> {
         Binding(get: {
+            if let id = selectedProject, workspace.projects.contains(where: { $0.id == id }) { return .project(id) }
             guard let id = workspace.selectedID, workspace.conversations.contains(where: { $0.id == id }) else { return nil }
             if let row = selectedRow, row.conversationID == id,
                row.projectID == nil || workspace.selected?.projectID == row.projectID {
-                return row
+                return .conversation(row)
             }
-            return RowID(conversationID: id, projectID: nil)
+            return .conversation(RowID(conversationID: id, projectID: nil))
         }, set: { row in
             // A click on the background hands back nil; the open chat stays open.
             guard let row else { return }
             listFocus.take()
-            selectedRow = row
-            workspace.select(row.conversationID)
+            switch row {
+            case .project(let id):
+                selectedProject = id
+            case .conversation(let row):
+                selectedProject = nil
+                selectedRow = row
+                workspace.select(row.conversationID)
+            }
         })
     }
     var body: some View {
@@ -185,23 +196,29 @@ struct WorkspaceSidebar: View {
                     recentHeader
                 }
             }.listStyle(.sidebar).scrollContentBackground(.hidden)
-                // The chat rows' menu belongs to the list, so right-clicking one that is
-                // not selected selects it first and the menu acts on the selection — the
-                // system's own semantics rather than a per-row menu that ignores both.
-                //
-                // Only chats. A project row carries no selection tag (it is not a chat),
-                // so the system never hands one to this closure and it keeps a menu of
-                // its own. No `primaryAction:` either: a chat opens on the single click
-                // that selects it, which the selection binding already does.
-                .contextMenu(forSelectionType: RowID.self) { rows in
-                    conversationMenu(rows)
+                // The rows' menu belongs to the list, so it acts on the row it was raised
+                // over — the system's own semantics rather than a per-row menu. No
+                // `primaryAction:`: a chat opens on the single click that selects it, which
+                // the selection binding already does, and a double click renames nothing.
+                .contextMenu(forSelectionType: SidebarRow.self) { rows in
+                    menu(rows)
                 }
-                .modifier(SidebarListFocusBinding(focus: listFocus))
+                // Return renames the selected row, as in Finder and Xcode. A rename field
+                // takes Return first, to keep the name.
+                .onKeyPress(.return) { renaming == nil && renameSelected() ? .handled : .ignored }
+                // ⌫, ⌦ and Edit › Delete on the selected chat ask what its menu's 删除聊天… asks;
+                // on a project they do nothing. A rename field takes them first, for its own text.
+                .onDeleteCommand { deleteSelectedChat() }
+                // A click inside the field would otherwise hand the keyboard to the list and
+                // end the rename.
+                .modifier(SidebarListFocusBinding(focus: listFocus, takesClicks: renaming == nil))
                 .accessibilityIdentifier("workspace.sidebar").accessibilityLabel("聊天")
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             workspace.refreshProjectAvailability()
         }
+        // A chat opened from anywhere takes the highlight back from a picked project.
+        .onChange(of: workspace.selectedID) { selectedProject = nil }
     }
     private var recentHeader: some View {
         Text("最近").accessibilityIdentifier("workspace.recent.title")
@@ -240,7 +257,7 @@ struct WorkspaceSidebar: View {
         } label: {
             HStack(spacing: 8) {
                 Label {
-                    Text(project.name).lineLimit(1)
+                    name(project.name, renaming: .project(project.id))
                 } icon: {
                     Image(systemName: workspace.isAvailable(project) ? "folder" : "folder.badge.questionmark")
                         .accessibilityHidden(true)
@@ -252,8 +269,7 @@ struct WorkspaceSidebar: View {
                 }.accessibilityIdentifier("workspace.project.newConversation.\(project.id)")
             }.frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-                // The project is not a chat, so it carries no selection tag. A click
-                // anywhere on it still opens or closes its chats.
+                // A click anywhere on it also opens or closes its chats.
                 .onTapGesture { listFocus.take(); projectExpansion(project).wrappedValue.toggle() }
                 .accessibilityElement(children: .contain)
                 .onHover { hoveredProject = $0 ? project.id : nil }
@@ -265,7 +281,7 @@ struct WorkspaceSidebar: View {
                 // into this row. The row offers what it does as an action instead.
                 .accessibilityAction(named: "在此项目中新建聊天") { newProjectConversation(project.id) }
                 .accessibilityIdentifier("workspace.project.\(project.id)")
-                .contextMenu { projectMenu(project) }
+                .tag(SidebarRow.project(project.id))
                 .modifier(ProjectFolderDropTarget(drop: projectFolderDrop))
         }
     }
@@ -277,7 +293,7 @@ struct WorkspaceSidebar: View {
         ForEach(conversations) { conversation in
             let rowID = RowID(conversationID: conversation.id, projectID: projectID)
             HStack(spacing: 8) {
-                Text(conversation.displayTitle).lineLimit(1)
+                name(conversation.displayTitle, renaming: .conversation(rowID))
                 Spacer(minLength: 0)
                 if conversation.store.task?.status == .running,
                    projectID != nil || conversation.projectID == nil {
@@ -288,25 +304,80 @@ struct WorkspaceSidebar: View {
             // element so assistive technology reads and selects the row, not its label.
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
-            .tag(rowID)
+            .tag(SidebarRow.conversation(rowID))
             .modifier(ProjectFolderDropTarget(drop: projectID == nil ? nil : projectFolderDrop))
             .help(conversation.displayTitle)
             .accessibilityIdentifier("conversation.\(projectID?.uuidString ?? "recent").\(conversation.id)")
         }
     }
-    /// The menu the list raises over a chat row. Rename and delete are both single-chat
-    /// commands — the rename sheet edits one title and the delete alert names one chat —
-    /// so a selection that is not exactly one row produces no menu instead of a command
-    /// that would silently pick one of them.
-    @ViewBuilder private func conversationMenu(_ rows: Set<RowID>) -> some View {
-        if rows.count == 1, let row = rows.first, let conversation = workspace.conversation(id: row.conversationID) {
-            Button("重命名…") { WorkspaceActions.rename(conversation.displayTitle) { workspace.renameConversation(conversation.id, to: $0) } }
-            Button("删除聊天…", role: .destructive) { WorkspaceActions.delete(conversation, workspace: workspace) }
+    /// A row's name, or the field it turns into while it is renamed.
+    @ViewBuilder private func name(_ name: String, renaming target: SidebarRow) -> some View {
+        if renaming == target {
+            SidebarRenameField(text: $renameDraft) { finishRename(target, $0) }
+        } else {
+            Text(name).lineLimit(1)
         }
     }
-    @ViewBuilder private func projectMenu(_ project: WorkspaceProject) -> some View {
+    /// The menu's Rename and Return both start here. Starting a rename while another row is
+    /// being renamed keeps what was typed there.
+    private func beginRename(_ target: SidebarRow) {
+        let name = switch target {
+        case .conversation(let row): workspace.conversation(id: row.conversationID)?.displayTitle
+        case .project(let id): workspace.projects.first { $0.id == id }?.name
+        }
+        guard let name else { return }
+        if let current = renaming { finishRename(current, .elsewhere) }
+        renameDraft = name
+        renaming = target
+    }
+    private func renameSelected() -> Bool {
+        guard let row = selection.wrappedValue else { return false }
+        beginRename(row)
+        return true
+    }
+    /// An empty name changes nothing: the store ignores it.
+    private func finishRename(_ target: SidebarRow, _ ending: SidebarRenameField.Ending) {
+        // A field also reports its end as it goes away, after Return or Esc has already finished
+        // its rename or another rename has begun.
+        guard renaming == target else { return }
+        renaming = nil
+        if ending != .cancel {
+            switch target {
+            case .conversation(let row): workspace.renameConversation(row.conversationID, to: renameDraft)
+            case .project(let id): workspace.renameProject(id, to: renameDraft)
+            }
+        }
+        // A click elsewhere leaves the keyboard where the click put it.
+        if ending != .elsewhere { listFocus.take() }
+    }
+    private func deleteSelectedChat() {
+        guard case .conversation(let row) = selection.wrappedValue,
+              let conversation = workspace.conversation(id: row.conversationID) else { return }
+        WorkspaceActions.delete(conversation, workspace: workspace, in: window())
+    }
+    /// The menu the list raises over a row. Every command in it acts on one chat or one
+    /// project — the rename edits one name and the delete alert names one chat — so a
+    /// selection that is not exactly one row produces no menu instead of a command that would
+    /// silently pick one of them.
+    @ViewBuilder private func menu(_ rows: Set<SidebarRow>) -> some View {
+        if rows.count == 1, let row = rows.first {
+            switch row {
+            case .conversation(let id):
+                if let conversation = workspace.conversation(id: id.conversationID) { conversationMenu(row, conversation) }
+            case .project(let id):
+                if let project = workspace.projects.first(where: { $0.id == id }) { projectMenu(row, project) }
+            }
+        }
+    }
+    // The rename action goes on the button, built from the row the menu was raised over: set on
+    // the list, it would rename the selected row instead.
+    @ViewBuilder private func conversationMenu(_ row: SidebarRow, _ conversation: WorkspaceConversation) -> some View {
+        RenameButton().renameAction { beginRename(row) }
+        Button("删除聊天…", role: .destructive) { WorkspaceActions.delete(conversation, workspace: workspace, in: window()) }
+    }
+    @ViewBuilder private func projectMenu(_ row: SidebarRow, _ project: WorkspaceProject) -> some View {
         Button("新聊天") { newProjectConversation(project.id) }
-        Button("重命名…") { WorkspaceActions.rename(project.name) { workspace.renameProject(project.id, to: $0) } }
+        RenameButton().renameAction { beginRename(row) }
         Button("在访达中显示") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
             .disabled(!workspace.isAvailable(project))
         Button("重新定位文件夹…") { WorkspaceActions.chooseFolder { workspace.relocateProject(project.id, to: $0) } }
@@ -357,6 +428,8 @@ private struct ProjectFolderDropTarget: ViewModifier {
 
 struct SidebarListFocusBinding: ViewModifier {
     let focus: SidebarListFocus
+    /// Off while something inside the list, such as a rename field, needs its own clicks.
+    var takesClicks = true
     @FocusState private var focused: Bool
     func body(content: Content) -> some View {
         content.focused($focused)
@@ -365,7 +438,76 @@ struct SidebarListFocusBinding: ViewModifier {
             }
             // Include clicks on the already-selected row and on empty list space,
             // neither of which necessarily writes through the selection binding.
-            .simultaneousGesture(TapGesture().onEnded { focused = true })
+            .simultaneousGesture(TapGesture().onEnded { focused = true }, isEnabled: takesClicks)
+    }
+}
+
+/// A sidebar row's name while it is renamed. An AppKit field rather than a SwiftUI one for its
+/// delegate: the field itself reports how its editing ended, including when the keyboard moves
+/// to another column of the window, which the sidebar's focus state never sees.
+struct SidebarRenameField: NSViewRepresentable {
+    enum Ending { case commit, cancel, elsewhere }
+    @Binding var text: String
+    let end: (Ending) -> Void
+    /// The row's own text size, which follows the sidebar size setting.
+    @Environment(\.sidebarRowSize) private var sidebarRowSize
+    private var fontSize: CGFloat {
+        switch sidebarRowSize {
+        case .small: 11
+        case .large: 15
+        default: 13
+        }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(field: self) }
+    func makeNSView(context: Context) -> Field {
+        let field = Field(string: text)
+        // Drawn on its own text background, as Finder and Xcode draw a rename, so the name stays
+        // readable over a selected row's accent fill. No bezel: it draws a translucent fill of its
+        // own instead of the background colour.
+        field.isBezeled = false
+        field.drawsBackground = true
+        field.backgroundColor = .textBackgroundColor
+        field.textColor = .textColor
+        field.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.lineBreakMode = .byClipping
+        field.delegate = context.coordinator
+        return field
+    }
+    func updateNSView(_ field: Field, context: Context) {
+        context.coordinator.field = self
+        field.font = .systemFont(ofSize: fontSize)
+        // Typing already reports through the delegate; while it does, the field is the source.
+        if field.currentEditor() == nil, field.stringValue != text { field.stringValue = text }
+    }
+    /// Takes the keyboard once it is on screen, and selects the name it shows.
+    final class Field: NSTextField {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.makeFirstResponder(self)
+        }
+    }
+    @MainActor final class Coordinator: NSObject, NSTextFieldDelegate {
+        var field: SidebarRenameField
+        init(field: SidebarRenameField) { self.field = field }
+        func controlTextDidChange(_ notification: Notification) {
+            guard let control = notification.object as? NSTextField else { return }
+            field.text = control.stringValue
+        }
+        /// Return and Esc. An input method that is composing takes them first, for its own
+        /// candidates, so these arrive only once there is nothing left for it to do.
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)): field.end(.commit); return true
+            case #selector(NSResponder.cancelOperation(_:)): field.end(.cancel); return true
+            default: return false
+            }
+        }
+        /// The keyboard went somewhere else: a click on another view, or Tab.
+        func controlTextDidEndEditing(_ notification: Notification) {
+            field.end(.elsewhere)
+        }
     }
 }
 

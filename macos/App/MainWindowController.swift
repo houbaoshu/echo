@@ -105,7 +105,8 @@ import SwiftUI
         window.isReleasedWhenClosed = false; window.minSize = NSSize(width: 720, height: 520)
         window.collectionBehavior = [.fullScreenPrimary]; window.delegate = self
         let sidebarHost = NSHostingController(rootView: WorkspaceSidebar(workspace: workspace,
-                                                                         listFocus: sidebarListFocus))
+                                                                         listFocus: sidebarListFocus,
+                                                                         window: { [weak window] in window }))
         let conversationHost = NSHostingController(rootView: WorkspaceConversationView(workspace: workspace,
                                                                                           planets: self.planets))
         let inspectorHost = NSHostingController(rootView: WorkspaceInspector(workspace: workspace))
