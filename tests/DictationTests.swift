@@ -22,7 +22,7 @@ extension EchoVoiceScenarios {
     /// The engine is built off the main actor, as a call's is. While it builds, the recording shows
     /// as preparing and can be cancelled, which ends the build without an error or a capture.
     @Test @MainActor static func theEngineIsBuiltOffTheMainActor() async throws {
-        let audio = FakeAudio(), recognizer = DictationRecognizer(), (store, _) = VoiceTests.agentStore()
+        let audio = FakeAudio(), recognizer = DictationRecognizer(), (store, _) = puppetStore()
         audio.holdsStarts = true
         let dictation = DictationController(audio: audio, recognizer: { _ in recognizer }, permission: { true })
         let call = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() },
@@ -55,7 +55,7 @@ extension EchoVoiceScenarios {
     }
 
     @Test @MainActor static func recordFinishCancelAndPreview() async throws {
-        let audio = FakeAudio(), recognizer = DictationRecognizer(), (store, puppet) = VoiceTests.agentStore()
+        let audio = FakeAudio(), recognizer = DictationRecognizer(), (store, puppet) = puppetStore()
         var prepareFailure: SettingsError? = SettingsError("无法下载 Apple 语音模型（zh-CN）：网络不可用")
         var prepares = 0
         let dictation = DictationController(audio: audio, recognizer: { _ in
@@ -66,7 +66,7 @@ extension EchoVoiceScenarios {
         let call = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() },
             synthesizer: { FakeSynthesizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: call)
-        let settings = SettingsStore(secrets: FakeSecrets())
+        let settings = SettingsStore(secrets: TestBootstrap.Secrets())
         workspace.voice.attach(workspace: workspace, settings: settings)
         dictation.attach(workspace: workspace)
         let conversation = workspace.selected!
@@ -305,7 +305,7 @@ extension EchoVoiceScenarios {
     }
 
     @Test @MainActor static func localTests() async throws {
-        let audio = FakeAudio(), engine = TestAppleSpeechEngine(), (store, puppet) = VoiceTests.agentStore()
+        let audio = FakeAudio(), engine = TestAppleSpeechEngine(), (store, puppet) = puppetStore()
         var prepares = 0
         let dictation = DictationController(audio: audio, recognizer: { downloading in
             prepares += 1
@@ -313,7 +313,7 @@ extension EchoVoiceScenarios {
         }, finalizationTimeout: .milliseconds(40), permission: { true })
         let voice = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(initialStore: store, dictation: dictation, voice: voice)
-        let settings = SettingsStore(secrets: FakeSecrets())
+        let settings = SettingsStore(secrets: TestBootstrap.Secrets())
         dictation.attach(workspace: workspace)
         voice.attach(workspace: workspace, settings: settings)
         let conversation = workspace.selected!
@@ -509,7 +509,7 @@ extension EchoVoiceScenarios {
         }, permission: { true })
         let delayedVoice = VoiceSessionController(audio: FakeAudio(), recognizer: { SuspendedRecognizer() }, permission: { true })
         let delayedWorkspace = WorkspaceStore(initialStore: TaskStore(harness: idleAgent()), dictation: delayed, voice: delayedVoice)
-        let emptySettings = SettingsStore(secrets: FakeSecrets())
+        let emptySettings = SettingsStore(secrets: TestBootstrap.Secrets())
         delayed.attach(workspace: delayedWorkspace)
         delayedVoice.attach(workspace: delayedWorkspace, settings: emptySettings)
         defer { delayedWorkspace.shutdown() }

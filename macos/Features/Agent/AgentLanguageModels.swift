@@ -146,16 +146,19 @@ final class AgentTransport: NSObject, Sendable, URLSessionTaskDelegate {
     init(configuration: URLSessionConfiguration) {
         session = URLSession(configuration: configuration)
     }
-    deinit { session.finishTasksAndInvalidate() }
-    static func make(for endpoint: AgentEndpoint) -> AgentTransport {
+    /// An ephemeral session that gives each request `timeout` in all, its stream included; without
+    /// `proxies` it goes to the host directly.
+    convenience init(timeout: TimeInterval, proxies: Bool = true) {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = 60
-        if endpoint.isLoopback {
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
+        if !proxies {
             configuration.connectionProxyDictionary = [kCFNetworkProxiesHTTPEnable as String: false, kCFNetworkProxiesHTTPSEnable as String: false]
         }
-        return AgentTransport(configuration: configuration)
+        self.init(configuration: configuration)
     }
+    deinit { session.finishTasksAndInvalidate() }
+    static func make(for endpoint: AgentEndpoint) -> AgentTransport { AgentTransport(timeout: 60, proxies: !endpoint.isLoopback) }
     /// No redirects, like the Rust client.
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest) async -> URLRequest? { nil }

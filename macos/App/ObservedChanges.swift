@@ -20,19 +20,18 @@ import Observation
     initial: Bool = false,
     onChange: @escaping @MainActor (Value) -> Void
 ) -> ObservationHandle {
-    let loop = ObservedChanges(value) { _, next in onChange(next) }
-    loop.start(initial: initial)
-    return ObservationHandle { loop.cancel() }
+    observeTransitions(value, initial: initial) { _, next in onChange(next) }
 }
 
 /// `observeChanges` that also hands over the result it replaces: what `value` returned before the
-/// write, and what it returns now.
+/// write, and what it returns now. `initial` delivers the current result as both.
 @MainActor func observeTransitions<Value: Equatable>(
     _ value: @escaping @MainActor () -> Value,
+    initial: Bool = false,
     onChange: @escaping @MainActor (_ old: Value, _ new: Value) -> Void
 ) -> ObservationHandle {
     let loop = ObservedChanges(value, onChange: onChange)
-    loop.start(initial: false)
+    loop.start(initial: initial)
     return ObservationHandle { loop.cancel() }
 }
 
@@ -60,7 +59,7 @@ import Observation
 /// report, before the handler runs, so a write the handler itself makes is reported too.
 @MainActor private final class ObservedChanges<Value: Equatable> {
     private let value: @MainActor () -> Value
-    private var onChange: (@MainActor (Value, Value) -> Void)?
+    private let onChange: @MainActor (Value, Value) -> Void
     private var last: Value?
     /// Bumped on every re-arm and on cancel: a registration from before cannot be withdrawn, so a
     /// stale one recognizes itself when it fires and does nothing.
@@ -72,23 +71,20 @@ import Observation
     func start(initial: Bool) {
         let current = track()
         last = current
-        if initial { onChange?(current, current) }
+        if initial { onChange(current, current) }
     }
-    func cancel() {
-        onChange = nil
-        generation += 1
-    }
+    func cancel() { generation += 1 }
     private func track() -> Value {
         generation += 1
         let armed = generation
         return withObservationTracking(options: [.didSet]) { value() } onChange: { [weak self] _ in
             // Observed subjects are main-actor state, so their writes, and this report, are on main.
             MainActor.assumeIsolated {
-                guard let self, self.generation == armed, self.onChange != nil else { return }
+                guard let self, self.generation == armed else { return }
                 let next = self.track()
                 guard let previous = self.last, next != previous else { return }
                 self.last = next
-                self.onChange?(previous, next)
+                self.onChange(previous, next)
             }
         }
     }

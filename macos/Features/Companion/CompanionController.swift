@@ -1,51 +1,6 @@
 import AppKit
 import SwiftUI
 
-@MainActor final class CompanionSurface: NSPanel {
-    var acceptsKeyboard: Bool
-    /// A click into a text view of this panel while it is not key places the caret there too.
-    var focusesTextOnFirstClick = false
-    override var canBecomeKey: Bool { acceptsKeyboard }
-    override var canBecomeMain: Bool { false }
-    init<Content: View>(title: String, acceptsKeyboard: Bool = false, content: Content) {
-        self.acceptsKeyboard = acceptsKeyboard
-        super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        self.title = title
-        isReleasedWhenClosed = false
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        level = .floating
-        hidesOnDeactivate = false
-        // Stays when Echo is hidden, with the pet; see PetPanel.
-        canHide = false
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        acceptsMouseMovedEvents = true
-        // Every companion surface inherits the system appearance.
-        contentView = NSHostingView(rootView: content)
-    }
-
-    /// AppKit spends the click that makes a window key on making it key: the text view never sees
-    /// it and the caret stays where it was. Becoming key first hands the same click to the text.
-    /// Only a click on text does this; the panel's buttons still leave the keyboard where it is.
-    override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown, focusesTextOnFirstClick, !isKeyWindow, canBecomeKey,
-           contentView?.hitTest(event.locationInWindow) is NSTextView {
-            makeKey()
-        }
-        super.sendEvent(event)
-    }
-
-    /// AppKit must ignore the whole window outside the card; a SwiftUI hit test alone
-    /// does not forward a click through to another application's window.
-    func updateMousePassthrough(at point: NSPoint, contentInset: CGFloat, closeButtonFrames: [CGRect]) {
-        // Keep receiving mouse-up when a text selection or button press crosses the edge.
-        guard NSEvent.pressedMouseButtons == 0 else { return }
-        let contentFrame = frame.insetBy(dx: contentInset, dy: contentInset)
-        ignoresMouseEvents = !contentFrame.contains(point) && !closeButtonFrames.contains { $0.contains(point) }
-    }
-}
-
 @MainActor final class CompanionController: NSObject, NSWindowDelegate {
     private let defaults: UserDefaults
     /// How long the activity panel takes to fade in or out.
@@ -81,7 +36,6 @@ import SwiftUI
     /// Either reason above hides the whole cluster; this is whether it is hidden now.
     private var clusterHidden = false
     private var noticeTimer: Timer?
-    private var bubbleObservation: ObservationHandle?
     let controlsPresentation: PetControlsPresentation
     private var outsideClickMonitor: Any?
     /// A click elsewhere took the keyboard from a composer that keeps its draft. The + menu
@@ -150,8 +104,7 @@ import SwiftUI
         workspace.onOpenPetActivity = { [weak self] in
             guard let self else { return }
             self.clearNotice()
-            self.ensureMainController()
-            self.mainController?.showWorkspace()
+            self.loadedMainController.showWorkspace()
         }
         petPanel.constrainOrigin = { [weak self] origin in
             guard let self else { return origin }
@@ -191,13 +144,7 @@ import SwiftUI
                                                name: NSWindow.didResignKeyNotification, object: controlsPanel)
         NotificationCenter.default.addObserver(self, selector: #selector(controlsBecameKey),
                                                name: NSWindow.didBecomeKeyNotification, object: controlsPanel)
-        // The bubble takes its place between the pet and its card only once it has something to show.
         let voice = workspace.voice
-        bubbleObservation = observeChanges({
-            CompanionBubbleContent.isShown(voice: voice.snapshot, spoken: voice.spoken, notice: nil)
-        }) { [weak self] _ in
-            DispatchQueue.main.async { [weak self] in self?.layout() }
-        }
         voiceObservation = observeChanges({ voice.snapshot.error }, initial: true) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async { [weak self] in
@@ -215,7 +162,6 @@ import SwiftUI
         // The main window's transcript shows its own planet only for the conversation Live Voice
         // owns; the pet steps aside exactly then, so the two planet-driven animations never
         // render at the same time.
-        let workspace = workspace
         petVoicePlanetObservation = observeChanges({
             workspace.isMainWindowShown && workspace.selectedID != nil
                 && workspace.selectedID == voice.snapshot.session.owner?.conversationID
@@ -309,7 +255,7 @@ import SwiftUI
         if activityPanel.acceptsKeyboard != acceptsKeyboard {
             activityPanel.acceptsKeyboard = acceptsKeyboard
             if acceptsKeyboard { activityPanel.makeKey() }
-            else if activityPanel.isKeyWindow { activityPanel.orderOut(nil); activityPanel.orderFrontRegardless() }
+            else { activityPanel.resignKeyStayingInFront() }
         }
         layout()
         if !clusterHidden { controlsPanel.orderFrontRegardless() }
@@ -371,7 +317,9 @@ import SwiftUI
     private func samplePointer(_ point: NSPoint) {
         updateActivityMousePassthrough(at: point)
         let presentation = controlsPresentation
-        let hovered = hoverFrames().contains { $0.contains(point) }
+        // Every hover frame lies inside the two panels, so a pointer anywhere else on screen, as it
+        // nearly always is, needs no strip measured.
+        let hovered = petPanel.frame.union(controlsPanel.frame).contains(point) && hoverFrames().contains { $0.contains(point) }
         guard presentation.isHovered != hovered else { return }
         presentation.isHovered = hovered
         // An empty composer follows the idle strip, unless the user is still typing in it.
@@ -403,7 +351,7 @@ import SwiftUI
         return [petPanel.frame, frames.controlsContent(width: width)]
     }
     private func composerDidChange(open: Bool) {
-        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor); self.outsideClickMonitor = nil }
+        NSEvent.removeMonitor(&outsideClickMonitor)
         composerReleasedKeyboard = false
         if open {
             controlsPanel.orderFrontRegardless()
@@ -414,26 +362,25 @@ import SwiftUI
             outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
                 MainActor.assumeIsolated { self?.composerLostFocus() }
             }
-        } else if controlsPanel.isKeyWindow {
-            // Return typing to the app that was in front instead of an empty panel.
-            controlsPanel.orderOut(nil)
-            controlsPanel.orderFrontRegardless()
+        } else {
+            controlsPanel.resignKeyStayingInFront()
         }
     }
     /// A folder dropped on the pet becomes a project, reusing the one already at that path, and the
     /// composer opens on it with the keyboard. Only the project changes; a draft stays as typed.
     func startChat(inFolder folder: URL) {
         controlsPresentation.projectID = workspace.addProject(url: folder)
-        controlsPresentation.openComposer()
-        // Already open, its panel may have given up the keyboard to a click elsewhere.
-        composerReleasedKeyboard = false
-        controlsPanel.makeKey()
+        openComposerWithKeyboard()
     }
     /// Text files dropped on the pet join the composer's draft, after any already there, and the
     /// composer opens with the keyboard. Nothing is sent; the project and the text stay as they are.
     func startChat(withFiles files: [URL]) {
         controlsPresentation.attach(files)
+        openComposerWithKeyboard()
+    }
+    private func openComposerWithKeyboard() {
         controlsPresentation.openComposer()
+        // Already open, its panel may have given up the keyboard to a click elsewhere.
         composerReleasedKeyboard = false
         controlsPanel.makeKey()
     }
@@ -458,17 +405,14 @@ import SwiftUI
         guard presentation.isComposerOpen, !presentation.isDialogOpen, !presentation.closeComposerIfEmpty() else { return }
         composerReleasedKeyboard = true
         if presentation.isProjectPickerOpen { presentation.isProjectPickerOpen = false }
-        // A non-activating panel is not always told that another app took the click.
-        if controlsPanel.isKeyWindow {
-            controlsPanel.orderOut(nil)
-            controlsPanel.orderFrontRegardless()
-        }
+        controlsPanel.resignKeyStayingInFront()
     }
 
     func layout() {
         guard !layingOut, let screen = CompanionLayout.screen(for: petPanel.frame, screens: NSScreen.screens.map(\.visibleFrame)) else { return }
         layingOut = true
         defer { layingOut = false }
+        // The bubble takes its place between the pet and its card only once it has something to show.
         let reservesBubble = CompanionBubbleContent.isShown(voice: workspace.voice.snapshot, spoken: workspace.voice.spoken,
                                                             notice: bubbleState.notice)
         let frames = CompanionLayout.place(pet: petPanel.frame, in: screen, expanded: taskStore.isFollowUpExpanded,
@@ -509,28 +453,24 @@ import SwiftUI
         else { workspace.revealActivity() }
         taskStore.showMainWindow()
         presentMainWindow()
-        mainController?.showWorkspace()
+        loadedMainController.showWorkspace()
     }
     /// The pet's click; see `WorkspaceStore.revealFromPet`.
     func showMainWindowFromPet() {
         clearNotice()
         workspace.revealFromPet()
         presentMainWindow()
-        mainController?.showWorkspace()
+        loadedMainController.showWorkspace()
     }
-    func showSettings() {
-        ensureMainController()
-        mainController?.showSettings()
+    func showSettings() { loadedMainController.showSettings() }
+    /// The main window's controller, made the first time something needs it.
+    private var loadedMainController: MainWindowController {
+        if let mainController { return mainController }
+        let controller = MainWindowController(workspace: workspace, defaults: defaults, settings: settings, pets: pets, planets: planets)
+        mainController = controller
+        return controller
     }
-    private func ensureMainController() {
-        if mainController == nil {
-            mainController = MainWindowController(workspace: workspace, defaults: defaults, settings: settings, pets: pets, planets: planets)
-        }
-    }
-    private func presentMainWindow() {
-        ensureMainController()
-        mainController?.present()
-    }
+    private func presentMainWindow() { loadedMainController.present() }
     @objc private func screensChanged() { layout() }
     @objc private func applicationHiddenChanged(_ notification: Notification) {
         workspace.isApplicationHidden = notification.name == NSApplication.didHideNotification
@@ -554,14 +494,14 @@ import SwiftUI
         layout()
     }
     func shutdown() {
-        workspace.voice.shutdown(); voiceObservation = nil; bubbleObservation = nil; petVoicePlanetObservation = nil
+        workspace.voice.shutdown(); voiceObservation = nil; petVoicePlanetObservation = nil
         petCallObservation = nil; workspace.onPetTaskEvent = nil
         settings.cancelTest(); pets.stop(); pets.onActivate = nil
         observation = nil
         controlsPresentation.onComposerOpenChange = nil; controlsPresentation.onProjectPickerOpenChange = nil
-        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor); self.outsideClickMonitor = nil }
-        if let activityMouseUpMonitor { NSEvent.removeMonitor(activityMouseUpMonitor); self.activityMouseUpMonitor = nil }
-        if let globalActivityMouseUpMonitor { NSEvent.removeMonitor(globalActivityMouseUpMonitor); self.globalActivityMouseUpMonitor = nil }
+        NSEvent.removeMonitor(&outsideClickMonitor)
+        NSEvent.removeMonitor(&activityMouseUpMonitor)
+        NSEvent.removeMonitor(&globalActivityMouseUpMonitor)
         NotificationCenter.default.removeObserver(self)
         noticeTimer?.invalidate()
         mainController?.shutdown()

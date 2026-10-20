@@ -3,7 +3,6 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var pets: PetCatalog?
     private var companion: CompanionController? {
         didSet {
             statusItem?.remove(); statusItem = companion.map(StatusItemController.init)
@@ -46,7 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let pets = PetCatalog(settings: settings,
                         builtinRoot: Bundle.main.resourceURL?.appendingPathComponent("pets"),
                         importedRoot: root.appendingPathComponent("pets"))
-                    self.pets = pets
                     let store = try pets.loadInitial()
                     let voice = VoiceSessionController(audio: TestBootstrap.Audio(),
                         recognizer: { TestBootstrap.Recognizer() }, synthesizer: { TestBootstrap.Synthesizer() }, permission: { true })
@@ -120,7 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                   builtinRoot: Bundle.main.resourceURL?.appendingPathComponent("pets"),
                                   importedRoot: SettingsStore.directory.appendingPathComponent("pets"))
             pets.onFailure = { [weak self] error in self?.showFailure(error) }
-            self.pets = pets
             let store = try pets.loadInitial()
             let localChat = LocalChatService(backend: CoreAILocalChatBackend(locate: { localModels.find() }))
             let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: WorkspacePersistence.defaultURL),
@@ -176,9 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⌘K, not ⌘F: this opens a palette that switches between chats, which is what ⌘K
         // means across editors. ⌘F on macOS means "find inside what I am looking at", so it
         // stays free for a find in the open conversation.
-        let quickOpen = fileMenu.addItem(withTitle: String(localized: "搜索聊天…"), action: #selector(search), keyEquivalent: "k")
-        quickOpen.keyEquivalentModifierMask = [.command]
-        quickOpen.target = self
+        fileMenu.addItem(withTitle: String(localized: "搜索聊天…"), action: #selector(search), keyEquivalent: "k").target = self
         fileMenu.addItem(withTitle: String(localized: "添加项目文件夹…|菜单栏", defaultValue: "添加项目文件夹…"), action: #selector(addProject), keyEquivalent: "").target = self
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: String(localized: "关闭窗口"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
@@ -223,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// TextEdit's order and words. Like Find, the items have no target: the text view that has the
     /// keyboard enables them, checks the toggles that are on for it, and does the work. A nil entry
     /// is a separator.
-    static var textSubmenus: [(String, [(String, String, String)?])] {
+    private static var textSubmenus: [(String, [(String, String, String)?])] {
         [(String(localized: "拼写和语法"), [
             (String(localized: "显示拼写和语法"), "showGuessPanel:", ":"),
             (String(localized: "立即检查文稿"), "checkSpelling:", ";"),
@@ -256,7 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The system Find submenu. Items have no target, so the responder chain decides:
     /// the find commands enable only in a text view with `usesFindBar` (the file preview),
     /// and the composer, which has neither find bar nor find panel, leaves them disabled.
-    static func makeFindMenu() -> NSMenu {
+    private static func makeFindMenu() -> NSMenu {
         let findMenu = NSMenu(title: String(localized: "查找"))
         let finderAction = #selector(NSResponder.performTextFinderAction(_:))
         for (title, action, key, modifiers) in [
@@ -276,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showSettings() { companion?.showSettings() }
     @objc private func showPreferences(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
-        companion?.showSettings()
+        showSettings()
     }
     @objc private func newConversation() {
         guard let companion else { return }
@@ -314,10 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         DictationDiagnostics.shared?.printSummary()
-        pets?.stop()
         companion?.shutdown()
         companion = nil
-        pets = nil
     }
 
     /// What Echo's App Intents act on. An intent can launch Echo and arrive before

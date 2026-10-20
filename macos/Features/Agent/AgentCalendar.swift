@@ -1,4 +1,3 @@
-import EventKit
 import Foundation
 import FoundationModels
 
@@ -119,16 +118,17 @@ enum AgentTime: Sendable, Equatable {
     /// A whole day, in no time zone.
     case day(year: Int, month: Int, day: Int)
 
+    // [0-9], not \d: \d also matches fullwidth and other scripts' digits, which Int() cannot read.
+    private static let expression = try! NSRegularExpression(
+        pattern: #"^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(Z|z|[+-][0-9]{2}(?::?[0-9]{2})?)?)?$"#)
+
     /// ISO 8601: `2026-10-13T10:00:00+08:00` (seconds and fractions optional, `Z` for UTC), or
     /// `2026-10-13` alone. A time without an offset is refused: whose 10:00 it is must be said.
     static func parse(_ raw: String) -> Result<AgentTime, AgentInvalidArguments> {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        // [0-9], not \d: \d also matches fullwidth and other scripts' digits, which Int() cannot read.
-        let pattern = #"^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(\.[0-9]{1,9})?)?(Z|z|[+-][0-9]{2}(?::?[0-9]{2})?)?)?$"#
-        let regex = try! NSRegularExpression(pattern: pattern)
-        let invalid = AgentInvalidArguments(result: AgentToolResult.failed(
-            "\(raw) is not a time; use ISO 8601 with a UTC offset, such as 2026-10-13T10:00:00+08:00, or a date alone, such as 2026-10-13"))
-        guard let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return .failure(invalid) }
+        let invalid = AgentInvalidArguments.failed(
+            "\(raw) is not a time; use ISO 8601 with a UTC offset, such as 2026-10-13T10:00:00+08:00, or a date alone, such as 2026-10-13")
+        guard let match = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return .failure(invalid) }
         func group(_ index: Int) -> String? {
             Range(match.range(at: index), in: text).map { String(text[$0]) }
         }
@@ -138,8 +138,7 @@ enum AgentTime: Sendable, Equatable {
             return .success(.day(year: year, month: month, day: day))
         }
         guard let zone = group(8) else {
-            return .failure(AgentInvalidArguments(result: AgentToolResult.failed(
-                "\(raw) has no UTC offset; add the person's offset, such as 2026-10-13T10:00:00+08:00")))
+            return .failure(.failed("\(raw) has no UTC offset; add the person's offset, such as 2026-10-13T10:00:00+08:00"))
         }
         let offset: Int
         if zone == "Z" || zone == "z" {
@@ -183,6 +182,14 @@ enum AgentTime: Sendable, Equatable {
         switch self {
         case .instant(let date): date
         case .day: clock.calendar.date(from: day(in: clock))!
+        }
+    }
+
+    /// Where a range that ends at this time ends: a day alone takes in the whole day.
+    func end(in clock: AgentClock) -> Date {
+        switch self {
+        case .instant(let date): date
+        case .day: clock.calendar.date(byAdding: .day, value: 1, to: start(in: clock))!
         }
     }
 }
@@ -286,12 +293,12 @@ enum AgentCalendarResult {
 
     /// Which access a result says Echo lacks, when it is the result of a call made without it.
     static func missingAccess(_ result: String) -> (kind: AgentCalendarKind, permission: AgentCalendarPermission)? {
-        for kind in [AgentCalendarKind.reminders, .events] {
-            for permission in [AgentCalendarPermission.denied, .restricted, .writeOnly] where result == denied(kind, permission) {
-                return (kind, permission)
-            }
-        }
-        return nil
+        deniedResults.first { $0.result == result }.map { ($0.kind, $0.permission) }
+    }
+
+    /// Every result of a call made without access, worked out once: cards read them on every render.
+    private static let deniedResults = [AgentCalendarKind.reminders, .events].flatMap { kind in
+        [AgentCalendarPermission.denied, .restricted, .writeOnly].map { (result: denied(kind, $0), kind: kind, permission: $0) }
     }
 
     static func failure(_ error: any Error, what: String) -> String {
@@ -348,8 +355,7 @@ enum AgentCalendarRequest: Sendable, Equatable {
 /// Runs reminders and calendar calls for the conversation.
 protocol AgentCalendarAccess: Sendable {
     /// `call` links the call to the one the harness saw dispatched, as for finder_location.
-    /// `changes` says whether the tool changes anything, which decides its place in its batch.
-    func run(call: GenerationID?, changes: Bool, _ request: Result<AgentCalendarRequest, AgentInvalidArguments>) async throws -> String
+    func run(call: GenerationID?, _ request: Result<AgentCalendarRequest, AgentInvalidArguments>) async throws -> String
 }
 
 private func timeArgument(_ raw: String?) -> Result<AgentTime?, AgentInvalidArguments> {
@@ -386,10 +392,9 @@ struct ListRemindersTool: Tool {
                 timeArgument(input.due_to).map { to in .listReminders(list: nonEmpty(input.list), from: from, to: to) }
             }
         } else {
-            request = .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for list_reminders; expected {\"list\"?: string, \"due_from\"?: string, \"due_to\"?: string}. Received: \(arguments.jsonString)")))
+            request = .failure(.expected(#"{"list"?: string, "due_from"?: string, "due_to"?: string}"#, by: name, received: arguments))
         }
-        return try await access.run(call: arguments.id, changes: false, request)
+        return try await access.run(call: arguments.id, request)
     }
 }
 
@@ -416,13 +421,12 @@ struct CreateReminderTool: Tool {
             if let title = nonEmpty(input.title) {
                 request = timeArgument(input.due).map { .createReminder(title: title, due: $0, list: nonEmpty(input.list)) }
             } else {
-                request = .failure(.init(result: AgentToolResult.failed("title must not be empty")))
+                request = .failure(.failed("title must not be empty"))
             }
         } else {
-            request = .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for create_reminder; expected {\"title\": string, \"due\"?: string, \"list\"?: string}. Received: \(arguments.jsonString)")))
+            request = .failure(.expected(#"{"title": string, "due"?: string, "list"?: string}"#, by: name, received: arguments))
         }
-        return try await access.run(call: arguments.id, changes: true, request)
+        return try await access.run(call: arguments.id, request)
     }
 }
 
@@ -444,10 +448,9 @@ struct CompleteReminderTool: Tool {
         if let input = try? Input(arguments), let id = nonEmpty(input.id) {
             request = .success(.completeReminder(id: id))
         } else {
-            request = .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for complete_reminder; expected {\"id\": string}. Received: \(arguments.jsonString)")))
+            request = .failure(.expected(#"{"id": string}"#, by: name, received: arguments))
         }
-        return try await access.run(call: arguments.id, changes: true, request)
+        return try await access.run(call: arguments.id, request)
     }
 }
 
@@ -471,10 +474,9 @@ struct ListEventsTool: Tool {
         if let input = try? Input(arguments) {
             request = AgentTime.parse(input.from).flatMap { from in AgentTime.parse(input.to).map { .listEvents(from: from, to: $0) } }
         } else {
-            request = .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for list_events; expected {\"from\": string, \"to\": string}. Received: \(arguments.jsonString)")))
+            request = .failure(.expected(#"{"from": string, "to": string}"#, by: name, received: arguments))
         }
-        return try await access.run(call: arguments.id, changes: false, request)
+        return try await access.run(call: arguments.id, request)
     }
 }
 
@@ -506,13 +508,13 @@ struct CreateEventTool: Tool {
                     timeArgument(input.end).map { .createEvent(title: title, start: start, end: $0, allDay: input.all_day, location: nonEmpty(input.location)) }
                 }
             } else {
-                request = .failure(.init(result: AgentToolResult.failed("title must not be empty")))
+                request = .failure(.failed("title must not be empty"))
             }
         } else {
-            request = .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for create_event; expected {\"title\": string, \"start\": string, \"end\"?: string, \"all_day\"?: boolean, \"location\"?: string}. Received: \(arguments.jsonString)")))
+            request = .failure(.expected(#"{"title": string, "start": string, "end"?: string, "all_day"?: boolean, "location"?: string}"#,
+                                         by: name, received: arguments))
         }
-        return try await access.run(call: arguments.id, changes: true, request)
+        return try await access.run(call: arguments.id, request)
     }
 }
 
@@ -541,10 +543,7 @@ enum AgentCalendarRunner {
                     guard let list = Self.list(named: name, in: all) else { return .done(Self.noList(name, all)) }
                     lists = [list.id]
                 }
-                // A day as the end of the range takes in the whole day.
-                let end = to.map { time -> Date in
-                    if case .day = time { clock.calendar.date(byAdding: .day, value: 1, to: time.start(in: clock))! } else { time.start(in: clock) }
-                }
+                let end = to?.end(in: clock)
                 let start = from?.start(in: clock)
                 if let start, let end, end <= start { return .done(AgentToolResult.failed("due_to must be after due_from")) }
                 // Without a range, reminders without a due date are listed too; with one, they are not.
@@ -587,8 +586,7 @@ enum AgentCalendarRunner {
                 return .completeReminder(id: id)
 
             case .listEvents(let from, let to):
-                let start = from.start(in: clock)
-                let end: Date = if case .day = to { clock.calendar.date(byAdding: .day, value: 1, to: to.start(in: clock))! } else { to.start(in: clock) }
+                let start = from.start(in: clock), end = to.end(in: clock)
                 guard end > start else { return .done(AgentToolResult.failed("to must be after from")) }
                 let found = try await store.events(from: start, to: end).sorted { ($0.start, $0.end) < ($1.start, $1.end) }
                 return .done(AgentToolResult.object([
@@ -705,147 +703,5 @@ enum AgentCalendarRunner {
         } catch {
             return .refused(.failed(AgentCalendarFailure.reason(error)))
         }
-    }
-}
-
-// MARK: EventKit
-
-/// Lets EventKit objects cross from EventKit's queue to the store's actor, which alone uses them.
-private struct Handed<Value>: @unchecked Sendable {
-    let value: Value
-}
-
-/// The person's reminders and events through one long-lived event store, as Apple recommends: a
-/// store made for each call can read an event saved by another store moments before with most of
-/// its fields missing. Items are refreshed before they are read, since the store keeps what it read
-/// before and another app may have changed it since.
-actor EventKitCalendarStore: AgentCalendarStore {
-    static let shared = EventKitCalendarStore()
-
-    private var made: EKEventStore?
-    /// Made on first use, so a harness that never reaches these tools never touches EventKit.
-    private var store: EKEventStore {
-        if let made { return made }
-        let store = EKEventStore()
-        made = store
-        return store
-    }
-
-    func permission(for kind: AgentCalendarKind) async -> AgentCalendarPermission {
-        let type: EKEntityType = kind == .reminders ? .reminder : .event
-        switch EKEventStore.authorizationStatus(for: type) {
-        case .fullAccess: return .granted
-        case .writeOnly: return .writeOnly
-        case .restricted: return .restricted
-        case .notDetermined: break
-        default: return .denied
-        }
-        let store = Handed(value: store)
-        let granted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            let answer: @Sendable (Bool, (any Error)?) -> Void = { granted, _ in continuation.resume(returning: granted) }
-            if kind == .reminders { store.value.requestFullAccessToReminders(completion: answer) }
-            else { store.value.requestFullAccessToEvents(completion: answer) }
-        }
-        if granted { return .granted }
-        return EKEventStore.authorizationStatus(for: type) == .restricted ? .restricted : .denied
-    }
-
-    func reminderLists() async throws -> (lists: [AgentReminderList], defaultID: String?) {
-        (store.calendars(for: .reminder).map { AgentReminderList(id: $0.calendarIdentifier, title: $0.title) },
-         store.defaultCalendarForNewReminders()?.calendarIdentifier)
-    }
-
-    func incompleteReminders(in lists: [String]?, dueFrom: Date?, dueTo: Date?) async throws -> [AgentReminder] {
-        let calendars = lists.map { ids in store.calendars(for: .reminder).filter { ids.contains($0.calendarIdentifier) } }
-        let predicate = store.predicateForIncompleteReminders(withDueDateStarting: dueFrom, ending: dueTo, calendars: calendars)
-        let store = Handed(value: store)
-        let found = await withCheckedContinuation { (continuation: CheckedContinuation<Handed<[EKReminder]>, Never>) in
-            store.value.fetchReminders(matching: predicate) { continuation.resume(returning: Handed(value: $0 ?? [])) }
-        }
-        return found.value.filter { $0.refresh() }.map(Self.value)
-    }
-
-    func createReminder(title: String, due: DateComponents?, alarm: Date?, list: String?) async throws -> AgentReminder {
-        let calendar = try list.map { id in
-            guard let calendar = store.calendar(withIdentifier: id) else { throw AgentCalendarFailure.notFound }
-            return calendar
-        } ?? store.defaultCalendarForNewReminders()
-        guard let calendar else { throw AgentCalendarFailure.noDefault }
-        guard calendar.allowsContentModifications else { throw AgentCalendarFailure.readOnly(calendar.title) }
-        let reminder = EKReminder(eventStore: store)
-        reminder.title = title
-        reminder.calendar = calendar
-        reminder.dueDateComponents = due
-        if let alarm { reminder.addAlarm(EKAlarm(absoluteDate: alarm)) }
-        try save(reminder)
-        return Self.value(reminder)
-    }
-
-    func reminder(id: String) async throws -> AgentReminder? {
-        current(id, as: EKReminder.self).map(Self.value)
-    }
-
-    func setCompleted(_ completed: Bool, reminder id: String) async throws -> AgentReminder {
-        guard let reminder = current(id, as: EKReminder.self) else { throw AgentCalendarFailure.notFound }
-        guard reminder.calendar.allowsContentModifications else { throw AgentCalendarFailure.readOnly(reminder.calendar.title) }
-        reminder.isCompleted = completed
-        try save(reminder)
-        return Self.value(reminder)
-    }
-
-    func removeReminder(id: String) async throws {
-        guard let reminder = current(id, as: EKReminder.self) else { throw AgentCalendarFailure.notFound }
-        do { try store.remove(reminder, commit: true) } catch { store.reset(); throw AgentCalendarFailure.failed(error.localizedDescription) }
-    }
-
-    func events(from: Date, to: Date) async throws -> [AgentCalendarEvent] {
-        store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: nil))
-            .filter { $0.refresh() }.map(Self.value)
-    }
-
-    func createEvent(_ draft: AgentEventDraft) async throws -> AgentCalendarEvent {
-        guard let calendar = store.defaultCalendarForNewEvents else { throw AgentCalendarFailure.noDefault }
-        guard calendar.allowsContentModifications else { throw AgentCalendarFailure.readOnly(calendar.title) }
-        let event = EKEvent(eventStore: store)
-        event.title = draft.title
-        event.calendar = calendar
-        event.isAllDay = draft.isAllDay
-        event.startDate = draft.start
-        event.endDate = draft.end
-        event.location = draft.location
-        do { try store.save(event, span: .thisEvent, commit: true) } catch { store.reset(); throw AgentCalendarFailure.failed(error.localizedDescription) }
-        return Self.value(event)
-    }
-
-    func event(id: String) async throws -> AgentCalendarEvent? {
-        current(id, as: EKEvent.self).map(Self.value)
-    }
-
-    func removeEvent(id: String) async throws {
-        guard let event = current(id, as: EKEvent.self) else { throw AgentCalendarFailure.notFound }
-        do { try store.remove(event, span: .thisEvent, commit: true) } catch { store.reset(); throw AgentCalendarFailure.failed(error.localizedDescription) }
-    }
-
-    /// The item as it is now; nil when it is gone or is not of `type`.
-    private func current<Item: EKCalendarItem>(_ id: String, as type: Item.Type) -> Item? {
-        guard let item = store.calendarItem(withIdentifier: id) as? Item, item.refresh() else { return nil }
-        return item
-    }
-
-    private func save(_ reminder: EKReminder) throws {
-        // A failed save leaves the change pending in the store; reset drops it.
-        do { try store.save(reminder, commit: true) } catch { store.reset(); throw AgentCalendarFailure.failed(error.localizedDescription) }
-    }
-
-    private static func value(_ reminder: EKReminder) -> AgentReminder {
-        AgentReminder(id: reminder.calendarItemIdentifier, title: reminder.title ?? "", due: reminder.dueDateComponents,
-                      listID: reminder.calendar?.calendarIdentifier ?? "", listTitle: reminder.calendar?.title ?? "",
-                      isCompleted: reminder.isCompleted, modified: reminder.lastModifiedDate)
-    }
-
-    private static func value(_ event: EKEvent) -> AgentCalendarEvent {
-        AgentCalendarEvent(id: event.calendarItemIdentifier, title: event.title ?? "", start: event.startDate, end: event.endDate,
-                           isAllDay: event.isAllDay, location: event.location, calendarTitle: event.calendar?.title ?? "",
-                           modified: event.lastModifiedDate)
     }
 }

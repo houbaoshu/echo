@@ -29,11 +29,6 @@ import AppKit
         add(conversationMenu, String(localized: "停止回复|菜单栏", defaultValue: "停止回复"), #selector(stop), ".", .command)
     }
 
-    private var canStop: Bool {
-        guard let main = controller() else { return false }
-        return NSApp.keyWindow === main.window && main.canHandleEscape
-    }
-
     /// The window the untargeted action would reach: the key window answers if there is one,
     /// whether or not it can go full screen.
     private var fullScreenWindow: NSWindow? { NSApp.keyWindow ?? NSApp.mainWindow }
@@ -43,9 +38,9 @@ import AppKit
         if menuItem.action == #selector(toggleFullScreen) {
             // The window's own validation decides, and also retitles the item in AppKit's
             // own words. Every window does that, panels included.
-            guard let window = fullScreenWindow else { menuItem.title = String(localized: "进入全屏幕"); return false }
-            let enabled = window.validateUserInterfaceItem(menuItem)
-            menuItem.title = window.styleMask.contains(.fullScreen)
+            let window = fullScreenWindow
+            let enabled = window?.validateUserInterfaceItem(menuItem) ?? false
+            menuItem.title = window?.styleMask.contains(.fullScreen) == true
                 ? String(localized: "退出全屏幕") : String(localized: "进入全屏幕")
             return enabled
         }
@@ -61,7 +56,7 @@ import AppKit
         switch menuItem.action {
         case #selector(toggleDictation): return main.canToggleDictation
         case #selector(toggleVoice): return main.canToggleVoice
-        case #selector(stop): return canStop
+        case #selector(stop): return main.canHandleEscape
         default: return true
         }
     }

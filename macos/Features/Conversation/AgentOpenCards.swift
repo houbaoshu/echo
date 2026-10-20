@@ -2,7 +2,7 @@ import Foundation
 
 /// What an open_app or open_url card says: the app or the page's host and path once opened, and
 /// when nothing opened, why, in the person's language. These calls cannot be undone.
-struct AgentOpenCard {
+struct AgentOpenCard: AgentToolCard {
     let tool: AgentToolRecord
 
     static func applies(to tool: AgentToolRecord) -> Bool {
@@ -12,13 +12,7 @@ struct AgentOpenCard {
     var icon: String { tool.tool == "open_app" ? "arrow.up.forward.app" : "globe" }
 
     /// "打开应用：提醒事项", "打开网址：example.com/docs"; a call that did not open says how it ended first.
-    var title: String {
-        (tool.state == .finished ? "" : tool.state.label + " · ") + action
-    }
-
-    private var result: [String: Any]? {
-        tool.result.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
-    }
+    var title: String { titled(action) }
 
     private var action: String {
         if tool.tool == "open_app" { return String(localized: "打开应用：\(result?["app"] as? String ?? tool.command)") }

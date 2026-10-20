@@ -3,7 +3,7 @@ use std::ffi::{CStr, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::ptr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{frames::SpriteFrames, model::Pet, runtime::PetRuntime};
 
@@ -37,10 +37,7 @@ unsafe fn write_error(buffer: *mut c_char, capacity: usize, error: &str) {
     if buffer.is_null() || capacity == 0 {
         return;
     }
-    let mut length = error.len().min(capacity - 1);
-    while !error.is_char_boundary(length) {
-        length -= 1;
-    }
+    let length = error.floor_char_boundary(capacity - 1);
     unsafe {
         ptr::copy_nonoverlapping(error.as_ptr(), buffer.cast(), length);
         *buffer.add(length) = 0;
@@ -72,21 +69,15 @@ pub unsafe extern "C" fn echo_create(
             clock: Instant::now(),
         })
     });
-    match result {
-        Ok(Ok(runtime)) => Box::into_raw(Box::new(runtime)),
-        Ok(Err(cause)) => {
-            unsafe {
-                write_error(error, capacity, &format!("{cause:#}"));
-            }
-            ptr::null_mut()
-        }
-        Err(_) => {
-            unsafe {
-                write_error(error, capacity, "Rust runtime initialization panicked");
-            }
-            ptr::null_mut()
-        }
+    let message = match result {
+        Ok(Ok(runtime)) => return Box::into_raw(Box::new(runtime)),
+        Ok(Err(cause)) => format!("{cause:#}"),
+        Err(_) => "Rust runtime initialization panicked".into(),
+    };
+    unsafe {
+        write_error(error, capacity, &message);
     }
+    ptr::null_mut()
 }
 
 /// Release a runtime and all borrowed frame buffers. Null is a no-op.
@@ -128,18 +119,49 @@ pub unsafe extern "C" fn echo_frame(
     let (Some(handle), Some(out)) = (unsafe { handle.as_ref() }, unsafe { out.as_mut() }) else {
         return false;
     };
-    *out = EchoFrame {
-        data: ptr::null(),
-        length: 0,
-    };
-    let Some(frame) = handle.frames.get(index as usize) else {
+    let frame = handle.frames.get(index as usize);
+    *out = frame.map_or(
+        EchoFrame {
+            data: ptr::null(),
+            length: 0,
+        },
+        |frame| EchoFrame {
+            data: frame.as_ptr(),
+            length: frame.len(),
+        },
+    );
+    frame.is_some()
+}
+
+/// Runs `change` on a live handle at the runtime's current time; a null handle, an error or a
+/// panic is false.
+unsafe fn drive(
+    handle: *mut EchoRuntime,
+    change: impl FnOnce(&mut PetRuntime, Duration) -> anyhow::Result<()>,
+) -> bool {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
         return false;
     };
-    *out = EchoFrame {
-        data: frame.as_ptr(),
-        length: frame.len(),
-    };
-    true
+    catch_unwind(AssertUnwindSafe(|| {
+        change(&mut handle.runtime, handle.clock.elapsed()).is_ok()
+    }))
+    .unwrap_or(false)
+}
+
+/// `drive` with a NUL-terminated UTF-8 animation name; a null or non-UTF-8 name is false.
+unsafe fn drive_named(
+    handle: *mut EchoRuntime,
+    name: *const c_char,
+    change: impl FnOnce(&mut PetRuntime, &str, Duration) -> anyhow::Result<()>,
+) -> bool {
+    if name.is_null() {
+        return false;
+    }
+    unsafe {
+        drive(handle, |runtime, now| {
+            change(runtime, CStr::from_ptr(name).to_str()?, now)
+        })
+    }
 }
 
 /// Set the pet's state animation. It restarts at the runtime's current monotonic time, or when it
@@ -148,24 +170,8 @@ pub unsafe extern "C" fn echo_frame(
 /// `handle` must be live, and `name` a NUL-terminated UTF-8 string.
 /// Do not call concurrently with another operation on this handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn echo_set_animation(
-    handle: *mut EchoRuntime,
-    name: *const c_char,
-) -> bool {
-    if handle.is_null() || name.is_null() {
-        return false;
-    }
-    catch_unwind(AssertUnwindSafe(|| {
-        let handle = unsafe { &mut *handle };
-        let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
-            return false;
-        };
-        handle
-            .runtime
-            .set_animation(name, handle.clock.elapsed())
-            .is_ok()
-    }))
-    .unwrap_or(false)
+pub unsafe extern "C" fn echo_set_animation(handle: *mut EchoRuntime, name: *const c_char) -> bool {
+    unsafe { drive_named(handle, name, PetRuntime::set_animation) }
 }
 
 /// Play a named animation once over the pet's state, as a click's wave does: the part before
@@ -175,20 +181,7 @@ pub unsafe extern "C" fn echo_set_animation(
 /// Do not call concurrently with another operation on this handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echo_play_once(handle: *mut EchoRuntime, name: *const c_char) -> bool {
-    if handle.is_null() || name.is_null() {
-        return false;
-    }
-    catch_unwind(AssertUnwindSafe(|| {
-        let handle = unsafe { &mut *handle };
-        let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
-            return false;
-        };
-        handle
-            .runtime
-            .play_once(name, handle.clock.elapsed())
-            .is_ok()
-    }))
-    .unwrap_or(false)
+    unsafe { drive_named(handle, name, PetRuntime::play_once) }
 }
 
 /// Update hover and drag direction (-1 left, 0 released, 1 right).
@@ -200,16 +193,11 @@ pub unsafe extern "C" fn echo_set_interaction(
     hovered: bool,
     direction: i32,
 ) -> bool {
-    let Some(handle) = (unsafe { handle.as_mut() }) else {
-        return false;
-    };
-    catch_unwind(AssertUnwindSafe(|| {
-        handle
-            .runtime
-            .set_interaction(hovered, direction, handle.clock.elapsed())
-            .is_ok()
-    }))
-    .unwrap_or(false)
+    unsafe {
+        drive(handle, |runtime, now| {
+            runtime.set_interaction(hovered, direction, now)
+        })
+    }
 }
 
 /// Set a pointer offset from the pet center, with positive Y pointing down. A changed offset is
@@ -218,16 +206,7 @@ pub unsafe extern "C" fn echo_set_interaction(
 /// The handle must be live and accessed serially.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn echo_look_at(handle: *mut EchoRuntime, dx: f64, dy: f64) -> bool {
-    let Some(handle) = (unsafe { handle.as_mut() }) else {
-        return false;
-    };
-    catch_unwind(AssertUnwindSafe(|| {
-        handle
-            .runtime
-            .look_at(dx, dy, handle.clock.elapsed())
-            .is_ok()
-    }))
-    .unwrap_or(false)
+    unsafe { drive(handle, |runtime, now| runtime.look_at(dx, dy, now)) }
 }
 
 /// Advance animation and return the visible sprite and next wake-up delay.

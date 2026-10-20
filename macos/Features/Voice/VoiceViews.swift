@@ -55,7 +55,7 @@ struct VoiceSettingsView: View {
     /// which no longer applies once the Volcengine Ark key is gone (it may go while the page is away).
     private var status: SettingsTestLine? {
         settings.voiceNotice.map { SettingsTestLine(text: $0, succeeded: false) }
-            ?? (settings.canTestVoice ? voice.testResult.map { SettingsTestLine(text: $0, succeeded: voice.testSucceeded) } : nil)
+            ?? (settings.canTestVoice ? voice.testResult : nil)
     }
     var body: some View {
         // Each group of the section is a `Section`, so the separator between them is the

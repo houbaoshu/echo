@@ -3,6 +3,12 @@ import SwiftUI
 
 @MainActor class WorkspaceWindow: NSWindow {
     var onEscape: (() -> Bool)?
+    /// Escape is the window's while no sheet is up and no input method is composing.
+    var ownsEscape: Bool {
+        guard attachedSheet == nil else { return false }
+        if let editor = firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
+        return true
+    }
     override func cancelOperation(_ sender: Any?) {
         if let onEscape, onEscape() { return }
         super.cancelOperation(sender)
@@ -60,8 +66,8 @@ import SwiftUI
 @MainActor final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     let workspace: WorkspaceStore
     let settings: SettingsStore
-    let pets: PetCatalog
-    let planets: PlanetStore
+    private let pets: PetCatalog
+    private let planets: PlanetStore
     var isSettingsVisible: Bool { settingsController?.window?.isVisible == true }
     private(set) var settingsController: SettingsWindowController?
     private let rootController = NSViewController()
@@ -80,7 +86,7 @@ import SwiftUI
     private var paletteController: SearchPaletteController!
     /// The workspace sidebar's chat list, so closing the search field can hand the
     /// keyboard straight back to it instead of dropping focus on the window.
-    let sidebarListFocus = SidebarListFocus()
+    private let sidebarListFocus = SidebarListFocus()
 
     init(workspace: WorkspaceStore, defaults: UserDefaults = .standard, windowOverride: WorkspaceWindow? = nil,
          settings: SettingsStore, pets: PetCatalog? = nil, planets: PlanetStore? = nil) {
@@ -125,10 +131,9 @@ import SwiftUI
         // The column is the chat list and nothing else: no header or footer accessory.
         // New chat, search and Settings live in the menu bar (⌘N, ⌘K, ⌘,), which works
         // whether or not the column is open.
-        let content = NSSplitViewItem(viewController: conversationHost)
-        content.minimumThickness = 440; content.holdingPriority = .init(249)
-        content.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
-        conversationItem = content
+        conversationItem = NSSplitViewItem(viewController: conversationHost)
+        conversationItem.minimumThickness = 440; conversationItem.holdingPriority = .init(249)
+        conversationItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspectorHost)
         inspectorItem.minimumThickness = 260; inspectorItem.maximumThickness = 380
         inspectorItem.canCollapse = true; inspectorItem.canCollapseFromWindowResize = true
@@ -138,7 +143,7 @@ import SwiftUI
         // replaces it once there is one.
         sidebarItem.isCollapsed = true; inspectorItem.isCollapsed = true
         splitController.splitView.dividerStyle = .thin
-        splitController.addSplitViewItem(sidebarItem); splitController.addSplitViewItem(content); splitController.addSplitViewItem(inspectorItem)
+        splitController.addSplitViewItem(sidebarItem); splitController.addSplitViewItem(conversationItem); splitController.addSplitViewItem(inspectorItem)
         rootController.view = NSView()
         rootController.addChild(splitController)
         rootController.view.addSubview(splitController.view)
@@ -165,7 +170,8 @@ import SwiftUI
         // always write to standard defaults, so they are armed only for the app's own
         // suite; tests and the acceptance probe inject their own and get the default
         // centred window and first-launch columns.
-        if defaults === UserDefaults.standard {
+        let autosavesLayout = defaults === UserDefaults.standard
+        if autosavesLayout {
             window.setFrameAutosaveName("main")
             window.setFrameUsingName("main")
         }
@@ -175,7 +181,7 @@ import SwiftUI
             let (prior, wasCollapsed) = (change.isPrior, change.oldValue)
             MainActor.assumeIsolated { self?.inspectorCollapseChanging(prior: prior, wasCollapsed: wasCollapsed) }
         }
-        if defaults === UserDefaults.standard {
+        if autosavesLayout {
             // Set only once the window has its size: restoring into an unsized split view
             // does not bring the sidebar back at its saved width.
             splitController.splitView.autosaveName = "main"
@@ -242,12 +248,7 @@ import SwiftUI
         if let owner = workspace.voice.snapshot.session.owner { workspace.endVoice(owner: owner) }
         else if let selected = workspace.selected { workspace.startVoice(conversationID: selected.id) }
     }
-    /// Escape is the window's while no sheet is up and no input method is composing.
-    private var ownsEscape: Bool {
-        guard let window, window.attachedSheet == nil else { return false }
-        if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
-        return true
-    }
+    private var ownsEscape: Bool { (window as? WorkspaceWindow)?.ownsEscape == true }
     /// Escape during a recording, wherever no control took it first, ends just the recording,
     /// as its ✕ does. ⌘. stays Stop alone, so this is not part of `handleEscape`.
     func cancelDictation() -> Bool { ownsEscape && workspace.dictation.cancelForEscape() }
@@ -256,7 +257,7 @@ import SwiftUI
         // The search palette is a window of its own, so Escape while it is up never
         // reaches this one.
         guard let presentation = composerPresentation else { return false }
-        return presentation.canStop && presentation.stopEnabled
+        return presentation.stopsOnEscape
     }
     func handleEscape() -> Bool {
         guard canHandleEscape, let selected = workspace.selected else { return false }
@@ -269,7 +270,7 @@ import SwiftUI
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil); NSApp.activate()
     }
-    @objc func hideMainWindow() {
+    func hideMainWindow() {
         searchPalette.isOpen = false
         workspace.isMainWindowVisible = false; workspace.isMainWindowMinimized = false
         workspace.selected?.store.hideMainWindow()

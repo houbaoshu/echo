@@ -63,8 +63,7 @@ struct OpenAppTool: Tool {
         if let input = try? Input(arguments), !input.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             request = .success(.app(input.name))
         } else {
-            request = .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for open_app; expected {\"name\": string}. Received: \(arguments.jsonString)")))
+            request = .failure(.expected(#"{"name": string}"#, by: name, received: arguments))
         }
         return try await access.run(call: arguments.id, request)
     }
@@ -88,8 +87,7 @@ struct OpenURLTool: Tool {
         if let input = try? Input(arguments) {
             request = .success(.url(input.url))
         } else {
-            request = .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for open_url; expected {\"url\": string}. Received: \(arguments.jsonString)")))
+            request = .failure(.expected(#"{"url": string}"#, by: name, received: arguments))
         }
         return try await access.run(call: arguments.id, request)
     }
@@ -110,7 +108,7 @@ enum AgentOpenResult {
     }
 
     static func failed(_ reason: Reason, _ detail: String, _ fields: [String: Any] = [:]) -> String {
-        AgentToolResult.object(fields.merging(["status": "failed", "detail": detail, "reason": reason.rawValue]) { $1 })
+        AgentToolResult.failed(reason: reason.rawValue, detail, fields)
     }
 
     static func opened(_ app: AgentApp, wasRunning: Bool) -> String {
@@ -251,19 +249,16 @@ enum AgentOpenRunner {
 
     // MARK: Web addresses
 
-    /// The address as it opens, or why it does not: http or https in any case, with a host;
-    /// spaces around it are dropped and spaces in it encoded.
+    /// The address as it opens, read as web_fetch reads it, or why it does not: http or https in any
+    /// case, with a host; spaces around it are dropped and spaces in it encoded.
     static func webAddress(_ raw: String) -> Result<URL, AgentInvalidArguments> {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: text), var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return .failure(.init(result: AgentOpenResult.invalidURL))
+        AgentWebFetchResult.address(raw).mapError { failure in
+            switch failure {
+            case .noScheme: .init(result: AgentOpenResult.noScheme)
+            case .scheme(let scheme): .init(result: AgentOpenResult.scheme(scheme))
+            default: .init(result: AgentOpenResult.invalidURL)
+            }
         }
-        guard let scheme = parts.scheme?.lowercased() else { return .failure(.init(result: AgentOpenResult.noScheme)) }
-        guard scheme == "http" || scheme == "https" else { return .failure(.init(result: AgentOpenResult.scheme(scheme))) }
-        guard let host = parts.host, !host.isEmpty else { return .failure(.init(result: AgentOpenResult.invalidURL)) }
-        parts.scheme = scheme
-        guard let opened = parts.url else { return .failure(.init(result: AgentOpenResult.invalidURL)) }
-        return .success(opened)
     }
 }
 

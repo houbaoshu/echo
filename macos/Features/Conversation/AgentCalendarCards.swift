@@ -3,7 +3,7 @@ import Foundation
 /// What a reminders or calendar card says: its title and the lines it shows when opened, from the
 /// call's arguments until a result says what was done. Times read relative to now in the person's
 /// time zone: "明天 10:00", "周三 14:00–15:00", later ones by date.
-struct AgentCalendarCard {
+struct AgentCalendarCard: AgentToolCard {
     let tool: AgentToolRecord
     var now = Date()
     var timeZone = TimeZone.current
@@ -25,15 +25,8 @@ struct AgentCalendarCard {
 
     /// "新建提醒：交报告 · 明天 10:00"; a call that did not finish says how it ended first.
     var title: String {
-        let prefix: String
-        if tool.undo == .undone { prefix = String(localized: "已撤销") + " · " }
-        else if tool.state == .finished && AgentHarness.calendarChangeTools.contains(tool.tool ?? "") { prefix = "" }
-        else { prefix = tool.state.label + " · " }
-        return prefix + action
-    }
-
-    private var result: [String: Any]? {
-        tool.result.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
+        let changed = tool.undo != .undone && tool.state == .finished && AgentHarness.calendarChangeTools.contains(tool.tool ?? "")
+        return (changed ? "" : tool.stateLabel + " · ") + action
     }
 
     private var action: String {
@@ -142,6 +135,7 @@ struct AgentCalendarCard {
 
     /// Today, tomorrow and yesterday by name, the coming week by weekday, other days by date.
     private func day(_ date: Date) -> String {
+        let calendar = calendar
         let offset = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
         let formatter = DateFormatter()
         formatter.locale = locale

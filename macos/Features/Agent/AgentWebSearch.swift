@@ -91,12 +91,7 @@ enum AgentWebSearcher: Sendable {
         return settings.savedModelServiceKey.map { .deepSeek(DeepSeekSearch(key: $0)) }
     }
 
-    static func transport() -> AgentTransport {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 30
-        return AgentTransport(configuration: configuration)
-    }
+    static func transport() -> AgentTransport { AgentTransport(timeout: 30) }
 
     var service: AgentWebSearchService {
         switch self {
@@ -210,7 +205,7 @@ struct DeepSeekSearch: Sendable {
             case .year: DateComponents(year: -1)
             }
             let start = calendar.dateComponents([.year, .month, .day], from: calendar.date(byAdding: back, to: clock.now()) ?? clock.now())
-            suffix = String(format: " after:%04d-%02d-%02d", start.year ?? 0, start.month ?? 0, start.day ?? 0)
+            suffix = " after:" + AgentTimeText.date(start)
         }
         let limit = queryLimit - suffix.unicodeScalars.count
         guard query.unicodeScalars.count <= limit else { throw .queryTooLong(length: query.unicodeScalars.count, limit: limit) }
@@ -302,9 +297,8 @@ struct WebSearchTool: Tool {
             }
             request = .success(.init(query: input.query, timeRange: range, includeContent: input.include_content ?? false))
         } else {
-            request = .failure(.init(result: AgentToolResult.failed(
-                #"invalid arguments for web_search; expected {"query": string, "time_range"?: "day" | "week" | "month" | "year", "include_content"?: boolean}. Received: "#
-                + arguments.jsonString)))
+            request = .failure(.expected(#"{"query": string, "time_range"?: "day" | "week" | "month" | "year", "include_content"?: boolean}"#,
+                                         by: name, received: arguments))
         }
         return try await access.search(request)
     }
@@ -380,7 +374,7 @@ enum AgentWebSearchResult {
             detail = "\(name) returned a response that could not be read; nothing was searched"
         }
         if service != .doubao { fields["service"] = service.rawValue }
-        return AgentToolResult.object(fields.merging(["status": "failed", "reason": reason.rawValue, "detail": detail]) { $1 })
+        return AgentToolResult.failed(reason: reason.rawValue, detail, fields)
     }
 
     static func run(_ request: AgentWebSearchRequest, with searcher: AgentWebSearcher) async -> String {

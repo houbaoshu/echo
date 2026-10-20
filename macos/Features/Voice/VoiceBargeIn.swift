@@ -42,7 +42,7 @@ struct VoiceBargeInGate {
         var sum = 0.0, squares = 0.0
         pcm.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
             for i in stride(from: 0, to: pcm.count, by: 2) {
-                let value = Double(Int16(bitPattern: UInt16(bytes[i]) | UInt16(bytes[i + 1]) << 8)) / 32768
+                let value = bytes.pcm16Sample(at: i)
                 sum += value; squares += value * value
             }
         }
@@ -88,17 +88,22 @@ struct VoiceBargeInEchoGuard {
         // Edit distance to ANY substring, rather than a whole-reply comparison.
         // This also catches punctuation, casing and small ASR substitutions.
         guard text.count <= 512 else { return false }
-        var previous = [Int](repeating: 0, count: reference.count + 1)
+        let tolerance = text.count < 5 ? 0 : max(1, text.count / 5)
+        var previous = [Int](repeating: 0, count: reference.count + 1), current = previous
         for (i, character) in text.enumerated() {
-            var current = [Int](repeating: i + 1, count: reference.count + 1)
+            current[0] = i + 1
+            var rowMinimum = current[0]
             for (j, other) in reference.enumerated() {
                 current[j + 1] = min(previous[j] + (character == other ? 0 : 1),
                                      previous[j + 1] + 1, current[j] + 1)
+                rowMinimum = min(rowMinimum, current[j + 1])
             }
-            previous = current
+            swap(&previous, &current)
+            // Row minimums never decrease, so once one is past the tolerance the last one is too.
+            if rowMinimum > tolerance { return true }
         }
-        let tolerance = text.count < 5 ? 0 : max(1, text.count / 5)
-        return (previous.min() ?? 0) > tolerance
+        // The last row stayed within the tolerance: some stretch of the reply matches the text.
+        return false
     }
 
     private static func normalize(_ text: String) -> String {

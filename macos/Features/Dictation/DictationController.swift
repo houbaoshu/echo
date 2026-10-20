@@ -37,11 +37,16 @@ import Observation
     @ObservationIgnored private var sendWhenFinished: (() -> Void)?
     private(set) var diagnosticTrace: DictationTrace?
 
-    private var diagnosticState: [String: Any] {
+    private func diagnosticState(_ extra: [String: Any] = [:]) -> [String: Any] {
         ["state": String(describing: state), "generation": generation.uuidString,
          "subtitle": subtitle,
-         "finalTranscript": finalTranscript as Any? ?? NSNull(),
-         "draft": store?.mainDraft as Any? ?? NSNull()]
+         "finalTranscript": traceField(finalTranscript),
+         "draft": traceField(store?.mainDraft)].merging(extra) { _, new in new }
+    }
+    /// Whether work started for `recording` still belongs to the current one, in a task not cancelled.
+    private func isCurrent(_ recording: UUID) -> Bool { generation == recording && !Task.isCancelled }
+    private static func voiceIsIdle(_ workspace: WorkspaceStore?) -> Bool {
+        workspace?.voice.isActive != true && workspace?.voice.testing != true
     }
 
     init(audio: any VoiceAudioHandling = VoiceAudio(),
@@ -76,24 +81,21 @@ import Observation
             "voiceActive": workspace?.voice.isActive == true, "voiceTesting": workspace?.voice.testing == true
         ])
         guard !retired, !isActive else { return }
-        guard workspace?.voice.isActive != true, workspace?.voice.testing != true else {
+        guard Self.voiceIsIdle(workspace) else {
             error = String(localized: "请先结束 Live Voice 或语音测试，再开始转写。"); state = .failed; return
         }
         generation = UUID(); let current = generation
         captureReady = false; isDownloadingModel = false; levels = []
         conversationID = conversation.id; store = conversation.store
         finalTranscript = nil; subtitle = ""; error = nil; state = .recording
-        diagnosticTrace = nil
-        if let logger = DictationDiagnostics.shared {
-            diagnosticTrace = DictationTrace(logger: logger, recordingID: current,
-                conversationID: conversation.id, store: conversation.store, canRecord: { [weak workspace = self.workspace] in
-                    workspace?.voice.isActive != true && workspace?.voice.testing != true
-                })
+        let trace = DictationDiagnostics.shared.map { logger in
+            DictationTrace(logger: logger, recordingID: current, conversationID: conversation.id, store: conversation.store,
+                           canRecord: { [weak workspace = self.workspace] in Self.voiceIsIdle(workspace) })
         }
-        let trace = diagnosticTrace
-        trace?.record("recording.start", diagnosticState)
+        diagnosticTrace = trace
+        trace?.record("recording.start", diagnosticState())
         startup = Task { [weak self] in
-            guard let self, self.generation == current, !Task.isCancelled else { return }
+            guard let self, self.isCurrent(current) else { return }
             let recognizer: any VoiceRecognizing
             do {
                 recognizer = try await self.makeRecognizer { [weak self] in
@@ -104,100 +106,111 @@ import Observation
             } catch {
                 trace?.record("recognizer.prepareFailed", ["errorDomain": (error as NSError).domain,
                     "errorCode": (error as NSError).code])
-                guard self.generation == current, !Task.isCancelled else { return }
+                guard self.isCurrent(current) else { return }
                 self.complete(error: error.localizedDescription); return
             }
-            guard self.generation == current, !Task.isCancelled else { recognizer.cancel(); return }
+            guard self.isCurrent(current) else { recognizer.cancel(); return }
             self.isDownloadingModel = false
             self.recognizer = recognizer
             trace?.record("recognizer.prepared", ["type": String(describing: type(of: recognizer))])
-            if let local = recognizer as? AppleSpeechRecognizer {
-                local.onSegment = trace.map { trace in { segment in
+            if let trace, let local = recognizer as? AppleSpeechRecognizer {
+                local.onSegment = { segment in
                     trace.record("apple.rawCallback", ["text": segment.text, "isFinal": segment.isFinal,
                         "start": segment.range.start.seconds, "end": segment.range.end.seconds])
-                } }
+                }
             }
             let allowed = await self.permission()
             trace?.record("capture.permission", ["allowed": allowed])
-            guard self.generation == current, !Task.isCancelled else { return }
+            guard self.isCurrent(current) else { return }
             guard allowed else { self.complete(error: String(localized: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。")); return }
+            let captured: AsyncThrowingStream<VoiceCapturePacket, Error>
             do {
                 // Follows a switch of the default devices at the same sample rate, as a call does, and
                 // like a call's its engine is built off the main actor, which it would hold for seconds;
                 // meanwhile the recording shows as preparing and can be cancelled.
-                let captured = try await self.audio.startInBackground(capture: true, recoversDeviceSwitch: true)
-                // Ended while the engine was built: its audio.stop() already let the engine go.
-                guard self.generation == current, !Task.isCancelled else { return }
-                self.captureReady = true
-                trace?.record("capture.ready", self.diagnosticState)
-                let (stream, input) = AsyncThrowingStream<Data, Error>.makeStream(bufferingPolicy: .bufferingOldest(10))
-                self.audioInput = input
-                self.recognitionTask = Task { [weak self] in
-                    guard let self, self.generation == current, !Task.isCancelled else { return }
-                    do {
-                        try await recognizer.run(key: "", audio: stream) { [weak self] result in
-                            let accepted = self?.generation == current && self?.isActive == true
-                            let callbackIndex = trace?.callback(result, accepted: accepted)
-                            if let self { trace?.record("callback.before", self.diagnosticState.merging([
-                                "callbackIndex": callbackIndex as Any? ?? NSNull()
-                            ]) { _, new in new }) }
-                            guard let self, self.generation == current, self.isActive else { return }
-                            // The Apple adapter provides the cumulative transcript of all segments;
-                            // an empty hypothesis never erases it, but an empty final does.
-                            let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                            if result.streamFinal { self.subtitle = text; self.finalTranscript = text }
-                            else if !text.isEmpty { self.subtitle = text }
-                            trace?.record("callback.after", self.diagnosticState.merging([
-                                "callbackIndex": callbackIndex as Any? ?? NSNull()
-                            ]) { _, new in new })
-                        }
-                        trace?.record("recognizer.return", self.diagnosticState)
-                        guard self.generation == current, !Task.isCancelled else { return }
-                        // An empty final while still recording is the recognizer stopping on its own.
-                        let completed = self.state == .finalizing || self.finalTranscript?.isEmpty == false
-                        self.complete(error: completed ? nil : String(localized: "语音识别已提前结束，请重新开始转写。"), finished: completed)
-                    } catch {
-                        trace?.record("recognizer.error", self.diagnosticState.merging([
-                            "errorDomain": (error as NSError).domain, "errorCode": (error as NSError).code,
-                            "cancelled": Task.isCancelled
-                        ]) { _, new in new })
-                        guard self.generation == current, !Task.isCancelled else { return }
-                        self.complete(error: error is SettingsError ? error.localizedDescription : String(localized: "Apple 本地语音识别失败，请重新开始转写。"))
-                    }
-                }
-                // Like the call's, the first-packet timeout pauses while VoiceAudio restarts the
-                // engine and gives the recovered microphone a full timeout of its own.
-                self.watchdog = VoiceCaptureWatchdog.watch(self.audio, timeout: self.captureTimeout,
-                    isCurrent: { [weak self] in self?.generation == current && self?.state == .recording },
-                    onTimeout: { [weak self] in self?.complete(error: String(localized: "麦克风没有返回音频，请检查输入设备。")) })
-                self.captureTask = Task { [weak self] in
-                    do {
-                        for try await packet in captured {
-                            guard let self, self.generation == current, !Task.isCancelled else { return }
-                            if self.state == .recording {
-                                self.watchdog?.cancel(); self.watchdog = nil
-                                self.appendLevels(packet.data)
-                            }
-                            if case .dropped = input.yield(packet.data) { throw SettingsError(localized: "语音识别处理过慢，请重新开始转写。") }
-                        }
-                        guard let self, self.generation == current, !Task.isCancelled else { return }
-                        if self.state == .finalizing { input.finish() }
-                        else { self.complete(error: String(localized: "录音已中断，请重新开始转写。")) }
-                    } catch {
-                        guard let self, self.generation == current, !Task.isCancelled else { return }
-                        self.complete(error: error is SettingsError ? error.localizedDescription : String(localized: "录音失败，请检查麦克风。"))
-                    }
-                }
+                captured = try await self.audio.startInBackground(capture: true, recoversDeviceSwitch: true)
             } catch {
                 // A cancellation is the stop() of the recording that ended meanwhile, or of a newer start.
                 guard self.generation == current, !(error is CancellationError) else { return }
-                self.complete(error: String(localized: "无法启动麦克风，请检查输入设备。"))
+                self.complete(error: String(localized: "无法启动麦克风，请检查输入设备。")); return
+            }
+            // Ended while the engine was built: its audio.stop() already let the engine go.
+            guard self.isCurrent(current) else { return }
+            self.captureReady = true
+            trace?.record("capture.ready", self.diagnosticState())
+            let (stream, input) = AsyncThrowingStream<Data, Error>.makeStream(bufferingPolicy: .bufferingOldest(10))
+            self.audioInput = input
+            self.recognitionTask = self.recognize(stream, with: recognizer, current: current, trace: trace)
+            // Like the call's, the first-packet timeout pauses while VoiceAudio restarts the
+            // engine and gives the recovered microphone a full timeout of its own.
+            self.watchdog = VoiceCaptureWatchdog.watch(self.audio, timeout: self.captureTimeout,
+                isCurrent: { [weak self] in self?.generation == current && self?.state == .recording },
+                onTimeout: { [weak self] in self?.complete(error: String(localized: "麦克风没有返回音频，请检查输入设备。")) })
+            self.captureTask = self.forward(captured, to: input, current: current)
+        }
+    }
+    /// Runs the recognizer over the recording's audio, then ends the recording with its outcome.
+    private func recognize(_ audio: AsyncThrowingStream<Data, Error>, with recognizer: any VoiceRecognizing,
+                           current: UUID, trace: DictationTrace?) -> Task<Void, Never> {
+        Task { [weak self] in
+            guard let self, self.isCurrent(current) else { return }
+            do {
+                try await recognizer.run(key: "", audio: audio) { [weak self] result in
+                    guard let self else { trace?.callback(result, accepted: false); return }
+                    self.receive(result, current: current, trace: trace)
+                }
+                trace?.record("recognizer.return", self.diagnosticState())
+                guard self.isCurrent(current) else { return }
+                // An empty final while still recording is the recognizer stopping on its own.
+                let completed = self.state == .finalizing || self.finalTranscript?.isEmpty == false
+                self.complete(error: completed ? nil : String(localized: "语音识别已提前结束，请重新开始转写。"), finished: completed)
+            } catch {
+                trace?.record("recognizer.error", self.diagnosticState([
+                    "errorDomain": (error as NSError).domain, "errorCode": (error as NSError).code,
+                    "cancelled": Task.isCancelled
+                ]))
+                guard self.isCurrent(current) else { return }
+                self.complete(error: error is SettingsError ? error.localizedDescription : String(localized: "Apple 本地语音识别失败，请重新开始转写。"))
+            }
+        }
+    }
+    private func receive(_ result: ASRResult, current: UUID, trace: DictationTrace?) {
+        let accepted = generation == current && isActive
+        let callbackIndex = trace?.callback(result, accepted: accepted)
+        trace?.record("callback.before", diagnosticState(["callbackIndex": traceField(callbackIndex)]))
+        guard accepted else { return }
+        // The Apple adapter provides the cumulative transcript of all segments;
+        // an empty hypothesis never erases it, but an empty final does.
+        let text = result.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if result.streamFinal { subtitle = text; finalTranscript = text }
+        else if !text.isEmpty { subtitle = text }
+        trace?.record("callback.after", diagnosticState(["callbackIndex": traceField(callbackIndex)]))
+    }
+    /// Passes the captured audio on to the recognizer, and ends the recording if the capture ends first.
+    private func forward(_ captured: AsyncThrowingStream<VoiceCapturePacket, Error>,
+                         to input: AsyncThrowingStream<Data, Error>.Continuation, current: UUID) -> Task<Void, Never> {
+        Task { [weak self] in
+            do {
+                for try await packet in captured {
+                    guard let self, self.isCurrent(current) else { return }
+                    if self.state == .recording {
+                        self.watchdog?.cancel(); self.watchdog = nil
+                        self.appendLevels(packet.data)
+                    }
+                    if case .dropped = input.yield(packet.data) { throw SettingsError(localized: "语音识别处理过慢，请重新开始转写。") }
+                }
+                guard let self, self.isCurrent(current) else { return }
+                if self.state == .finalizing { input.finish() }
+                else { self.complete(error: String(localized: "录音已中断，请重新开始转写。")) }
+            } catch {
+                guard let self, self.isCurrent(current) else { return }
+                self.complete(error: error is SettingsError ? error.localizedDescription : String(localized: "录音失败，请检查麦克风。"))
             }
         }
     }
     /// Ends this recording. With `send`, the final transcript is sent once recognized instead of left for editing.
     func finishRecording(thenSend send: (() -> Void)? = nil) {
-        diagnosticTrace?.record("recording.finishRequested", diagnosticState)
+        diagnosticTrace?.record("recording.finishRequested", diagnosticState())
         guard state == .recording, captureReady else { return }
         sendWhenFinished = send
         state = .finalizing; captureReady = false; watchdog?.cancel()
@@ -211,7 +224,7 @@ import Observation
         }
     }
     func cancel(discard: Bool = false) {
-        diagnosticTrace?.record("recording.cancelRequested", diagnosticState.merging(["discard": discard]) { _, new in new })
+        diagnosticTrace?.record("recording.cancelRequested", diagnosticState(["discard": discard]))
         guard isActive else { return }
         complete(discard: discard)
     }
@@ -222,9 +235,9 @@ import Observation
         return true
     }
     private func complete(error: String? = nil, discard: Bool = false, finished: Bool = false) {
-        diagnosticTrace?.record("completion.before", diagnosticState.merging([
+        diagnosticTrace?.record("completion.before", diagnosticState([
             "discard": discard, "hasError": error != nil
-        ]) { _, new in new })
+        ]))
         generation = UUID() // Invalidate callbacks before touching any resource.
         let send = finished ? sendWhenFinished : nil
         sendWhenFinished = nil
@@ -242,28 +255,29 @@ import Observation
             diagnosticTrace?.record("draft.append.after", ["draft": store.mainDraft])
         } else {
             diagnosticTrace?.record("draft.append.skipped", ["discard": discard, "content": content,
-                "draft": store?.mainDraft as Any? ?? NSNull()])
+                "draft": traceField(store?.mainDraft)])
         }
         let completedDraft = store?.mainDraft
         finalTranscript = nil; store = nil; conversationID = nil; subtitle = ""
         self.error = error; state = error == nil ? .idle : .failed
-        diagnosticTrace?.record("completion.after", diagnosticState.merging(["draft": completedDraft as Any? ?? NSNull()]) { _, new in new })
+        diagnosticTrace?.record("completion.after", diagnosticState(["draft": traceField(completedDraft)]))
         // Send sends the draft as it now stands: what was said if anything was, else the draft
         // alone. With nothing in either there is nothing to send, and nothing is said about it.
         if completedDraft?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { send?() }
     }
     private func appendLevels(_ data: Data) {
         // Existing 16 kHz signed little-endian PCM, one RMS envelope per 20 ms.
-        let bytes = Array(data)
-        var envelope: [Double] = []
-        for start in stride(from: 0, to: bytes.count - bytes.count % 2, by: 640) {
-            let end = min(start + 640, bytes.count - bytes.count % 2)
-            var energy = 0.0
-            for offset in stride(from: start, to: end, by: 2) {
-                let sample = Double(Int16(bitPattern: UInt16(bytes[offset]) | UInt16(bytes[offset + 1]) << 8)) / 32768
-                energy += sample * sample
+        let usable = data.count - data.count % 2
+        let envelope = data.withUnsafeBytes { bytes in
+            stride(from: 0, to: usable, by: 640).map { start in
+                let end = min(start + 640, usable)
+                var energy = 0.0
+                for offset in stride(from: start, to: end, by: 2) {
+                    let sample = bytes.pcm16Sample(at: offset)
+                    energy += sample * sample
+                }
+                return min(1, sqrt(energy / Double((end - start) / 2)) * 4)
             }
-            envelope.append(min(1, sqrt(energy / Double((end - start) / 2)) * 4))
         }
         levels = Array((levels + envelope).suffix(80))
     }

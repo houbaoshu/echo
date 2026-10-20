@@ -4,7 +4,7 @@ import CoreServices
 // One recursive stream per selected project, without opening every directory.
 // FSEvents batches bursts before refreshing the browser's already loaded folders.
 final class ProjectFileWatcher {
-    private var stream: FSEventStreamRef?
+    private let stream: FSEventStreamRef
     private final class Callback {
         let onChange: @Sendable () -> Void
         init(_ onChange: @escaping @Sendable () -> Void) { self.onChange = onChange }
@@ -34,10 +34,8 @@ final class ProjectFileWatcher {
     }
 
     deinit {
-        if let stream {
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
-        }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
     }
 }

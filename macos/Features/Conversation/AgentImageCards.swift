@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 /// What a generate_image card says: one line with the prompt, the saved file's name and size once
 /// opened, and the image to show under the card; when no image came, why, in the person's language.
-struct AgentImageCard {
+struct AgentImageCard: AgentToolCard {
     let tool: AgentToolRecord
 
     static func applies(to tool: AgentToolRecord) -> Bool { tool.tool == GenerateImageTool.toolName }
@@ -17,16 +17,13 @@ struct AgentImageCard {
     var title: String {
         if tool.state == .finished && tool.undo != .undone { return String(localized: "已生成图片 · \(tool.command)") }
         let action = String(localized: "生成图片 · \(tool.command)")
-        return (tool.undo == .undone ? String(localized: "已撤销") : tool.state.label) + " · " + action
-    }
-
-    private var result: [String: Any]? {
-        tool.result.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
+        return tool.stateLabel + " · " + action
     }
 
     /// The saved image's size in pixels; zero when unknown.
     var pixels: CGSize {
-        CGSize(width: result?["width"] as? Int ?? 0, height: result?["height"] as? Int ?? 0)
+        let result = result
+        return CGSize(width: result?["width"] as? Int ?? 0, height: result?["height"] as? Int ?? 0)
     }
 
     /// The image file the call saved, while its change has not been undone.

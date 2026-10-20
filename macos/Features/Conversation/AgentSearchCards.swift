@@ -2,7 +2,7 @@ import Foundation
 
 /// What a web_search card says: the query folded, and the pages found, each opening in the default
 /// browser; when the search failed, why, in the person's language.
-struct AgentSearchCard {
+struct AgentSearchCard: AgentToolCard {
     let tool: AgentToolRecord
 
     /// A page the card lists, by its place in the results. Only a page with an http or https
@@ -21,8 +21,7 @@ struct AgentSearchCard {
     /// "搜索 · 搜索词", and the time range when the call asked for one: "搜索 · 搜索词 · 近一周". A call
     /// that did not finish says how it ended first.
     var title: String {
-        (tool.state == .finished ? "" : tool.state.label + " · ") + String(localized: "搜索 · \(tool.command)")
-            + (range.map { " · " + $0 } ?? "")
+        titled(String(localized: "搜索 · \(tool.command)") + (range.map { " · " + $0 } ?? ""))
     }
 
     private var range: String? {
@@ -33,10 +32,6 @@ struct AgentSearchCard {
         case .year: String(localized: "近一年")
         case nil: nil
         }
-    }
-
-    private var result: [String: Any]? {
-        tool.result.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
     }
 
     var links: [Link] {

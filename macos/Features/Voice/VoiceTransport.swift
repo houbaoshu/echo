@@ -1,10 +1,12 @@
 import Foundation
 
 // A timeout also closes the socket, so a suspended receive never delays cancellation.
-func voiceDeadline<T: Sendable>(_ seconds: Double = 30, socket: URLSessionWebSocketTask,
+// Without one the operation waits as long as it takes, still closing the socket on cancellation.
+func voiceDeadline<T: Sendable>(_ seconds: Double? = 30, socket: URLSessionWebSocketTask,
                                 operation: @escaping @Sendable () async throws -> T) async throws -> T {
     try await withTaskCancellationHandler {
-        try await withThrowingTaskGroup(of: T.self) { group in
+        guard let seconds else { return try await operation() }
+        return try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await operation() }
             group.addTask {
                 try await Task.sleep(for: .seconds(seconds))
@@ -63,6 +65,7 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
     private let session: URLSession
     let task: URLSessionWebSocketTask
     private let label: String
+    private let isTTS: Bool
     /// First eight characters of `X-Api-Connect-Id`, so overlapping ASR and TTS sockets
     /// stay apart in the log and a line can be matched against the service's own records.
     private let connection: String
@@ -78,9 +81,9 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
     /// cancellation can tell this client's own teardown from a fault it discovered.
     private var closing = false
     init(path: String, resource: String, key: String) throws {
-        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !key.contains("\r"), !key.contains("\n") else { throw SettingsError.arkKeyMissing }
-        label = path.hasPrefix("tts") ? "TTS" : "ASR"
+        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !key.hasLineBreak else { throw SettingsError.arkKeyMissing }
+        isTTS = path.hasPrefix("tts")
+        label = isTTS ? "TTS" : "ASR"
         let connectID = UUID().uuidString
         connection = String(connectID.prefix(8))
         VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "\(label) [\(connection)] path=/api/v3/plan/\(path) resource=\(resource)")
@@ -95,9 +98,14 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
         request.setValue(UUID().uuidString, forHTTPHeaderField: "X-Api-Request-Id")
         task = session.webSocketTask(with: request)
         task.maximumMessageSize = VoiceWire.limit
-        VoiceDiagnostics.shared.record("3 连接", "START", "\(label) [\(connection)] WebSocket 正在握手")
+        log("START", "WebSocket 正在握手")
         task.resume()
     }
+    /// A "3 连接" line naming this socket.
+    private func log(_ status: String, _ message: String) {
+        VoiceDiagnostics.shared.record("3 连接", status, "\(label) [\(connection)] \(message)")
+    }
+    private var httpStatus: Int { (task.response as? HTTPURLResponse)?.statusCode ?? 0 }
     private var age: String { "age=\(opened.duration(to: .now).components.seconds)s" }
     private func since(_ instant: ContinuousClock.Instant?) -> String {
         guard let instant else { return "never" }
@@ -117,8 +125,8 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
     private func note(_ origin: VoiceIO, _ error: Error) {
         guard !(error is CancellationError) else { return }
         if !closing { noted = true }
-        VoiceDiagnostics.shared.record("3 连接", closing ? "EVENT" : "FAIL",
-            "\(label) [\(connection)] origin=\(origin.rawValue)\(closing ? " afterClose=true" : "") cancelled=\(Task.isCancelled) \(counters)；\(VoiceDiagnostics.reason(error))")
+        log(closing ? "EVENT" : "FAIL",
+            "origin=\(origin.rawValue)\(closing ? " afterClose=true" : "") cancelled=\(Task.isCancelled) \(counters)；\(VoiceDiagnostics.reason(error))")
     }
     func send(_ data: Data) async throws {
         let task = task
@@ -126,18 +134,13 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
         catch { note(.send, error); throw error }
         sentFrames += 1
         lastSend = .now
-        if sentFrames == 1 { VoiceDiagnostics.shared.record("3 连接", "PASS", "\(label) [\(connection)] 首包发送成功；HTTP=\((task.response as? HTTPURLResponse)?.statusCode ?? 0)") }
+        if sentFrames == 1 { log("PASS", "首包发送成功；HTTP=\(httpStatus)") }
     }
-    func receive(tts: Bool, timeout: Double? = 30) async throws -> VoiceWire.Frame {
+    func receive(timeout: Double? = 30) async throws -> VoiceWire.Frame {
         let task = task
         let message: URLSessionWebSocketTask.Message
-        do {
-            if let timeout { message = try await voiceDeadline(timeout, socket: task) { try await task.receive() } }
-            else {
-                message = try await withTaskCancellationHandler { try await task.receive() }
-                    onCancel: { task.cancel(with: .goingAway, reason: nil) }
-            }
-        } catch { note(.receive, error); throw error }
+        do { message = try await voiceDeadline(timeout, socket: task) { try await task.receive() } }
+        catch { note(.receive, error); throw error }
         lastReceive = .now
         guard case .data(let data) = message else {
             let failure = SettingsError(localized: "语音服务没有返回二进制数据。")
@@ -146,10 +149,10 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
         // A type 15 frame decodes into the service's own refusal code. That is the first
         // cause worth having, so it is recorded before the group can discard it.
         let frame: VoiceWire.Frame
-        do { frame = try VoiceWire.decode(data, tts: tts) } catch { note(.receive, error); throw error }
+        do { frame = try VoiceWire.decode(data, tts: isTTS) } catch { note(.receive, error); throw error }
         receivedFrames += 1
-        if receivedFrames == 1 || (tts && frame.type != 11) {
-            VoiceDiagnostics.shared.record("3 连接", "EVENT", "\(label) [\(connection)] frame=\(receivedFrames) type=\(frame.type) event=\(frame.event ?? -1) bytes=\(frame.payload.count)")
+        if receivedFrames == 1 || (isTTS && frame.type != 11) {
+            log("EVENT", "frame=\(receivedFrames) type=\(frame.type) event=\(frame.event ?? -1) bytes=\(frame.payload.count)")
         }
         return frame
     }
@@ -170,19 +173,19 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
         // A silent heartbeat leaves no evidence of how long the socket was provably alive
         // before a drop. Every third pong is one line a minute at the 20 second interval.
         if pongs == 1 || pongs % 3 == 0 {
-            VoiceDiagnostics.shared.record("3 连接", "EVENT", "\(label) [\(connection)] pong \(pongs) rtt=\(since(sent)) \(age)")
+            log("EVENT", "pong \(pongs) rtt=\(since(sent)) \(age)")
         }
     }
     func close() {
         // Distinguishes a teardown this client chose from one it discovered, and marks every
         // later failure as a consequence of this call. `closing` is set before the cancel
         // that causes those failures, so none of them can be read back as a new fault.
-        if !noted, !closing { VoiceDiagnostics.shared.record("3 连接", "EVENT", "\(label) [\(connection)] 客户端主动关闭 \(counters)") }
+        if !noted, !closing { log("EVENT", "客户端主动关闭 \(counters)") }
         closing = true
         task.cancel(with: .goingAway, reason: nil); session.invalidateAndCancel()
     }
     func friendlyError(_ error: Error) -> SettingsError {
-        VoiceDiagnostics.shared.record("3 连接", "FAIL", "\(label) [\(connection)] 上报 HTTP=\((task.response as? HTTPURLResponse)?.statusCode ?? 0) close=\(task.closeCode.rawValue) \(counters)；\(VoiceDiagnostics.reason(error))")
+        log("FAIL", "上报 HTTP=\(httpStatus) close=\(task.closeCode.rawValue) \(counters)；\(VoiceDiagnostics.reason(error))")
         if let http = task.response as? HTTPURLResponse {
             switch http.statusCode {
             case 401, 403: return SettingsError(localized: "语音鉴权失败，请检查设置的模型页里火山方舟的 API Key 和套餐权限。")
@@ -252,11 +255,12 @@ extension VoiceRecognizing {
                     return false
                 }
                 group.addTask { @MainActor @Sendable in
+                    let decoder = JSONDecoder()
                     while true {
-                        let frame = try await socket.receive(tts: false, timeout: nil)
+                        let frame = try await socket.receive(timeout: nil)
                         try Task.checkCancellation()
                         var result: ASRResult
-                        do { result = try JSONDecoder().decode(ASRResult.self, from: frame.payload) }
+                        do { result = try decoder.decode(ASRResult.self, from: frame.payload) }
                         catch DecodingError.keyNotFound(let key, _) { throw SettingsError(localized: "语音识别结果缺少字段：\(key.stringValue)。") }
                         catch DecodingError.typeMismatch(_, let context) { throw SettingsError(localized: "语音识别字段类型不兼容：\(context.codingPath.map(\.stringValue).joined(separator: "."))。") }
                         catch DecodingError.valueNotFound(_, let context) { throw SettingsError(localized: "语音识别字段为空：\(context.codingPath.map(\.stringValue).joined(separator: "."))。") }
@@ -325,7 +329,7 @@ extension VoiceSynthesizing {
         ])
     }
     private func expect(_ event: Int, socket: VoiceSocket, session: String? = nil) async throws {
-        let frame = try await socket.receive(tts: true)
+        let frame = try await socket.receive()
         guard frame.event == event, session == nil || frame.sessionID == session else {
             throw SettingsError(localized: "语音合成会话未能建立（事件 \(frame.event ?? -1)），请检查音色与套餐权限。")
         }
@@ -356,8 +360,9 @@ extension VoiceSynthesizing {
                 group.addTask { @MainActor @Sendable in
                     var receivedAudio = false
                     var chunks = 0, bytes = 0
+                    let decoder = JSONDecoder()
                     while true {
-                        let frame = try await socket.receive(tts: true, timeout: 120)
+                        let frame = try await socket.receive(timeout: 120)
                         try Task.checkCancellation()
                         guard frame.sessionID == sessionID else { throw SettingsError(localized: "语音合成返回了不匹配的会话。") }
                         if frame.event == 153 || frame.event == 151 { throw SettingsError(localized: "语音合成未完成，请检查音色与套餐额度。") }
@@ -367,7 +372,7 @@ extension VoiceSynthesizing {
                             if chunks == 1 { VoiceDiagnostics.shared.record("5 返回音频流", "PASS", "TTS 首包 event=352 bytes=\(frame.payload.count)；PCM16 LE / 24000 Hz / 单声道") }
                             try await receive(frame.payload)
                         }
-                        if frame.event == 364, let subtitle = try? JSONDecoder().decode(VoiceSubtitle.self, from: frame.payload),
+                        if frame.event == 364, let subtitle = try? decoder.decode(VoiceSubtitle.self, from: frame.payload),
                            !subtitle.words.isEmpty {
                             self.onSubtitle?(subtitle)
                         }

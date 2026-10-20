@@ -8,7 +8,7 @@ import FoundationModels
 struct NativeConnectionTester: ConnectionTesting {
     @MainActor func test(configuration: ModelConfiguration, key: String) async throws {
         let configuration = try configuration.validated()
-        guard !key.contains("\r"), !key.contains("\n") else { throw SettingsError(localized: "API Key 不能包含换行。") }
+        guard !key.hasLineBreak else { throw SettingsError(localized: "API Key 不能包含换行。") }
         try Task.checkCancellation()
         let endpoint = AgentEndpoint(configuration, key: key)
         let model = EchoLanguageModel(endpoint: endpoint, transport: AgentTransport.make(for: endpoint),

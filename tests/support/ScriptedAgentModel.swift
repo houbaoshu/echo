@@ -281,10 +281,25 @@ struct NoFinder: FinderLocating {
     func locate() async -> FinderLocation { .unavailable(.noFolder) }
 }
 
+/// Answers finder_location only when the test opens the gate; no test asks the real Finder.
+struct HeldFinder: FinderLocating {
+    let gate = ScriptGate()
+    func locate() async -> FinderLocation {
+        try? await gate.wait()
+        return .unavailable(.noFolder)
+    }
+}
+
 /// A native Agent session whose model never answers: stores that only need to be Agent sessions.
 @MainActor func idleAgent() -> AgentHarness {
     let puppet = PuppetModel()
     return AgentHarness(resolveModel: { puppet.factory }, finder: NoFinder())
+}
+
+/// A native Agent conversation whose model the test answers.
+@MainActor func puppetStore() -> (TaskStore, PuppetModel) {
+    let puppet = PuppetModel()
+    return (TaskStore(harness: AgentHarness(resolveModel: { puppet.factory })), puppet)
 }
 
 /// Native Agent sessions for a workspace's conversations, each answered by its own puppet model,

@@ -32,8 +32,7 @@ final class FakeFetcher: AgentWebFetching, Sendable {
     /// Fetches once through a chat whose model calls web_fetch with `url`, then replies.
     static func chat(_ url: String, fetcher: FakeFetcher) async throws -> Chat {
         let chat = Chat(FinderRootTests.oneByOne([("web_fetch", #"{"url":"\#(url)"}"#)]), fetcher: fetcher)
-        #expect(chat.store.send("读一下这个网页"))
-        try await chat.idle()
+        try await chat.run("读一下这个网页")
         return chat
     }
 
@@ -186,8 +185,7 @@ final class FakeFetcher: AgentWebFetching, Sendable {
             #expect(AgentFetchCard(tool: tool).lines == [line])
         }
         let invalid = Chat(FinderRootTests.oneByOne([("web_fetch", #"{"address":"https://example.com"}"#)]), fetcher: fetcher)
-        #expect(invalid.store.send("读一下"))
-        try await invalid.idle()
+        try await invalid.run("读一下")
         #expect((Self.json(invalid.store.tools.first?.result)["detail"] as? String)?.hasPrefix("invalid arguments for web_fetch") == true)
         #expect(fetcher.urls.isEmpty)
     }

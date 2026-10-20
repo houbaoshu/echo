@@ -19,21 +19,22 @@ struct MarkdownBlock {
         for (intent, range) in parsed.runs[\.presentationIntent] {
             var block = Self(text: AttributedString(parsed[range]))
             if let components = intent?.components {
+                // The first list item and the first list, as the components list them.
+                var item: (identity: Int, ordinal: Int)?
+                var ordered: Bool?
                 for component in components {
                     switch component.kind {
                     case .header(let level): block.heading = level
                     case .codeBlock: block.code = true
                     case .blockQuote: block.quote = true
-                    case .orderedList, .unorderedList: block.listDepth += 1
+                    case .orderedList: block.listDepth += 1; ordered = ordered ?? true
+                    case .unorderedList: block.listDepth += 1; ordered = ordered ?? false
+                    case .listItem(let ordinal): item = item ?? (component.identity, ordinal)
                     default: break
                     }
                 }
-                if let item = components.first(where: { if case .listItem = $0.kind { return true }; return false }),
-                   seenListItems.insert(item.identity).inserted,
-                   case .listItem(let ordinal) = item.kind {
-                    let list = components.first { if case .orderedList = $0.kind { return true }; if case .unorderedList = $0.kind { return true }; return false }
-                    if let list, case .orderedList = list.kind { block.marker = "\(ordinal)." }
-                    else { block.marker = "•" }
+                if let item, seenListItems.insert(item.identity).inserted {
+                    block.marker = ordered == true ? "\(item.ordinal)." : "•"
                 }
             }
             // Text renders formatting and links, never remote images or executable HTML.

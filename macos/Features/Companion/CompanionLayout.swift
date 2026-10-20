@@ -3,6 +3,9 @@ import CoreGraphics
 
 struct CompanionLayout {
     static let capsuleWidth: CGFloat = 330
+    /// The activity and bubble canvases: a card and its 12 pt transparent padding on either side.
+    static let cardCanvasWidth = capsuleWidth + 24
+    static let cardCornerRadius: CGFloat = 28
     static let collapsedHeight: CGFloat = 56
     static let expandedHeight: CGFloat = 96
     static let activityPadding: CGFloat = 48
@@ -29,7 +32,7 @@ struct CompanionLayout {
     static func place(pet: CGRect, in screen: CGRect, expanded: Bool, bubble reservesBubble: Bool = false, activityHeight: CGFloat? = nil,
                       controlsHeight: CGFloat = Self.controlsHeight) -> Self {
         let inset = screen.insetBy(dx: 8, dy: 8)
-        let width = min(capsuleWidth + 24, inset.width)
+        let width = min(cardCanvasWidth, inset.width)
         let height = min((activityHeight ?? (expanded ? expandedHeight : collapsedHeight)) + 24, inset.height - pet.height - controlsHeight - 8)
         // Keep room for the controls below the pet. The activity goes toward
         // the screen center, so it never reserves space above a top-edge pet.

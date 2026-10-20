@@ -59,8 +59,8 @@ enum VoiceWire {
             stream.avail_in = uInt(data.count)
             var result = Data()
             var status: Int32 = Z_OK
+            var chunk = [UInt8](repeating: 0, count: 16384)
             repeat {
-                var chunk = [UInt8](repeating: 0, count: 16384)
                 let written = chunk.withUnsafeMutableBytes { output -> Int in
                     stream.next_out = output.bindMemory(to: Bytef.self).baseAddress
                     stream.avail_out = uInt(output.count)

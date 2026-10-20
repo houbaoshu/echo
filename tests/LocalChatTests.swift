@@ -63,6 +63,11 @@ import Testing
             store.checkpoint = { [unowned self] in self.saved.append($0) }
         }
         func idle() async throws { try await eventually("turn ends") { !self.store.isGenerating } }
+        /// Sends `text` and waits for its turn to end.
+        func run(_ text: String, sourceLocation: SourceLocation = #_sourceLocation) async throws {
+            #expect(store.send(text), sourceLocation: sourceLocation)
+            try await idle()
+        }
         var native: NativeAgentState { store.snapshot.native! }
         var assistant: [ConversationMessage] { store.messages.filter { $0.role == .assistant } }
     }
@@ -77,10 +82,8 @@ import Testing
         }
         var shown: [String?] = []
         let watch = observeChanges({ chat.store.replyStream.live }, initial: true) { shown.append($0) }
-        #expect(chat.store.send("你好"))
-        try await chat.idle()
-        #expect(chat.store.send("再说一次"))
-        try await chat.idle()
+        try await chat.run("你好")
+        try await chat.run("再说一次")
         watch.cancel()
 
         #expect(shown.contains { $0 != nil && $0 != "回复0。" && "回复0。".hasPrefix($0!) }, "The reply streams while it is written: \(shown)")
@@ -113,16 +116,14 @@ import Testing
             if index == 0 { await emit.call("read_file", #"{"path":"src/main.txt"}"#) }
             else { try await emit.text("cloud reply") }
         }, project: root)
-        #expect(cloud.store.send("read it"))
-        try await cloud.idle()
+        try await cloud.run("read it")
         let before = cloud.native.entries
         #expect(before.map(AgentHarnessTests.kind) == ["prompt", "toolCalls", "toolOutput", "response"])
         cloud.store.shutdown()
 
         let saved = try #require(cloud.saved.last)
         let chat = LocalChat({ _, channel, _ in try await FakeBackend.stream(["local reply"], into: channel) }, snapshot: saved)
-        #expect(chat.store.send("and now?"))
-        try await chat.idle()
+        try await chat.run("and now?")
         let request = try #require(chat.backend.requests.first)
         #expect(request.kinds == ["instructions", "prompt", "response", "prompt"], "No tool traffic reaches the local model")
         let after = chat.native.entries
@@ -162,8 +163,7 @@ import Testing
 
     @Test func aTooLongMessageFailsInsteadOfBeingCut() async throws {
         let chat = LocalChat { _, channel, _ in try await FakeBackend.stream(["x"], into: channel) }
-        #expect(chat.store.send(String(repeating: "长", count: LocalChatContext.characterBudget + 1)))
-        try await chat.idle()
+        try await chat.run(String(repeating: "长", count: LocalChatContext.characterBudget + 1))
         #expect(chat.backend.requests.isEmpty)
         #expect(chat.store.task?.status == .failed && chat.store.task?.summary == LocalChatError.messageTooLong.localizedDescription)
         #expect(chat.native.entries.map(AgentHarnessTests.kind) == ["prompt"] && chat.store.canRetry, "The message is kept for a retry")
@@ -223,8 +223,7 @@ import Testing
 
     @Test func aLoadFailureIsReportedAndNeverReachesTheCloud() async throws {
         let chat = LocalChat { _, _, _ in throw LocalChatError.loadFailed("broken") }
-        #expect(chat.store.send("你好"))
-        try await chat.idle()
+        try await chat.run("你好")
         #expect(chat.store.task?.status == .failed && chat.store.task?.summary == "本地模型加载失败：broken")
         #expect(chat.cloudRequests == 0 && chat.store.canRetry)
         chat.store.shutdown()
@@ -232,8 +231,7 @@ import Testing
 
     @Test func anEmptyLocalReplyFailsWithoutRetryingTheModel() async throws {
         let chat = LocalChat { _, channel, _ in try await FakeBackend.stream([" "], into: channel) }
-        #expect(chat.store.send("你好"))
-        try await chat.idle()
+        try await chat.run("你好")
         #expect(chat.backend.requests.count == 1)
         #expect(chat.store.task?.summary == LocalChatError.noReply.localizedDescription)
         #expect(chat.native.entries.map(AgentHarnessTests.kind) == ["prompt"])
@@ -332,6 +330,11 @@ import Testing
             }
         }
         func idle() async throws { try await eventually("turn ends") { !self.store.isGenerating } }
+        /// Sends `text` and waits for its turn to end.
+        func run(_ text: String, sourceLocation: SourceLocation = #_sourceLocation) async throws {
+            #expect(store.send(text), sourceLocation: sourceLocation)
+            try await idle()
+        }
         var native: NativeAgentState { store.snapshot.native! }
         var assistant: [ConversationMessage] { store.messages.filter { $0.role == .assistant } }
         var users: [String] { store.messages.filter { $0.role == .user }.map(\.content) }
@@ -351,8 +354,7 @@ import Testing
         for code in [URLError.Code.notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff] {
             FailingProtocol.count.withLock { $0 = 0 }
             let chat = FallbackChat(cloud: { Self.unreachableCloud(code) })
-            #expect(chat.store.send("你好"))
-            try await chat.idle()
+            try await chat.run("你好")
             #expect(FailingProtocol.count.withLock { $0 } == 1, "The cloud was tried first")
             #expect(chat.users == ["你好"] && chat.assistant.map(\.content) == ["本地回复0"])
             #expect(chat.events == ["completed:本地回复0"])
@@ -362,8 +364,7 @@ import Testing
             // The network is back: the next turn goes to the cloud and sees the local exchange.
             let cloud = ScriptedAgentModel { _, emit, _ in try await emit.text("云端回复") }
             chat.cloud = { cloud.factory }
-            #expect(chat.store.send("再来"))
-            try await chat.idle()
+            try await chat.run("再来")
             #expect(chat.assistant.map(\.content) == ["本地回复0", "云端回复"])
             #expect(cloud.requests.first?.kinds == ["instructions", "prompt", "response", "prompt"])
             #expect(chat.backend.requests.count == 1)
@@ -382,8 +383,7 @@ import Testing
         ]
         for (factory, message) in failures {
             let chat = FallbackChat(cloud: factory)
-            #expect(chat.store.send("你好"))
-            try await chat.idle()
+            try await chat.run("你好")
             #expect(chat.store.task?.status == .failed && chat.store.task?.summary.hasPrefix(message) == true, "\(message): \(chat.store.task?.summary ?? "")")
             #expect(chat.backend.requests.isEmpty && chat.assistant.map(\.content) == [""] && chat.assistant.last?.status == .failed,
                     "\(message): only the failure's empty message, no local reply")
@@ -399,8 +399,7 @@ import Testing
             else { throw AgentModelError.transport(URLError(.notConnectedToInternet)) }
         }
         let tooled = FallbackChat(cloud: { afterTool.factory }, project: root)
-        #expect(tooled.store.send("读一下"))
-        try await tooled.idle()
+        try await tooled.run("读一下")
         #expect(tooled.store.task?.summary == AgentHarness.offlineAfterOutputMessage)
         #expect(tooled.store.tools.count == 1 && tooled.store.tools.first?.state == .finished)
         #expect(tooled.backend.requests.isEmpty)
@@ -416,8 +415,7 @@ import Testing
             throw AgentModelError.transport(URLError(.notConnectedToInternet))
         }
         let cut = FallbackChat(cloud: { partial.factory })
-        #expect(cut.store.send("你好"))
-        try await cut.idle()
+        try await cut.run("你好")
         #expect(cut.store.task?.summary == AgentHarness.offlineAfterOutputMessage)
         #expect(cut.backend.requests.isEmpty && cut.assistant.allSatisfy { $0.content.isEmpty })
         cut.store.shutdown()
@@ -426,8 +424,7 @@ import Testing
     @Test func aMissingOrBrokenModelSaysWhatToDoAndContinueAnswersOnceItIsThere() async throws {
         let backend = FakeBackend(available: .missing) { _, channel, _ in try await FakeBackend.stream(["终于"], into: channel) }
         let chat = FallbackChat(cloud: { Self.unreachableCloud(.notConnectedToInternet) }, backend: backend)
-        #expect(chat.store.send("在吗"))
-        try await chat.idle()
+        try await chat.run("在吗")
         #expect(chat.store.task?.summary == "当前离线，本地模型未安装。请联网后重试，或在设置中导入本地模型。")
         backend.setAvailability(.invalid("缺少内嵌 tokenizer"))
         #expect(chat.store.retry())
@@ -448,23 +445,20 @@ import Testing
 
     @Test func withoutACloudModelTheLocalModelAnswersOrBothAreExplained() async throws {
         let chat = FallbackChat(cloud: { throw SettingsError.modelNotConfigured })
-        #expect(chat.store.send("你好"))
-        try await chat.idle()
+        try await chat.run("你好")
         #expect(chat.assistant.map(\.content) == ["本地回复0"] && chat.backend.requests.count == 1)
         chat.store.shutdown()
 
         let neither = FallbackChat(cloud: { throw SettingsError.modelNotConfigured },
                                    backend: FakeBackend(available: .missing) { _, _, _ in })
-        #expect(neither.store.send("你好"))
-        try await neither.idle()
+        try await neither.run("你好")
         #expect(neither.store.task?.summary == "尚未配置模型。请在设置中配置并保存默认模型，或导入本地模型。")
         #expect(neither.store.notice == neither.store.task?.summary)
         neither.store.shutdown()
 
         // A saved model that cannot be read is not "no model": its own error stands.
         let broken = FallbackChat(cloud: { throw SettingsError("无法读取已保存的 API Key，请在设置中重新填写并保存。") })
-        #expect(broken.store.send("你好"))
-        try await broken.idle()
+        try await broken.run("你好")
         #expect(broken.store.task?.summary == "无法读取已保存的 API Key，请在设置中重新填写并保存。" && broken.backend.requests.isEmpty)
         broken.store.shutdown()
     }
@@ -476,8 +470,7 @@ import Testing
             if index == 0 { await emit.call("read_file", #"{"path":"src/main.txt"}"#) }
             else { throw AgentModelError.httpStatus(500) }
         }, project: root)
-        #expect(cloud.store.send("读一下"))
-        try await cloud.idle()
+        try await cloud.run("读一下")
         cloud.store.shutdown()
         let saved = try #require(cloud.saved.last)
         let chat = LocalChat({ _, channel, _ in try await FakeBackend.stream(["x"], into: channel) }, snapshot: saved)
@@ -529,15 +522,13 @@ import Testing
         gate.open()
         try await chat.idle()
         #expect(chat.assistant.map(\.content) == ["本地0"] && cloud.requests.isEmpty)
-        #expect(chat.store.send("二"))
-        try await chat.idle()
+        try await chat.run("二")
         #expect(chat.assistant.map(\.content) == ["本地0", "云端0"] && backend.requests.count == 1)
 
         // Local only with no usable model: the turn says so and the cloud is not asked.
         chat.localOnly = true
         backend.setAvailability(.missing)
-        #expect(chat.store.send("三"))
-        try await chat.idle()
+        try await chat.run("三")
         #expect(chat.store.task?.summary == LocalChatError.modelMissing.localizedDescription)
         backend.setAvailability(.invalid("缺少内嵌 tokenizer"))
         #expect(chat.store.retry())

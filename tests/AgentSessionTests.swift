@@ -76,14 +76,14 @@ extension EchoIntegrationScenarios {
     static func reopenAfterInvalidSettings(_ f: SessionFixture) async throws {
       let temp = f.root
       let settings = SettingsStore(
-        url: temp.appendingPathComponent("reopen-settings.json"), secrets: NativeMemorySecrets())
+        url: temp.appendingPathComponent("reopen-settings.json"), secrets: TestBootstrap.Secrets())
       settings.selectProvider(.ollama)
       settings.draft = ModelConfiguration(baseURL: f.server.baseURL, model: "fixture", apiProtocol: f.protocolName == .responses ? .responses : .chatCompletions)
       settings.save()
       #expect(settings.notice == nil)
       let workspace = WorkspaceStore(
         persistence: WorkspacePersistence(url: temp.appendingPathComponent("reopen/workspace.json")),
-        harnessFactory: { f.settingsHarness(settings) })
+        harnessFactory: { AgentHarness(settings: settings) })
       defer { workspace.shutdown() }
       let chat = try #require(workspace.selected)
       #expect(chat.store.send("hello before settings change"))

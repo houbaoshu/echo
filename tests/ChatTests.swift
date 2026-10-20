@@ -5,10 +5,6 @@ import Testing
 /// A conversation's own commands on the native Agent engine, with a puppet model. The turn itself
 /// (context, streaming, Stop, steering, failures) is AgentHarnessTests'.
 @MainActor @Suite(.serialized) struct ChatTests {
-    static func chat() -> (TaskStore, PuppetModel) {
-        let puppet = PuppetModel()
-        return (TaskStore(harness: AgentHarness(resolveModel: { puppet.factory })), puppet)
-    }
     /// Reopens a conversation from what it saved, through the archive's JSON.
     static func reopen(_ snapshot: TaskStore.Snapshot) throws -> (TaskStore, PuppetModel) {
         let archived = try JSONDecoder().decode(TaskStore.Snapshot.self, from: JSONEncoder().encode(snapshot))
@@ -17,7 +13,7 @@ import Testing
     }
 
     @Test static func sendStopRetryAndShutdown() async throws {
-        let (chat, puppet) = Self.chat()
+        let (chat, puppet) = puppetStore()
         var events: [String] = []
         let observation = chat.lifecycle.sink { event in
             switch event {
@@ -95,7 +91,7 @@ import Testing
         #expect(queuedSteering.steering == .queued, "A queued follow-up keeps its caption")
 
         // Failed before any reply.
-        let (failing, failingModel) = Self.chat()
+        let (failing, failingModel) = puppetStore()
         try #require(failing.send("Hello"))
         try await failingModel.answer(.fail(AgentModelError(message: "before first text")))
         try await eventually("failed") { !failing.isGenerating }
@@ -117,7 +113,7 @@ import Testing
         failed.shutdown(); failing.shutdown()
 
         // Stopped before any reply.
-        let (stopping, stoppingModel) = Self.chat()
+        let (stopping, stoppingModel) = puppetStore()
         try #require(stopping.send("Hello"))
         try await stoppingModel.waitForRequests(1)
         stopping.stopTask()
@@ -128,7 +124,7 @@ import Testing
         stopping.shutdown()
 
         // Saved while the turn ran, as at a quit or crash.
-        let (running, runningModel) = Self.chat()
+        let (running, runningModel) = puppetStore()
         try #require(running.send("Hello"))
         try await runningModel.waitForRequests(1)
         let (interrupted, _) = try Self.reopen(running.snapshot)
@@ -143,7 +139,7 @@ import Testing
         reopened.shutdown(); running.shutdown()
 
         // A completed turn has its reply, and reopens with nothing added.
-        let (completing, completingModel) = Self.chat()
+        let (completing, completingModel) = puppetStore()
         try #require(completing.send("Hello"))
         try await completingModel.reply("answer")
         try await eventually("answered") { !completing.isGenerating }
@@ -165,7 +161,7 @@ import Testing
     /// ending saves it, reopening does not add a second, and Continue replaces it.
     @Test static func endingBeforeReplyWhileOpen() async throws {
         for ending in [ConversationMessage.Status.failed, .stopped] {
-            let (chat, model) = Self.chat()
+            let (chat, model) = puppetStore()
             var saved: TaskStore.Snapshot?
             chat.checkpoint = { saved = $0 }
             try #require(chat.send("Hello"))
@@ -197,7 +193,7 @@ import Testing
         }
 
         // A Stop whose ending cannot be saved ends failed, and its message says so.
-        let (chat, model) = Self.chat()
+        let (chat, model) = puppetStore()
         try #require(chat.send("Hello"))
         try await model.waitForRequests(1)
         chat.checkpoint = { _ in throw CocoaError(.fileWriteNoPermission) }
@@ -355,7 +351,7 @@ import Testing
     /// loses nor repeats them.
     @Test(arguments: FollowUpEnding.allCases, ["draft", "draft\n"])
     static func followUpsGoBackAfterTheDraft(ending: FollowUpEnding, draft: String) async throws {
-        let (chat, puppet) = Self.chat()
+        let (chat, puppet) = puppetStore()
         var saved: [TaskStore.Snapshot] = []
         chat.checkpoint = { saved.append($0) }
         defer { chat.shutdown() }
@@ -390,7 +386,7 @@ import Testing
     /// A follow-up the turn ended without is in the draft, not the queue: the next message sent
     /// goes alone.
     @Test static func returnedFollowUpStaysOutOfTheNextMessage() async throws {
-        let (chat, puppet) = Self.chat()
+        let (chat, puppet) = puppetStore()
         defer { chat.shutdown() }
         try #require(chat.send("Hello"))
         try await puppet.waitForRequests(1)

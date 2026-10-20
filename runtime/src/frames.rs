@@ -1,7 +1,7 @@
 //! Row-major sprite extraction, independent of the eventual renderer.
 use crate::model::Pet;
 use anyhow::{Context, Result, ensure};
-use image::{GenericImageView, RgbaImage};
+use image::RgbaImage;
 
 pub struct SpriteFrames {
     pub width: u32,
@@ -28,20 +28,20 @@ impl SpriteFrames {
             spec.width,
             spec.height
         );
+        // Copy each frame a row of pixels at a time; going pixel by pixel through a sub-image view
+        // takes several times as long for the same bytes.
+        let (width, height) = (spec.width as usize, spec.height as usize);
+        let sheet_row = width * spec.columns as usize * 4;
+        let raw = sheet.as_raw();
         let mut frames = Vec::with_capacity(pet.frame_count());
-        for row in 0..spec.rows {
-            for column in 0..spec.columns {
-                frames.push(
-                    sheet
-                        .view(
-                            column * spec.width,
-                            row * spec.height,
-                            spec.width,
-                            spec.height,
-                        )
-                        .to_image()
-                        .into_raw(),
-                );
+        for row in 0..spec.rows as usize {
+            for column in 0..spec.columns as usize {
+                let mut frame = Vec::with_capacity(width * height * 4);
+                for y in row * height..(row + 1) * height {
+                    let start = y * sheet_row + column * width * 4;
+                    frame.extend_from_slice(&raw[start..start + width * 4]);
+                }
+                frames.push(frame);
             }
         }
         Ok(Self {

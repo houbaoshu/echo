@@ -1,6 +1,7 @@
 //! Manifest and animation semantics adapted from openai/codex codex-rs/tui/src/pets/model.rs.
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -22,8 +23,13 @@ pub struct Animation {
 
 impl Animation {
     pub fn total_duration(&self) -> Duration {
-        self.frames.iter().map(|frame| frame.duration).sum()
+        span(&self.frames)
     }
+}
+
+/// How long `frames` play for, end to end.
+pub fn span(frames: &[AnimationFrame]) -> Duration {
+    frames.iter().map(|frame| frame.duration).sum()
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -34,10 +40,26 @@ pub struct FrameSpec {
     pub rows: u32,
 }
 
+/// The grid of a sheet whose manifest gives none.
+const STANDARD: FrameSpec = FrameSpec {
+    width: 192,
+    height: 208,
+    columns: 8,
+    rows: 11,
+};
+
+/// The 16 look directions, clockwise from up, in the standard sheet's last two rows.
+pub const LOOK_FRAMES: Range<usize> = 72..88;
+
+impl FrameSpec {
+    /// A sheet with its own grid keeps the look directions only where the standard one has them.
+    pub fn has_look_frames(self) -> bool {
+        self.columns == STANDARD.columns && self.rows >= STANDARD.rows
+    }
+}
+
 #[derive(Debug)]
 pub struct Pet {
-    pub id: String,
-    pub display_name: String,
     pub spritesheet_path: PathBuf,
     pub frame: FrameSpec,
     pub animations: HashMap<String, Animation>,
@@ -46,8 +68,11 @@ pub struct Pet {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PetFile {
-    id: String,
-    display_name: String,
+    // Required, though only the app reads them.
+    #[serde(rename = "id")]
+    _id: String,
+    #[serde(rename = "displayName")]
+    _display_name: String,
     sprite_version_number: Option<u32>,
     #[serde(default = "default_spritesheet")]
     spritesheet_path: String,
@@ -86,12 +111,7 @@ impl Pet {
             Some(version) => bail!("unsupported spriteVersionNumber: {version}"),
             None => bail!("spriteVersionNumber is missing; only version 2 is supported"),
         }
-        let frame = file.frame.unwrap_or(FrameSpec {
-            width: 192,
-            height: 208,
-            columns: 8,
-            rows: 11,
-        });
+        let frame = file.frame.unwrap_or(STANDARD);
         ensure!(
             frame.width > 0 && frame.height > 0 && frame.columns > 0 && frame.rows > 0,
             "frame dimensions and grid counts must be positive"
@@ -120,17 +140,10 @@ impl Pet {
         );
 
         let mut animations = default_animations();
-        if has_look_frames(frame) {
+        if frame.has_look_frames() {
             animations.insert(
                 "spinning".into(),
-                looping(
-                    (72..=87)
-                        .map(|sprite_index| AnimationFrame {
-                            sprite_index,
-                            duration: Duration::from_millis(120),
-                        })
-                        .collect(),
-                ),
+                looping(uniform(LOOK_FRAMES, Duration::from_millis(120))),
             );
         }
         for (name, spec) in file.animations {
@@ -144,14 +157,7 @@ impl Pet {
             animations.insert(
                 name,
                 Animation {
-                    frames: spec
-                        .frames
-                        .into_iter()
-                        .map(|sprite_index| AnimationFrame {
-                            sprite_index,
-                            duration,
-                        })
-                        .collect(),
+                    frames: uniform(spec.frames, duration),
                     loop_start: spec.looping.unwrap_or(true).then_some(0),
                     fallback: if spec.fallback.is_empty() {
                         "idle".into()
@@ -162,8 +168,6 @@ impl Pet {
             );
         }
         let pet = Self {
-            id: file.id,
-            display_name: file.display_name,
             spritesheet_path: directory.join(relative_path),
             frame,
             animations,
@@ -174,11 +178,6 @@ impl Pet {
 
     pub fn frame_count(&self) -> usize {
         (self.frame.columns * self.frame.rows) as usize
-    }
-
-    /// Whether the sheet has the 16 look directions, frames 72 to 87.
-    pub fn has_look_frames(&self) -> bool {
-        has_look_frames(self.frame)
     }
 
     pub fn validate_animations(&self) -> Result<()> {
@@ -240,32 +239,39 @@ impl Pet {
 }
 
 fn idle_animation() -> Animation {
-    Animation {
-        frames: [(0, 1680), (1, 660), (2, 660), (3, 840), (4, 840), (5, 1920)]
+    looping(
+        [(0, 1680), (1, 660), (2, 660), (3, 840), (4, 840), (5, 1920)]
             .into_iter()
             .map(|(sprite_index, ms)| AnimationFrame {
                 sprite_index,
                 duration: Duration::from_millis(ms),
             })
             .collect(),
-        loop_start: Some(0),
-        fallback: "idle".into(),
-    }
+    )
+}
+
+/// The given sprites, each shown for `duration`.
+pub(crate) fn uniform(
+    sprites: impl IntoIterator<Item = usize>,
+    duration: Duration,
+) -> Vec<AnimationFrame> {
+    sprites
+        .into_iter()
+        .map(|sprite_index| AnimationFrame {
+            sprite_index,
+            duration,
+        })
+        .collect()
 }
 
 /// One row of the standard sheet, holding `final_ms` on its last frame.
 fn row_frames(row: usize, count: usize, ms: u64, final_ms: u64) -> Vec<AnimationFrame> {
     (0..count)
         .map(|column| AnimationFrame {
-            sprite_index: row * 8 + column,
+            sprite_index: row * STANDARD.columns as usize + column,
             duration: Duration::from_millis(if column + 1 == count { final_ms } else { ms }),
         })
         .collect()
-}
-
-/// A sheet with its own grid keeps the look directions only where the standard one has them.
-fn has_look_frames(frame: FrameSpec) -> bool {
-    frame.columns == 8 && frame.rows >= 11
 }
 
 /// Cycles its frames for as long as the state lasts.
@@ -275,10 +281,6 @@ fn looping(frames: Vec<AnimationFrame>) -> Animation {
         loop_start: Some(0),
         fallback: "idle".into(),
     }
-}
-
-fn app_state_animation(row: usize, count: usize, ms: u64, final_ms: u64) -> Animation {
-    three_runs(row_frames(row, count, ms, final_ms))
 }
 
 /// Reference behavior: play the action three times, then loop the idle tail.
@@ -313,7 +315,10 @@ fn default_animations() -> HashMap<String, Animation> {
         ("waiting", 6, 6, 150, 260),
         ("review", 8, 6, 150, 280),
     ] {
-        animations.insert(name.into(), app_state_animation(row, count, ms, final_ms));
+        animations.insert(
+            name.into(),
+            three_runs(row_frames(row, count, ms, final_ms)),
+        );
     }
     // Live Voice thinking lasts as long as the agent runs; keep this state cycling.
     animations.insert("running".into(), looping(running_frames()));

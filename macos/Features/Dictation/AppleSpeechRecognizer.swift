@@ -115,9 +115,8 @@ struct AppleSpeechSegment: Sendable {
     // The Mandarin on-device model also accepts English/code-switching. Use it for
     // ordinary dictation regardless of the macOS UI language; no user-facing picker
     // or mid-recording locale switch. Device fixtures exercise all three cases.
-    static func prepare(preferredLanguages: [String] = ["zh-CN"],
-                        downloading: @escaping @MainActor () -> Void = {}) async throws -> AppleSpeechRecognizer {
-        let locale = try speechLocale(preferredLanguages: preferredLanguages,
+    static func prepare(downloading: @escaping @MainActor () -> Void = {}) async throws -> AppleSpeechRecognizer {
+        let locale = try speechLocale(preferredLanguages: ["zh-CN"],
                                       supportedLocales: Set(await DictationTranscriber.supportedLocales))
         return try await prepare(engine: SystemAppleSpeechEngine(locale: locale), downloading: downloading)
     }
@@ -126,8 +125,7 @@ struct AppleSpeechSegment: Sendable {
                         downloading: @escaping @MainActor () -> Void = {}) async throws -> AppleSpeechRecognizer {
         try Task.checkCancellation()
         do { try await engine.installModel(downloading: downloading) }
-        catch is CancellationError { throw CancellationError() }
-        catch {
+        catch let error where !(error is CancellationError) {
             throw SettingsError(localized: "无法下载 Apple 语音模型（\(engine.locale.identifier)）：\(error.localizedDescription)")
         }
         try Task.checkCancellation()
@@ -165,8 +163,7 @@ struct AppleSpeechSegment: Sendable {
 
     func run(key: String, audio: AsyncThrowingStream<Data, Error>,
              receive: @escaping @MainActor (ASRResult) -> Void) async throws {
-        try Task.checkCancellation()
-        guard !cancelled else { throw CancellationError() }
+        try checkCancelled()
         // Relayed through a stream this recognizer owns, so cancel() ends the wait at once.
         let (stream, continuation) = AsyncThrowingStream<AppleSpeechSegment, Error>.makeStream()
         segments = continuation
@@ -180,20 +177,23 @@ struct AppleSpeechSegment: Sendable {
         var transcript = AppleDictationTranscript()
         do {
             for try await segment in stream {
-                try Task.checkCancellation()
-                guard !cancelled else { throw CancellationError() }
+                try checkCancelled()
                 onSegment?(segment)
                 let text = transcript.accept(segment)
                 if !text.isEmpty { receive(ASRResult(result: .init(text: text, utterances: nil))) }
             }
-        } catch let error as CancellationError { throw error }
-        catch let error as SettingsError { throw error }
-        catch { throw SettingsError(localized: "Apple 本地语音识别失败：\(String(describing: error))") }
-        try Task.checkCancellation()
-        guard !cancelled else { throw CancellationError() }
+        } catch let error where !(error is CancellationError || error is SettingsError) {
+            throw SettingsError(localized: "Apple 本地语音识别失败：\(String(describing: error))")
+        }
+        try checkCancelled()
         // Delivered even when empty: nothing said is no failure, and an empty final withdraws
         // whatever the volatile segments had shown.
         receive(ASRResult(result: .init(text: transcript.text, utterances: nil), streamFinal: true))
+    }
+
+    private func checkCancelled() throws {
+        try Task.checkCancellation()
+        guard !cancelled else { throw CancellationError() }
     }
 
     func cancel() {

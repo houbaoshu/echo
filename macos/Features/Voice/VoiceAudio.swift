@@ -1,171 +1,5 @@
 import AVFoundation
-import CoreAudio
 import Foundation
-
-// AVAudioConverter invokes its input block synchronously during convert(). This box never
-// escapes that call; all buffer/flag access happens in the converter's input block.
-private final class VoiceConverterInput: @unchecked Sendable {
-    let buffer: AVAudioPCMBuffer
-    var supplied = false
-    init(_ buffer: AVAudioPCMBuffer) { self.buffer = buffer }
-}
-
-public struct VoiceCapturePacket: Sendable, Equatable {
-    public let data: Data
-    public let epoch: Int
-    public init(data: Data, epoch: Int) {
-        self.data = data
-        self.epoch = epoch
-    }
-}
-
-// Conversion runs on the audio tap; finalization on MainActor is protected by the lock.
-final class VoicePCMConverter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var finished = false
-    private var paused = false
-    private var packetBytes = 6400
-    private var epoch: Int
-    private var delivered = 0
-    let converter: AVAudioConverter
-    let target: AVAudioFormat
-    let continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation
-    var pending = Data()
-    init(source: AVAudioFormat, continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation, initialEpoch: Int = 1) throws {
-        target = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
-        guard let converter = AVAudioConverter(from: source, to: target) else { throw SettingsError(localized: "麦克风音频格式无法转换。") }
-        self.converter = converter; self.continuation = continuation
-        self.epoch = initialEpoch
-    }
-    func reset(epoch: Int, paused: Bool, monitoring: Bool = false) {
-        lock.lock(); defer { lock.unlock() }
-        self.epoch = epoch
-        self.paused = paused
-        packetBytes = monitoring ? 640 : 6400
-        pending.removeAll()
-        converter.reset() // Resampler history belongs to the old capture boundary too.
-    }
-    /// Tap buffers received so far, muted or not: whether the microphone is alive at all.
-    var deliveredBuffers: Int { lock.withLock { delivered } }
-    func accept(_ input: AVAudioPCMBuffer) {
-        lock.lock(); defer { lock.unlock() }
-        delivered += 1
-        guard !finished, !paused else { return }
-        let capacity = AVAudioFrameCount(ceil(Double(input.frameLength) * 16000 / input.format.sampleRate)) + 32
-        guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else {
-            continuation.finish(throwing: SettingsError(localized: "麦克风转换缓冲区分配失败。")); return
-        }
-        let source = VoiceConverterInput(input)
-        var error: NSError?
-        let status = converter.convert(to: output, error: &error) { _, inputStatus in
-            if source.supplied { inputStatus.pointee = .noDataNow; return nil }
-            source.supplied = true; inputStatus.pointee = .haveData; return source.buffer
-        }
-        guard status != .error, error == nil, let samples = output.int16ChannelData?[0] else {
-            continuation.finish(throwing: SettingsError(localized: "麦克风音频转换失败（code=\(error?.code ?? 0) status=\(status.rawValue)）。")); return
-        }
-        pending.append(Data(bytes: samples, count: Int(output.frameLength) * 2))
-        while pending.count >= packetBytes {
-            let packet = Data(pending.prefix(packetBytes)); pending.removeFirst(packetBytes)
-            let capturePacket = VoiceCapturePacket(data: packet, epoch: epoch)
-            if case .dropped = continuation.yield(capturePacket) {
-                continuation.finish(throwing: SettingsError(localized: "语音上传跟不上录音速度，请检查网络后重试。")); return
-            }
-        }
-    }
-    func finish(flush: Bool = true) {
-        lock.lock(); defer { lock.unlock() }
-        guard !finished else { return }
-        finished = true
-        if flush, !paused, !pending.isEmpty {
-            let capturePacket = VoiceCapturePacket(data: pending, epoch: epoch)
-            if case .dropped = continuation.yield(capturePacket) {
-                continuation.finish(throwing: SettingsError(localized: "录音尾包处理过慢，已保留识别到的文字。"))
-            }
-        }
-        pending.removeAll(); continuation.finish()
-    }
-}
-
-/// The system default devices an engine graph was built on. Only the device identities
-/// matter here: a Bluetooth headset keeps its identity across a profile switch, while
-/// picking another output in Control Center changes it.
-struct VoiceAudioRoute: Equatable, Sendable {
-    var input: UInt32
-    var output: UInt32
-    static var current: VoiceAudioRoute {
-        VoiceAudioRoute(input: defaultDevice(kAudioHardwarePropertyDefaultInputDevice),
-                        output: defaultDevice(kAudioHardwarePropertyDefaultOutputDevice))
-    }
-    private static func defaultDevice(_ selector: AudioObjectPropertySelector) -> UInt32 {
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(mSelector: selector,
-                                                 mScope: kAudioObjectPropertyScopeGlobal,
-                                                 mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
-                                         0, nil, &size, &device) == noErr else { return 0 }
-        return device
-    }
-}
-
-/// Opening the microphone drives a Bluetooth headset from A2DP to HFP, so Core Audio
-/// reconfigures the very route the call just started on and AVAudioEngine stops itself
-/// roughly a second after start(). That is Echo's own recording doing it, not the user
-/// choosing another device, and restarting the engine on the unchanged route recovers the
-/// call. Every other configuration change still ends it, so a real device switch is not
-/// masked: the check is device identity, not the notification. A Live Voice call and a
-/// dictation opt in to following a switch to another device at the same sample rate instead.
-struct VoiceConfigurationChangePolicy: Sendable {
-    enum Decision: Equatable, Sendable {
-        case restartEngine
-        /// Restart on the new default devices and reset the player; queued reply audio is kept.
-        case recoverSwitch
-        case endCall(String)
-    }
-    struct Change: Sendable {
-        var baseline: VoiceAudioRoute
-        var current: VoiceAudioRoute
-        /// Seconds since the engine started, bounding recovery to initialization.
-        var elapsed: TimeInterval
-        var restarts: Int
-        var queuedPlaybackFrames: Int
-        /// Sample rate the duplex graph was built with; nil for a playback-only graph.
-        var graphSampleRate: Double?
-        var inputSampleRate: Double
-        /// Set only for a Live Voice call or a dictation; everything else still ends on a switch.
-        var recoversDeviceSwitch: Bool = false
-    }
-    var initializationWindow: TimeInterval = 10
-    var maximumRestarts: Int = 3
-    func decide(_ change: Change) -> Decision {
-        guard change.current == change.baseline else {
-            let switched = "默认设备已切换 输入 \(change.baseline.input)→\(change.current.input) 输出 \(change.baseline.output)→\(change.current.output)"
-            guard change.recoversDeviceSwitch else { return .endCall(switched) }
-            if let rate = change.graphSampleRate, rate != change.inputSampleRate {
-                return .endCall("\(switched)，采集采样率 \(rate) Hz→\(change.inputSampleRate) Hz，需要重建音频图")
-            }
-            // Queued audio is not checked: it survives the restart and is queued again.
-            return .recoverSwitch
-        }
-        guard change.elapsed < initializationWindow else {
-            return .endCall("同一设备在初始化窗口 \(Int(initializationWindow)) 秒之后重新配置 elapsed=\(Int(change.elapsed))")
-        }
-        guard change.restarts < maximumRestarts else {
-            return .endCall("启动期已恢复 \(change.restarts) 次仍在重新配置，超出上限")
-        }
-        // Restarting drops whatever the player still holds, so never recover over audible audio.
-        guard change.queuedPlaybackFrames == 0 else {
-            return .endCall("重新配置时仍有 \(change.queuedPlaybackFrames) 帧回复音频未播完")
-        }
-        // A different rate invalidates the tap and the duplex connection, which a plain restart
-        // cannot fix; rebuilding the graph is deliberately left out of this change.
-        if let rate = change.graphSampleRate, rate != change.inputSampleRate {
-            return .endCall("采集采样率已从 \(rate) Hz 变为 \(change.inputSampleRate) Hz")
-        }
-        return .restartEngine
-    }
-}
 
 @MainActor protocol VoiceAudioHandling: AnyObject {
     var onFailure: ((String, VoiceAudioFailure) -> Void)? { get set }
@@ -208,76 +42,6 @@ extension VoiceAudioHandling {
     }
 }
 
-/// How the setup queue brings a lent engine back.
-struct VoiceAudioRestartOptions: Equatable, Sendable {
-    var resumePlayback: Bool
-    /// After a device switch the player has to be stopped before it plays anything again.
-    var resetPlayer: Bool
-}
-
-/// A background start's claim on the handover. stop() cancels it from the main actor; the setup
-/// queue reads it right after building, so an abandoned graph is torn down before any later build.
-final class VoiceAudioStartToken: @unchecked Sendable {
-    private let lock = NSLock()
-    private var cancelled = false
-    var isCancelled: Bool { lock.withLock { cancelled } }
-    func cancel() { lock.withLock { cancelled = true } }
-}
-
-struct VoiceAudioBuildRequest: Sendable {
-    var capture: Bool
-    var continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation
-}
-
-/// An engine graph between construction and handover. It has exactly one owner at any time:
-/// the setup queue while it is built (or torn down as an orphan), then VoiceAudio on the main
-/// actor once adopted. Nothing else references the engine meanwhile, which is the whole of
-/// what makes the unchecked Sendable sound; only the two flags are touched across threads.
-/// A recovery restart lends an adopted engine back to the queue the same way: VoiceAudio
-/// leaves it alone until the queue is done, and a stop() meanwhile has the queue tear it down.
-final class VoiceAudioGraph: @unchecked Sendable {
-    struct Step { var name: String; var start: ContinuousClock.Instant; var duration: Duration }
-    let engine: AVAudioEngine
-    let player: AVAudioPlayerNode
-    var converter: VoicePCMConverter?
-    var tapped = false
-    var duplexSampleRate: Double?
-    var route = VoiceAudioRoute(input: 0, output: 0)
-    var startedAt = Date()
-    var steps: [Step] = []
-    /// Only records that a configuration change arrived before VoiceAudio's own observer existed.
-    var setupObserver: NSObjectProtocol?
-    private let lock = NSLock()
-    private var changed = false
-    private var tornDown = false
-    init(engine: AVAudioEngine = AVAudioEngine(), player: AVAudioPlayerNode = AVAudioPlayerNode()) {
-        self.engine = engine; self.player = player
-    }
-    var changedDuringSetup: Bool { lock.withLock { changed } }
-    func markChanged() { lock.withLock { changed = true } }
-    var isTornDown: Bool { lock.withLock { tornDown } }
-    func removeSetupObserver() {
-        if let setupObserver { NotificationCenter.default.removeObserver(setupObserver) }
-        setupObserver = nil
-    }
-    func teardown() {
-        removeSetupObserver()
-        if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
-        converter?.finish(flush: false); converter = nil
-        player.stop(); engine.stop()
-        lock.withLock { tornDown = true }
-    }
-}
-
-extension AVAudioNode {
-    func installTapChecked(onBus bus: AVAudioNodeBus, bufferSize: AVAudioFrameCount,
-                           format: AVAudioFormat?, block: @escaping AVAudioNodeTapBlock) throws {
-        // Xcode 27.0 ships no Swift overlay for installTapOnBus:…:error:block:; the
-        // NS_REFINED_FOR_SWIFT method imports as throwing with an empty error label.
-        try __installTap(onBus: bus, bufferSize: bufferSize, format: format, error: (), block: block)
-    }
-}
-
 @MainActor final class VoiceAudio: NSObject, VoiceAudioHandling {
     var onFailure: ((String, VoiceAudioFailure) -> Void)?
     var inputOutputLatency: TimeInterval {
@@ -314,7 +78,7 @@ extension AVAudioNode {
     private var trailingByte = Data()
     private var playbackPaused = false
     private let playbackFormat = VoiceAudio.makePlaybackFormat()
-    private let changePolicy: VoiceConfigurationChangePolicy
+    private let changePolicy = VoiceConfigurationChangePolicy()
     /// Core Audio can post the change before it actually stops the engine; settle first.
     private let restartDelay: Duration
     private(set) var routeBaseline: VoiceAudioRoute?
@@ -354,8 +118,7 @@ extension AVAudioNode {
 
     /// `build`, `restart`, `onConfigurationChange`, `currentRoute`, `isRunning` and `schedule`
     /// exist for tests; the defaults are the real engine, devices and configuration-change policy.
-    init(policy: VoiceConfigurationChangePolicy = VoiceConfigurationChangePolicy(),
-         restartDelay: Duration = .milliseconds(300),
+    init(restartDelay: Duration = .milliseconds(300),
          build: @escaping @Sendable (VoiceAudioBuildRequest) throws -> VoiceAudioGraph = { try VoiceAudio.buildGraph($0) },
          restart: @escaping @Sendable (VoiceAudioGraph, VoiceAudioRestartOptions) throws -> Void = { try VoiceAudio.restartGraph($0, $1) },
          onConfigurationChange: ((AVAudioEngine) -> Void)? = nil,
@@ -366,7 +129,6 @@ extension AVAudioNode {
          },
          playbackStallTimeout: Duration = .seconds(10),
          captureResumeTimeout: Duration = .seconds(3)) {
-        changePolicy = policy
         self.restartDelay = restartDelay
         self.build = build
         self.restart = restart
@@ -420,9 +182,7 @@ extension AVAudioNode {
         let graph: VoiceAudioGraph
         do { graph = try Self.setupQueue.sync { try build(request) } }
         catch { continuation.finish(); throw error }
-        // Before the handover, which may judge a change that arrived during the build.
-        self.recoversDeviceSwitch = recoversDeviceSwitch
-        adopt(graph, continuation: continuation)
+        adopt(graph, continuation: continuation, recoversDeviceSwitch: recoversDeviceSwitch)
         return stream
     }
 
@@ -456,9 +216,7 @@ extension AVAudioNode {
             throw CancellationError()
         }
         pendingStart = nil
-        // Before the handover, which may judge a change that arrived during the build.
-        self.recoversDeviceSwitch = recoversDeviceSwitch
-        adopt(graph, continuation: continuation)
+        adopt(graph, continuation: continuation, recoversDeviceSwitch: recoversDeviceSwitch)
         return stream
     }
 
@@ -563,7 +321,10 @@ extension AVAudioNode {
     }
 
     /// Takes ownership of a running graph on the main actor; every later engine access is here.
-    private func adopt(_ graph: VoiceAudioGraph, continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation) {
+    private func adopt(_ graph: VoiceAudioGraph, continuation: AsyncThrowingStream<VoiceCapturePacket, Error>.Continuation,
+                       recoversDeviceSwitch: Bool) {
+        // Before the handover below, which may judge a change that arrived during the build.
+        self.recoversDeviceSwitch = recoversDeviceSwitch
         engine = graph.engine; player = graph.player
         captureConverter = graph.converter; tapped = graph.tapped
         self.continuation = continuation
@@ -693,7 +454,7 @@ extension AVAudioNode {
         let engine = graph.engine
         VoiceDiagnostics.shared.recordSpan("audio.restart", start: began, duration: began.duration(to: .now))
         if case .failure(let error) = result {
-            deferredOutputMuted = nil; deferredInterrupt = false; changedDuringRestart = false
+            clearDeferredIntents()
             VoiceDiagnostics.shared.record("2 服务初始化", "FAIL", "恢复引擎失败：\(VoiceDiagnostics.reason(error))")
             onFailure?(LocalizedStringResource("音频设备恢复失败，通话已结束，请重新开始。").sourceText, .recoveryFailed)
             return
@@ -761,8 +522,7 @@ extension AVAudioNode {
         // restart recovers it; it waits under the same no-progress limit as a full queue. A call
         // that follows device switches also waits out the stop that precedes the change.
         while queuedFrames > 24000 * 5 || pendingStart != nil || isRestartingCapture || (recoversDeviceSwitch && engineStopped) {
-            if playbackPaused { progressAt = .now }
-            if queuedFrames != lastFrames { lastFrames = queuedFrames; progressAt = .now }
+            if playbackPaused || queuedFrames != lastFrames { lastFrames = queuedFrames; progressAt = .now }
             guard progressAt.duration(to: .now) < playbackStallTimeout else {
                 VoiceDiagnostics.shared.record("6 播放器", "FAIL", "队列 \(Self.seconds(playbackStallTimeout)) 秒无进展 queuedFrames=\(queuedFrames) 等待引擎启动=\(pendingStart != nil) 等待引擎恢复=\(isRestartingCapture) 引擎已停止=\(engineStopped)")
                 throw SettingsError(localized: "播放器队列停滞，请检查音频输出设备。")
@@ -772,15 +532,16 @@ extension AVAudioNode {
         }
         try Task.checkCancellation()
         guard let player, let engine, isRunning(engine), epoch == generation else { throw CancellationError() }
-        var bytes = trailingByte; bytes.append(data)
+        let bytes = trailingByte.isEmpty ? data : trailingByte + data
         trailingByte = bytes.count.isMultiple(of: 2) ? Data() : Data(bytes.suffix(1))
         let count = bytes.count / 2
-        guard count > 0, let buffer = AVAudioPCMBuffer(pcmFormat: playbackFormat, frameCapacity: AVAudioFrameCount(count)),
-              let samples = buffer.floatChannelData?[0] else {
-            if count > 0 { throw SettingsError(localized: "播放器缓冲区分配失败。") }; return
-        }
+        guard count > 0 else { return }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: playbackFormat, frameCapacity: AVAudioFrameCount(count)),
+              let samples = buffer.floatChannelData?[0] else { throw SettingsError(localized: "播放器缓冲区分配失败。") }
         buffer.frameLength = AVAudioFrameCount(count)
-        for i in 0..<count { samples[i] = Float(Int16(bitPattern: UInt16(bytes[i * 2]) | UInt16(bytes[i * 2 + 1]) << 8)) / 32768 }
+        bytes.withUnsafeBytes { pcm in
+            for i in 0..<count { samples[i] = Float(pcm.pcm16Sample(at: i * 2)) }
+        }
         let wasEmpty = scheduledBuffers.isEmpty
         let entry = ScheduledBuffer(id: nextBufferID, frames: count, buffer: buffer)
         nextBufferID += 1
@@ -832,8 +593,7 @@ extension AVAudioNode {
         var lastFrames = queuedFrames
         var progressAt = ContinuousClock.now
         while queuedFrames > 0 {
-            if playbackPaused { progressAt = .now }
-            if queuedFrames != lastFrames { lastFrames = queuedFrames; progressAt = .now }
+            if playbackPaused || queuedFrames != lastFrames { lastFrames = queuedFrames; progressAt = .now }
             // A single scheduled buffer can contain a full diagnostic phrase.
             guard progressAt.duration(to: .now) < .seconds(Double(lastFrames) / 24000) + playbackStallTimeout else {
                 VoiceDiagnostics.shared.record("6 播放器", "FAIL", "等待 dataPlayedBack 超时 queuedFrames=\(queuedFrames)")
@@ -848,11 +608,19 @@ extension AVAudioNode {
         }
     }
     func interruptPlayback() {
-        generation = UUID(); trailingByte = Data(); playbackPaused = false
-        scheduledBuffers = []; playedBackFrames = 0; headStartSample = nil
+        resetPlaybackQueue()
         guard restartingGraph == nil else { deferredInterrupt = true; return }
         player?.stop()
         if engine?.isRunning == true { resumePlayer("打断后重启播放器") }
+    }
+    /// Drops every buffer of the current generation, so callbacks for them are ignored from here.
+    private func resetPlaybackQueue() {
+        generation = UUID(); trailingByte = Data(); playbackPaused = false
+        scheduledBuffers = []; playedBackFrames = 0; headStartSample = nil
+    }
+    /// Forgets what was asked for while the setup queue held the engine.
+    private func clearDeferredIntents() {
+        deferredOutputMuted = nil; deferredInterrupt = false; changedDuringRestart = false
     }
     func finishCapture() { stop(flushCapture: true) }
     func stop() { stop(flushCapture: false) }
@@ -863,12 +631,11 @@ extension AVAudioNode {
         restartTask?.cancel(); restartTask = nil
         livenessTask?.cancel(); livenessTask = nil
         isRestartingCapture = false; captureRestartedAt = nil
-        deferredOutputMuted = nil; deferredInterrupt = false; changedDuringRestart = false
+        clearDeferredIntents()
         recoversDeviceSwitch = false; switchRoute = nil
         lastInputOutputLatency = 0
         routeBaseline = nil; startedAt = nil; graphSampleRate = nil; restarts = 0
-        generation = UUID(); trailingByte = Data(); playbackPaused = false
-        scheduledBuffers = []; playedBackFrames = 0; headStartSample = nil
+        resetPlaybackQueue()
         // The converter is lock-protected, so capture ends now even if the engine is not ours yet.
         captureConverter?.finish(flush: flushCapture); captureConverter = nil
         continuation?.finish(); continuation = nil

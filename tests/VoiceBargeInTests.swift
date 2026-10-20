@@ -189,20 +189,19 @@ extension EchoVoiceScenarios {
         }
 
         let f = BargeInFixture()
-        var finishDrain: CheckedContinuation<Void, Never>?
-        f.audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
-        defer { finishDrain?.resume(); f.shutdown() }
+        f.audio.holdsDrain = true
+        defer { f.audio.releaseDrain(); f.shutdown() }
         try await f.start()
         let run = f.store.task!.runID
         f.audio.releasePlayback()
-        try await eventually("finishDrain != nil") { finishDrain != nil }
+        try await eventually("the drain waits to finish") { f.audio.isHoldingDrain }
         #expect(f.voice.snapshot.replyAudio == .draining(run), "fixture is in playback drain after synthesis finished")
         try await f.probe(); try await f.recognize()
         f.recognizers[1].emit("我还有个问题", start: 0, end: 300, final: true)
         #expect(f.store.messages[1].status == .completed && f.userTexts.count == 2,
               "barge-in during drain preserves completed assistant text")
         let state = f.voice.snapshot, drains = f.audio.finishedDrains
-        finishDrain?.resume(); finishDrain = nil
+        f.audio.releaseDrain()
         try await eventually("the old drain returns") { f.audio.finishedDrains > drains }
         #expect(f.voice.snapshot == state && f.recognizers.count == 2,
               "old drain completion cannot resume listening or alter a new run")
@@ -284,9 +283,7 @@ extension EchoVoiceScenarios {
                       "unmute during playback rearms local monitoring without resurrecting probe ASR")
             case "stop": f.voice.stopReply()
             case "send":
-                f.voice.prepareForSubmission()
-                #expect(f.store.send("用文字替换"), "text replacement is accepted during confirmation")
-                f.voice.finishSubmission()
+                #expect(f.voice.submit { f.store.send("用文字替换") }, "text replacement is accepted during confirmation")
             case "end": f.voice.end()
             case "failure": f.audio.onFailure?("设备变化", .deviceChange)
             default:
@@ -317,9 +314,8 @@ extension EchoVoiceScenarios {
         _ = NSApplication.shared
         do {
             let f = BargeInFixture(timeout: BargeInFixture.shortTimeout)
-            var finishDrain: CheckedContinuation<Void, Never>?
-            f.audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
-            defer { finishDrain?.resume(); f.shutdown() }
+            f.audio.holdsDrain = true
+            defer { f.audio.releaseDrain(); f.shutdown() }
             try await f.start(); try await f.probe(); try await f.recognize()
             let run = f.store.task!.runID
             // The Agent sends no more model text after the final reply; TTS can still deliver audio.
@@ -335,8 +331,8 @@ extension EchoVoiceScenarios {
                   && f.store.messages[1].status == .completed && f.recognizers[1].cancelled,
                   "no ASR result resumes a completed model's remaining playback")
             // The draining state is set before the drain itself begins; release it once it waits.
-            try await eventually("the drain waits to finish") { finishDrain != nil }
-            finishDrain?.resume(); finishDrain = nil
+            try await eventually("the drain waits to finish") { f.audio.isHoldingDrain }
+            f.audio.releaseDrain()
             try await eventually("f.voice.snapshot.recognition == .listening") { f.voice.snapshot.recognition == .listening }
             #expect(f.voice.snapshot.bargeIn == .off && f.recognizers.count == 3,
                   "normal drain and tail recovery clear the local monitor before fresh listening")
@@ -346,13 +342,12 @@ extension EchoVoiceScenarios {
         do {
             let audio = FakeAudio(), synth = FakeSynthesizer(), permission = HeldPermission()
             synth.emitsAudio = true
-            let (store, puppet) = VoiceTests.agentStore()
+            let (store, puppet) = puppetStore()
             let voice = VoiceSessionController(audio: audio, recognizer: { FakeRecognizer() },
                 synthesizer: { synth }, captureTimeout: .milliseconds(50), permission: { await permission.ask() })
             let conversation = WorkspaceConversation(store: store)
-            var finishDrain: CheckedContinuation<Void, Never>?
-            audio.onDrain = { await withCheckedContinuation { finishDrain = $0 } }
-            defer { finishDrain?.resume(); permission.answer(false); voice.shutdown(); store.shutdown() }
+            audio.holdsDrain = true
+            defer { audio.releaseDrain(); permission.answer(false); voice.shutdown(); store.shutdown() }
             // The reply completes while the call starts, so speaking it at activation closes the
             // startup watchdog before any packet and only the monitor's watchdog remains.
             store.send("麦克风首包之前的文字")
@@ -360,7 +355,7 @@ extension EchoVoiceScenarios {
             try await puppet.reply("开始播报")
             try await eventually("store.task?.status == .completed && permission.isWaiting") { store.task?.status == .completed && permission.isWaiting }
             permission.answer(true)
-            try await eventually("finishDrain != nil") { finishDrain != nil }
+            try await eventually("the drain waits to finish") { audio.isHoldingDrain }
             #expect(audio.monitoring, "text reply enables local monitoring even before the first capture packet")
             try await eventually("the first-capture watchdog ends the call after its 50 ms timeout") { !voice.isActive }
             #expect(!voice.isActive && voice.error?.contains("没有返回音频") == true,

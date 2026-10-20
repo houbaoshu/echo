@@ -134,8 +134,7 @@ import UniformTypeIdentifiers
                      timeout: TimeInterval = ArkImageGenerator.timeout) async throws -> Chat {
         let chat = Chat(FinderRootTests.oneByOne([("generate_image", arguments)]), project: project, finder: finder,
                         imageGenerator: generator(replies, timeout: timeout))
-        #expect(chat.store.send("画一张"))
-        try await chat.idle()
+        try await chat.run("画一张")
         return chat
     }
     static func remove(_ chat: Chat, _ more: URL?...) {
@@ -251,8 +250,7 @@ import UniformTypeIdentifiers
         for name in [Self.base + ".jpeg", Self.base + " 2.jpeg", Self.base + " 3.png"] {
             try Data("taken".utf8).write(to: chat.pictures.appendingPathComponent(name))
         }
-        #expect(chat.store.send("画一张"))
-        try await chat.idle()
+        try await chat.run("画一张")
         // The same name with another extension is not taken: " 3" is free for the JPEG.
         #expect(Self.json(chat.store.tools.first?.result)["path"] as? String == chat.pictures.path + "/" + Self.base + " 3.jpeg")
         #expect(try Data(contentsOf: chat.pictures.appendingPathComponent(Self.base + ".jpeg")) == Data("taken".utf8), "Nothing is replaced")
@@ -280,8 +278,7 @@ import UniformTypeIdentifiers
         try FileManager.default.createDirectory(at: chat.pictures, withIntermediateDirectories: true)
         try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: chat.pictures.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: chat.pictures.path) }
-        #expect(chat.store.send("画一张"))
-        try await chat.idle()
+        try await chat.run("画一张")
         let tool = try #require(chat.store.tools.first)
         let result = Self.json(tool.result)
         #expect(tool.state == .failed && result["reason"] as? String == "save" && result["message"] as? String == String(cString: strerror(EACCES)))
@@ -448,11 +445,9 @@ import UniformTypeIdentifiers
 
     @Test func onlyATurnWithAGeneratorOffersGenerateImage() async throws {
         let with = Chat(FinderRootTests.oneByOne([]), imageGenerator: Self.generator([]))
-        #expect(with.store.send("你好"))
-        try await with.idle()
+        try await with.run("你好")
         let without = Chat(FinderRootTests.oneByOne([]))
-        #expect(without.store.send("你好"))
-        try await without.idle()
+        try await without.run("你好")
         let offered = try #require(with.model.requests.first).enabledToolDefinitions.map(\.name)
         let plain = try #require(without.model.requests.first).enabledToolDefinitions.map(\.name)
         #expect(offered.contains("generate_image") && !plain.contains("generate_image"))

@@ -30,7 +30,6 @@ import SwiftUI
         // pane scrolling under it and rule a line once it has scrolled, as System Settings
         // does (measured on macOS 27: a transparent titlebar draws neither, whatever the
         // form's scroll edge effect style, and the pane ran sharp into the title).
-        window.title = settings.selectedSection.title
         window.toolbarStyle = .unified
         let toolbar = NSToolbar(identifier: "chiyan.settings")
         toolbar.displayMode = .iconOnly
@@ -82,8 +81,7 @@ import SwiftUI
     }
 
     func handleEscape() -> Bool {
-        guard let window, window.isVisible, window.attachedSheet == nil else { return false }
-        if let editor = window.firstResponder as? any NSTextInputClient, editor.hasMarkedText() { return false }
+        guard let window = window as? WorkspaceWindow, window.isVisible, window.ownsEscape else { return false }
         window.performClose(nil)
         return true
     }

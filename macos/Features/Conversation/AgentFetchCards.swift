@@ -3,22 +3,18 @@ import Foundation
 /// What a web_fetch card says: the page's title folded, and its address, which opens in the
 /// default browser; when the page could not be read, why, in the person's language. The text read
 /// is for the model and is not shown.
-struct AgentFetchCard {
+struct AgentFetchCard: AgentToolCard {
     let tool: AgentToolRecord
 
     static func applies(to tool: AgentToolRecord) -> Bool { tool.tool == "web_fetch" }
 
     let icon = "doc.text.magnifyingglass"
 
-    private var result: [String: Any]? {
-        tool.result.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
-    }
-
     /// "读取网页 · 页面标题"; before the page is read, or without a title, its host and path. A call
     /// that did not finish says how it ended first.
     var title: String {
         let name = (result?["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? AgentOpenCard.address(tool.command)
-        return (tool.state == .finished ? "" : tool.state.label + " · ") + String(localized: "读取网页 · \(name)")
+        return titled(String(localized: "读取网页 · \(name)"))
     }
 
     /// The page: where it ended up once read, otherwise the address asked for.

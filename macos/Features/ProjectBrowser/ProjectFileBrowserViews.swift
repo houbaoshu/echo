@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct WorkspaceInspector: View {
     var workspace: WorkspaceStore
@@ -38,45 +37,39 @@ private struct ProjectFileBrowserView: View {
         // ↑ / ↓ and ← / → traversal, the focus ring and the sidebar row metrics all come
         // from AppKit instead of being drawn here.
         ScrollViewReader { proxy in
-            VStack(spacing: 0) {
-                List(selection: selection) {
-                    directoryContents("")
-                }.listStyle(.sidebar).scrollContentBackground(.hidden)
-                    .modifier(SidebarListFocusBinding(focus: listFocus))
-                    .accessibilityIdentifier("projectFiles.tree")
-                    // Return opens one row; over several it does nothing.
-                    .onKeyPress(.return) { activateSelection(); return .handled }
-                    // The list owns the menu, which is what brings the system's own
-                    // right-click semantics with it: a menu raised over a selected row acts
-                    // on the whole selection, one raised over any other row on that row
-                    // alone.
-                    //
-                    // No `primaryAction:`. The system would fire it on a double click,
-                    // and this tree opens on a single one — the row's own tap gesture
-                    // stays the activation, so clicking a file still previews it at once.
-                    .contextMenu(forSelectionType: String.self) { paths in
-                        entryMenu(paths)
-                    }
-                    // The list keeps its identity when the project changes, so `onAppear`
-                    // fires once for the window's whole life. Restoring on the location
-                    // covers the first appearance and every later switch alike.
-                    .onChange(of: browser.location, initial: true) { _, _ in
-                        // Rows restored from a saved expansion exist only once the list lays out.
-                        guard let path = browser.state.scrollID else { return }
-                        DispatchQueue.main.async { proxy.scrollTo(path, anchor: .top) }
-                    }
-            }
+            List(selection: selection) {
+                directoryContents("")
+            }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                .modifier(SidebarListFocusBinding(focus: listFocus))
+                .accessibilityIdentifier("projectFiles.tree")
+                // Return opens one row; over several it does nothing.
+                .onKeyPress(.return) { browser.activateSelection(); return .handled }
+                // The list owns the menu, which is what brings the system's own
+                // right-click semantics with it: a menu raised over a selected row acts
+                // on the whole selection, one raised over any other row on that row
+                // alone.
+                //
+                // No `primaryAction:`. The system would fire it on a double click,
+                // and this tree opens on a single one — the row's own tap gesture
+                // stays the activation, so clicking a file still previews it at once.
+                .contextMenu(forSelectionType: String.self) { paths in
+                    entryMenu(paths)
+                }
+                // The list keeps its identity when the project changes, so `onAppear`
+                // fires once for the window's whole life. Restoring on the location
+                // covers the first appearance and every later switch alike.
+                .onChange(of: browser.location, initial: true) { _, _ in
+                    // Rows restored from a saved expansion exist only once the list lays out.
+                    guard let path = browser.state.scrollID else { return }
+                    DispatchQueue.main.async { proxy.scrollTo(path, anchor: .top) }
+                }
         }
     }
-    /// The highlight, which the pointer, ⇧ / ⌘ clicks and the arrow keys move, all drawn
-    /// and extended by the list itself. The row to scroll back to is the first one a
-    /// change added, so a range comes back from its top.
+    /// The highlight, drawn and extended by the list itself.
     private var selection: Binding<Set<String>> {
         Binding(get: { browser.state.selection }, set: { paths in
             listFocus.take()
-            let added = paths.subtracting(browser.state.selection)
             browser.setSelection(paths)
-            if let first = browser.inTreeOrder(added).first { browser.setScrollID(first) }
         })
     }
     /// Expanding loads on demand, and only ever from here, so a collapsed folder is
@@ -87,20 +80,6 @@ private struct ProjectFileBrowserView: View {
                     guard expanded != browser.state.expanded.contains(path) else { return }
                     browser.toggleDirectory(path)
                 })
-    }
-    /// A click, Return or an accessibility press activates a row: a folder opens or
-    /// closes, a file opens its preview. The list's own triangle only ever discloses, and
-    /// it is also what a folder row's accessibility press reaches.
-    private func activate(_ entry: ProjectFileEntry) {
-        if entry.kind == .directory { browser.activateDirectory(entry.path) }
-        else { browser.openFile(entry.path) }
-    }
-    private func activateSelection() {
-        // selectedPath is nil unless exactly one row is selected.
-        guard let path = browser.state.selectedPath,
-              case .loaded(let entries) = browser.state.directories[(path as NSString).deletingLastPathComponent],
-              let entry = entries.first(where: { $0.path == path }) else { return }
-        activate(entry)
     }
     @ViewBuilder private func directoryContents(_ path: String) -> some View {
         switch browser.state.directories[path] {
@@ -140,7 +119,7 @@ private struct ProjectFileBrowserView: View {
     }
     private func entryRow(_ entry: ProjectFileEntry) -> some View {
         ProjectFileRow(entry: entry, isExpanded: browser.state.expanded.contains(entry.path),
-                       activate: { activate(entry) })
+                       activate: { browser.activate(entry) })
             .modifier(ProjectFileDrag(url: browser.url(for: entry.path)) {
                 browser.draggedPaths(from: entry.path).compactMap { browser.url(for: $0) }
             })
@@ -163,13 +142,15 @@ private struct ProjectFileBrowserView: View {
     /// Only the file page takes the body font. The tree is a source list, whose rows take
     /// their size from the sidebar size setting and must not inherit one.
     private var filePage: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let path = browser.state.selectedPath ?? ""
+        let expansionTitle: LocalizedStringKey = browser.isPreviewExpanded ? "收起预览" : "展开预览"
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 Button { browser.returnToDirectory() } label: { Image(systemName: "chevron.left") }
                     .buttonStyle(.borderless).help("返回目录").accessibilityLabel("返回目录")
                     .accessibilityIdentifier("projectFiles.back")
-                Text(browser.state.selectedPath ?? "").font(WorkspaceStyle.caption).lineLimit(3)
-                    .textSelection(.enabled).help(browser.state.selectedPath ?? "")
+                Text(path).font(WorkspaceStyle.caption).lineLimit(3)
+                    .textSelection(.enabled).help(path)
                 Spacer(minLength: 0)
                 Button { browser.togglePreviewExpansion() } label: {
                     // The diagonal the pane grows along, drawn by the symbol itself rather
@@ -178,213 +159,50 @@ private struct ProjectFileBrowserView: View {
                           ? "arrow.up.right.and.arrow.down.left" : "arrow.down.left.and.arrow.up.right")
                         .font(.callout).frame(width: 24, height: 24).contentShape(Rectangle())
                 }.buttonStyle(.borderless).foregroundStyle(.secondary)
-                    .help(browser.isPreviewExpanded ? "收起预览" : "展开预览")
-                    .accessibilityLabel(browser.isPreviewExpanded ? "收起预览" : "展开预览")
+                    .help(expansionTitle)
+                    .accessibilityLabel(expansionTitle)
                     .accessibilityIdentifier("projectFiles.toggleExpansion")
             }.padding(14)
             Divider()
-            switch browser.state.preview {
-            case .loading: ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .text(let text):
-                if text.isEmpty {
-                    Text("空文件").foregroundStyle(.secondary).padding(14)
-                    Spacer()
-                } else {
-                    Group {
-                        if ["md", "markdown"].contains(((browser.state.selectedPath ?? "") as NSString).pathExtension.lowercased()) {
-                            ScrollView {
-                                AssistantMarkdown(content: text).equatable()
-                                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
-                            }.accessibilityIdentifier("projectFiles.markdown")
-                        } else {
-                            ProjectReadOnlyText(text: text, path: browser.state.selectedPath ?? "")
-                        }
-                    }.id(browser.state.selectedPath).accessibilityIdentifier("projectFiles.preview")
-                }
-            case .image(let image):
-                ProjectReadOnlyImage(image: image)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity).padding(14)
-                    .accessibilityIdentifier("projectFiles.preview")
-            case .information(let message), .failed(let message):
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(message).foregroundStyle(.secondary).textSelection(.enabled)
-                    Button("在访达中显示") {
-                        guard let path = browser.state.selectedPath, let url = browser.url(for: path) else { return }
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                    if case .failed = browser.state.preview {
-                        Button("重试") { if let path = browser.state.selectedPath { browser.openFile(path) } }
-                    }
-                }.padding(14)
-                Spacer()
-            }
+            previewContent(path)
         }.font(WorkspaceStyle.body)
     }
-}
-
-/// One row of the tree. The list draws the selection, the triangle, the indentation and
-/// the context menu; the row supplies the icon, the name, and what a click, Return or a
-/// press means. As a Label in a source list, the icon follows the sidebar's icon size.
-private struct ProjectFileRow: View {
-    let entry: ProjectFileEntry
-    let isExpanded: Bool
-    let activate: () -> Void
-    var body: some View {
-        HStack(spacing: 0) {
-            Label {
-                Text(entry.name).lineLimit(1).truncationMode(.middle)
-            } icon: {
-                if entry.kind == .symbolicLink {
-                    Image(systemName: "link")
-                } else {
-                    ProjectFileIcon(name: entry.name, isDirectory: entry.kind == .directory)
-                }
+    @ViewBuilder private func previewContent(_ path: String) -> some View {
+        switch browser.state.preview {
+        case .loading: ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .text(let text):
+            if text.isEmpty {
+                Text("空文件").foregroundStyle(.secondary).padding(14)
+                Spacer()
+            } else {
+                Group {
+                    if ["md", "markdown"].contains((path as NSString).pathExtension.lowercased()) {
+                        ScrollView {
+                            AssistantMarkdown(content: text).equatable()
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                        }.accessibilityIdentifier("projectFiles.markdown")
+                    } else {
+                        ProjectReadOnlyText(text: text, path: path)
+                    }
+                }.id(browser.state.selectedPath).accessibilityIdentifier("projectFiles.preview")
             }
-            Spacer(minLength: 0)
-        }.frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            // The list keeps click-to-select; this adds what activation means on top.
-            // Assistive technology's press reaches this gesture too, so it stays a plain tap.
-            .simultaneousGesture(TapGesture().onEnded {
-                guard !ProjectFileClick.onlySelects(NSApp.currentEvent) else { return }
-                activate()
-            })
-            .help(entry.path)
-            // Keep the content one element so assistive technology reads and selects the
-            // row, not its label, and so a press activates it.
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("projectFiles.entry.\(entry.path)")
-            .accessibilityValue(entry.kind == .directory ? (isExpanded ? "已展开" : "已折叠") : "")
-    }
-}
-
-/// A ⇧ or ⌘ click only adds to or takes from the selection, and a ⌃ click raises the menu,
-/// both of which the list does itself, so neither opens the row as a plain click does. A press
-/// from assistive technology or the keyboard carries no click and always opens it.
-enum ProjectFileClick {
-    static func onlySelects(_ event: NSEvent?) -> Bool {
-        guard let event, event.type == .leftMouseDown || event.type == .leftMouseUp else { return false }
-        return !event.modifierFlags.isDisjoint(with: [.shift, .command, .control])
-    }
-}
-
-/// Dragging a row out hands over the files and folders themselves, as dragging them out of
-/// Finder does: the list starts the drag and draws the rows as its image, and Finder, Mail or a
-/// chat app gets their URLs. A drag from a selected row carries the whole selection, one from any
-/// other row that row alone. The drag only ever offers copy, so a drop on a Finder window on the
-/// same disk copies instead of moving anything out of the project, and ⌘, which asks Finder to
-/// move, gets no drop at all. A generated image's card drags its file out the same way.
-struct ProjectFileDrag: ViewModifier {
-    let url: URL?
-    /// Every URL the drag carries, read once it begins.
-    let draggedURLs: () -> [URL]
-    private static let copyOnly = DragConfiguration(
-        operationsWithinApp: .init(allowCopy: true, allowMove: false, allowDelete: false),
-        operationsOutsideApp: .init(allowCopy: true, allowMove: false, allowDelete: false))
-    func body(content: Content) -> some View {
-        if let url {
-            content
-                .onDrag { NSItemProvider(object: url as NSURL) }
-                // SwiftUI hands the receiver a copy it makes of the provider's file under
-                // ~/Library/Caches/com.apple.SwiftUI.Drag-…, a whole folder included, and leaves it
-                // there. Putting the URLs themselves on the drag pasteboard once the drag begins
-                // gives the receiver the files in the project instead, and nothing is copied.
-                .onDragSessionUpdated { session in
-                    guard session.phase == .initial else { return }
-                    let urls = draggedURLs()
-                    let pasteboard = NSPasteboard(name: .drag)
-                    pasteboard.clearContents()
-                    pasteboard.writeObjects((urls.isEmpty ? [url] : urls) as [NSURL])
+        case .image(let image):
+            ProjectReadOnlyImage(image: image)
+                .frame(maxWidth: .infinity, maxHeight: .infinity).padding(14)
+                .accessibilityIdentifier("projectFiles.preview")
+        case .information(let message), .failed(let message):
+            VStack(alignment: .leading, spacing: 12) {
+                Text(message).foregroundStyle(.secondary).textSelection(.enabled)
+                Button("在访达中显示") {
+                    guard let path = browser.state.selectedPath, let url = browser.url(for: path) else { return }
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
-                .dragConfiguration(Self.copyOnly)
-        } else {
-            content
+                if case .failed = browser.state.preview {
+                    Button("重试") { if let path = browser.state.selectedPath { browser.openFile(path) } }
+                }
+            }.padding(14)
+            Spacer()
         }
-    }
-}
-
-/// Finder's own icon for a folder or the file's type, so the browser reads like Finder's list view.
-/// Keyed by extension — the icon describes the type, so one lookup serves every file of it. The
-/// icon fills the box the source list gives a symbol in this row, so it follows the sidebar's icon
-/// size as a symbol does.
-private struct ProjectFileIcon: View {
-    let name: String
-    var isDirectory = false
-    @MainActor private static var cache: [String: NSImage] = [:]
-    var body: some View {
-        Image(systemName: "square").hidden()
-            .overlay {
-                Image(nsImage: isDirectory ? Self.folder : Self.icon(forExtension: (name as NSString).pathExtension.lowercased()))
-                    .resizable().scaledToFit()
-            }
-            .accessibilityHidden(true)
-    }
-    @MainActor private static let folder = NSWorkspace.shared.icon(for: .folder)
-    @MainActor private static func icon(forExtension pathExtension: String) -> NSImage {
-        if let cached = cache[pathExtension] { return cached }
-        let icon = NSWorkspace.shared.icon(for: UTType(filenameExtension: pathExtension) ?? .data)
-        cache[pathExtension] = icon
-        return icon
-    }
-}
-
-struct ProjectReadOnlyImage: NSViewRepresentable {
-    let image: CGImage
-    func makeNSView(context: Context) -> NSImageView {
-        let view = NSImageView()
-        view.imageScaling = .scaleProportionallyDown
-        view.imageAlignment = .alignCenter
-        view.isEditable = false
-        view.setAccessibilityIdentifier("projectFiles.image")
-        return view
-    }
-    func updateNSView(_ view: NSImageView, context: Context) {
-        view.image = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
-    }
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSImageView, context: Context) -> CGSize? {
-        proposal.replacingUnspecifiedDimensions()
-    }
-}
-
-struct ProjectReadOnlyText: NSViewRepresentable {
-    let text: String
-    var path = ""
-    final class Coordinator {
-        var language: PreviewSyntaxHighlighter.Language?
-    }
-    func makeCoordinator() -> Coordinator { Coordinator() }
-    /// The body text style in its monospaced design, as the chat's code blocks use.
-    static var font: NSFont {
-        let body = NSFont.preferredFont(forTextStyle: .body)
-        return body.fontDescriptor.withDesign(.monospaced).flatMap { NSFont(descriptor: $0, size: 0) } ?? body
-    }
-    func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
-        scroll.autohidesScrollers = true; scroll.drawsBackground = false
-        let view = NSTextView(frame: .zero)
-        view.isEditable = false; view.isSelectable = true; view.isRichText = false
-        view.drawsBackground = false; view.font = Self.font
-        view.textColor = .labelColor; view.textContainerInset = NSSize(width: 12, height: 12)
-        view.isVerticallyResizable = true; view.isHorizontallyResizable = true
-        view.minSize = .zero; view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        view.textContainer?.widthTracksTextView = false
-        view.textContainer?.containerSize = view.maxSize
-        view.usesFindBar = true
-        view.setAccessibilityIdentifier("projectFiles.text")
-        scroll.documentView = view
-        return scroll
-    }
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let view = scroll.documentView as? NSTextView else { return }
-        let language = PreviewSyntaxHighlighter.language(for: path)
-        let changed = view.string != text
-        if changed { view.string = text }
-        if changed || context.coordinator.language != language {
-            if let storage = view.textStorage { PreviewSyntaxHighlighter.apply(to: storage, language: language) }
-            context.coordinator.language = language
-        }
-        if changed { view.sizeToFit() }
     }
 }
 

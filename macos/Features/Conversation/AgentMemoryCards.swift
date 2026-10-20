@@ -3,7 +3,7 @@ import Foundation
 /// What a remember or update_memory card says: what was remembered, changed or removed, and when
 /// nothing changed, why, in the person's language. The passage before and after shows from the
 /// call's arguments, as an edit card's does.
-struct AgentMemoryCard {
+struct AgentMemoryCard: AgentToolCard {
     let tool: AgentToolRecord
 
     static func applies(to tool: AgentToolRecord) -> Bool {
@@ -23,11 +23,7 @@ struct AgentMemoryCard {
         let action = if tool.tool == "remember" { String(localized: "记住：\(tool.command)") }
             else if removes { String(localized: "从记忆中删除：\(tool.command)") }
             else { String(localized: "更新记忆：\(tool.command)") }
-        return (tool.undo == .undone ? String(localized: "已撤销") : tool.state.label) + " · " + action
-    }
-
-    private var result: [String: Any]? {
-        tool.result.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
+        return tool.stateLabel + " · " + action
     }
 
     /// The lines an opened card shows beneath the passage: none once it changed, why when it did not.

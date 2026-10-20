@@ -30,10 +30,7 @@ enum ChatAttachmentTypes {
     /// a package, a file whose type cannot be text, or anything that is not a file at all. A drag is
     /// taken or refused as a whole, as the pet and the sidebar treat folders.
     static func droppedFiles(on pasteboard: NSPasteboard) -> [URL]? {
-        guard let items = pasteboard.pasteboardItems, !items.isEmpty,
-              let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
-              urls.count == items.count, urls.allSatisfy(accepts) else { return nil }
-        return urls
+        WorkspaceActions.droppedURLs(on: pasteboard, where: accepts)
     }
 }
 
@@ -48,27 +45,19 @@ extension WorkspaceActions {
         let filter = ChatAttachmentPanelFilter()
         panel.delegate = filter
         panel.prompt = String(localized: "添加|选文件框按钮", defaultValue: "添加")
-        let finish = { (response: NSApplication.ModalResponse) in
+        run(panel, asSheet: asSheet) { response in
             // The panel holds its delegate weakly.
             withExtendedLifetime(filter) {}
             let files = panel.urls.filter(ChatAttachmentTypes.accepts)
             if response == .OK, !files.isEmpty { completion(files) }
         }
-        if asSheet, let window = NSApp.keyWindow {
-            panel.beginSheetModal(for: window, completionHandler: finish)
-            return
-        }
-        NSApp.activate()
-        finish(panel.runModal())
     }
 }
 
 /// Keeps folders open to browse and dims the files a chat does not take.
 private final class ChatAttachmentPanelFilter: NSObject, NSOpenSavePanelDelegate {
     func panel(_ sender: Any, shouldEnable url: URL) -> Bool {
-        let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
-        if values?.isDirectory == true, values?.isPackage != true { return true }
-        return ChatAttachmentTypes.accepts(url)
+        WorkspaceActions.isFolder(url) || ChatAttachmentTypes.accepts(url)
     }
 }
 
@@ -88,12 +77,11 @@ struct ChatFileDrop: DropDelegate {
 /// A file in a draft: its icon, its name, and ✕ to take it out, which shows only while the
 /// pointer is on the chip or the ✕ has keyboard focus, as on the project picker. A file Echo could
 /// not read is still added, marked, with the reason in its tooltip; sending it is up to the person.
+/// The chip brings its own glass, over the desktop on the pet as over the composer's card.
 struct DraftAttachmentChip: View {
     let attachment: ChatAttachment
     /// The name the file will go by in the chat, which tells two files of one name apart.
     let name: String
-    /// Over the desktop, as on the pet, the chip brings its own glass.
-    var onGlass = false
     let remove: () -> Void
     @State private var hovered = false
     @FocusState private var removeFocused: Bool
@@ -113,8 +101,7 @@ struct DraftAttachmentChip: View {
             .help("移除文件").accessibilityLabel("移除文件").accessibilityIdentifier("attachment.remove")
         }
         .padding(.leading, 7).padding(.trailing, 3).frame(height: 24)
-        .background { if !onGlass { Capsule().fill(.primary.opacity(0.06)) } }
-        .glassEffect(onGlass ? .regular : .identity, in: Capsule())
+        .glassEffect(.regular, in: Capsule())
         .contentShape(Capsule())
         .onHover { hovered = $0 }
         .help(attachment.problem?.message ?? attachment.path)

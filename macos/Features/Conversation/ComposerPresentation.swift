@@ -33,6 +33,8 @@ struct ComposerPresentation {
     let output: Action?
     let canStop: Bool
     let stopEnabled: Bool
+    /// Escape stops a reply that is being written or spoken, unless it is already stopping.
+    var stopsOnEscape: Bool { canStop && stopEnabled }
     let microphoneEnabled: Bool
     let muteEnabled: Bool
     let canSend: Bool

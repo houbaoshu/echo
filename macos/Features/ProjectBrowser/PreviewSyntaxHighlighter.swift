@@ -98,11 +98,10 @@ enum PreviewSyntaxHighlighter {
         storage.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range)
         guard let language, let grammar = grammars[language] else { return }
         grammar.expression.enumerateMatches(in: storage.string, range: range) { match, _, _ in
-            guard let match else { return }
-            for (index, color) in grammar.colors.enumerated() where match.range(at: index + 1).location != NSNotFound {
-                storage.addAttribute(.foregroundColor, value: color, range: match.range)
-                break
-            }
+            guard let match, let rule = grammar.colors.indices.first(where: {
+                match.range(at: $0 + 1).location != NSNotFound
+            }) else { return }
+            storage.addAttribute(.foregroundColor, value: grammar.colors[rule], range: match.range)
         }
     }
 }

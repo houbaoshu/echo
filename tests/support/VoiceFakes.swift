@@ -1,10 +1,4 @@
-import Testing
-import AppKit
-import AVFoundation
-import Combine
 import Foundation
-import ImageIO
-import SwiftUI
 
 actor PendingModelTester: ConnectionTesting {
     var request: ModelConfiguration?
@@ -28,7 +22,6 @@ actor PendingModelTester: ConnectionTesting {
     var played: [Data] = []
     var stops = 0
     var capturing = false
-    var onDrain: (() async -> Void)?
     var onPlay: ((Data) async throws -> Void)?
     var captureEpoch = 1
     var capturePaused = false
@@ -113,10 +106,22 @@ actor PendingModelTester: ConnectionTesting {
         played.append(data)
         if holdsPlayback { await withCheckedContinuation { heldPlays.append($0) } }
     }
-    /// Drains that have returned, counted after `onDrain`: once a test sees the new count, the
+    /// While set, a drain waits, as the last of the reply still being heard, until `releaseDrain()`.
+    /// Unlike held plays, stopping or interrupting playback leaves it waiting.
+    var holdsDrain = false
+    private var heldDrain: CheckedContinuation<Void, Never>?
+    var isHoldingDrain: Bool { heldDrain != nil }
+    func releaseDrain() {
+        let held = heldDrain; heldDrain = nil
+        held?.resume()
+    }
+    /// Drains that have returned, counted after the hold: once a test sees the new count, the
     /// caller's code after the drain has run.
     private(set) var finishedDrains = 0
-    func drain() async throws { await onDrain?(); finishedDrains += 1 }
+    func drain() async throws {
+        if holdsDrain { await withCheckedContinuation { heldDrain = $0 } }
+        finishedDrains += 1
+    }
     func interruptPlayback() { stops += 1; playbackPaused = false; playbackFrames = 0; releasePlayback() }
     func stop() { stopCalls += 1; capturing = false; playbackPaused = false; monitoring = false; playbackFrames = 0; releasePlayback(); input?.finish(); input = nil }
 }
@@ -143,7 +148,6 @@ actor PendingModelTester: ConnectionTesting {
 }
 @MainActor final class FakeSynthesizer: VoiceSynthesizing {
     var failure: SettingsError?
-    var onChunk: ((String) throws -> Void)?
     var emitsAudio = false
     var chunks: [String] = []
     var callback: (@MainActor (Data) async throws -> Void)?
@@ -157,7 +161,6 @@ actor PendingModelTester: ConnectionTesting {
              receive: @escaping @MainActor (Data) async throws -> Void) async throws {
         callback = receive
         for try await chunk in text {
-            if let onChunk { try onChunk(chunk) }
             if let failure { throw failure }
             chunks.append(chunk)
             if emitsAudio { try await receive(Data([0, 0])) }
@@ -175,12 +178,6 @@ actor PendingModelTester: ConnectionTesting {
         let request = pending; pending = nil
         request?.resume(returning: allowed)
     }
-}
-@MainActor final class FakeSecrets: SecretStore {
-    var values: [String: String] = [:]
-    func read(_ account: String) throws -> String { values[account] ?? "" }
-    func write(_ value: String, account: String) throws { values[account] = value }
-    func remove(_ account: String) throws { values[account] = nil }
 }
 
 // Deliberately ignores task cancellation until cancel() closes the transport.

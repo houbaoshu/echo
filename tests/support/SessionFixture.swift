@@ -32,8 +32,6 @@ import Testing
         catch { try? FileManager.default.removeItem(at: root); throw error }
     }
     func harness() -> AgentHarness { AgentFixture.harness(baseURL: server.baseURL) { [unowned self] in self.protocolName } }
-    /// A harness that reads the model configuration from saved settings.
-    func settingsHarness(_ settings: SettingsStore) -> AgentHarness { AgentHarness(settings: settings) }
     func close() async throws {
         workspace.shutdown()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -52,12 +52,6 @@ import Foundation
     }
     func cancel() { cancelled = true }
 }
-@MainActor private final class CommandSecrets: SecretStore {
-    var values: [String: String] = [:]
-    func read(_ account: String) throws -> String { values[account] ?? "" }
-    func write(_ value: String, account: String) throws { values[account] = value }
-    func remove(_ account: String) throws { values[account] = nil }
-}
 
 /// Workspace commands while Live Voice owns one conversation. Every conversation runs on the native
 /// Agent with its own puppet model, so text sent during a turn steers it, only a turn's final reply
@@ -74,7 +68,7 @@ import Foundation
         }, permission: { await withCheckedContinuation { permission = $0 } })
         let puppets = PuppetSessions()
         let workspace = WorkspaceStore(voice: voice, harnessFactory: puppets.factory)
-        let settings = SettingsStore(secrets: CommandSecrets())
+        let settings = SettingsStore(secrets: TestBootstrap.Secrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
         settings.arkAPIKey = "voice"; settings.saveArk()
         voice.attach(workspace: workspace, settings: settings)
@@ -263,7 +257,7 @@ import Foundation
                                            permission: { await withCheckedContinuation { permission = $0 } })
         // Its conversations only need to be Agent sessions; no turn is answered.
         let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
-        let settings = SettingsStore(secrets: CommandSecrets())
+        let settings = SettingsStore(secrets: TestBootstrap.Secrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
         settings.arkAPIKey = "voice"; settings.saveArk()
         voice.attach(workspace: workspace, settings: settings)

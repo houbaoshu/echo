@@ -3,40 +3,6 @@ import AVFoundation
 import Combine
 import Observation
 
-/// The first-packet timeout measures the microphone, not an engine restart: while VoiceAudio
-/// recovers from a startup reconfiguration nothing can arrive, and once it has recovered the
-/// device gets a full timeout of its own.
-enum VoiceCaptureWatchdog {
-    enum Decision: Equatable {
-        case fire
-        case wait(until: ContinuousClock.Instant)
-    }
-    static func decide(now: ContinuousClock.Instant, armedAt: ContinuousClock.Instant,
-                       restartedAt: ContinuousClock.Instant?, restarting: Bool, timeout: Duration) -> Decision {
-        // The restart's length is unknown; look again one timeout later, which is never past
-        // the deadline a restart completing meanwhile will set.
-        if restarting { return .wait(until: now + timeout) }
-        // A restart from before this watchdog was armed says nothing about the current capture.
-        let deadline = max(armedAt, restartedAt ?? armedAt) + timeout
-        return now < deadline ? .wait(until: deadline) : .fire
-    }
-    /// Arms the timeout now and calls `onTimeout` once it passes. The task ends by itself as soon
-    /// as `isCurrent` says the capture it was armed for is no longer the current one.
-    @MainActor static func watch(_ audio: any VoiceAudioHandling, timeout: Duration,
-                                 isCurrent: @escaping @MainActor () -> Bool,
-                                 onTimeout: @escaping @MainActor () -> Void) -> Task<Void, Never> {
-        let armedAt = ContinuousClock.now
-        return Task { @MainActor [weak audio] in
-            while let audio, isCurrent(), !Task.isCancelled {
-                let decision = decide(now: .now, armedAt: armedAt, restartedAt: audio.captureRestartedAt,
-                                      restarting: audio.isRestartingCapture, timeout: timeout)
-                guard case .wait(let deadline) = decision else { onTimeout(); return }
-                do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
-            }
-        }
-    }
-}
-
 @MainActor @Observable final class VoiceSessionController: NSObject {
     private(set) var snapshot = VoiceSessionSnapshot()
     /// Set by the shared planet store while a sprite is loaded.
@@ -57,14 +23,12 @@ enum VoiceCaptureWatchdog {
     var conversationID: UUID? { snapshot.session.owner?.conversationID }
     var subtitle: String { snapshot.subtitle }
     var status: String { presentation.status }
-    var isMuted: Bool { presentation.isMuted }
+    var isMuted: Bool { snapshot.microphone == .muted }
     var error: String? { snapshot.error?.message }
     private(set) var testing = false
-    private(set) var testResult: String?
-    /// Whether `testResult` reports a success, so the settings page can mark it the
-    /// same way the model page marks its own connection test.
-    private(set) var testSucceeded = false
-    private(set) var isDictating = false
+    /// Marked as a success or not the same way the model page marks its own connection test.
+    private(set) var testResult: SettingsTestLine?
+    var isDictating: Bool { workspace?.dictation.isActive == true }
     var canStartCall: Bool { snapshot.session.owner == nil && !isDictating && !testing }
     var canSubmit: Bool {
         switch snapshot.session {
@@ -72,7 +36,7 @@ enum VoiceCaptureWatchdog {
         case .inactive, .ending: false
         }
     }
-    var isActive: Bool { presentation.isActive }
+    var isActive: Bool { snapshot.session.owner != nil }
     @ObservationIgnored private weak var workspace: WorkspaceStore?
     @ObservationIgnored private weak var settings: SettingsStore?
     @ObservationIgnored private weak var store: TaskStore?
@@ -102,8 +66,6 @@ enum VoiceCaptureWatchdog {
     @ObservationIgnored private var toolObservation: ObservationHandle?
     @ObservationIgnored private var statusLingerTask: Task<Void, Never>?
     @ObservationIgnored private var handledFinalRunID: UUID?
-    @ObservationIgnored private var submissionHadAudio = false
-    @ObservationIgnored private var dictationObservation: ObservationHandle?
     @ObservationIgnored private var startup: Task<Void, Never>?
     @ObservationIgnored private var captureWatchdog: Task<Void, Never>?
     @ObservationIgnored private var receivedCapturePacket = false
@@ -147,14 +109,12 @@ enum VoiceCaptureWatchdog {
             guard let self else { return }
             let error = SettingsError(message: String(localized: String.LocalizationValue(message)), diagnostic: message)
             if self.isActive { self.end(error: error, reason: VoiceEndReason(failure)) }
-            else if self.testing { self.cancelTest(); self.testResult = error.message }
+            else if self.testing { self.cancelTest(); self.testResult = SettingsTestLine(text: error.message, succeeded: false) }
         }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
     }
     func attach(workspace: WorkspaceStore, settings: SettingsStore) {
         self.workspace = workspace; self.settings = settings
-        let dictation = workspace.dictation
-        dictationObservation = observeChanges({ dictation.state.isActive }, initial: true) { [weak self] in self?.isDictating = $0 }
     }
     @objc private func willSleep() { end(reason: .systemSleep); cancelTest() }
 
@@ -168,6 +128,8 @@ enum VoiceCaptureWatchdog {
     private func reportError(_ error: SettingsError, conversationID: UUID?) {
         updateSnapshot { $0.error = .init(conversationID: conversationID, message: error.message) }
     }
+    /// Whether work started for `call` still belongs to the current call, in a task not cancelled.
+    private func isCurrent(_ call: UUID) -> Bool { sessionID == call && !Task.isCancelled }
 
     /// `entry` only labels the diagnostics timeline; it does not change how the call starts.
     @discardableResult func activate(conversation: WorkspaceConversation?, entry: String = "未标注入口") -> Bool {
@@ -213,11 +175,7 @@ enum VoiceCaptureWatchdog {
         VoiceDiagnostics.shared.measure("snapshot=.starting（含同步订阅者）") {
             snapshot = VoiceSessionSnapshot(session: .starting(.init(sessionID: call, conversationID: conversation.id)))
         }
-        spoken = nil
-        runID = conversation.store.isGenerating ? conversation.store.task?.runID : nil
-        handledFinalRunID = nil
-        delta = VoiceTextDelta()
-        playedAudioForCurrentRun = false
+        beginRun(conversation.store.isGenerating ? conversation.store.task?.runID : nil)
         receivedCapturePacket = false
         cancelRecovery()
         observation = conversation.store.lifecycle.sink { [weak self] event in self?.handle(event) }
@@ -238,13 +196,13 @@ enum VoiceCaptureWatchdog {
         // A call joining a turn already under way shows where the turn is.
         if store.task?.status == .running { updateSnapshot { $0.agentStatus = runningTool() ?? String(localized: "正在思考…") } }
         startup = Task { [weak self] in
-            guard let self, self.sessionID == call, !Task.isCancelled else { return }
+            guard let self, self.isCurrent(call) else { return }
             VoiceDiagnostics.shared.mark("startup Task 开始，请求麦克风权限")
             VoiceDiagnostics.shared.record("4 音频输入", "START", "检查麦克风权限")
             let allowed = await self.permission()
             VoiceDiagnostics.shared.mark("麦克风权限返回")
             VoiceDiagnostics.shared.record("4 音频输入", allowed ? "PASS" : "FAIL", allowed ? "麦克风权限已允许" : "麦克风权限被拒绝")
-            guard self.sessionID == call, !Task.isCancelled else { return }
+            guard self.isCurrent(call) else { return }
             guard allowed else { self.end(error: SettingsError(localized: "麦克风权限未开启，请在系统设置 → 隐私与安全性 → 麦克风中允许 Echo。"), reason: .permissionDenied); return }
             do {
                 // The engine is built off the main actor; the call can be ended meanwhile, which
@@ -255,7 +213,7 @@ enum VoiceCaptureWatchdog {
                 let stream = try await self.audio.startInBackground(capture: true, recoversDeviceSwitch: true)
                 VoiceDiagnostics.shared.recordSpan("audio.start", start: audioStart, duration: audioStart.duration(to: .now))
                 VoiceDiagnostics.shared.mark("audio.start 完成")
-                guard self.sessionID == call, !Task.isCancelled else { return }
+                guard self.isCurrent(call) else { return }
                 self.updateSnapshot { $0.session = .active(.init(sessionID: call, conversationID: conversation.id)) }
                 if self.store?.task?.status == .stopping {
                     self.updateSnapshot { $0.recognition = .off(.stopping) }
@@ -265,39 +223,7 @@ enum VoiceCaptureWatchdog {
                 if let run = self.runID, self.store?.task?.runID == run, self.store?.task?.status == .completed {
                     self.speakFinal(run)
                 }
-                self.captureTask = Task { [weak self] in
-                    // Set only by the audioInput overflow below, which throws the same SettingsError
-                    // other capture failures do; the flag is what tells the two apart in the log.
-                    var uploadBacklog = false
-                    do {
-                        for try await packet in stream {
-                            guard let self, self.sessionID == call, !Task.isCancelled else { return }
-                            guard packet.epoch == self.inputEpoch, !self.isMuted,
-                                  self.audioInput != nil || self.bargeInGate != nil else {
-                                continue
-                            }
-                            if !self.receivedCapturePacket {
-                                self.receivedCapturePacket = true
-                                VoiceDiagnostics.shared.mark("麦克风首包")
-                                self.captureWatchdog?.cancel(); self.captureWatchdog = nil
-                                VoiceDiagnostics.shared.record("4 音频输入", "PASS", "麦克风首包 bytes=\(packet.data.count)，PCM16 / 16000 Hz / 单声道")
-                            }
-                            if self.bargeInGate != nil {
-                                self.inspectBargeIn(packet.data)
-                            } else if case .dropped = self.audioInput?.yield(packet.data) {
-                                uploadBacklog = true
-                                throw SettingsError(localized: "语音上传过慢，通话已结束，请检查网络。")
-                            }
-                        }
-                        guard let self, self.sessionID == call, !Task.isCancelled else { return }
-                        self.end(error: SettingsError(localized: "录音已中断，请重新开始通话。"), reason: .captureEnded)
-                    } catch {
-                        guard let self, self.sessionID == call, !Task.isCancelled else { return }
-                        if error is CancellationError { return }
-                        self.end(error: (error as? SettingsError) ?? SettingsError(localized: "录音失败，请检查麦克风。"),
-                                 reason: uploadBacklog ? .uploadBacklog : .captureFailed)
-                    }
-                }
+                self.captureTask = self.consumeCapture(stream, call: call)
             } catch is CancellationError {
                 return
             } catch {
@@ -310,6 +236,47 @@ enum VoiceCaptureWatchdog {
         }
         VoiceDiagnostics.shared.mark("start() 返回")
         return true
+    }
+    /// Hands the microphone to recognition, or to the barge-in gate while a reply plays, until `call` ends.
+    private func consumeCapture(_ stream: AsyncThrowingStream<VoiceCapturePacket, Error>, call: UUID) -> Task<Void, Never> {
+        Task { [weak self] in
+            // Set only by the audioInput overflow below, which throws the same SettingsError
+            // other capture failures do; the flag is what tells the two apart in the log.
+            var uploadBacklog = false
+            do {
+                for try await packet in stream {
+                    guard let self, self.isCurrent(call) else { return }
+                    guard packet.epoch == self.inputEpoch, !self.isMuted,
+                          self.audioInput != nil || self.bargeInGate != nil else {
+                        continue
+                    }
+                    if !self.receivedCapturePacket {
+                        self.receivedCapturePacket = true
+                        VoiceDiagnostics.shared.mark("麦克风首包")
+                        self.captureWatchdog?.cancel(); self.captureWatchdog = nil
+                        VoiceDiagnostics.shared.record("4 音频输入", "PASS", "麦克风首包 bytes=\(packet.data.count)，PCM16 / 16000 Hz / 单声道")
+                    }
+                    if self.bargeInGate != nil {
+                        self.inspectBargeIn(packet.data)
+                    } else if case .dropped = self.audioInput?.yield(packet.data) {
+                        uploadBacklog = true
+                        throw SettingsError(localized: "语音上传过慢，通话已结束，请检查网络。")
+                    }
+                }
+                guard let self, self.isCurrent(call) else { return }
+                self.end(error: SettingsError(localized: "录音已中断，请重新开始通话。"), reason: .captureEnded)
+            } catch {
+                guard let self, self.isCurrent(call) else { return }
+                if error is CancellationError { return }
+                self.end(error: (error as? SettingsError) ?? SettingsError(localized: "录音失败，请检查麦克风。"),
+                         reason: uploadBacklog ? .uploadBacklog : .captureFailed)
+            }
+        }
+    }
+    /// Starts the state kept for one reply over: `id` is the run the call now follows, if any.
+    private func beginRun(_ id: UUID?) {
+        runID = id; handledFinalRunID = nil; spoken = nil
+        delta = VoiceTextDelta(); playedAudioForCurrentRun = false
     }
     private func beginRecognition(preRoll: Data? = nil) {
         cancelRecovery()
@@ -326,8 +293,7 @@ enum VoiceCaptureWatchdog {
         updateSnapshot { $0.recognition = .connecting }
         VoiceDiagnostics.shared.mark("ASR 开始连接")
         recognitionTask = Task { [weak self] in
-            guard let self else { return }
-            guard self.sessionID == call, self.recognitionID == recognition, !Task.isCancelled else { return }
+            guard let self, self.isCurrent(call), self.recognitionID == recognition else { return }
             do {
                 try await client.run(key: self.key, audio: stream, onReady: { [weak self] in
                     guard let self, self.sessionID == call, self.recognitionID == recognition, !self.isMuted else { return }
@@ -337,10 +303,10 @@ enum VoiceCaptureWatchdog {
                     guard let self, self.sessionID == call, self.recognitionID == recognition, !self.isMuted else { return }
                     self.accept(result)
                 })
-                guard self.sessionID == call, self.recognitionID == recognition, !Task.isCancelled else { return }
+                guard self.isCurrent(call), self.recognitionID == recognition else { return }
                 self.end(error: SettingsError(localized: "语音识别连接已结束，请重新开始通话。"), reason: .recognitionClosed)
             } catch {
-                guard self.sessionID == call, self.recognitionID == recognition, !Task.isCancelled else { return }
+                guard self.isCurrent(call), self.recognitionID == recognition else { return }
                 if error is CancellationError { return }
                 self.end(error: (error as? SettingsError) ?? SettingsError(localized: "语音识别失败，请检查网络和套餐。"),
                          reason: .recognitionFailed)
@@ -386,7 +352,6 @@ enum VoiceCaptureWatchdog {
             }
             let single = ASRResult(result: .init(text: utterance.text, utterances: [utterance]))
             let speech = tracker.accept(single)
-            update.beganSpeaking = update.beganSpeaking || speech.beganSpeaking
             update.committed += speech.committed
             if !speech.subtitle.isEmpty {
                 update.subtitle = speech.subtitle
@@ -445,8 +410,7 @@ enum VoiceCaptureWatchdog {
                 if self?.bargeInGate == nil {
                     do { try await Task.sleep(for: bargeInTimeout - activityWindow) } catch { return }
                 }
-                guard let self, self.sessionID == call, self.bargeInID == token,
-                      self.runID == run, !Task.isCancelled else { return }
+                guard let self, self.isCurrent(call), self.bargeInID == token, self.runID == run else { return }
                 self.stopRecognition(reason: .currentReply)
                 self.cancelBargeIn(resumePlayback: true)
                 self.armBargeIn(cooldownSamples: 12000) // 750 ms before another probe
@@ -481,27 +445,23 @@ enum VoiceCaptureWatchdog {
         guard isActive else { return }
         switch event {
         case .started(let id):
-            interruptReply(); runID = id; handledFinalRunID = nil
+            interruptReply()
             // The bubble turns from the last reply, even one still muted on screen, to the new turn.
-            spoken = nil
+            beginRun(id)
             statusLingerTask?.cancel(); statusLingerTask = nil
             updateSnapshot { $0.agentStatus = String(localized: "正在思考…") }
-            delta = VoiceTextDelta(); playedAudioForCurrentRun = false
             resumeListening()
         case .reply(let id, let reply):
             guard runID == id else { return }
             switch reply {
-            case .completed:
-                // Still starting: activation speaks it once audio is up, from the store's state.
-                if case .starting = snapshot.session { return }
-                speakFinal(id)
+            case .completed: speakFinal(id)
             case .failed(let message): end(error: SettingsError(message), reason: .replyFailed)
             }
         case .stopped(let id):
             guard store?.task?.runID == id else { return }
             let hadAudio = playedAudioForCurrentRun
             interruptReply()
-            scheduleListeningRecovery(runID: nil, playedAudio: hadAudio)
+            scheduleListeningRecovery(playedAudio: hadAudio)
         case .retired: end(reason: .retired)
         }
     }
@@ -514,7 +474,7 @@ enum VoiceCaptureWatchdog {
         let call = sessionID, linger = statusLinger
         statusLingerTask = Task { [weak self] in
             try? await Task.sleep(for: linger)
-            guard let self, !Task.isCancelled, self.sessionID == call else { return }
+            guard let self, self.isCurrent(call) else { return }
             self.statusLingerTask = nil
             self.updateSnapshot { $0.agentStatus = nil }
         }
@@ -524,23 +484,31 @@ enum VoiceCaptureWatchdog {
         updateSnapshot { $0.agentStatus = nil }
     }
     private func speakFinal(_ id: UUID) {
-        guard handledFinalRunID != id else { return }
+        // Still starting: activation speaks it once audio is up, from the store's state.
+        guard case .active = snapshot.session, handledFinalRunID != id else { return }
         handledFinalRunID = id
         // A user already speaking owns the input; do not cut their utterance
         // off to play a final that arrived before their follow-up was committed.
         guard let message = store?.responseMessage, message.role == .assistant, message.status == .completed,
-              case .active = snapshot.session, subtitle.isEmpty, !submitting,
+              subtitle.isEmpty, !submitting,
               !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         cancelRecovery()
         stopRecognition(reason: .currentReply)
         feed(message.content); textInput?.finish()
     }
-    private func resumeListening() {
-        guard case .active = snapshot.session, !submitting,
-              store?.task?.status != .stopping, snapshot.replyAudio == .none,
-              synthesisTask == nil, recoveryTask == nil, recognizer == nil else { return }
+    /// Whether nothing holds listening back: the call is up, and no submission, stop or reply is under way.
+    private var mayListen: Bool {
+        guard case .active = snapshot.session else { return false }
+        return !submitting && store?.task?.status != .stopping && snapshot.replyAudio == .none && synthesisTask == nil
+    }
+    /// Listens, or while the microphone is muted says that is why it does not.
+    private func listenUnlessMuted() {
         if isMuted { updateSnapshot { $0.recognition = .off(.muted) } }
-        else { beginRecognition() }
+        else if recognizer == nil { beginRecognition() }
+    }
+    private func resumeListening() {
+        guard mayListen, recoveryTask == nil, recognizer == nil else { return }
+        listenUnlessMuted()
     }
     private func feed(_ text: String) {
         do {
@@ -569,7 +537,7 @@ enum VoiceCaptureWatchdog {
             guard let self else { return }
             do {
                 try await client.run(configuration: configuration, key: key, text: stream) { [weak self] data in
-                    guard let self, self.sessionID == call, self.turnID == turn, !Task.isCancelled else { throw CancellationError() }
+                    guard let self, self.isCurrent(call), self.turnID == turn else { throw CancellationError() }
                     if !data.isEmpty {
                         if !self.playedAudioForCurrentRun { self.speechBaseFrames = self.audio.playbackFrames }
                         self.playedAudioForCurrentRun = true
@@ -578,10 +546,10 @@ enum VoiceCaptureWatchdog {
                     }
                     try await self.audio.play(data)
                 }
-                guard self.sessionID == call, self.turnID == turn, !Task.isCancelled else { return }
+                guard self.isCurrent(call), self.turnID == turn else { return }
                 self.updateSnapshot { $0.replyAudio = .draining(runID) }
                 try await self.audio.drain()
-                guard self.sessionID == call, self.turnID == turn, !Task.isCancelled else { return }
+                guard self.isCurrent(call), self.turnID == turn else { return }
                 self.synthesisTask = nil; self.synthesizer = nil; self.textInput = nil
                 if self.spoken?.runID == runID { self.spoken?.stoppedAt = .infinity }
                 // A voice without subtitles still leaves its reply once it has been played in full.
@@ -590,10 +558,10 @@ enum VoiceCaptureWatchdog {
                 }
                 self.updateSnapshot { $0.replyAudio = .none }
                 if self.store?.isGenerating != true {
-                    self.scheduleListeningRecovery(runID: runID, playedAudio: self.playedAudioForCurrentRun)
+                    self.scheduleListeningRecovery(playedAudio: self.playedAudioForCurrentRun)
                 }
             } catch {
-                guard self.sessionID == call, self.turnID == turn, !Task.isCancelled else { return }
+                guard self.isCurrent(call), self.turnID == turn else { return }
                 if error is CancellationError { return }
                 self.end(error: (error as? SettingsError) ?? SettingsError(localized: "语音播放失败，请检查网络与设备。"),
                          reason: .playbackFailed)
@@ -618,41 +586,23 @@ enum VoiceCaptureWatchdog {
         recoveryTask?.cancel()
         recoveryTask = nil
     }
-    private func scheduleListeningRecovery(runID: UUID?, playedAudio: Bool) {
+    private func scheduleListeningRecovery(playedAudio: Bool) {
         cancelRecovery()
-        guard isActive, case .active = snapshot.session, !submitting else { return }
-        guard store?.task?.status != .stopping,
-              snapshot.replyAudio == .none, synthesisTask == nil else { return }
+        guard mayListen else { return }
         if snapshot.bargeIn != .off {
             stopRecognition(reason: .currentReply)
             cancelBargeIn(resumePlayback: true)
         }
-        if playedAudio {
-            // Mute gates ASR, not the tail timer: unmuting must still wait for
-            // any protection time remaining after playback has drained.
-            let call = sessionID
-            let token = recoveryID
-            updateSnapshot { $0.recognition = .off(.recovery) }
-            recoveryTask = Task { [weak self, tailProtectionDuration] in
-                do {
-                    try await Task.sleep(for: tailProtectionDuration)
-                } catch { return }
-                guard let self else { return }
-                guard self.sessionID == call, self.recoveryID == token, !Task.isCancelled else { return }
-                guard case .active = self.snapshot.session, !self.submitting else { return }
-                guard self.store?.task?.status != .stopping,
-                      self.snapshot.replyAudio == .none, self.synthesisTask == nil else { return }
-                self.recoveryTask = nil
-                if self.isMuted {
-                    self.updateSnapshot { $0.recognition = .off(.muted) }
-                } else {
-                    if self.recognizer == nil { self.beginRecognition() }
-                }
-            }
-        } else if isMuted {
-            updateSnapshot { $0.recognition = .off(.muted) }
-        } else {
-            if recognizer == nil { beginRecognition() }
+        guard playedAudio else { listenUnlessMuted(); return }
+        // Mute gates ASR, not the tail timer: unmuting must still wait for
+        // any protection time remaining after playback has drained.
+        let call = sessionID, token = recoveryID
+        updateSnapshot { $0.recognition = .off(.recovery) }
+        recoveryTask = Task { [weak self, tailProtectionDuration] in
+            do { try await Task.sleep(for: tailProtectionDuration) } catch { return }
+            guard let self, self.isCurrent(call), self.recoveryID == token, self.mayListen else { return }
+            self.recoveryTask = nil
+            self.listenUnlessMuted()
         }
     }
     func toggleMute() {
@@ -698,24 +648,23 @@ enum VoiceCaptureWatchdog {
     }
     func clearError() { updateSnapshot { $0.error = nil } }
     func clearError(conversationID: UUID) {
-        if snapshot.error?.conversationID == conversationID {
-            clearError()
-        }
+        if snapshot.error?.conversationID == conversationID { clearError() }
     }
-    func prepareForSubmission() {
-        guard canSubmit else { return }
+    /// Runs `submission` with listening and the reply stopped, then listens again as the stopped
+    /// reply would have: after its tail protection when some of it was heard.
+    func submit(_ submission: () -> Bool) -> Bool {
+        guard canSubmit else { return false }
         submitting = true
-        submissionHadAudio = snapshot.replyAudio.runID != nil && playedAudioForCurrentRun
+        let hadAudio = snapshot.replyAudio.runID != nil && playedAudioForCurrentRun
         stopRecognition(reason: .currentReply)
         updateSnapshot { $0.subtitle = "" }
         interruptReply(preserveRun: true)
-    }
-    func finishSubmission() {
+        let accepted = submission()
         submitting = false
-        if submissionHadAudio { scheduleListeningRecovery(runID: runID, playedAudio: true) }
+        if hadAudio { scheduleListeningRecovery(playedAudio: true) }
         else if recoveryTask != nil { updateSnapshot { $0.recognition = .off(.recovery) } }
         else { resumeListening() }
-        submissionHadAudio = false
+        return accepted
     }
     func stopReply() {
         if store?.task?.status == .stopping { return }
@@ -726,7 +675,7 @@ enum VoiceCaptureWatchdog {
         updateSnapshot { $0.subtitle = "" }
         interruptReply()
         store?.stopTask()
-        scheduleListeningRecovery(runID: nil, playedAudio: hadPlayedAudio)
+        scheduleListeningRecovery(playedAudio: hadPlayedAudio)
     }
     /// `reason` and `origin` are diagnostics only: which path ended the call, and for a user
     /// end, which control's call site asked for it.
@@ -734,8 +683,8 @@ enum VoiceCaptureWatchdog {
         if case .ending = snapshot.session { return }
         if let error { VoiceDiagnostics.shared.record("通话", "FAIL", error.diagnostic) }
         let owner = snapshot.session.owner
-        if owner != nil { recordTermination(reason, origin: origin, failed: error != nil) }
         if let owner {
+            recordTermination(reason, origin: origin, failed: error != nil)
             updateSnapshot {
                 $0.session = .ending(owner)
                 $0.recognition = .off(.ending)
@@ -750,7 +699,7 @@ enum VoiceCaptureWatchdog {
         audio.stop()
         inputEpoch += 1; audio.resetCapture(epoch: inputEpoch, paused: true)
         store = nil; key = ""
-        handledFinalRunID = nil; submitting = false; submissionHadAudio = false
+        handledFinalRunID = nil; submitting = false
         spoken = nil
         let failure = error.map { VoiceSessionSnapshot.Failure(conversationID: owner?.conversationID, message: $0.message) } ?? snapshot.error
         if let owner, endingAnimationDuration > .zero {
@@ -795,17 +744,19 @@ enum VoiceCaptureWatchdog {
     /// Cancelling only tears down a running probe. A result already on screen keeps
     /// both its text and its outcome, so leaving and returning to the page — which
     /// cancels on disappear — cannot turn a success into something else.
-    func invalidateTest() { cancelTest(); testResult = nil; testSucceeded = false }
+    func invalidateTest() { cancelTest(); testResult = nil }
     func test(configuration: VoiceConfiguration, key: String, preview: Bool) {
-        guard !isActive, !isDictating else { testSucceeded = false; testResult = String(localized: "请先结束语音或转写再测试。"); return }
-        cancelTest(); testResult = nil; testSucceeded = false; testing = true
+        guard !isActive, !isDictating else {
+            testResult = SettingsTestLine(text: String(localized: "请先结束语音或转写再测试。"), succeeded: false); return
+        }
+        cancelTest(); testResult = nil; testing = true
         let id = probeID
         probeWatchdog = Task { [weak self, probeTimeout] in
             do { try await Task.sleep(for: probeTimeout) } catch { return }
             guard let self, self.probeID == id, self.testing else { return }
             self.cancelTest()
             VoiceDiagnostics.shared.record("连接测试", "FAIL", "总时限已到，取消 ASR/TTS 和播放器")
-            self.testResult = String(localized: "语音测试超时，请检查网络和套餐后重试。")
+            self.testResult = SettingsTestLine(text: String(localized: "语音测试超时，请检查网络和套餐后重试。"), succeeded: false)
         }
         probe = Task { [weak self] in
             guard let self else { return }
@@ -837,21 +788,20 @@ enum VoiceCaptureWatchdog {
                 if preview { try await self.audio.drain() }
                 guard self.probeID == id, !Task.isCancelled else { return }
                 self.cancelTest()
-                self.testResult = preview ? String(localized: "试听完成。") : String(localized: "识别与合成连接成功（使用静音样本，未录音）。")
-                self.testSucceeded = true
+                self.testResult = SettingsTestLine(text: preview ? String(localized: "试听完成。") : String(localized: "识别与合成连接成功（使用静音样本，未录音）。"),
+                                                   succeeded: true)
             } catch {
                 guard self.probeID == id, !Task.isCancelled else { return }
                 self.cancelTest()
                 VoiceDiagnostics.shared.record("连接测试", "FAIL", VoiceDiagnostics.reason(error))
-                self.testResult = (error as? SettingsError)?.message ?? String(localized: "语音测试失败，请检查 API Key 和网络。")
+                self.testResult = SettingsTestLine(text: (error as? SettingsError)?.message ?? String(localized: "语音测试失败，请检查 API Key 和网络。"),
+                                                   succeeded: false)
             }
         }
     }
     func shutdown() {
         end(reason: .shutdown)
         cancelTest()
-        dictationObservation?.cancel()
-        dictationObservation = nil
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 }

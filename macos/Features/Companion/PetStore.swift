@@ -40,8 +40,7 @@ final class PetStore {
     init(directory: URL) throws {
         struct Metadata: Decodable { var displayName: String? }
         let metadata = try? JSONDecoder().decode(Metadata.self, from: Data(contentsOf: directory.appendingPathComponent("pet.json")))
-        let name = metadata?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.displayName = name.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "桌面精灵")
+        self.displayName = SpriteFolder.displayName(metadata?.displayName) ?? String(localized: "桌面精灵")
         let handle = try RuntimeHandle(directory: directory)
         var info = EchoInfo()
         guard echo_info(handle.pointer, &info), info.frame_count > 0 else {
@@ -81,30 +80,15 @@ final class PetStore {
     /// Waves once over hovering and looking at the pointer, then gives way to them again.
     func wave() {
         let animation = "waving"
-        guard let handle else { return }
-        guard echo_play_once(handle.pointer, animation) else {
-            fail(PetError(message: String(localized: "无法播放动画：\(animation)。")))
-            return
-        }
-        refresh()
+        drive({ echo_play_once($0, animation) }, failure: String(localized: "无法播放动画：\(animation)。"))
     }
 
     func interact(hovered: Bool, direction: Int32) {
-        guard let handle else { return }
-        guard echo_set_interaction(handle.pointer, hovered, direction) else {
-            fail(PetError(message: String(localized: "无法更新精灵交互状态。")))
-            return
-        }
-        refresh()
+        drive({ echo_set_interaction($0, hovered, direction) }, failure: String(localized: "无法更新精灵交互状态。"))
     }
 
     func look(at offset: NSPoint) {
-        guard let handle else { return }
-        guard echo_look_at(handle.pointer, offset.x, offset.y) else {
-            fail(PetError(message: String(localized: "无法更新精灵注视方向。")))
-            return
-        }
-        refresh()
+        drive({ echo_look_at($0, offset.x, offset.y) }, failure: String(localized: "无法更新精灵注视方向。"))
     }
 
     /// Hold the frame that is already showing instead of advancing. Reduce Motion pauses the
@@ -133,12 +117,7 @@ final class PetStore {
     }
 
     func play(_ animation: String) {
-        guard let handle else { return }
-        guard echo_set_animation(handle.pointer, animation) else {
-            fail(PetError(message: String(localized: "无法播放动画：\(animation)。")))
-            return
-        }
-        refresh()
+        drive({ echo_set_animation($0, animation) }, failure: String(localized: "无法播放动画：\(animation)。"))
     }
 
     /// Plays `animation` when this sprite has it and `fallback` otherwise, returning the clip that
@@ -180,6 +159,13 @@ final class PetStore {
             // Includes event tracking: moving the pet does not freeze animation.
             RunLoop.main.add(timer, forMode: .common)
         }
+    }
+
+    /// Makes one runtime call and shows what it did; a call that fails stops the sprite.
+    private func drive(_ call: (OpaquePointer) -> Bool, failure: @autoclosure () -> String) {
+        guard let handle else { return }
+        guard call(handle.pointer) else { fail(PetError(message: failure())); return }
+        refresh()
     }
 
     private func fail(_ error: Error) {

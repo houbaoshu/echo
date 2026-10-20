@@ -103,8 +103,7 @@ import Testing
     /// Searches once through a chat whose model calls web_search with `arguments`, then replies.
     static func chat(_ arguments: String, replies: [Reply], deepSeek: Bool = false) async throws -> Chat {
         let chat = Chat(FinderRootTests.oneByOne([("web_search", arguments)]), webSearch: deepSeek ? Self.deepSeek(replies) : search(replies))
-        #expect(chat.store.send("搜一下"))
-        try await chat.idle()
+        try await chat.run("搜一下")
         return chat
     }
 
@@ -461,11 +460,9 @@ import Testing
 
     @Test func onlyATurnWithASearcherOffersWebSearch() async throws {
         let with = Chat(FinderRootTests.oneByOne([]), webSearch: Self.search([]))
-        #expect(with.store.send("你好"))
-        try await with.idle()
+        try await with.run("你好")
         let without = Chat(FinderRootTests.oneByOne([]))
-        #expect(without.store.send("你好"))
-        try await without.idle()
+        try await without.run("你好")
         let offered = try #require(with.model.requests.first).enabledToolDefinitions.map(\.name)
         let plain = try #require(without.model.requests.first).enabledToolDefinitions.map(\.name)
         #expect(offered.contains("web_search") && !plain.contains("web_search"))

@@ -96,7 +96,6 @@ struct WorkspaceSearchField: NSViewRepresentable {
         return field
     }
     func updateNSView(_ field: NSTextField, context: Context) {
-        context.coordinator.text = $text
         context.coordinator.field = self
         focus.field = field
         // Writing to stringValue commits marked text, so leave a composing input
@@ -105,9 +104,8 @@ struct WorkspaceSearchField: NSViewRepresentable {
         if field.stringValue != text { field.stringValue = text }
     }
     @MainActor final class Coordinator: NSObject, NSTextFieldDelegate {
-        var text: Binding<String>
         var field: WorkspaceSearchField
-        init(field: WorkspaceSearchField) { self.text = field.$text; self.field = field }
+        init(field: WorkspaceSearchField) { self.field = field }
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             switch selector {
             case #selector(NSResponder.moveDown(_:)): field.onMove?(1); return field.onMove != nil
@@ -121,8 +119,8 @@ struct WorkspaceSearchField: NSViewRepresentable {
         /// is still composing, so the query waits for the candidate — which is what the
         /// SwiftUI field it replaces did.
         func controlTextDidChange(_ notification: Notification) {
-            guard let field = notification.object as? NSTextField else { return }
-            text.wrappedValue = field.stringValue
+            guard let control = notification.object as? NSTextField else { return }
+            field.text = control.stringValue
         }
     }
 }
@@ -210,7 +208,7 @@ struct ChatSearchPalette: View {
                     // traversal is driven from the field, because that is where the insertion
                     // point has to stay, and so is the highlight's look (`selectionFill`).
                     ScrollViewReader { proxy in
-                        List(results, selection: Binding(get: { highlighted }, set: { highlighted = $0 })) { conversation in
+                        List(results, selection: $highlighted) { conversation in
                             let selected = conversation.id == highlighted
                             HStack(spacing: 8) {
                                 Text(conversation.displayTitle).lineLimit(1)

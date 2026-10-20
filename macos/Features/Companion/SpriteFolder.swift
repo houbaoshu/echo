@@ -30,15 +30,14 @@ enum SpriteFolder {
         let manifestURL = root.appendingPathComponent("pet.json").resolvingSymlinksInPath()
         guard manifestURL.path.hasPrefix(root.path + "/") else { throw SettingsError(localized: "pet.json 必须位于所选文件夹内。") }
         let manifestSize = try manifestURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard manifestSize <= 1_048_576 else { throw SettingsError(localized: "pet.json 文件过大。") }
+        guard manifestSize <= manifestSizeLimit else { throw SettingsError(localized: "pet.json 文件过大。") }
         let data = try Data(contentsOf: manifestURL)
         let manifest = try JSONDecoder().decode(Manifest.self, from: data)
         // The 8 × 11 sheet with look directions. Older pets leave the field out and have 9 rows.
-        guard manifest.spriteVersionNumber == 2 else {
+        guard manifest.spriteVersionNumber == supportedVersion else {
             throw SettingsError(localized: "仅支持第 2 版精灵格式（pet.json 中的 spriteVersionNumber 须为 2）。")
         }
-        let relative = manifest.spritesheetPath ?? "spritesheet.webp"
-        guard !relative.isEmpty, !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") else {
+        guard let relative = sheetPath(manifest.spritesheetPath) else {
             throw SettingsError(localized: "精灵图必须使用文件夹内的相对路径。")
         }
         let sheetURL = root.appendingPathComponent(relative).resolvingSymlinksInPath().standardizedFileURL
@@ -48,14 +47,51 @@ enum SpriteFolder {
         let size = try sheetURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= 33_554_432 else { throw SettingsError(localized: "精灵图文件不能超过 32 MB。") }
         let sheet = try Data(contentsOf: sheetURL)
-        guard let source = CGImageSourceCreateWithData(sheet as CFData, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              width > 0, height > 0, width <= 8192, height <= 8192, width * height <= 16_777_216 else {
+        guard let source = CGImageSourceCreateWithData(sheet as CFData, nil), pixelSize(of: source) != nil else {
             throw SettingsError(localized: "精灵图损坏或尺寸过大（最多 1600 万像素）。")
         }
         return Contents(manifest: data, sheet: sheet, sheetPath: relative, description: manifest.description)
+    }
+
+    /// The largest `pet.json` read.
+    static let manifestSizeLimit = 1_048_576
+    /// The one sprite format read; see `read`.
+    static let supportedVersion = 2
+
+    /// The sheet's path as a manifest declares it, or nil unless it is relative and stays inside the folder.
+    static func sheetPath(_ declared: String?) -> String? {
+        let relative = declared ?? "spritesheet.webp"
+        guard !relative.isEmpty, !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") else { return nil }
+        return relative
+    }
+
+    /// A sheet's size in pixels, or nil when it cannot be read or is too large to load.
+    static func pixelSize(of source: CGImageSource) -> (width: Int, height: Int)? {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width <= 8192, height <= 8192, width * height <= 16_777_216 else { return nil }
+        return (width, height)
+    }
+
+    /// A manifest's display name without the whitespace around it, or nil when that leaves nothing.
+    static func displayName(_ declared: String?) -> String? {
+        guard let name = declared?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
+        return name
+    }
+
+    /// The sprite folders in `root`, by name. Hidden ones, such as an import being staged, are left out.
+    static func folders(in root: URL) -> [URL] {
+        let contents = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        return contents.filter { !$0.lastPathComponent.hasPrefix(".") }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// The folder a `builtin:` or `imported:` id names, which may only be a direct child of its own root.
+    static func directory(for id: String, builtinRoot: URL?, importedRoot: URL?) -> URL? {
+        let roots = [("builtin:", builtinRoot), ("imported:", importedRoot)]
+        guard let (prefix, root) = roots.first(where: { id.hasPrefix($0.0) }), let root else { return nil }
+        return child(named: String(id.dropFirst(prefix.count)), of: root)
     }
 
     /// The folder an id's name points at, which may only be a direct child of `root`. Ids come from

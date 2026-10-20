@@ -92,17 +92,16 @@ extension VoiceEndReason {
 
     /// Times a synchronous stretch of main-thread work. `quietAfter` keeps a recurring span (the
     /// workspace save) from flooding the 300-line buffer once startup is over: past that point
-    /// only runs at least `quietBelow` long are written.
+    /// only runs of at least a frame (16 ms) are written.
     func measure<T>(_ name: StaticString, _ detail: @autoclosure () -> String = "",
-                    quietAfter: Duration? = nil, quietBelow: Duration = .milliseconds(16),
-                    _ body: () throws -> T) rethrows -> T {
+                    quietAfter: Duration? = nil, _ body: () throws -> T) rethrows -> T {
         let state = signposter.beginInterval(name)
         let begin = ContinuousClock.now
         defer {
             signposter.endInterval(name, state)
             let duration = begin.duration(to: .now)
             if let start = timelineStart, let offset = offset(at: begin) {
-                let quiet = quietAfter.map { start.duration(to: begin) > $0 && duration < quietBelow } ?? false
+                let quiet = quietAfter.map { start.duration(to: begin) > $0 && duration < .milliseconds(16) } ?? false
                 if !quiet {
                     let extra = detail()
                     record("计时", "SPAN", "\(offset) \(name) 耗时 \(Self.milliseconds(duration))\(extra.isEmpty ? "" : " \(extra)")")

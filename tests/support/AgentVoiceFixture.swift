@@ -11,7 +11,6 @@ import Foundation
     var harnessFactory: () -> AgentHarness = { AgentHarness(resolveModel: { PuppetModel().factory }, finder: NoFinder()) }
     var recognizers: [FakeRecognizer] = []
     var synths: [FakeSynthesizer] = []
-    var finishDrain: CheckedContinuation<Void, Never>?
     var permission: @MainActor () async -> Bool = { true }
     /// How long the bubble keeps a finished tool's words; set before the call starts.
     var statusLinger: Duration = .seconds(1)
@@ -24,7 +23,7 @@ import Foundation
        permission: { [unowned self] in await permission() })
     lazy var workspace = WorkspaceStore(initialStore: store, voice: voice, harnessFactory: { [unowned self] in harnessFactory() })
     lazy var conversation = workspace.selected!
-    lazy var settings = SettingsStore(secrets: FakeSecrets())
+    lazy var settings = SettingsStore(secrets: TestBootstrap.Secrets())
     /// `finder` answers the fixture's own Agent when it asks Finder; nothing here asks the real Finder.
     init(harness: AgentHarness? = nil, finder: any FinderLocating = NoFinder()) {
         let puppet = puppet
@@ -47,8 +46,9 @@ import Foundation
     func speak(_ text: String, start: Int = 0, final: Bool = true) {
         recognizers.last?.emit(text, start: start, end: start + 200, final: final)
     }
-    func holdPlayback() { audio.onDrain = { [unowned self] in await withCheckedContinuation { finishDrain = $0 } } }
-    func releasePlayback() { finishDrain?.resume(); finishDrain = nil; audio.onDrain = nil }
+    /// Holds the reply's drain, so the reply stays audible until `releaseDrain()`.
+    func holdDrain() { audio.holdsDrain = true }
+    func releaseDrain() { audio.holdsDrain = false; audio.releaseDrain() }
     /// Sends `count` loud packets and waits until the call has handled them all.
     func frames(_ count: Int) async throws {
         let handled = audio.handledPackets
@@ -65,6 +65,6 @@ import Foundation
             self.recognizers.count == recognizers + 1 && self.recognizers.last?.callback != nil
         }
     }
-    func shutdown() { releasePlayback(); workspace.shutdown() }
+    func shutdown() { releaseDrain(); workspace.shutdown() }
 }
 

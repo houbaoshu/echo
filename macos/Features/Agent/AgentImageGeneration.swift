@@ -72,15 +72,8 @@ struct ArkImageGenerator: Sendable {
     let model: String
     let transport: AgentTransport
 
-    init(key: String, model: String, transport: AgentTransport = ArkImageGenerator.transport()) {
+    init(key: String, model: String, transport: AgentTransport = AgentTransport(timeout: ArkImageGenerator.timeout)) {
         self.key = key; self.model = model; self.transport = transport
-    }
-
-    static func transport(timeout: TimeInterval = ArkImageGenerator.timeout) -> AgentTransport {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.timeoutIntervalForResource = timeout
-        return AgentTransport(configuration: configuration)
     }
 
     /// The generator a turn gets: one with the saved Volcengine Ark key and vision model, and none without the key.
@@ -157,9 +150,9 @@ struct GenerateImageTool: Tool {
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         guard let input = try? Input(arguments), !input.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               input.aspect_ratio.map({ AgentImageRequest.AspectRatio(rawValue: $0) != nil }) ?? true else {
-            return try await access.generate(call: arguments.id, .failure(.init(result: AgentToolResult.failed(
-                #"invalid arguments for generate_image; expected {"prompt": string, "aspect_ratio"?: "1:1" | "4:3" | "3:4" | "16:9" | "9:16", "save_to_chat_folder"?: boolean}. Received: "#
-                + arguments.jsonString))))
+            return try await access.generate(call: arguments.id, .failure(.expected(
+                #"{"prompt": string, "aspect_ratio"?: "1:1" | "4:3" | "3:4" | "16:9" | "9:16", "save_to_chat_folder"?: boolean}"#,
+                by: name, received: arguments)))
         }
         return try await access.generate(call: arguments.id, .success(.init(
             prompt: input.prompt, aspectRatio: input.aspect_ratio.flatMap(AgentImageRequest.AspectRatio.init),
@@ -301,12 +294,12 @@ enum AgentImageResult {
             (reason, fields) = (.response, [:])
             detail = "The image service returned a response that could not be read; no image was generated"
         }
-        return AgentToolResult.object(fields.merging(["status": "failed", "reason": reason.rawValue, "detail": detail]) { $1 })
+        return AgentToolResult.failed(reason: reason.rawValue, detail, fields)
     }
 
     /// The image was made but could not be saved.
     static func notSaved(_ message: String) -> String {
-        AgentToolResult.object(["status": "failed", "reason": Reason.save.rawValue, "message": message,
-                                "detail": "The image was generated but could not be saved (\(message)); there is no image file"])
+        AgentToolResult.failed(reason: Reason.save.rawValue, "The image was generated but could not be saved (\(message)); there is no image file",
+                               ["message": message])
     }
 }

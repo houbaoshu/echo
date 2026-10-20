@@ -535,8 +535,9 @@ enum WebPageText {
     static let probe = "(() => { const text = document.body ? document.body.innerText : \"\"; return text.length < \(shortPage) ? text : text.length; })()"
 
     static func hasWallWords(_ text: String) -> Bool {
+        guard text.count < shortPage else { return false }
         let lowered = text.lowercased()
-        return text.count < shortPage && wallWords.contains { lowered.contains($0) }
+        return wallWords.contains { lowered.contains($0) }
     }
 
     /// Whether `url` is a check or a sign-in page by its address.
@@ -581,8 +582,7 @@ struct WebFetchTool: Tool {
         if let input = try? Input(arguments) {
             address = .success(input.url)
         } else {
-            address = .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for web_fetch; expected {\"url\": string}. Received: \(arguments.jsonString)")))
+            address = .failure(.expected(#"{"url": string}"#, by: name, received: arguments))
         }
         return try await access.fetch(address)
     }
@@ -665,7 +665,7 @@ enum AgentWebFetchResult {
             (reason, detail) = (.network, "The page could not be loaded (\(message)); nothing was read")
             fields["message"] = message
         }
-        return AgentToolResult.object(fields.merging(["status": "failed", "reason": reason.rawValue, "detail": detail]) { $1 })
+        return AgentToolResult.failed(reason: reason.rawValue, detail, fields)
     }
 
     static func run(_ raw: String, with fetcher: any AgentWebFetching) async -> String {

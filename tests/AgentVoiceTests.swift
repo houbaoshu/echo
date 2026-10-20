@@ -122,7 +122,7 @@ extension EchoVoiceScenarios {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        try await f.start(); f.holdPlayback(); f.speak("第一个问题")
+        try await f.start(); f.holdDrain(); f.speak("第一个问题")
         #expect(f.store.isGenerating, "the first utterance opened a turn")
 
         // Refused while the turn runs: the message is appended, the partial is not kept.
@@ -168,7 +168,7 @@ extension EchoVoiceScenarios {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        try await f.start(); f.holdPlayback(); f.speak("第一次问题")
+        try await f.start(); f.holdDrain(); f.speak("第一次问题")
         try await f.puppet.reply("第一次回答")
         try await eventually("first reply", timeout: .seconds(8)) {
             f.store.task?.status == .completed && f.synths.count == 1 && f.audio.played.count == 1
@@ -183,18 +183,18 @@ extension EchoVoiceScenarios {
               "a second text message steers the same round")
         #expect(f.voice.snapshot.recognition == .off(.recovery) && f.audio.capturePaused,
               "another submission cannot bypass the existing acoustic tail timer")
-        f.releasePlayback()
+        f.releaseDrain()
         try await eventually("f.voice.snapshot.recognition == .listening") { f.voice.snapshot.recognition == .listening }
         #expect(!f.audio.capturePaused && f.store.isGenerating, "tail expiry restores listening during model work")
         f.voice.end()
-        try await f.start(); f.holdPlayback()
+        try await f.start(); f.holdDrain()
         // The request that was running when the follow-up arrived answers first; that text is not the reply.
         try await f.puppet.reply("先说第二次")
         try await f.puppet.reply("新的最终回答")
         try await eventually("rejoined final", timeout: .seconds(8)) { f.synths.count == 2 && !f.synths[1].chunks.isEmpty }
         #expect(f.voice.error == nil, "rejoining a running Agent resets old TTS text and speaks the new final")
         #expect(f.synths[1].chunks == ["新的最终回答"], "rejoining a running Agent resets old TTS text and speaks the new final")
-        f.releasePlayback()
+        f.releaseDrain()
         try await eventually("f.voice.snapshot.recognition == .listening") { f.voice.snapshot.recognition == .listening }
         f.recognizers.last?.callback?(.init(result: .init(text: "下一句仍在讲话", utterances: [
             .init(text: "已经定稿", start_time: 0, end_time: 200, definite: true),
@@ -212,7 +212,7 @@ extension EchoVoiceScenarios {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        try await f.start(); f.holdPlayback()
+        try await f.start(); f.holdDrain()
         f.voice.toggleSpeakerMute(); f.speak("第一个问题")
         try await f.puppet.waitForRequests(1)
         let stream = f.store.replyStream
@@ -229,7 +229,7 @@ extension EchoVoiceScenarios {
         #expect(f.synths[0].chunks == ["今天**天气**不错，适合散步。"], "speech receives only the final reply")
         #expect(f.store.messages.last?.content == "今天**天气**不错，适合散步。",
               "the settled reply is the conversation's own message, so nothing streams beside it")
-        f.releasePlayback()
+        f.releaseDrain()
         try await eventually("playback ends") { f.voice.snapshot.replyAudio == .none }
         #expect(stream.text == "今天**天气**不错，适合散步。", "the reply stays after playback ends")
 
@@ -262,7 +262,7 @@ extension EchoVoiceScenarios {
         _ = NSApplication.shared
         let f = AgentVoiceFixture()
         defer { f.shutdown() }
-        try await f.start(); f.holdPlayback()
+        try await f.start(); f.holdDrain()
         f.voice.toggleSpeakerMute()
         func bubble() -> CompanionBubbleContent {
             CompanionBubbleContent(voice: f.voice.snapshot, spoken: f.voice.spoken, position: f.voice.spokenPosition, notice: nil)
@@ -290,7 +290,7 @@ extension EchoVoiceScenarios {
         #expect(bubble() == .reply(reply, heard: "##天气。今天天气很"), "1.8 seconds in, the reply is still within its first sentence")
         f.audio.playbackFrames = 4800 + 64800
         #expect(bubble() == .reply(reply, heard: "##天气。今天天气很好，适合散"), "later sentences extend the timeline")
-        f.releasePlayback()
+        f.releaseDrain()
         try await eventually("the reply finishes playing") { f.voice.spoken?.stoppedAt == .infinity }
         #expect(f.voice.spoken?.stoppedAt == .infinity && bubble() == .reply(reply, heard: nil) && shown(),
               "finished playback shows the whole reply and keeps it")
@@ -299,7 +299,7 @@ extension EchoVoiceScenarios {
         try await eventually("listening resumes after the reply", timeout: .seconds(8)) {
             f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
         }
-        f.holdPlayback()
+        f.holdDrain()
         f.speak("再说一个", start: 400)
         try await f.puppet.waitForRequests(2)
         #expect(f.voice.spoken == nil && bubble() == .status("正在思考…"), "the next turn replaces the previous reply with its status")
@@ -329,7 +329,7 @@ extension EchoVoiceScenarios {
         try await f.puppet.reply("没有字幕的回复。")
         try await eventually("third reply synthesized", timeout: .seconds(8)) { f.synths.count == 3 && f.audio.played.count == 3 }
         #expect(bubble() == .none && !shown(), "the new turn took away the previous reply, and nothing of this one is heard yet")
-        f.releasePlayback()
+        f.releaseDrain()
         try await eventually("the reply without subtitles finishes playing") { f.voice.spoken?.source == "没有字幕的回复。" }
         #expect(bubble() == .reply("没有字幕的回复。", heard: nil) && shown(), "a reply without subtitles appears whole after playback")
         f.voice.end()
@@ -394,21 +394,21 @@ extension EchoVoiceScenarios {
             let f = AgentVoiceFixture()
             defer { f.shutdown() }
             f.workspace.isMainWindowVisible = viewed
-            try await f.start(); f.holdPlayback()
+            try await f.start(); f.holdDrain()
             f.speak("第一轮")
             #expect(f.store.isGenerating && !f.store.isActivityVisible, "a Live Voice turn keeps its task card folded")
             try await f.puppet.reply("第一轮回复")
             try await eventually("first reply", timeout: .seconds(8)) { f.synths.count == 1 }
-            f.releasePlayback()
+            f.releaseDrain()
             let recognizers = f.recognizers.count
             try await eventually("listening resumes", timeout: .seconds(8)) {
                 f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
             }
-            f.holdPlayback()
+            f.holdDrain()
             f.speak("第二轮", start: 400)
             try await f.puppet.reply("第二轮回复")
             try await eventually("second reply", timeout: .seconds(8)) { f.synths.count == 2 }
-            f.releasePlayback()
+            f.releaseDrain()
             try await eventually("the second reply finishes playing") { f.voice.snapshot.replyAudio == .none }
             let surface = PetSurfacePresentation(hovered: true, composerOpen: false, draft: "",
                 activityCount: f.store.activityCount, activitiesCollapsed: f.store.activitiesCollapsed,
@@ -459,11 +459,11 @@ extension EchoVoiceScenarios {
             told = []
             try await f.start()
             if !adopted {
-                f.holdPlayback(); f.speak("第一轮")
+                f.holdDrain(); f.speak("第一轮")
                 try await f.puppet.reply("第一轮回复")
                 try await eventually("the call's reply plays", timeout: .seconds(8)) { f.synths.count == 1 }
                 let recognizers = f.recognizers.count
-                f.releasePlayback()
+                f.releaseDrain()
                 try await eventually("listening resumes", timeout: .seconds(8)) {
                     f.voice.snapshot.recognition == .listening && f.recognizers.count > recognizers
                 }
@@ -489,7 +489,7 @@ extension EchoVoiceScenarios {
         for finalFirst in [false, true] {
             let f = AgentVoiceFixture()
             defer { f.shutdown() }
-            try await f.start(); f.holdPlayback(); f.speak("最初的问题")
+            try await f.start(); f.holdDrain(); f.speak("最初的问题")
             let run = try #require(f.store.task?.runID)
             try await f.puppet.waitForRequests(1)
             #expect(f.synths.isEmpty && f.voice.snapshot.recognition == .listening,
@@ -500,7 +500,7 @@ extension EchoVoiceScenarios {
             }
             defer { subscription.cancel() }
             try await f.puppet.reply("今天的天气非常晴朗，适合出门散步。")
-            try await eventually("final reply", timeout: .seconds(8)) { f.synths.count == 1 && f.finishDrain != nil }
+            try await eventually("final reply", timeout: .seconds(8)) { f.synths.count == 1 && f.audio.isHoldingDrain }
             #expect(f.synths[0].chunks == ["今天的天气非常晴朗，适合出门散步。"], "only the final reply is spoken as one synthesis input")
             #expect(f.voice.snapshot.replyAudio == .draining(run), "only the final reply is spoken as one synthesis input")
             let finalMessage = try #require(f.store.responseMessage)
@@ -529,7 +529,7 @@ extension EchoVoiceScenarios {
             do { try await oldAudio(Data([1, 2])); Issue.record("old audio must be rejected") }
             catch is CancellationError {  }
             let drains = f.audio.finishedDrains
-            f.releasePlayback()
+            f.releaseDrain()
             try await eventually("the old playback drain returns") { f.audio.finishedDrains > drains }
             #expect(f.voice.snapshot.recognition == .listening && f.synths.count == 1,
                   "old playback drain cannot change the new round or replay its predecessor")
@@ -652,13 +652,4 @@ extension EchoVoiceScenarios {
     }
 }
 
-}
-
-/// Answers finder_location only when the test opens the gate; no test asks the real Finder.
-struct HeldFinder: FinderLocating {
-    let gate = ScriptGate()
-    func locate() async -> FinderLocation {
-        try? await gate.wait()
-        return .unavailable(.noFolder)
-    }
 }

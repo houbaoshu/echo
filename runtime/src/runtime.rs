@@ -1,7 +1,7 @@
 //! Timing and loop selection adapted from openai/codex codex-rs/tui/src/pets/ambient.rs.
 //! What shows over what (drag, a one-shot, hovering, looking at the pointer) is Echo's own;
 //! see `PetRuntime::shown`.
-use crate::model::{Animation, Pet};
+use crate::model::{Animation, LOOK_FRAMES, Pet, span};
 use anyhow::{Result, ensure};
 use std::time::Duration;
 
@@ -19,14 +19,17 @@ struct Once {
     name: String,
     started_at: Duration,
     ends_at: Duration,
+    /// The hover jump, which the pointer leaving cuts short.
+    ends_on_leave: bool,
 }
 
 impl Once {
-    fn new(pet: &Pet, name: &str, now: Duration) -> Self {
+    fn new(pet: &Pet, name: &str, now: Duration, ends_on_leave: bool) -> Self {
         Self {
             name: name.into(),
             started_at: now,
             ends_at: now + once_length(&pet.animations[name]),
+            ends_on_leave,
         }
     }
 
@@ -57,16 +60,14 @@ pub struct PetRuntime {
     base: String,
     /// None while a state set under something else waits to show for the first time.
     base_started_at: Option<Duration>,
-    /// A clip played once over everything but a drag.
-    once: Option<Once>,
+    /// A clip played once over everything but a drag: a click's wave, or the jump that greets
+    /// the pointer each time it enters.
+    clip: Option<Once>,
     hovered: bool,
-    /// The jump that greets the pointer each time it enters.
-    hover_jump: Option<Once>,
     direction: i32,
     drag_started_at: Duration,
-    look_frame: Option<usize>,
-    pointer: Option<(f64, f64)>,
-    pointer_moved_at: Option<Duration>,
+    /// The last pointer offset, and when it last changed.
+    pointer: Option<((f64, f64), Duration)>,
 }
 
 impl PetRuntime {
@@ -76,14 +77,11 @@ impl PetRuntime {
             pet,
             base: "idle".into(),
             base_started_at: Some(Duration::ZERO),
-            once: None,
+            clip: None,
             hovered: false,
-            hover_jump: None,
             direction: 0,
             drag_started_at: Duration::ZERO,
-            look_frame: None,
             pointer: None,
-            pointer_moved_at: None,
         })
     }
 
@@ -92,36 +90,37 @@ impl PetRuntime {
             dx.is_finite() && dy.is_finite(),
             "invalid pointer coordinates"
         );
-        self.look_frame = if self.pet.has_look_frames() && dx.hypot(dy) > 1.0 {
-            let angle = dx.atan2(-dy).to_degrees().rem_euclid(360.0);
-            Some(72 + (angle / 22.5).round() as usize % 16)
-        } else {
-            None
-        };
         // The same offset again is not a move, so it does not keep the pet looking.
-        if self.pointer != Some((dx, dy)) {
-            self.pointer = Some((dx, dy));
-            self.pointer_moved_at = Some(now);
+        if self.pointer.is_none_or(|(offset, _)| offset != (dx, dy)) {
+            self.pointer = Some(((dx, dy), now));
         }
         Ok(())
+    }
+
+    /// The look sprite facing `(dx, dy)`, outside a 1 pt dead zone at the center.
+    fn look_sprite(&self, dx: f64, dy: f64) -> Option<usize> {
+        if !self.pet.frame.has_look_frames() || dx.hypot(dy) <= 1.0 {
+            return None;
+        }
+        let angle = dx.atan2(-dy).to_degrees().rem_euclid(360.0);
+        Some(LOOK_FRAMES.start + (angle / 22.5).round() as usize % LOOK_FRAMES.len())
     }
 
     pub fn set_interaction(&mut self, hovered: bool, direction: i32, now: Duration) -> Result<()> {
         ensure!((-1..=1).contains(&direction), "invalid drag direction");
         // Entering during a drag, or in the call that ends it, is the drag's own doing.
         let dragging = self.direction != 0 || direction != 0;
-        let waving = self.once.as_ref().is_some_and(|once| once.is_playing(now));
+        let waving = self.clip.as_ref().is_some_and(|clip| clip.is_playing(now));
         if hovered && !self.hovered && !dragging && !waving {
-            self.hover_jump = Some(Once::new(&self.pet, "jumping", now));
+            self.clip = Some(Once::new(&self.pet, "jumping", now, true));
         }
-        if !hovered {
-            self.hover_jump = None;
+        if !hovered && self.clip.as_ref().is_some_and(|clip| clip.ends_on_leave) {
+            self.clip = None;
         }
         if direction != 0 && direction != self.direction {
             // Running starts over when a drag starts or turns, and ends a wave or a jump.
             self.drag_started_at = now;
-            self.once = None;
-            self.hover_jump = None;
+            self.clip = None;
         }
         self.hovered = hovered;
         self.direction = direction;
@@ -149,9 +148,8 @@ impl PetRuntime {
             self.pet.animations.contains_key(name),
             "unknown animation: {name}"
         );
-        self.once = Some(Once::new(&self.pet, name, now));
         // It takes over from the jump that greeted the pointer, which does not come back after.
-        self.hover_jump = None;
+        self.clip = Some(Once::new(&self.pet, name, now, false));
         Ok(())
     }
 
@@ -176,21 +174,19 @@ impl PetRuntime {
                 "running-right"
             });
         }
-        if let Some(once) = &self.once
-            && once.is_playing(now)
+        if let Some(clip) = &self.clip
+            && clip.is_playing(now)
         {
-            return Shown::Clip(once);
+            return Shown::Clip(clip);
         }
         if self.hovered {
             // A pointer resting on the pet is not looked at.
-            return match &self.hover_jump {
-                Some(jump) if jump.is_playing(now) => Shown::Clip(jump),
-                _ => Shown::Base,
-            };
+            return Shown::Base;
         }
         if self.base_takes_look(now)
-            && let (Some(sprite_index), Some(moved_at)) = (self.look_frame, self.pointer_moved_at)
+            && let Some(((dx, dy), moved_at)) = self.pointer
             && now < moved_at + LOOK_HOLD
+            && let Some(sprite_index) = self.look_sprite(dx, dy)
         {
             return Shown::Look(sprite_index, moved_at + LOOK_HOLD);
         }
@@ -224,7 +220,7 @@ fn once_length(animation: &Animation) -> Duration {
         .loop_start
         .filter(|&start| start > 0)
         .unwrap_or(animation.frames.len());
-    animation.frames[..end].iter().map(|frame| frame.duration).sum()
+    span(&animation.frames[..end])
 }
 
 /// The frame `elapsed` into `name`, carrying the overshoot of each finished one-shot into its
@@ -241,14 +237,8 @@ fn frame_at(pet: &Pet, name: &str, mut elapsed: Duration) -> FrameTick {
 fn current_animation_frame(animation: &Animation, elapsed: Duration) -> FrameTick {
     let mut nanos = elapsed.as_nanos();
     if let Some(loop_start) = animation.loop_start {
-        let prefix: u128 = animation.frames[..loop_start]
-            .iter()
-            .map(|f| f.duration.as_nanos())
-            .sum();
-        let cycle: u128 = animation.frames[loop_start..]
-            .iter()
-            .map(|f| f.duration.as_nanos())
-            .sum();
+        let prefix = span(&animation.frames[..loop_start]).as_nanos();
+        let cycle = span(&animation.frames[loop_start..]).as_nanos();
         if nanos >= prefix {
             nanos = prefix + (nanos - prefix) % cycle;
         }
@@ -261,12 +251,7 @@ fn current_animation_frame(animation: &Animation, elapsed: Duration) -> FrameTic
             let remaining = duration - nanos;
             return FrameTick {
                 sprite_index: frame.sprite_index,
-                next_frame_in: (!static_tail).then(|| {
-                    Duration::new(
-                        (remaining / 1_000_000_000) as u64,
-                        (remaining % 1_000_000_000) as u32,
-                    )
-                }),
+                next_frame_in: (!static_tail).then(|| Duration::from_nanos_u128(remaining)),
             };
         }
         nanos -= duration;
@@ -277,7 +262,7 @@ fn current_animation_frame(animation: &Animation, elapsed: Duration) -> FrameTic
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::AnimationFrame;
+    use crate::model::uniform;
     use std::ops::RangeInclusive;
     use std::path::Path;
 
@@ -316,13 +301,7 @@ mod tests {
 
     fn blink() -> Animation {
         Animation {
-            frames: [0, 1]
-                .into_iter()
-                .map(|sprite_index| AnimationFrame {
-                    sprite_index,
-                    duration: ms(100),
-                })
-                .collect(),
+            frames: uniform([0, 1], ms(100)),
             loop_start: None,
             fallback: "running".into(),
         }
@@ -331,18 +310,15 @@ mod tests {
     #[test]
     fn bundled_planets_share_continuous_voice_animations() {
         for name in ["ember-planet", "quiet-planet"] {
-            let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../assets/planets")
-                .join(name);
-            let pet = Pet::load(&directory).unwrap();
+            let pet = load("planets", name);
             let running = &pet.animations["running"];
             assert_eq!(running.loop_start, Some(0));
-            assert!((56..=61).contains(&current_animation_frame(running, Duration::from_secs(10)).sprite_index));
+            assert!((56..=61).contains(&current_animation_frame(running, ms(10_000)).sprite_index));
             let spinning = &pet.animations["spinning"];
             assert_eq!(spinning.loop_start, Some(0));
             assert_eq!(spinning.frames.iter().map(|f| f.sprite_index).collect::<Vec<_>>(),
                        (72..=87).collect::<Vec<_>>());
-            assert_eq!(current_animation_frame(spinning, Duration::from_millis(1920)).sprite_index, 72);
+            assert_eq!(current_animation_frame(spinning, ms(1920)).sprite_index, 72);
             let mut runtime = PetRuntime::new(pet).unwrap();
             runtime.look_at(100.0, 0.0, Duration::ZERO).unwrap();
             assert_eq!(runtime.advance(Duration::ZERO).sprite_index, 76);

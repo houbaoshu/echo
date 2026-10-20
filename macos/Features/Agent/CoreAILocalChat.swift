@@ -121,15 +121,14 @@ final class CoreAILocalChatBackend: LocalChatBackend {
 
     /// The task's value, or CancellationError as soon as the caller is cancelled.
     private static func value<T: Sendable>(of task: Task<T, any Error>) async throws -> T {
-        let waiter = OnceContinuation<T>()
+        let once = ResumeOnce<T>()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                waiter.set(continuation)
-                if Task.isCancelled { waiter.take()?.resume(throwing: CancellationError()) }
-                Task { let result = await task.result; waiter.take()?.resume(with: result) }
+                once.set(continuation)
+                Task { once.resume(with: await task.result) }
             }
         } onCancel: {
-            waiter.take()?.resume(throwing: CancellationError())
+            once.resume(throwing: CancellationError())
         }
     }
 
@@ -173,14 +172,5 @@ final class CoreAILocalChatBackend: LocalChatBackend {
             return false
         }
         if !busy { unloadIfIdle() }
-    }
-}
-
-/// A continuation resumed at most once, by whichever side gets to it first.
-private final class OnceContinuation<T: Sendable>: Sendable {
-    private let slot = Mutex<CheckedContinuation<T, any Error>?>(nil)
-    func set(_ continuation: CheckedContinuation<T, any Error>) { slot.withLock { $0 = continuation } }
-    func take() -> CheckedContinuation<T, any Error>? {
-        slot.withLock { continuation in defer { continuation = nil }; return continuation }
     }
 }

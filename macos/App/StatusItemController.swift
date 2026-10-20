@@ -30,7 +30,7 @@ import AppKit
         return LSLaunchFlags(rawValue: UInt32(bitPattern: flags)).contains(.dontSwitch)
     }
     /// 'lsfg': where Launch Services puts the opener's launch flags in a reopen. Not documented.
-    static let launchFlagsKeyword: AEKeyword = 0x6C73_6667
+    private static let launchFlagsKeyword: AEKeyword = 0x6C73_6667
 }
 
 /// Echo's item at the right of the menu bar. With every window closed Echo stays in the

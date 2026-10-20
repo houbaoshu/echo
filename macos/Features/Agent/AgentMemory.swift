@@ -102,8 +102,7 @@ struct RememberTool: Tool {
 
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         guard let input = try? Input(arguments) else {
-            return try await access.change(call: arguments.id, .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for remember; expected {\"text\": string}. Received: \(arguments.jsonString)"))))
+            return try await access.change(call: arguments.id, .failure(.expected(#"{"text": string}"#, by: name, received: arguments)))
         }
         return try await access.change(call: arguments.id, .success(.remember(input.text)))
     }
@@ -127,8 +126,8 @@ struct UpdateMemoryTool: Tool {
 
     @concurrent func call(arguments: GeneratedContent) async throws -> String {
         guard let input = try? Input(arguments) else {
-            return try await access.change(call: arguments.id, .failure(.init(result: AgentToolResult.failed(
-                "invalid arguments for update_memory; expected {\"old_text\": string, \"new_text\": string}. Received: \(arguments.jsonString)"))))
+            return try await access.change(call: arguments.id, .failure(.expected(#"{"old_text": string, "new_text": string}"#,
+                                                                                  by: name, received: arguments)))
         }
         return try await access.change(call: arguments.id, .success(.update(old: input.old_text, new: input.new_text)))
     }
@@ -208,13 +207,7 @@ enum AgentMemoryEdit {
     /// `old`'s one occurrence replaced by `new`, compared byte for byte as edit_file does. Removing
     /// a passage removes its line too when nothing but a list marker is left of it.
     private static func replacing(_ old: String, with new: String, in data: Data) -> Result<Data, AgentInvalidArguments> {
-        let needle = Data(old.utf8)
-        var matches: [Range<Data.Index>] = []
-        var start = data.startIndex
-        while let found = data.range(of: needle, in: start..<data.endIndex) {
-            matches.append(found)
-            start = data.index(after: found.lowerBound)
-        }
+        let matches = AgentFileWriter.occurrences(of: old, in: data)
         switch matches.count {
         case 0:
             return failure(.notFound, "old_text was not found in the memory, so nothing was changed; it must match the memory exactly, including spaces and line breaks")
@@ -244,10 +237,10 @@ enum AgentMemoryEdit {
 
     private static func failure(_ reason: Reason, _ detail: String, count: Int? = nil,
                                 kinds: [AgentMemorySensitive] = []) -> Result<Data, AgentInvalidArguments> {
-        var value: [String: Any] = ["status": "failed", "detail": detail, "reason": reason.rawValue]
-        if let count { value["count"] = count }
-        if !kinds.isEmpty { value["kinds"] = kinds.map(\.rawValue) }
-        return .failure(.init(result: AgentToolResult.object(value)))
+        var fields: [String: Any] = [:]
+        if let count { fields["count"] = count }
+        if !kinds.isEmpty { fields["kinds"] = kinds.map(\.rawValue) }
+        return .failure(.init(result: AgentToolResult.failed(reason: reason.rawValue, detail, fields)))
     }
 
     /// A finished call's result: what the memory now holds of the change.

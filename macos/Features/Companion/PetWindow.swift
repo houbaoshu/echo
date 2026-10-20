@@ -26,17 +26,8 @@ final class PetPanel: NSPanel {
             contentRect: NSRect(origin: .zero, size: store.size),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
         )
-        isReleasedWhenClosed = false
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        level = .floating
-        hidesOnDeactivate = false
-        // Hiding Echo, from its Dock tile or another app's Hide Others, hides its windows; the pet
-        // stays. Only Hide Pet takes it away, so the status item always tells the truth about it.
-        canHide = false
+        configureAsCompanionPanel()
         isFloatingPanel = true
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         title = store.displayName
         contentView = interactionView(for: store)
         if let screen = NSScreen.main {
@@ -113,10 +104,8 @@ final class PetPanel: NSPanel {
     }
 
     override func close() {
-        if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor) }
-        if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor) }
-        globalPointerMonitor = nil
-        localPointerMonitor = nil
+        NSEvent.removeMonitor(&globalPointerMonitor)
+        NSEvent.removeMonitor(&localPointerMonitor)
         super.close()
     }
 }
@@ -140,7 +129,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     private var hoverTrackingArea: NSTrackingArea?
 
     init(store: PetStore, onClick: @escaping () -> Void, onDropFolder: @escaping (URL) -> Void,
-         onDropFiles: @escaping ([URL]) -> Void = { _ in }, onHide: @escaping () -> Void, onShowSettings: @escaping () -> Void) {
+         onDropFiles: @escaping ([URL]) -> Void, onHide: @escaping () -> Void, onShowSettings: @escaping () -> Void) {
         self.store = store
         self.onClick = onClick
         self.onHide = onHide
@@ -204,7 +193,9 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
         return true
     }
 
-    @objc private func primaryClicked(_ recognizer: NSClickGestureRecognizer) {
+    @objc private func primaryClicked(_ recognizer: NSClickGestureRecognizer) { click() }
+
+    private func click() {
         store.wave()
         onClick()
     }
@@ -229,8 +220,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { bounds.contains(point) ? self : nil }
     override func accessibilityPerformPress() -> Bool {
-        store.wave()
-        onClick()
+        click()
         return true
     }
 
@@ -296,7 +286,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     }
 
     private func drag(to current: NSPoint) {
-        guard let window, let mouseStart, let windowStart, let lastDragPoint else { return }
+        guard let lastDragPoint else { return }
         let deltaX = current.x - lastDragPoint.x
         let deltaY = current.y - lastDragPoint.y
         guard abs(deltaX) >= 4 || abs(deltaY) >= 4 else { return }
@@ -305,6 +295,12 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
         if deltaX >= 4 { direction = 1 }
         else if deltaX <= -4 { direction = -1 }
         store.interact(hovered: hovered, direction: direction)
+        moveWindow(to: current)
+    }
+
+    /// Moves the window by as much as the pointer has moved since the press.
+    private func moveWindow(to current: NSPoint) {
+        guard let window, let mouseStart, let windowStart else { return }
         window.setFrameOrigin(NSPoint(x: windowStart.x + current.x - mouseStart.x,
                                       y: windowStart.y + current.y - mouseStart.y))
     }
@@ -312,15 +308,12 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
     private func endDrag(at current: NSPoint) {
         guard let mouseStart, let window else { return }
         let moved = dragging || abs(current.x - mouseStart.x) >= 4 || abs(current.y - mouseStart.y) >= 4
-        if moved && !dragging, let windowStart {
-            window.setFrameOrigin(NSPoint(x: windowStart.x + current.x - mouseStart.x,
-                                          y: windowStart.y + current.y - mouseStart.y))
-        }
+        if moved && !dragging { moveWindow(to: current) }
         if moved {
             hovered = bounds.contains(convert(window.convertPoint(fromScreen: current), from: nil))
         }
         resetGesture()
-        if !moved { store.wave(); onClick() }
+        if !moved { click() }
     }
 
     private func resetGesture() {

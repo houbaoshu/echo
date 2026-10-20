@@ -10,7 +10,9 @@ struct ConversationProjectPicker: View {
     private var project: WorkspaceProject? { workspace.project(for: conversationID) }
     private var editable: Bool { workspace.canAssociateProject(conversationID: conversationID) }
     private var canChoose: Bool { workspace.selectedID == conversationID && editable }
+    private var isUnavailable: Bool { project.map(workspace.isAvailable) == false }
     @FocusState private var detachFocused: Bool
+    private var showsDetach: Bool { hovered || focused || detachFocused }
     var body: some View {
         HStack {
             HStack(spacing: 0) {
@@ -36,7 +38,7 @@ struct ConversationProjectPicker: View {
                             },
                             close: { isPresented = false })
                     }
-                    .help(project.map(workspace.isAvailable) == false ? "项目不可用" : "选择项目文件夹")
+                    .help(isUnavailable ? "项目不可用" : "选择项目文件夹")
                     .accessibilityIdentifier("conversation.project")
                     .accessibilityValue("可选择项目")
                     // The xmark only shows on hover or keyboard focus, and SwiftUI leaves a hidden
@@ -50,8 +52,8 @@ struct ConversationProjectPicker: View {
                             .frame(width: 24, height: 28).contentShape(Rectangle())
                     }.buttonStyle(.plain).focused($detachFocused)
                         .foregroundStyle(WorkspaceStyle.secondary)
-                        .opacity(hovered || focused || detachFocused ? 1 : 0)
-                        .allowsHitTesting(hovered || focused || detachFocused)
+                        .opacity(showsDetach ? 1 : 0)
+                        .allowsHitTesting(showsDetach)
                         .help("取消关联项目").accessibilityLabel("取消关联项目")
                         .accessibilityIdentifier("conversation.project.detach")
                 }
@@ -73,9 +75,9 @@ struct ConversationProjectPicker: View {
     }
     private var label: some View {
         HStack(spacing: 6) {
-            Image(systemName: project.map(workspace.isAvailable) == false ? "folder.badge.questionmark" : "folder")
+            Image(systemName: isUnavailable ? "folder.badge.questionmark" : "folder")
             Text(project?.name ?? String(localized: "选择项目")).lineLimit(1)
-            if project.map(workspace.isAvailable) == false { Text("不可用").foregroundStyle(WorkspaceStyle.warning) }
+            if isUnavailable { Text("不可用").foregroundStyle(WorkspaceStyle.warning) }
             if editable { Image(systemName: "chevron.down").font(.caption2) }
         }.font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
     }
@@ -134,12 +136,7 @@ struct ProjectSelectionPanel: View {
         return workspace.projects.first { $0.id == id }
     }
     private func enabled(_ option: ProjectPickerOption) -> Bool { project(option).map(workspace.isAvailable) ?? true }
-    private func selected(_ option: ProjectPickerOption) -> Bool {
-        switch option {
-        case .project(let id): return selectedProjectID == id
-        case .add, .addFiles: return false
-        }
-    }
+    private func selected(_ option: ProjectPickerOption) -> Bool { option == selectedProjectID.map(ProjectPickerOption.project) }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // The chat palette's AppKit field: ↑ / ↓ / Return / Escape reach it as commands once an
@@ -150,6 +147,7 @@ struct ProjectSelectionPanel: View {
             // The list draws the selection, but focus stays in the search field.
             // Changes from `move(_:)` need explicit scrolling to keep the row visible.
             ScrollViewReader { proxy in
+                let options = self.options
                 List(selection: selection) {
                     ForEach(options, id: \.self) { option in
                         row(option).tag(option).id(option)
@@ -176,17 +174,20 @@ struct ProjectSelectionPanel: View {
     /// One row of the list. The list draws the selection, the hover and the row metrics;
     /// the row supplies the icon, the name and what a click means.
     private func row(_ option: ProjectPickerOption) -> some View {
-        HStack(spacing: 8) {
+        let project = self.project(option)
+        let isEnabled = project.map(workspace.isAvailable) ?? true
+        let isSelected = selected(option)
+        return HStack(spacing: 8) {
             Image(systemName: option == .add ? "folder.badge.plus" : option == .addFiles ? "doc.badge.plus" : "folder")
-            Text(project(option)?.name ?? (option == .addFiles ? String(localized: "添加文件…") : String(localized: "添加项目文件夹…"))).lineLimit(1)
+            Text(project?.name ?? (option == .addFiles ? String(localized: "添加文件…") : String(localized: "添加项目文件夹…"))).lineLimit(1)
             Spacer(minLength: 0)
-            if !enabled(option) { Text("不可用").font(WorkspaceStyle.caption) }
-            if selected(option) { Image(systemName: "checkmark") }
+            if !isEnabled { Text("不可用").font(WorkspaceStyle.caption) }
+            if isSelected { Image(systemName: "checkmark") }
         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             // The row is already the hit target; this is what a click means on top of
             // selecting — the same shape the project file tree uses.
             .simultaneousGesture(TapGesture().onEnded { if enabled(option) { choose(option) } })
-            .disabled(!enabled(option))
+            .disabled(!isEnabled)
             // Keep the row one element so assistive technology reads and selects the row
             // rather than its label.
             .accessibilityElement(children: .combine)
@@ -194,9 +195,9 @@ struct ProjectSelectionPanel: View {
             // the pointer and by nothing else, so assistive technology gets the same
             // activation spelled out as the row's default action.
             .accessibilityAction { if enabled(option) { choose(option) } }
-            .accessibilityIdentifier(project(option).map { "projectPicker.project.\($0.id)" }
+            .accessibilityIdentifier(project.map { "projectPicker.project.\($0.id)" }
                                      ?? (option == .addFiles ? "projectPicker.addFiles" : "projectPicker.add"))
-            .accessibilityAddTraits(selected(option) ? .isSelected : [])
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
     private func move(_ delta: Int) {
         let selectable = options.filter(enabled)
@@ -208,15 +209,11 @@ struct ProjectSelectionPanel: View {
         guard enabled(option) else { close(); return }
         switch option {
         case .project(let id): select(id); close()
-        case .add:
+        case .add, .addFiles:
             willOpenDialog()
             close()
             // Let the popover dismiss so a sheet belongs to the main window.
-            DispatchQueue.main.async { addFolder() }
-        case .addFiles:
-            willOpenDialog()
-            close()
-            DispatchQueue.main.async { addFiles?() }
+            DispatchQueue.main.async { if option == .add { addFolder() } else { addFiles?() } }
         }
     }
 }

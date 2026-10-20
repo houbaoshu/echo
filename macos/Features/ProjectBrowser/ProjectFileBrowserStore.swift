@@ -1,8 +1,6 @@
 import Foundation
 import Observation
-import Darwin
-import ImageIO
-import UniformTypeIdentifiers
+import CoreGraphics
 
 struct ProjectFileEntry: Identifiable, Equatable, Sendable {
     enum Kind: Sendable { case directory, file, symbolicLink, other }
@@ -83,7 +81,8 @@ enum ProjectFilePreview: Equatable, Sendable {
         let watchID = watchID
         watcher = ProjectFileWatcher(root: next.root) { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, self.watchID == watchID, self.location == next else { return }
+                // watchID is renewed with every location, so it also rules out a later project.
+                guard let self, self.watchID == watchID else { return }
                 self.refresh()
             }
         }
@@ -97,10 +96,15 @@ enum ProjectFilePreview: Equatable, Sendable {
         guard let location else { return nil }
         return URL(fileURLWithPath: location.root).appendingPathComponent(path)
     }
-    /// The tree's highlight, which the pointer and the arrow keys move. Opening a file
-    /// is a separate step, so walking the tree never replaces it with a preview.
-    func highlight(_ path: String) { state.selection = [path] }
-    func setSelection(_ paths: Set<String>) { state.selection = paths }
+    /// The tree's highlight, which the pointer, ⇧ / ⌘ clicks and the arrow keys move.
+    /// Opening a file is a separate step, so walking the tree never replaces it with a
+    /// preview. The row to scroll back to is the first one a change added, so a range
+    /// comes back from its top.
+    func setSelection(_ paths: Set<String>) {
+        let added = paths.subtracting(state.selection)
+        state.selection = paths
+        if let first = inTreeOrder(added).first { state.scrollID = first }
+    }
     /// The paths among `paths` that the tree shows, in the order it shows them.
     func inTreeOrder(_ paths: Set<String>) -> [String] {
         var ordered: [String] = []
@@ -118,6 +122,20 @@ enum ProjectFilePreview: Equatable, Sendable {
     /// the row is part of it, otherwise that row alone.
     func draggedPaths(from path: String) -> [String] {
         state.selection.contains(path) ? inTreeOrder(state.selection) : [path]
+    }
+    /// A click, Return or an accessibility press activates a row: a folder opens or
+    /// closes, a file opens its preview. The list's own triangle only ever discloses, and
+    /// it is also what a folder row's accessibility press reaches.
+    func activate(_ entry: ProjectFileEntry) {
+        if entry.kind == .directory { activateDirectory(entry.path) }
+        else { openFile(entry.path) }
+    }
+    /// Return activates the one selected row; over several it does nothing.
+    func activateSelection() {
+        guard let path = state.selectedPath,
+              case .loaded(let entries) = state.directories[(path as NSString).deletingLastPathComponent],
+              let entry = entries.first(where: { $0.path == path }) else { return }
+        activate(entry)
     }
     /// A click on a folder: it alone is selected, the way Finder selects it, whether it
     /// opens or closes. In the tree the selection is only the highlight; the preview page
@@ -137,18 +155,24 @@ enum ProjectFilePreview: Equatable, Sendable {
         }
     }
     func togglePreviewExpansion() {
-        guard location != nil, state.showingFile, state.selectedPath != nil else { return }
+        // showingFile is only ever set while a project is.
+        guard state.showingFile, state.selectedPath != nil else { return }
         isPreviewExpanded.toggle()
     }
     func collapsePreview() {
         if isPreviewExpanded { isPreviewExpanded = false }
     }
     func returnToDirectory() { collapsePreview(); state.showingFile = false }
-    func openFile(_ path: String, preservingContent: Bool = false) {
-        guard let location else { return }
+    func openFile(_ path: String) {
+        guard location != nil else { return }
         if state.selectedPath != path { collapsePreview() }
         state.selection = [path]; state.showingFile = true
-        if !preservingContent { state.preview = .loading }
+        state.preview = .loading
+        reloadPreview(path)
+    }
+    /// Reads `path` into the preview, which keeps showing what it has until the read lands.
+    private func reloadPreview(_ path: String) {
+        guard let location else { return }
         let request = UUID(), generation = generation, readPreview = readPreview
         previewRequest = request
         Task { [weak self] in
@@ -156,11 +180,11 @@ enum ProjectFilePreview: Equatable, Sendable {
                 readPreview(location.root, path)
             }.value
             guard let self, self.location == location, self.generation == generation,
-                  self.previewRequest == request else { return }
+                  self.previewRequest == request, self.state.preview != result else { return }
             self.state.preview = result
         }
     }
-    func loadDirectory(_ path: String = "") {
+    func loadDirectory(_ path: String) {
         guard let location else { return }
         let request = UUID(), generation = generation, readDirectory = readDirectory
         directoryRequests[path] = request
@@ -195,7 +219,7 @@ enum ProjectFilePreview: Equatable, Sendable {
             pendingRefresh.insert(location)
             return
         }
-        if state.showingFile, let path = state.selectedPath { openFile(path, preservingContent: true) }
+        if state.showingFile, let path = state.selectedPath { reloadPreview(path) }
         let paths = Set(state.directories.keys).union(state.expanded).union([""])
         let request = UUID(), generation = generation, readDirectory = readDirectory
         for path in paths { directoryRequests[path] = request }
@@ -231,128 +255,5 @@ enum ProjectFilePreview: Equatable, Sendable {
         await withCheckedContinuation { continuation in
             DispatchQueue.main.async { continuation.resume() }
         }
-    }
-}
-
-// All entry inspection and reads run off the main actor. Descriptor-relative opens
-// refuse links at every path component, including directories replaced after listing.
-enum ProjectFileIO {
-    static let previewLimit = 1_048_576
-    static let imagePreviewLimit = 32 * 1_048_576
-    private static func errorMessage(_ code: Int32) -> String {
-        switch code {
-        case ENOENT: return String(localized: "文件或文件夹已删除或不可用。")
-        case EACCES, EPERM: return String(localized: "没有权限读取此文件或文件夹。")
-        case ELOOP: return String(localized: "符号链接不跟随，请在 Finder 中查看。")
-        case ENOTDIR: return String(localized: "文件夹不可用或已被替换。")
-        default: return String(localized: "读取失败：\(String(cString: strerror(code)))")
-        }
-    }
-    private struct ReadError: Error {
-        let message: String
-        /// The errno behind `message`, when there is one.
-        var code: Int32?
-        init(message: String) { self.message = message }
-        init(code: Int32) { message = errorMessage(code); self.code = code }
-    }
-    private static func descriptor(root: String, path: String, directory: Bool) throws -> Int32 {
-        do { return try ProjectPath.open(root: root, path: path, directory: directory) }
-        catch .outsideProject { throw ReadError(message: String(localized: "路径不属于当前项目。")) }
-        catch .system(let code) { throw ReadError(code: code) }
-    }
-    static func directory(root: String, path: String) -> ProjectDirectoryState {
-        do {
-            let fd = try descriptor(root: root, path: path, directory: true)
-            guard let dir = fdopendir(fd) else { let code = errno; close(fd); throw ReadError(code: code) }
-            defer { closedir(dir) }
-            var entries: [ProjectFileEntry] = []
-            while true {
-                errno = 0
-                guard let entry = readdir(dir) else {
-                    if errno != 0 { throw ReadError(code: errno) }
-                    break
-                }
-                let name = withUnsafePointer(to: &entry.pointee.d_name) {
-                    $0.withMemoryRebound(to: CChar.self, capacity: Int(entry.pointee.d_namlen) + 1) { String(cString: $0) }
-                }
-                if name.hasPrefix(".") { continue }
-                var info = stat()
-                guard fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {
-                    if errno == ENOENT { continue }
-                    throw ReadError(code: errno)
-                }
-                if info.st_flags & UInt32(UF_HIDDEN) != 0 { continue }
-                let kind: ProjectFileEntry.Kind
-                switch info.st_mode & S_IFMT {
-                case S_IFDIR: kind = .directory
-                case S_IFREG: kind = .file
-                case S_IFLNK: kind = .symbolicLink
-                default: kind = .other
-                }
-                entries.append(.init(path: path.isEmpty ? name : path + "/" + name, name: name, kind: kind))
-            }
-            return .loaded(entries.sorted {
-                if ($0.kind == .directory) != ($1.kind == .directory) { return $0.kind == .directory }
-                let order = $0.name.localizedStandardCompare($1.name)
-                return order == .orderedSame ? $0.name < $1.name : order == .orderedAscending
-            })
-        } catch let error as ReadError { return .failed(error.message) }
-        catch { return .failed(error.localizedDescription) }
-    }
-    static func preview(root: String, path: String) -> ProjectFilePreview {
-        do {
-            let fd = try descriptor(root: root, path: path, directory: false)
-            defer { close(fd) }
-            var info = stat()
-            guard fstat(fd, &info) == 0 else { throw ReadError(code: errno) }
-            guard info.st_mode & S_IFMT == S_IFREG else { return .information(String(localized: "仅支持预览普通文本和图片文件。")) }
-            let ext = (path as NSString).pathExtension.lowercased()
-            let isImage = UTType(filenameExtension: ext)?.conforms(to: .image) == true
-                || ["png", "jpg", "jpeg", "webp", "gif"].contains(ext)
-            let limit = isImage ? imagePreviewLimit : previewLimit
-            let sizeMessage = isImage ? String(localized: "图片超过 32 MiB，无法预览。") : String(localized: "文件超过 1 MiB，无法预览。")
-            guard info.st_size <= limit else { return .information(sizeMessage) }
-            var bytes = [UInt8](repeating: 0, count: limit + 1)
-            var total = 0
-            while total < bytes.count {
-                let count = bytes.withUnsafeMutableBytes { buffer in
-                    Darwin.read(fd, buffer.baseAddress!.advanced(by: total), buffer.count - total)
-                }
-                if count < 0 {
-                    if errno == EINTR { continue }
-                    throw ReadError(code: errno)
-                }
-                if count == 0 { break }
-                total += count
-            }
-            guard total <= limit else { return .information(sizeMessage) }
-            let data = Data(bytes.prefix(total))
-            if isImage {
-                // Decode off the main actor, apply orientation and bound decoded memory.
-                // GIFs use their first frame; no animation or editing state is needed.
-                guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-                      let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceThumbnailMaxPixelSize: 4096,
-                        kCGImageSourceShouldCacheImmediately: true
-                      ] as CFDictionary) else {
-                    return .information(String(localized: "无法预览图片：文件已损坏或格式不受支持。"))
-                }
-                return .image(image)
-            }
-            let text: String?
-            if data.starts(with: [0xFF, 0xFE]) { text = String(data: data.dropFirst(2), encoding: .utf16LittleEndian) }
-            else if data.starts(with: [0xFE, 0xFF]) { text = String(data: data.dropFirst(2), encoding: .utf16BigEndian) }
-            else { text = String(data: data.starts(with: [0xEF, 0xBB, 0xBF]) ? data.dropFirst(3) : data, encoding: .utf8) }
-            guard let text, !text.unicodeScalars.contains(where: {
-                ($0.value < 32 && $0.value != 9 && $0.value != 10 && $0.value != 13) || $0.value == 127
-            }) else { return .information(String(localized: "二进制文件或不支持的文本编码。支持 UTF-8 和带 BOM 的 UTF-16。")) }
-            return .text(text)
-        } catch let error as ReadError {
-            // A link is not followed on purpose, so it is information rather than a failure.
-            if error.code == ELOOP { return .information(error.message) }
-            return .failed(error.message)
-        } catch { return .failed(error.localizedDescription) }
     }
 }

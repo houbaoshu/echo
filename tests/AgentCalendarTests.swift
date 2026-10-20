@@ -15,8 +15,7 @@ import Testing
     nonisolated static let newYork = AgentClock(now: { monday }, timeZone: TimeZone(identifier: "America/New_York")!)
 
     static func run(_ chat: Chat, _ text: String = "帮我办") async throws {
-        #expect(chat.store.send(text))
-        try await chat.idle()
+        try await chat.run(text)
     }
 
     static func chat(_ calls: [(String, String)], calendar: FakeCalendarStore = FakeCalendarStore(),
@@ -376,8 +375,7 @@ import Testing
         }, calendar: calendar, clock: Self.clock)
         #expect(chat.store.send("提醒我"))
         try await eventually("asks for access") { calendar.asked == [.reminders] }
-        #expect(chat.store.send("算了"))
-        try await chat.idle()
+        try await chat.run("算了")
         #expect(chat.store.tools.first?.result == AgentToolResult.superseded)
         #expect(chat.assistantTexts.last == "好的")
         gate.open()

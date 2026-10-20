@@ -67,6 +67,9 @@ import Foundation
     }
 }
 
+/// A trace field for an optional value: JSON null when there is none.
+func traceField(_ value: Any?) -> Any { value ?? NSNull() }
+
 @MainActor final class DictationTrace {
     private let logger: DictationDiagnostics
     private let recordingID: UUID
@@ -77,7 +80,7 @@ import Foundation
     private var callbacks = 0
 
     init(logger: DictationDiagnostics, recordingID: UUID, conversationID: UUID,
-         store: TaskStore, canRecord: @escaping () -> Bool = { true }) {
+         store: TaskStore, canRecord: @escaping () -> Bool) {
         self.logger = logger; self.recordingID = recordingID; self.conversationID = conversationID
         self.canRecord = canRecord
         // Recorded right after each change, with the draft it replaced and the one it set. The event
@@ -108,12 +111,12 @@ import Foundation
         record("recognizer.callback", [
             "callbackIndex": callbacks, "callbackType": "ASRResult", "accepted": accepted,
             "streamFinal": result.streamFinal,
-            "text": result.result?.text as Any? ?? NSNull(),
-            "utterances": result.result?.utterances?.map { utterance -> [String: Any] in
+            "text": traceField(result.result?.text),
+            "utterances": traceField(result.result?.utterances?.map { utterance -> [String: Any] in
                 ["text": utterance.text, "start_time": utterance.start_time, "end_time": utterance.end_time,
-                 "definite": utterance.definite as Any? ?? NSNull(),
+                 "definite": traceField(utterance.definite),
                  "status": utterance.definite.map { $0 ? "final" : "partial" } ?? "unspecified"]
-            } as Any? ?? NSNull()
+            })
         ])
         return callbacks
     }

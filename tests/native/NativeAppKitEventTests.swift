@@ -297,13 +297,9 @@ private struct HeldExecutor: LanguageModelExecutor {
             try await Task.sleep(for: .milliseconds(200))
             window.contentView?.layoutSubtreeIfNeeded()
         }
-        func findScroll(_ view: NSView) -> NSScrollView? {
-            if let scroll = view as? NSScrollView { return scroll }
-            return view.subviews.lazy.compactMap { findScroll($0) }.first
-        }
         try await settle()
         let root = main.conversationItem.viewController.view
-        guard let scroll = findScroll(root), let document = scroll.documentView else {
+        guard let scroll = firstSubview(NSScrollView.self, in: root), let document = scroll.documentView else {
             throw SettingsError("The transcript must have a native scroll view")
         }
         func gap() -> CGFloat { max(0, document.bounds.height - scroll.contentView.bounds.maxY) }
@@ -461,12 +457,8 @@ private struct HeldExecutor: LanguageModelExecutor {
         func refresh() async throws {
             try await Task.sleep(for: .milliseconds(100)); window.contentView?.layoutSubtreeIfNeeded()
         }
-        func findEditor(_ view: NSView) -> ComposerTextView? {
-            if let editor = view as? ComposerTextView { return editor }
-            return view.subviews.lazy.compactMap { findEditor($0) }.first
-        }
         func focus() -> ComposerTextView {
-            let editor = findEditor(window.contentView!)!
+            let editor = firstSubview(ComposerTextView.self, in: window.contentView!)!
             XCTAssertTrue(window.makeFirstResponder(editor))
             return editor
         }
@@ -1360,91 +1352,10 @@ private struct HeldExecutor: LanguageModelExecutor {
         }
     }
 
-    private func findView(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {
-        if match(view) { return view }
-        for child in view.subviews { if let found = findView(child, match) { return found } }
-        return nil
-    }
     /// A search field: the palette's query is a plain text field that reports itself as
     /// one, so it is told apart by that rather than by its class.
     private func isQueryField(_ view: NSView) -> Bool {
         view is NSSearchField || (view as? NSTextField)?.accessibilitySubrole() == .searchField
-    }
-
-    /// SwiftUI AX nodes answer the selector without declaring the protocol, so dispatch it directly.
-    /// Real window-server capture of a companion panel.
-    private func snapshot(_ window: NSWindow, _ name: String) throws {
-        let capture = Process()
-        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", EchoTestResources.output("\(name).png").path]
-        try capture.run(); capture.waitUntilExit()
-    }
-    /// Where an element is drawn, in screen coordinates, so a test can assert what sits above
-    /// what without depending on the wording either one publishes.
-    private func axFrame(_ object: AnyObject?) -> NSRect? {
-        guard let object = object as? NSObject,
-              object.responds(to: NSSelectorFromString("accessibilityFrame")) else { return nil }
-        return (object.value(forKey: "accessibilityFrame") as? NSValue)?.rectValue
-    }
-    private func axValue(_ object: AnyObject?) -> String? {
-        let selector = NSSelectorFromString("accessibilityValue")
-        guard let object, object.responds(to: selector) else { return nil }
-        return object.perform(selector)?.takeUnretainedValue() as? String
-    }
-    /// The strings the window actually draws: only static-text nodes contribute, so a test
-    /// can tell visible wording apart from what is published for assistive technology alone.
-    private func visibleText(in root: Any) -> [String] {
-        var visited: Set<ObjectIdentifier> = []
-        var found: [String] = []
-        func visit(_ value: Any) {
-            let object = value as AnyObject
-            guard visited.insert(ObjectIdentifier(object)).inserted else { return }
-            if object.accessibilityRole?() == .staticText {
-                if let label = object.accessibilityLabel?() { found.append(label) }
-                if let text = axValue(object) { found.append(text) }
-            }
-            let children = (value as? NSView)?.accessibilityChildren() ?? object.accessibilityChildren?() ?? []
-            for child in children { visit(child) }
-            if let view = value as? NSView { for child in view.subviews { visit(child) } }
-        }
-        visit(root)
-        return found
-    }
-    /// Every accessible string the hosted view publishes, labels and values alike, so a
-    /// test can assert what the window does and does not say.
-    private func accessibilityText(in root: Any) -> [String] {
-        var visited: Set<ObjectIdentifier> = []
-        var found: [String] = []
-        func visit(_ value: Any) {
-            let object = value as AnyObject
-            guard visited.insert(ObjectIdentifier(object)).inserted else { return }
-            if let label = object.accessibilityLabel?() { found.append(label) }
-            if let text = axValue(object) { found.append(text) }
-            let children = (value as? NSView)?.accessibilityChildren() ?? object.accessibilityChildren?() ?? []
-            for child in children { visit(child) }
-            if let view = value as? NSView { for child in view.subviews { visit(child) } }
-        }
-        visit(root)
-        return found
-    }
-    private func findAccessibility(_ id: String, in root: Any) -> AnyObject? {
-        var visited: Set<ObjectIdentifier> = []
-        func visit(_ value: Any) -> AnyObject? {
-            let object = value as AnyObject
-            guard visited.insert(ObjectIdentifier(object)).inserted else { return nil }
-            // SwiftUI AX nodes implement the Objective-C selectors without declaring
-            // NSAccessibilityProtocol conformance. Use capability dispatch here.
-            if object.accessibilityIdentifier?() == id { return object }
-            let children = (value as? NSView)?.accessibilityChildren() ?? object.accessibilityChildren?() ?? []
-            for child in children {
-                if let found = visit(child) { return found }
-            }
-            if let view = value as? NSView {
-                for child in view.subviews { if let found = visit(child) { return found } }
-            }
-            return nil
-        }
-        return visit(root)
     }
 }
 
@@ -1483,12 +1394,8 @@ extension NativeAppKitEventTests {
             try await Task.sleep(for: .milliseconds(200))
             window.contentView?.layoutSubtreeIfNeeded()
         }
-        func findScroll(_ view: NSView) -> NSScrollView? {
-            if let scroll = view as? NSScrollView { return scroll }
-            return view.subviews.lazy.compactMap { findScroll($0) }.first
-        }
         try await settle()
-        let scroll = try XCTUnwrap(findScroll(window.contentView!))
+        let scroll = try XCTUnwrap(firstSubview(NSScrollView.self, in: window.contentView!))
         let document = try XCTUnwrap(scroll.documentView)
         XCTAssertTrue(scroll.contentInsets.top > 20, "The toolbar must inset the scroll view: \(scroll.contentInsets)")
         func position() -> CGFloat { scroll.contentView.bounds.minY }

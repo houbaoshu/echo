@@ -32,176 +32,6 @@ struct WorkspaceProject: Identifiable, Codable, Equatable {
     var displayTitle: String { untitled ? Self.untitledTitle : title }
 }
 
-struct WorkspaceSnapshot: Codable {
-    struct Conversation: Codable {
-        var id: UUID
-        var projectID: UUID?
-        var title: String
-        var manuallyNamed: Bool
-        /// Written only while the conversation is untitled.
-        var untitled: Bool? = nil
-        var lastUsed: Date
-        var state: TaskStore.Snapshot
-        var isUntitled: Bool { untitled ?? false }
-    }
-    var version = 1
-    var projects: [WorkspaceProject]
-    var conversations: [Conversation]
-    var selectedID: UUID?
-    var activityID: UUID?
-    var drafts: [Conversation]? = nil
-}
-
-/// Accessed on the main actor: mutations and atomic saves have a single ordered writer.
-@MainActor final class WorkspacePersistence {
-    let url: URL
-    var backupURL: URL { url.appendingPathExtension("backup") }
-    init(url: URL) { self.url = url }
-    static var defaultURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("io.github.houbaoshu.echo/workspace.json")
-    }
-    private func decode(_ url: URL) throws -> WorkspaceSnapshot {
-        let result = try JSONDecoder().decode(WorkspaceSnapshot.self, from: Data(contentsOf: url))
-        guard result.version == 1,
-              Set(result.conversations.map(\.id) + (result.drafts ?? []).map(\.id)).count
-                == result.conversations.count + (result.drafts ?? []).count,
-              Set(result.projects.map(\.id)).count == result.projects.count else {
-            throw CocoaError(.fileReadCorruptFile)
-        }
-        return result
-    }
-    /// Agent conversations keep their history in a sidecar here; the manifest holds a reference.
-    var sessionsDirectory: URL { url.deletingLastPathComponent().appendingPathComponent("agent-sessions-v2") }
-    func sessionURL(_ id: UUID) -> URL {
-        sessionsDirectory.appendingPathComponent("\(id.uuidString).json")
-    }
-    static var unreadableHistory: String { String(localized: "Agent 历史无法读取，已禁止执行。请恢复聊天文件后重新打开应用。") }
-    func saveSession(_ state: TaskStore.Snapshot, id: UUID) throws {
-        let target = sessionURL(id)
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(state)
-        // Only a changed conversation is written.
-        if (try? Data(contentsOf: target)) == data { return }
-        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: target, options: .atomic)
-    }
-    func removeSession(_ id: UUID) throws {
-        do { try FileManager.default.removeItem(at: sessionURL(id)) }
-        catch CocoaError.fileNoSuchFile {}
-    }
-    /// Copies of the files each conversation's Agent replaced, one folder per conversation.
-    var backupsDirectory: URL { url.deletingLastPathComponent().appendingPathComponent("agent-backups") }
-    func backupDirectory(_ id: UUID) -> URL { backupsDirectory.appendingPathComponent(id.uuidString) }
-    func removeBackups(_ id: UUID) throws {
-        do { try FileManager.default.removeItem(at: backupDirectory(id)) }
-        catch CocoaError.fileNoSuchFile {}
-    }
-    /// Deletes sidecars no manifest conversation references, such as those left by deletions before
-    /// sessions were removed. Only call after the manifest itself loaded cleanly.
-    func pruneSessions(keeping ids: Set<UUID>) {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: sessionsDirectory, includingPropertiesForKeys: nil), !files.isEmpty,
-              let siblings = try? fm.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil) else { return }
-        // The backup and archives preserved by `load` may be the only way back to a history.
-        // They need not decode, so any UUID text in them counts as a reference.
-        let archivePrefix = url.deletingPathExtension().lastPathComponent + ".corrupt-"
-        var referenced = ids
-        for archive in siblings where archive.lastPathComponent == backupURL.lastPathComponent
-                                   || archive.lastPathComponent.hasPrefix(archivePrefix) {
-            guard let data = try? Data(contentsOf: archive) else { return }
-            let pattern = /[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/
-            referenced.formUnion(String(decoding: data, as: UTF8.self).matches(of: pattern).compactMap { UUID(uuidString: String($0.output)) })
-        }
-        for file in files where file.pathExtension == "json" {
-            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent), !referenced.contains(id) else { continue }
-            try? fm.removeItem(at: file)
-        }
-    }
-    /// Aligns the backup with the manifest just saved, so recovery cannot restore what it dropped.
-    func refreshBackup() throws {
-        _ = try decode(url)
-        try Data(contentsOf: url).write(to: backupURL, options: .atomic)
-    }
-    /// A conversation's saved state. Only the native sidecar is history: when it is missing, an
-    /// Agent conversation is blocked as unreadable. Conversations kept in the manifest come back
-    /// as saved; the workspace decides whether their engine can open them.
-    func restoreSession(_ saved: WorkspaceSnapshot.Conversation) -> TaskStore.Snapshot {
-        if FileManager.default.fileExists(atPath: sessionURL(saved.id).path) {
-            do {
-                var state = try JSONDecoder().decode(TaskStore.Snapshot.self, from: Data(contentsOf: sessionURL(saved.id)))
-                guard state.native != nil else { throw CocoaError(.fileReadCorruptFile) }
-                state.loadError = nil
-                return state
-            } catch {
-                var state = saved.state
-                state.agentStored = true; state.loadError = Self.unreadableHistory
-                return state
-            }
-        }
-        var state = saved.state
-        // The manifest never holds native history: only the sidecar does.
-        state.native = nil
-        if saved.state.agentStored == true {
-            state.loadError = Self.unreadableHistory
-        } else {
-            // A load error saved with a manifest conversation is recomputed on every launch.
-            state.loadError = nil
-        }
-        return state
-    }
-    /// Why `load` did not hand back the archive as it is on disk.
-    enum LoadProblem {
-        /// The unreadable archive could not be set aside, so nothing may save over it.
-        case preservationFailed(String)
-        case restoredFromBackup
-        case unreadable
-        var message: String {
-            switch self {
-            case .preservationFailed(let reason): String(localized: "无法备份损坏的聊天文件：\(reason)")
-            case .restoredFromBackup: String(localized: "聊天文件无法读取，已从备份恢复；原文件已保留。")
-            case .unreadable: String(localized: "聊天文件无法读取，原文件已保留。已打开空白工作区。")
-            }
-        }
-    }
-    func load() -> (WorkspaceSnapshot?, LoadProblem?) {
-        guard FileManager.default.fileExists(atPath: url.path) else { return (nil, nil) }
-        do { return (try decode(url), nil) }
-        catch {
-            // Preserve the unreadable archive before any subsequent save replaces it.
-            let preserved = url.deletingPathExtension().appendingPathExtension("corrupt-\(UUID().uuidString).json")
-            do { try FileManager.default.copyItem(at: url, to: preserved) }
-            catch { return (nil, .preservationFailed(error.localizedDescription)) }
-            if let backup = try? decode(backupURL) { return (backup, .restoredFromBackup) }
-            return (nil, .unreadable)
-        }
-    }
-    func save(_ snapshot: WorkspaceSnapshot) throws {
-        let fm = FileManager.default
-        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        var compact = snapshot
-        func reference(_ saved: WorkspaceSnapshot.Conversation) throws -> WorkspaceSnapshot.Conversation {
-            var result = saved
-            if saved.state.tools != nil && saved.state.loadError == nil {
-                try saveSession(saved.state, id: saved.id)
-                result.state.messages = []; result.state.tools = nil
-                result.state.native = nil
-                result.state.agentStored = true
-            }
-            return result
-        }
-        compact.conversations = try compact.conversations.map(reference)
-        compact.drafts = try compact.drafts?.map(reference)
-        let data = try encoder.encode(compact)
-        if (try? decode(url)) != nil {
-            try Data(contentsOf: url).write(to: backupURL, options: .atomic)
-        }
-        try data.write(to: url, options: .atomic)
-    }
-}
-
 @MainActor @Observable final class WorkspaceStore {
     let fileBrowser = ProjectFileBrowserStore()
     let voice: VoiceSessionController
@@ -326,6 +156,7 @@ struct WorkspaceSnapshot: Codable {
     /// a TaskStore's lifecycle tells its subscribers in no fixed order.
     @ObservationIgnored private var voiceRunIDs: Set<UUID> = []
     @ObservationIgnored private var saveBlocked = false
+    @ObservationIgnored private var persistedSessionIDs: Set<UUID> = []
     // Keep display timestamps fixed for this app session. Persist actual interaction
     // times separately so only the next launch applies the new order.
     private var pendingRecency: [UUID: Date] = [:]
@@ -376,20 +207,18 @@ struct WorkspaceSnapshot: Codable {
             if case .preservationFailed = problem { saveBlocked = true }
             if let snapshot {
                 if problem == nil {
-                    persistence.pruneSessions(keeping: Set((snapshot.conversations + (snapshot.drafts ?? [])).map(\.id)))
+                    persistence.pruneSessions(keeping: Set(snapshot.allConversations.map(\.id)))
                 }
                 projects = snapshot.projects
                 conversations = snapshot.conversations.map { saved in
-                    WorkspaceConversation(id: saved.id,
-                        projectID: projects.contains(where: { project in project.id == saved.projectID }) ? saved.projectID : nil,
+                    WorkspaceConversation(id: saved.id, projectID: validProjectID(saved.projectID),
                         title: saved.title, manuallyNamed: saved.manuallyNamed, untitled: saved.isUntitled, lastUsed: saved.lastUsed,
-                        store: restoredStore(saved, persistence: persistence))
+                        store: TaskStore(snapshot: persistence.restoreSession(saved), harness: harnessFactory?()))
                 }
                 drafts = (snapshot.drafts ?? []).map { saved in
-                    WorkspaceConversation(id: saved.id,
-                        projectID: projects.contains(where: { $0.id == saved.projectID }) ? saved.projectID : nil,
+                    WorkspaceConversation(id: saved.id, projectID: validProjectID(saved.projectID),
                         title: "新对话", lastUsed: saved.lastUsed,
-                        store: restoredStore(saved, persistence: persistence))
+                        store: TaskStore(snapshot: persistence.restoreSession(saved), harness: harnessFactory?()))
                 }
                 // Restore history and drafts, but leave the previous session's
                 // selection and desktop activity behind on every launch.
@@ -401,7 +230,7 @@ struct WorkspaceSnapshot: Codable {
         petActivities.forEach(bind)
         // Armed after loading, which only repeats what is on disk, and before the first chat of a
         // launch is made, which is new.
-        _ = trackingSaves { snapshot }
+        _ = trackedSnapshot()
         if selected == nil { _ = newConversation() }
     }
 
@@ -474,28 +303,15 @@ struct WorkspaceSnapshot: Codable {
 
     // Commands capture their target at the surface that issued them. Selection and
     // desktop activity are navigation state, never an implicit command destination.
-    /// Only native history opens. An Agent workspace blocks a conversation whose messages are in
-    /// the manifest but which has no native history, leaving what it saved as it is until it is
-    /// deleted.
-    private func restoredStore(_ saved: WorkspaceSnapshot.Conversation,
-                               persistence: WorkspacePersistence) -> TaskStore {
-        var restored = persistence.restoreSession(saved)
-        if restored.native == nil, restored.loadError == nil, !restored.messages.isEmpty {
-            restored.loadError = WorkspacePersistence.unreadableHistory
-        }
-        return TaskStore(snapshot: restored, harness: harnessFactory?())
-    }
     @discardableResult func send(_ text: String, attachments: [ChatAttachment] = [], conversationID: UUID) -> Bool {
         guard !shuttingDown, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let target = conversation(id: conversationID), target.store.canSubmit else { return false }
-        if voice.conversationID == conversationID {
-            guard voice.canSubmit else { return false }
-            voice.prepareForSubmission()
-            let accepted = target.store.send(text, attachments: attachments)
-            voice.finishSubmission()
-            return accepted
-        }
-        return target.store.send(text, attachments: attachments)
+        return submit(conversationID) { target.store.send(text, attachments: attachments) }
+    }
+    /// Runs `submission`, inside the Live Voice call's submission when the call is on this conversation.
+    private func submit(_ conversationID: UUID, _ submission: () -> Bool) -> Bool {
+        guard voice.conversationID == conversationID else { return submission() }
+        return voice.submit(submission)
     }
     /// The pet's quick composer always starts its own conversation. It never reuses the
     /// main window's draft or changes the selection; the first send makes it the activity.
@@ -521,8 +337,7 @@ struct WorkspaceSnapshot: Codable {
         target.lastUsed = Date()
         // A failed start reports against this conversation, so the draft stays for the error to
         // hang on — and, being empty, it is what the next attempt reuses.
-        guard voice.activate(conversation: target, entry: "桌宠·新对话") else { return false }
-        return true
+        return voice.activate(conversation: target, entry: "桌宠·新对话")
     }
     @discardableResult func sendMainMessage(conversationID: UUID) -> Bool {
         guard let target = conversation(id: conversationID),
@@ -542,18 +357,11 @@ struct WorkspaceSnapshot: Codable {
     }
     @discardableResult func retry(conversationID: UUID) -> Bool {
         guard !shuttingDown, let target = conversation(id: conversationID), target.store.canRetry else { return false }
-        if voice.conversationID == conversationID {
-            guard voice.canSubmit else { return false }
-            voice.prepareForSubmission()
-            let accepted = target.store.retry()
-            voice.finishSubmission()
-            return accepted
-        }
-        return target.store.retry()
+        return submit(conversationID) { target.store.retry() }
     }
+    /// `activate` refuses while another call is on.
     @discardableResult func startVoice(conversationID: UUID) -> Bool {
-        guard !shuttingDown, voice.snapshot.session.owner == nil,
-              let target = conversation(id: conversationID) else { return false }
+        guard !shuttingDown, let target = conversation(id: conversationID) else { return false }
         return voice.activate(conversation: target, entry: "会话")
     }
     /// `file`/`line` name the control that asked, for the call's termination log only.
@@ -574,8 +382,7 @@ struct WorkspaceSnapshot: Codable {
         composerFocusRequest += 1
     }
     func revealVoice(conversationID: UUID? = nil, owner: VoiceSessionSnapshot.Owner? = nil) {
-        let targetID = conversationID ?? owner?.conversationID ?? voice.conversationID
-        guard let targetID else { return }
+        guard let targetID = conversationID ?? owner?.conversationID ?? voice.conversationID else { return }
         if selectedID != targetID { select(targetID) }
         requestComposerFocus(conversationID: targetID)
         isMainWindowVisible = true
@@ -583,7 +390,7 @@ struct WorkspaceSnapshot: Codable {
     }
     /// What a save writes, and also what decides when one happens: every flush reads this with
     /// tracking armed, and the first later change to anything read here schedules the next save
-    /// (`trackingSaves`). So everything it reads, here and in `TaskStore.snapshot`, has to be an
+    /// (`trackedSnapshot`). So everything it reads, here and in `TaskStore.snapshot`, has to be an
     /// observed property: never `@ObservationIgnored`, never kept in an object that is not
     /// `@Observable`. Otherwise a change to it alone is only written with some later change.
     /// WorkspaceTests.everySavedFieldReachesTheArchiveOnItsOwn changes each field on its own.
@@ -632,11 +439,9 @@ struct WorkspaceSnapshot: Codable {
                     self.exitPetFollowUp(); self.isPetTrayCollapsed = false
                     self.petActivityIDs.insert(id, at: 0)
                 }
-                if self.voice.conversationID != id {
-                    if self.isPetTrayCollapsed { target.store.foldActivity() } else { target.store.expandActivity() }
-                }
-                // Folded before the companion next synchronizes, so the card never shows for a Live Voice turn.
-                if self.voice.conversationID == id { target.store.foldActivity() }
+                // A Live Voice turn is folded before the companion next synchronizes, so its card never shows.
+                if self.voice.conversationID == id || self.isPetTrayCollapsed { target.store.foldActivity() }
+                else { target.store.expandActivity() }
             case .reply(_, .completed):
                 // The conversation on screen already shows its reply; elsewhere the result stays unread.
                 // A Live Voice conversation is still in progress; it is counted when the voice session ends.
@@ -645,11 +450,7 @@ struct WorkspaceSnapshot: Codable {
                 target.store.recordCompletion(unseen: !viewed && self.voice.conversationID != id)
                 if viewed { self.removePetActivity(id) }
                 self.fileBrowser.refresh(projectID: target.projectID)
-            case .reply(_, .failed):
-                target.store.recordCompletion(unseen: !self.isViewing(id))
-                if self.isViewing(id) { self.removePetActivity(id) }
-                self.fileBrowser.refresh(projectID: target.projectID)
-            case .stopped:
+            case .reply(_, .failed), .stopped:
                 target.store.recordCompletion(unseen: !self.isViewing(id))
                 if self.isViewing(id) { self.removePetActivity(id) }
                 self.fileBrowser.refresh(projectID: target.projectID)
@@ -658,7 +459,6 @@ struct WorkspaceSnapshot: Codable {
             if self.showsOnPet(event, conversationID: id) { self.onPetTaskEvent?(event) }
         }
     }
-    @ObservationIgnored private var persistedSessionIDs: Set<UUID> = []
     private func didUse(_ id: UUID) {
         let usedAt = Date()
         // A blank composer becomes a sidebar conversation only after the first real message.
@@ -682,11 +482,11 @@ struct WorkspaceSnapshot: Codable {
         if selectedID != conversation.id { dictation.cancel(); flush() }
         selectedID = conversation.id
         conversation.lastUsed = Date()
-        composerFocusID = conversation.id; composerFocusRequest += 1
+        requestComposerFocus(conversationID: conversation.id)
         return conversation
     }
     func select(_ id: UUID) {
-        guard id != selectedID, (conversations + drafts).contains(where: { $0.id == id }) else { return }
+        guard id != selectedID, conversation(id: id) != nil else { return }
         dictation.cancel()
         flush()
         selectedID = id
@@ -711,7 +511,7 @@ struct WorkspaceSnapshot: Codable {
         conversation.title = name; conversation.manuallyNamed = true; conversation.untitled = false
     }
     func deleteConversation(_ id: UUID) {
-        guard let conversation = (conversations + drafts).first(where: { $0.id == id }) else { return }
+        guard let conversation = conversation(id: id) else { return }
         if dictation.conversationID == id { dictation.cancel(discard: true) }
         if voice.conversationID == id { voice.end(reason: .conversationDeleted) }
         voice.clearError(conversationID: id)
@@ -741,7 +541,7 @@ struct WorkspaceSnapshot: Codable {
     /// what the palette shows before anything is typed.
     func conversations(matching query: String) -> [WorkspaceConversation] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return byRecency(conversations) }
+        guard !query.isEmpty else { return recentConversations }
         return byRecency(conversations.filter {
             $0.displayTitle.localizedStandardContains(query)
                 || $0.store.messages.contains { $0.content.localizedStandardContains(query) }
@@ -763,8 +563,9 @@ struct WorkspaceSnapshot: Codable {
             return $0.id.uuidString < $1.id.uuidString
         }
     }
+    private static func projectPath(_ url: URL) -> String { url.standardizedFileURL.resolvingSymlinksInPath().path }
     @discardableResult func addProject(url: URL) -> UUID {
-        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
+        let path = Self.projectPath(url)
         if let existing = projects.first(where: { $0.path == path }) { return existing.id }
         let project = WorkspaceProject(name: url.lastPathComponent, path: path)
         projects.append(project); return project.id
@@ -776,7 +577,7 @@ struct WorkspaceSnapshot: Codable {
     }
     func relocateProject(_ id: UUID, to url: URL) {
         guard !projectIsActive(id) else { persistenceNotice = String(localized: "任务活动期间不能重新定位项目。"); return }
-        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
+        let path = Self.projectPath(url)
         guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
         guard !projects.contains(where: { $0.id != id && $0.path == path }) else {
             persistenceNotice = String(localized: "该文件夹已属于另一个项目。"); return
@@ -850,7 +651,7 @@ struct WorkspaceSnapshot: Codable {
         // Logged only during a Live Voice call: every save for its first 10 s, then only slow ones.
         do {
             try VoiceDiagnostics.shared.measure("WorkspaceStore.flush", quietAfter: .seconds(10)) {
-                try persistence.save(trackingSaves { snapshot })
+                try persistence.save(trackedSnapshot())
             }
             return true
         }
@@ -860,16 +661,16 @@ struct WorkspaceSnapshot: Codable {
     /// a save, inside that write, the way an explicit `scheduleSave()` after it would. Every flush
     /// reads it again, so a change made right after a flush in the same turn still schedules one;
     /// otherwise it is read again on the next main-queue turn.
-    private func trackingSaves<T>(_ read: () -> T) -> T {
+    private func trackedSnapshot() -> WorkspaceSnapshot {
         saveTracking += 1
         let armed = saveTracking
-        return withObservationTracking(options: [.didSet]) { read() } onChange: { [weak self] _ in
+        return withObservationTracking(options: [.didSet]) { snapshot } onChange: { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.saveTracking == armed else { return }
                 self.scheduleSave()
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.saveTracking == armed else { return }
-                    _ = self.trackingSaves { self.snapshot }
+                    _ = self.trackedSnapshot()
                 }
             }
         }

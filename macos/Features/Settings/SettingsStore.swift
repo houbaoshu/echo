@@ -1,294 +1,17 @@
 import Foundation
 import Observation
-import Security
-
-enum ModelAPIProtocol: String, Codable, CaseIterable, Sendable {
-    case chatCompletions
-    case responses
-
-    var title: String { self == .chatCompletions ? "Chat Completions" : "Responses" }
-    var path: String { self == .chatCompletions ? "chat/completions" : "responses" }
-}
-
-struct ModelConfiguration: Codable, Equatable, Sendable {
-    var baseURL = "https://api.openai.com/v1"
-    var model = ""
-    var apiProtocol: ModelAPIProtocol = .chatCompletions
-
-    func rootURL() throws -> URL {
-        guard let parts = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let host = parts.host, !host.isEmpty,
-              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
-              parts.scheme == "https" || (parts.scheme == "http" && ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host.lowercased())),
-              let url = parts.url else { throw SettingsError(localized: "请输入 HTTPS API 根地址；本机服务可使用 HTTP。地址不能包含凭据、查询参数或片段。") }
-        return url
-    }
-    func endpoint() throws -> URL { try rootURL().appendingPathComponent(apiProtocol.path) }
-    func validated(requiresModel: Bool = true) throws -> Self {
-        _ = try endpoint()
-        var result = self
-        result.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        while result.baseURL.hasSuffix("/") { result.baseURL.removeLast() }
-        result.model = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !requiresModel || !result.model.isEmpty else { throw SettingsError(localized: "请输入默认模型。") }
-        return result
-    }
-}
-
-struct SettingsError: LocalizedError, Equatable {
-    /// What the interface shows, in the interface language.
-    let message: String
-    /// What diagnostics record: the zh-Hans source text, so the voice log reads the same in
-    /// every interface language. Equal to `message` for text that is not localized.
-    let diagnostic: String
-    init(_ message: String) { self.message = message; diagnostic = message }
-    init(message: String, diagnostic: String) { self.message = message; self.diagnostic = diagnostic }
-    init(localized resource: LocalizedStringResource) {
-        self.init(message: String(localized: resource), diagnostic: resource.sourceText)
-    }
-    var errorDescription: String? { message }
-    /// No default model is saved: a turn may use the local model instead.
-    static let modelNotConfigured = SettingsError(localized: "请先在设置中配置并保存默认模型。")
-    /// Voice and chat with Volcengine Ark, and with it Doubao search, all wait for the one Volcengine Ark key.
-    static let arkKeyMissing = SettingsError(localized: "请在设置的模型页填写并保存火山方舟的 API Key。")
-}
-
-extension LocalizedStringResource {
-    /// The text in the source language, zh-Hans, whatever the interface language is.
-    var sourceText: String {
-        var source = self
-        source.locale = Locale(identifier: "zh-Hans")
-        return String(localized: source)
-    }
-}
-
-@MainActor protocol SecretStore {
-    func read(_ account: String) throws -> String
-    func write(_ value: String, account: String) throws
-    func remove(_ account: String) throws
-}
-
-@MainActor final class KeychainSecretStore: SecretStore {
-    private func query(_ account: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "io.github.houbaoshu.echo.model", kSecAttrAccount as String: account]
-    }
-    func read(_ account: String) throws -> String {
-        var query = query(account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
-            throw SettingsError(localized: "无法读取钥匙串中的 API Key（OSStatus \(status)），请检查钥匙串访问权限。")
-        }
-        return value
-    }
-    func write(_ value: String, account: String) throws {
-        var query = query(account)
-        query[kSecValueData as String] = Data(value.utf8)
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else {
-            throw SettingsError(localized: "无法保存 API Key 到钥匙串。")
-        }
-    }
-    func remove(_ account: String) throws {
-        let status = SecItemDelete(query(account) as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw SettingsError(localized: "无法清除旧的钥匙串凭据。") }
-    }
-}
-
-/// The model service: a provider that only chats. Volcengine Ark is not one of them; it has a
-/// group of its own (`ArkSettings`). Declaration order is the picker's order.
-enum ModelProvider: String, Codable, CaseIterable, Sendable {
-    case deepSeek, openAI, ollama, custom
-
-    var title: String {
-        switch self {
-        case .openAI: "OpenAI"
-        case .deepSeek: "DeepSeek"
-        case .ollama: "Ollama"
-        case .custom: String(localized: "自定义（兼容 API）")
-        }
-    }
-    var requiresKey: Bool { self != .ollama }
-    var defaults: ModelConfiguration {
-        switch self {
-        case .openAI: ModelConfiguration()
-        case .deepSeek: ModelConfiguration(baseURL: "https://api.deepseek.com", model: "")
-        case .ollama: ModelConfiguration(baseURL: "http://localhost:11434/v1", model: "")
-        case .custom: ModelConfiguration(baseURL: "", model: "")
-        }
-    }
-}
-
-/// Volcengine Ark's group on the model page. Its one key pays for voice and image generation, and
-/// for chat and web_search while it chats, so it stands apart from the model service rather than
-/// among its providers.
-/// The address and protocol are the Agent Plan's and are not shown.
-struct ArkSettings: Codable, Equatable, Sendable {
-    static let defaultLanguageModel = "doubao-seed-2.0-mini"
-    static let defaultVisionModel = "doubao-seedream-5.0-pro"
-    /// The Agent Plan's OpenAI-compatible address.
-    static let baseURL = "https://ark.cn-beijing.volces.com/api/plan/v3"
-    var languageModel = ArkSettings.defaultLanguageModel
-    var visionModel = ArkSettings.defaultVisionModel
-    /// Chat goes to Volcengine Ark, with its key and language model, instead of to the model service.
-    var useForChat = false
-
-    var chatConfiguration: ModelConfiguration {
-        ModelConfiguration(baseURL: Self.baseURL, model: languageModel, apiProtocol: .responses)
-    }
-    func validated() throws -> Self {
-        var result = self
-        result.languageModel = languageModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        result.visionModel = visionModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !useForChat || !result.languageModel.isEmpty else { throw SettingsError(localized: "请输入火山方舟的语言模型。") }
-        return result
-    }
-    init() {}
-    init(from decoder: any Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        languageModel = try values.decodeIfPresent(String.self, forKey: .languageModel) ?? Self.defaultLanguageModel
-        visionModel = try values.decodeIfPresent(String.self, forKey: .visionModel) ?? Self.defaultVisionModel
-        useForChat = try values.decodeIfPresent(Bool.self, forKey: .useForChat) ?? false
-    }
-}
-
-struct ProviderSettings: Codable, Equatable {
-    var model: ModelConfiguration
-    var secretAccount: String?
-}
-
-struct SettingsSnapshot: Codable {
-    var version = 2
-    /// A new install starts on DeepSeek, the first provider in the picker.
-    var activeProvider: ModelProvider = .deepSeek
-    var providers: [String: ProviderSettings] = [ModelProvider.deepSeek.rawValue: ProviderSettings(model: ModelProvider.deepSeek.defaults)]
-    var selectedPetID = "builtin:chiyan"
-    /// Which planet visualizes Live Voice, in both the chat window and the pet's control strip.
-    var selectedPlanetID = SettingsSnapshot.defaultPlanetID
-    /// Declared here rather than on `PlanetStore`: the targets that build this file do not all
-    /// build that one.
-    static let defaultPlanetID = "builtin:ember-planet"
-    var voice: VoiceConfiguration?
-    var ark = ArkSettings()
-    /// The Volcengine Ark key: voice always uses it, and chat and Doubao search do when
-    /// `ark.useForChat` is on.
-    var arkSecretAccount: String?
-    /// The keys voice and Volcengine Ark chat kept before the Volcengine Ark group took their
-    /// place. Read only so launch can remove them; once removed they are nil and not written.
-    var legacyVoiceSecretAccount: String?
-    var legacyArkSecretAccount: String?
-    /// Every new turn goes to the local model, never the cloud.
-    var localModelOnly = false
-    /// Turns get the memory and its tools. Off leaves the memory file as it is.
-    var memoryEnabled = true
-
-    var model: ModelConfiguration { settings(for: activeProvider).model }
-    var secretAccount: String? { settings(for: activeProvider).secretAccount }
-    func settings(for provider: ModelProvider) -> ProviderSettings {
-        providers[provider.rawValue] ?? ProviderSettings(model: provider.defaults)
-    }
-    private enum CodingKeys: String, CodingKey {
-        case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, ark, arkSecretAccount, localModelOnly, memoryEnabled
-        case legacyVoiceSecretAccount = "voiceSecretAccount", legacyArkSecretAccount
-    }
-    /// What Volcengine Ark was called when it was one of the model service's providers.
-    private static let formerArkProvider = "volcengineArk"
-    /// Any version but this build's own, including the first, which kept one model and no provider.
-    static let unsupportedVersion = SettingsError(localized: "设置文件版本不受支持，原文件保留。请移走 settings.json 后重启应用。")
-    init() {}
-    init(from decoder: any Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        guard try values.decode(Int.self, forKey: .version) == 2 else { throw Self.unsupportedVersion }
-        selectedPetID = try values.decode(String.self, forKey: .selectedPetID)
-        selectedPlanetID = try values.decodeIfPresent(String.self, forKey: .selectedPlanetID) ?? SettingsSnapshot.defaultPlanetID
-        voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
-        arkSecretAccount = try values.decodeIfPresent(String.self, forKey: .arkSecretAccount)
-        legacyVoiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .legacyVoiceSecretAccount)
-        legacyArkSecretAccount = try values.decodeIfPresent(String.self, forKey: .legacyArkSecretAccount)
-        ark = try values.decodeIfPresent(ArkSettings.self, forKey: .ark) ?? ArkSettings()
-        localModelOnly = try values.decodeIfPresent(Bool.self, forKey: .localModelOnly) ?? false
-        memoryEnabled = try values.decodeIfPresent(Bool.self, forKey: .memoryEnabled) ?? true
-        let active = try values.decode(String.self, forKey: .activeProvider)
-        providers = try values.decode([String: ProviderSettings].self, forKey: .providers)
-        // Volcengine Ark used to be a provider. Chosen, it becomes the switch turned on, its default
-        // model the group's language model, and the model service the first provider set up; its key's
-        // name is kept only for launch to remove the key.
-        if let former = providers.removeValue(forKey: Self.formerArkProvider) {
-            legacyArkSecretAccount = legacyArkSecretAccount ?? former.secretAccount
-            if active == Self.formerArkProvider {
-                ark.useForChat = true
-                if !former.model.model.isEmpty { ark.languageModel = former.model.model }
-            }
-        }
-        if active == Self.formerArkProvider {
-            activeProvider = ModelProvider.allCases.first { providers[$0.rawValue] != nil } ?? .deepSeek
-            if providers[activeProvider.rawValue] == nil { providers[activeProvider.rawValue] = ProviderSettings(model: activeProvider.defaults) }
-        } else if let provider = ModelProvider(rawValue: active) {
-            activeProvider = provider
-        } else {
-            throw SettingsError(localized: "缺少当前 provider 配置。")
-        }
-        guard providers[activeProvider.rawValue] != nil else { throw SettingsError(localized: "缺少当前 provider 配置。") }
-    }
-}
-
-/// A page of the settings window. Declaration order is the order the sidebar and its keyboard
-/// traversal follow.
-enum SettingsSection: String, CaseIterable, Hashable {
-    /// Raw values only name the section in accessibility identifiers (`settings.section.模型`),
-    /// which must not follow the interface language; what the sidebar shows is `title`.
-    case model = "模型", memory = "记忆", voice = "语音", planet = "星球", pet = "精灵"
-    var title: String {
-        switch self {
-        case .model: String(localized: "模型")
-        case .memory: String(localized: "记忆")
-        case .voice: String(localized: "语音")
-        case .planet: String(localized: "星球")
-        case .pet: String(localized: "精灵")
-        }
-    }
-}
-
-protocol ConnectionTesting: Sendable {
-    func test(configuration: ModelConfiguration, key: String) async throws
-}
-
-/// Checks the Volcengine Ark key; a SettingsError carries what to show.
-protocol ArkConnectionTesting: Sendable {
-    func test(key: String) async throws
-}
-
-/// A group's one-line report below its box: a finished test, or why the group could not be saved.
-struct SettingsTestLine: Equatable {
-    let text: String
-    let succeeded: Bool
-}
 
 @MainActor @Observable final class SettingsStore {
     var voiceDraft = VoiceConfiguration()
     var voiceNotice: String?
     var isVoiceDirty: Bool { voiceDraft != (snapshot.voice ?? VoiceConfiguration()) }
     /// The Volcengine Ark group's key, as edited. Emptying it turns "use for chat" off.
-    var arkAPIKey = "" {
-        didSet {
-            if arkDraft.useForChat && !canUseArkForChat { arkDraft.useForChat = false }
-            invalidateArkTest()
-        }
-    }
+    var arkAPIKey = "" { didSet { arkGroupEdited() } }
     /// The rest of the Volcengine Ark group, as edited. "Use for chat" stays off without a key.
-    var arkDraft = ArkSettings() {
-        didSet {
-            if arkDraft.useForChat && !canUseArkForChat { arkDraft.useForChat = false }
-            invalidateArkTest()
-        }
-    }
+    var arkDraft = ArkSettings() { didSet { arkGroupEdited() } }
     var arkNotice: String?
-    private var savedArkKeyValue = ""
-    private var arkKeyLoaded = true
-    var isArkDirty: Bool { arkAPIKey != savedArkKeyValue || arkDraft != snapshot.ark }
+    private var arkCredential = Credential()
+    var isArkDirty: Bool { arkAPIKey != arkCredential.key || arkDraft != snapshot.ark }
     /// What the Volcengine Ark group reports below its box: why it could not be saved, or its test.
     var arkStatus: SettingsTestLine? { arkNotice.map { SettingsTestLine(text: $0, succeeded: false) } ?? arkTestResult }
     /// Whether "use for chat" can be on: only with a Volcengine Ark key typed in.
@@ -346,8 +69,7 @@ struct SettingsTestLine: Equatable {
     }
     private var credentials: [ModelProvider: Credential] = [:]
     private var providerDrafts: [ModelProvider: ProviderDraft] = [:]
-    private var savedKey: String { credentials[snapshot.activeProvider]?.key ?? "" }
-    private var keyLoaded: Bool { credentials[snapshot.activeProvider]?.loaded ?? true }
+    private var savedCredential: Credential { credentials[snapshot.activeProvider] ?? Credential() }
     private var selectedCredential: Credential { credentials[selectedProvider] ?? Credential() }
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var revision = 0
@@ -389,8 +111,8 @@ struct SettingsTestLine: Equatable {
         loadProvider(selectedProvider)
         voiceDraft = snapshot.voice ?? VoiceConfiguration()
         if let account = snapshot.arkSecretAccount {
-            do { savedArkKeyValue = try secrets.read(account); arkAPIKey = savedArkKeyValue }
-            catch { arkKeyLoaded = false; arkNotice = String(localized: "无法读取已保存的火山方舟 API Key，请检查钥匙串访问权限。") }
+            do { arkCredential.key = try secrets.read(account); arkAPIKey = arkCredential.key }
+            catch { arkCredential.loaded = false; arkNotice = String(localized: "无法读取已保存的火山方舟 API Key，请检查钥匙串访问权限。") }
         }
         arkDraft = snapshot.ark
     }
@@ -415,7 +137,7 @@ struct SettingsTestLine: Equatable {
             var credential = Credential()
             if provider.requiresKey, let account = snapshot.settings(for: provider).secretAccount {
                 do { credential.key = try secrets.read(account) }
-                catch { credential.loaded = false; notice = error.localizedDescription }
+                catch { credential.loaded = false }
             }
             credentials[provider] = credential
         }
@@ -450,29 +172,25 @@ struct SettingsTestLine: Equatable {
             try persist(next)
             snapshot = next; voiceDraft = value
             voiceNotice = nil
-        } catch { voiceNotice = error is SettingsError ? error.localizedDescription : String(localized: "语音配置保存失败，请检查目录写入权限。") }
+        } catch { voiceNotice = Self.notice(for: error, otherwise: String(localized: "语音配置保存失败，请检查目录写入权限。")) }
     }
     /// The saved Volcengine Ark key, trimmed; nil when there is none or it cannot be read. Voice
     /// uses this key whichever service chats; chat with Volcengine Ark and Doubao search use it
     /// while Volcengine Ark chats. No other key ever stands in for it.
-    var savedArkKey: String? {
-        let key = savedArkKeyValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard arkKeyLoaded, !key.isEmpty, !key.contains("\r"), !key.contains("\n") else { return nil }
-        return key
-    }
+    var savedArkKey: String? { Self.usableKey(arkCredential) }
     private func savedArkCredential() throws -> String {
-        guard arkKeyLoaded else { throw SettingsError(localized: "无法读取已保存的火山方舟 API Key，请检查钥匙串访问权限。") }
+        guard arkCredential.loaded else { throw SettingsError(localized: "无法读取已保存的火山方舟 API Key，请检查钥匙串访问权限。") }
         guard let key = savedArkKey else { throw SettingsError.arkKeyMissing }
         return key
     }
-    func restoreArk() { arkAPIKey = savedArkKeyValue; arkDraft = snapshot.ark; arkNotice = nil }
+    func restoreArk() { arkAPIKey = arkCredential.key; arkDraft = snapshot.ark; arkNotice = nil }
     func saveArk() {
         do {
             var value = try arkDraft.validated()
             let key = arkAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.contains("\r"), !key.contains("\n") else { throw SettingsError(localized: "API Key 不能包含换行。") }
-            guard arkKeyLoaded || !key.isEmpty else { throw SettingsError(localized: "原 API Key 尚未读取，请重新填写密钥后保存。") }
-            let changed = key != savedArkKeyValue || !arkKeyLoaded
+            guard !key.hasLineBreak else { throw SettingsError(localized: "API Key 不能包含换行。") }
+            guard arkCredential.loaded || !key.isEmpty else { throw SettingsError(localized: "原 API Key 尚未读取，请重新填写密钥后保存。") }
+            let changed = key != arkCredential.key || !arkCredential.loaded
             let oldAccount = snapshot.arkSecretAccount
             // The first key saved while the model service has no key of its own, neither saved nor
             // typed, turns Volcengine Ark chat on, once, when there is a language model to chat with;
@@ -481,22 +199,11 @@ struct SettingsTestLine: Equatable {
                snapshot.activeProvider.requiresKey, savedModelServiceKey == nil, selectedProvider.requiresKey,
                apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { value.useForChat = true }
             var next = snapshot; next.ark = value
-            if changed {
-                next.arkSecretAccount = key.isEmpty ? nil : "ark-\(UUID().uuidString)"
-                if let account = next.arkSecretAccount { try secrets.write(key, account: account) }
-            }
-            do { try persist(next) }
-            catch {
-                if changed, let account = next.arkSecretAccount { try? secrets.remove(account) }
-                throw error
-            }
-            snapshot = next; savedArkKeyValue = key; arkAPIKey = key; arkKeyLoaded = true; arkDraft = value
-            arkNotice = nil
-            if changed, let oldAccount {
-                do { try secrets.remove(oldAccount) }
-                catch { arkNotice = String(localized: "配置已保存，但旧密钥清理失败，请检查钥匙串访问权限。") }
-            }
-        } catch { arkNotice = error is SettingsError ? error.localizedDescription : String(localized: "保存失败，请检查设置目录的写入权限后重试。") }
+            if changed { next.arkSecretAccount = try writeNewKey(key, prefix: "ark") }
+            try persist(next, removingOnFailure: changed ? next.arkSecretAccount : nil)
+            snapshot = next; arkCredential = Credential(key: key); arkAPIKey = key; arkDraft = value
+            arkNotice = changed ? removeReplacedKey(oldAccount) : nil
+        } catch { arkNotice = Self.notice(for: error, otherwise: String(localized: "保存失败，请检查设置目录的写入权限后重试。")) }
     }
     func refreshLocalModel() {
         localModel = localModels?.find() ?? .missing
@@ -551,20 +258,22 @@ struct SettingsTestLine: Equatable {
     }
     /// The model service's saved key, trimmed; nil when there is none or it cannot be read. Unlike
     /// `savedModelCredentials`, it is the model service's whether or not Volcengine Ark chats.
-    var savedModelServiceKey: String? {
-        let key = savedKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard keyLoaded, !key.isEmpty, !key.contains("\r"), !key.contains("\n") else { return nil }
-        return key
-    }
+    var savedModelServiceKey: String? { Self.usableKey(savedCredential) }
     func savedModelCredentials() throws -> (configuration: ModelConfiguration, key: String) {
         if snapshot.ark.useForChat {
             guard !snapshot.ark.languageModel.isEmpty else { throw SettingsError.modelNotConfigured }
             return (try snapshot.ark.chatConfiguration.validated(), try savedArkCredential())
         }
         guard !snapshot.model.model.isEmpty else { throw SettingsError.modelNotConfigured }
-        guard keyLoaded else { throw SettingsError(localized: "无法读取已保存的 API Key，请在设置中重新填写并保存。") }
-        guard !savedKey.contains("\n"), !savedKey.contains("\r") else { throw SettingsError(localized: "已保存的 API Key 无效，请重新设置。") }
-        return (try snapshot.model.validated(), savedKey)
+        guard savedCredential.loaded else { throw SettingsError(localized: "无法读取已保存的 API Key，请在设置中重新填写并保存。") }
+        guard !savedCredential.key.hasLineBreak else { throw SettingsError(localized: "已保存的 API Key 无效，请重新设置。") }
+        return (try snapshot.model.validated(), savedCredential.key)
+    }
+    /// A saved key as it can be sent: read, trimmed, not empty and on one line; nil otherwise.
+    private static func usableKey(_ credential: Credential) -> String? {
+        let key = credential.key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard credential.loaded, !key.isEmpty, !key.hasLineBreak else { return nil }
+        return key
     }
     private func persist(_ value: SettingsSnapshot) throws {
         guard !loadBlocked else { throw SettingsError(localized: "设置文件无法读取，暂不能覆盖原文件。") }
@@ -573,11 +282,36 @@ struct SettingsTestLine: Equatable {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(value).write(to: url, options: .atomic)
     }
+    /// Saves `next`; a key just written for it is removed again when the file cannot be.
+    private func persist(_ next: SettingsSnapshot, removingOnFailure newAccount: String?) throws {
+        do { try persist(next) }
+        catch {
+            if let newAccount { try? secrets.remove(newAccount) }
+            throw error
+        }
+    }
+    /// Writes a key to a keychain account of its own, named after `prefix`; no key, no account.
+    private func writeNewKey(_ key: String, prefix: String) throws -> String? {
+        guard !key.isEmpty else { return nil }
+        let account = "\(prefix)-\(UUID().uuidString)"
+        try secrets.write(key, account: account)
+        return account
+    }
+    /// Removes the key a save replaced; what the group reports when it could not be.
+    private func removeReplacedKey(_ account: String?) -> String? {
+        guard let account else { return nil }
+        do { try secrets.remove(account); return nil }
+        catch { return String(localized: "配置已保存，但旧密钥清理失败，请检查钥匙串访问权限。") }
+    }
+    /// What a failed save shows: a SettingsError says why itself; anything else gets `fallback`.
+    private static func notice(for error: any Error, otherwise fallback: @autoclosure () -> String) -> String {
+        error is SettingsError ? error.localizedDescription : fallback()
+    }
     func save() {
         do {
             let value = try draft.validated(requiresModel: false)
             let key = selectedProvider.requiresKey ? apiKey : ""
-            guard !key.contains("\n"), !key.contains("\r") else { throw SettingsError(localized: "API Key 不能包含换行。") }
+            guard !key.hasLineBreak else { throw SettingsError(localized: "API Key 不能包含换行。") }
             guard selectedCredential.loaded || !key.isEmpty else { throw SettingsError(localized: "原 API Key 尚未读取，请重新填写密钥后保存。") }
             var next = snapshot
             next.activeProvider = selectedProvider
@@ -585,37 +319,26 @@ struct SettingsTestLine: Equatable {
             let changedKey = key != selectedCredential.key || !selectedCredential.loaded
                 || (!selectedProvider.requiresKey && oldAccount != nil)
             var entry = ProviderSettings(model: value, secretAccount: oldAccount)
-            if changedKey {
-                entry.secretAccount = key.isEmpty ? nil : "model-\(selectedProvider.rawValue)-\(UUID().uuidString)"
-                if let account = entry.secretAccount { try secrets.write(key, account: account) }
-            }
+            if changedKey { entry.secretAccount = try writeNewKey(key, prefix: "model-\(selectedProvider.rawValue)") }
             next.providers[selectedProvider.rawValue] = entry
-            do { try persist(next) }
-            catch {
-                if changedKey, let account = entry.secretAccount { try? secrets.remove(account) }
-                throw error
-            }
+            try persist(next, removingOnFailure: changedKey ? entry.secretAccount : nil)
             snapshot = next; draft = value; apiKey = key
             credentials[selectedProvider] = Credential(key: key)
             providerDrafts[selectedProvider] = nil
-            notice = nil
-            if changedKey, let oldAccount {
-                do { try secrets.remove(oldAccount) }
-                catch { notice = String(localized: "配置已保存，但旧密钥清理失败，请检查钥匙串访问权限。") }
-            }
-        } catch { notice = error is SettingsError ? error.localizedDescription : String(localized: "保存失败，请检查设置目录的写入权限后重试。") }
+            notice = changedKey ? removeReplacedKey(oldAccount) : nil
+        } catch { notice = Self.notice(for: error, otherwise: String(localized: "保存失败，请检查设置目录的写入权限后重试。")) }
     }
     /// Takes effect from the next turn; a reply being written keeps its model.
     func setLocalModelOnly(_ enabled: Bool) {
         guard enabled != snapshot.localModelOnly else { return }
         do { try update { $0.localModelOnly = enabled } }
-        catch { localModelNotice = error is SettingsError ? error.localizedDescription : String(localized: "设置保存失败，请检查目录写入权限。") }
+        catch { localModelNotice = Self.notice(for: error, otherwise: String(localized: "设置保存失败，请检查目录写入权限。")) }
     }
     /// Takes effect from the next turn; a reply being written keeps the memory it started with.
     func setMemoryEnabled(_ enabled: Bool) {
         guard enabled != snapshot.memoryEnabled else { return }
         do { try update { $0.memoryEnabled = enabled } }
-        catch { memoryNotice = error is SettingsError ? error.localizedDescription : String(localized: "设置保存失败，请检查目录写入权限。") }
+        catch { memoryNotice = Self.notice(for: error, otherwise: String(localized: "设置保存失败，请检查目录写入权限。")) }
     }
     func selectPet(_ id: String) throws { try update { $0.selectedPetID = id } }
     func selectPlanet(_ id: String) throws { try update { $0.selectedPlanetID = id } }
@@ -632,6 +355,11 @@ struct SettingsTestLine: Equatable {
     }
     private func invalidateTest() {
         revision += 1; task?.cancel(); task = nil; testing = false; testResult = nil
+    }
+    /// "Use for chat" goes off with the key; any edit outdates the group's test.
+    private func arkGroupEdited() {
+        if arkDraft.useForChat && !canUseArkForChat { arkDraft.useForChat = false }
+        invalidateArkTest()
     }
     private func invalidateArkTest() {
         arkRevision += 1; arkTask?.cancel(); arkTask = nil; arkTesting = false; arkTestResult = nil
@@ -657,7 +385,7 @@ struct SettingsTestLine: Equatable {
         do {
             configuration = try draft.validated()
             key = selectedProvider.requiresKey ? apiKey : ""
-            guard !key.contains("\r"), !key.contains("\n") else { throw SettingsError(localized: "API Key 不能包含换行。") }
+            guard !key.hasLineBreak else { throw SettingsError(localized: "API Key 不能包含换行。") }
         } catch { testResult = SettingsTestLine(text: error.localizedDescription, succeeded: false); return }
         let current = revision, tester = tester
         testing = true
@@ -673,7 +401,7 @@ struct SettingsTestLine: Equatable {
         invalidateArkTest(); arkNotice = nil
         let key = arkAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
-        guard !key.contains("\r"), !key.contains("\n") else {
+        guard !key.hasLineBreak else {
             arkTestResult = SettingsTestLine(text: String(localized: "API Key 不能包含换行。"), succeeded: false); return
         }
         let model = arkDraft.languageModel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -719,4 +447,9 @@ struct SettingsTestLine: Equatable {
         catch let error as SettingsError { return SettingsTestLine(text: error.message, succeeded: false) }
         catch { return SettingsTestLine(text: String(localized: "无法连接豆包搜索：\(error.localizedDescription)"), succeeded: false) }
     }
+}
+
+extension String {
+    /// A key with a line break in it cannot go in a request header.
+    var hasLineBreak: Bool { contains("\r") || contains("\n") }
 }

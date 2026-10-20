@@ -23,7 +23,7 @@ struct PetEntry: Identifiable {
     private let importedRoot: URL?
     private let trash: AgentTrash
     /// The pet a deleted pet in use gives way to, as on a first launch.
-    static let defaultID = "builtin:chiyan"
+    static let defaultID = SettingsSnapshot.defaultPetID
     init(settings: SettingsStore, builtinRoot: URL? = nil, importedRoot: URL? = nil, trash: AgentTrash = .system) {
         self.settings = settings; self.builtinRoot = builtinRoot; self.importedRoot = importedRoot; self.trash = trash
         selectedID = settings.snapshot.selectedPetID
@@ -36,8 +36,7 @@ struct PetEntry: Identifiable {
         var loaded: [PetEntry] = []
         for (root, builtin) in [(builtinRoot, true), (importedRoot, false)] {
             guard let root else { continue }
-            let directories = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
-            for directory in directories.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where !directory.lastPathComponent.hasPrefix(".") {
+            for directory in SpriteFolder.folders(in: root) {
                 let id = "\(builtin ? "builtin" : "imported"):\(directory.lastPathComponent)"
                 if let listed = entries.first(where: { $0.id == id }) { loaded.append(listed); continue }
                 do {
@@ -99,13 +98,14 @@ struct PetEntry: Identifiable {
     /// Move an imported pet's folder to the Trash, under its own name so Put Back restores it. The
     /// pet in use first gives way to 赤焰, so the desktop never shows a pet whose folder is gone.
     @discardableResult func moveToTrash(_ id: String) -> Bool {
-        guard let entry = entries.first(where: { $0.id == id }), !entry.builtin, id.hasPrefix("imported:") else { return false }
+        guard id.hasPrefix("imported:"), entries.contains(where: { $0.id == id }) else { return false }
         if id == selectedID, !activate(Self.defaultID) {
             notice = String(localized: "无法先换回赤焰，未移到废纸篓。"); return false
         }
         do {
-            guard let importedRoot, let directory = SpriteFolder.child(named: String(id.dropFirst("imported:".count)), of: importedRoot)
-            else { throw CocoaError(.fileNoSuchFile) }
+            guard let directory = SpriteFolder.directory(for: id, builtinRoot: builtinRoot, importedRoot: importedRoot) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
             try trash.move(directory)
         } catch {
             notice = String(localized: "无法移到废纸篓：\(error.localizedDescription)"); return false

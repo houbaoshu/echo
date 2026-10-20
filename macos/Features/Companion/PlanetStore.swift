@@ -77,12 +77,12 @@ struct PlanetEntry: Identifiable {
         }
     }
 
-    private func apply(_ indicator: PetSurfacePresentation.VoiceIndicator, force: Bool = false) {
+    private func apply(_ indicator: PetSurfacePresentation.VoiceIndicator) {
         current = indicator
         guard indicator != .inactive else { release(); return }
         guard let store = load() else { return }
         let name = Self.animationName(for: indicator)
-        guard force || name != playing else { return }
+        guard name != playing else { return }
         playing = store.play(name, fallback: "idle")
     }
 
@@ -90,6 +90,14 @@ struct PlanetEntry: Identifiable {
         guard let active else { return }
         active.stop()
         unload()
+    }
+
+    /// Puts a sprite on screen in place of any other; no clip has been asked of it yet.
+    private func install(_ store: PetStore) {
+        active = store
+        playing = nil
+        voice?.endingAnimationDuration = endingDuration
+        store.start()
     }
 
     /// Forgets the sprite and everything derived from it.
@@ -117,14 +125,11 @@ struct PlanetEntry: Identifiable {
             selectedID = id
             notice = nil
             guard let next else { return }
-            let previous = active
-            active = next
-            previous?.stop()
-            voice?.endingAnimationDuration = endingDuration
-            next.start()
+            active?.stop()
+            install(next)
             // The indicator stream is de-duplicated, so a swap has to replay the current state
             // itself. Without this the new planet sits in idle until Live Voice happens to move.
-            apply(current, force: true)
+            apply(current)
         } catch {
             notice = String(localized: "切换失败，保留当前星球：\(error.localizedDescription)")
         }
@@ -138,7 +143,7 @@ struct PlanetEntry: Identifiable {
         var skipped = false
         for (root, prefix) in [(root, "builtin"), (importedRoot, "imported")] {
             guard let root else { continue }
-            for directory in directories(in: root) {
+            for directory in SpriteFolder.folders(in: root) {
                 let id = "\(prefix):\(directory.lastPathComponent)"
                 if let entry = entries.first(where: { $0.id == id }) ?? entry(at: directory, id: id) {
                     loaded.append(entry)
@@ -214,10 +219,7 @@ struct PlanetEntry: Identifiable {
             let store = try VoiceDiagnostics.shared.measure("PlanetStore.load", directory.lastPathComponent) {
                 try makeStore(at: directory)
             }
-            active = store
-            voice?.endingAnimationDuration = endingDuration
-            playing = nil
-            store.start()
+            install(store)
             return store
         } catch {
             // Every later voice state change retries the load; one line per retry shows if that happens.
@@ -242,25 +244,15 @@ struct PlanetEntry: Identifiable {
     /// The selected planet, or the first bundled one if the saved choice is gone.
     private func resolvedDirectory() -> URL? {
         if let directory = directory(for: selectedID) { return directory }
-        guard let root, let first = directories(in: root).first else { return nil }
+        guard let root, let first = SpriteFolder.folders(in: root).first else { return nil }
         selectedID = "builtin:\(first.lastPathComponent)"
         notice = String(localized: "上次选择的星球无法加载，已换成另一颗。")
         try? settings?.selectPlanet(selectedID)
         return first
     }
 
-    private func directories(in root: URL) -> [URL] {
-        let contents = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
-        return contents.filter { !$0.lastPathComponent.hasPrefix(".") }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-    }
-
-    /// Resolve an id to a bundled or imported directory. The id comes from `settings.json`, so it
-    /// is treated as untrusted input and may only name a direct child of its own planets folder.
     private func directory(for id: String) -> URL? {
-        let roots = [("builtin:", root), ("imported:", importedRoot)]
-        guard let (prefix, root) = roots.first(where: { id.hasPrefix($0.0) }), let root else { return nil }
-        return SpriteFolder.child(named: String(id.dropFirst(prefix.count)), of: root)
+        SpriteFolder.directory(for: id, builtinRoot: root, importedRoot: importedRoot)
     }
 
     // MARK: - Manifest
@@ -281,7 +273,7 @@ struct PlanetEntry: Identifiable {
 
     private func manifest(at directory: URL) -> Manifest? {
         let url = directory.appendingPathComponent("pet.json")
-        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1_048_576,
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= SpriteFolder.manifestSizeLimit,
               let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(Manifest.self, from: data)
     }
@@ -290,25 +282,19 @@ struct PlanetEntry: Identifiable {
     private static let defaultFrame = Manifest.Frame(width: 192, height: 208, columns: 8, rows: 11)
 
     private func entry(at directory: URL, id: String) -> PlanetEntry? {
-        guard let manifest = manifest(at: directory), manifest.spriteVersionNumber == 2 else { return nil }
-        let relative = manifest.spritesheetPath ?? "spritesheet.webp"
-        guard !relative.isEmpty, !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") else { return nil }
-        let sheet = directory.appendingPathComponent(relative)
-        guard let source = CGImageSourceCreateWithURL(sheet as CFURL, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              width > 0, height > 0, width <= 8192, height <= 8192, width * height <= 16_777_216 else { return nil }
+        guard let manifest = manifest(at: directory), manifest.spriteVersionNumber == SpriteFolder.supportedVersion,
+              let relative = SpriteFolder.sheetPath(manifest.spritesheetPath),
+              let source = CGImageSourceCreateWithURL(directory.appendingPathComponent(relative) as CFURL, nil),
+              let size = SpriteFolder.pixelSize(of: source) else { return nil }
         let grid = manifest.frame ?? Self.defaultFrame
         guard grid.width > 0, grid.height > 0, grid.columns > 0, grid.rows > 0,
-              width == grid.width * grid.columns, height == grid.height * grid.rows else { return nil }
+              size.width == grid.width * grid.columns, size.height == grid.height * grid.rows else { return nil }
         // Frame 0 alone is the card's preview. Decoding the sheet once here is far cheaper than
         // building a PetStore, which slices and keeps every frame just to hand back one image.
         guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
               let preview = image.cropping(to: CGRect(x: 0, y: 0, width: grid.width, height: grid.height)) else { return nil }
-        let name = manifest.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
         return PlanetEntry(id: id,
-                           name: name.flatMap { $0.isEmpty ? nil : $0 } ?? directory.lastPathComponent,
+                           name: SpriteFolder.displayName(manifest.displayName) ?? directory.lastPathComponent,
                            description: manifest.description ?? "",
                            directory: directory, preview: preview)
     }
