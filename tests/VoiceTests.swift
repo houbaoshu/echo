@@ -300,6 +300,24 @@ extension EchoVoiceScenarios {
         #expect(!state.presentation(modelIsGenerating: false).isActive && state.error?.conversationID == owner.conversationID,
               "a dismissible error retains conversation ownership without retaining a session")
     }
+    /// The composer's ✕ clears the error it shows, with or without a chat, and never a newer one.
+    @Test @MainActor static func clearErrorByIDClearsOnlyTheErrorShown() {
+        _ = NSApplication.shared
+        let voice = VoiceSessionController(audio: FakeAudio())
+        defer { voice.shutdown() }
+        let noChat = VoiceSessionSnapshot.Failure(conversationID: nil, message: "没有聊天的错误")
+        voice.updateSnapshot { $0.error = noChat }
+        voice.clearError(id: noChat.id)
+        #expect(voice.snapshot.error == nil, "the ✕ clears an error with no chat")
+        let shown = VoiceSessionSnapshot.Failure(conversationID: UUID(), message: "看到的错误")
+        let newer = VoiceSessionSnapshot.Failure(conversationID: shown.conversationID, message: "之后的错误")
+        voice.updateSnapshot { $0.error = shown }
+        voice.updateSnapshot { $0.error = newer }
+        voice.clearError(id: shown.id)
+        #expect(voice.snapshot.error == newer, "a stale ✕ leaves the error that replaced the one it showed")
+        voice.clearError(id: newer.id)
+        #expect(voice.snapshot.error == nil, "the ✕ on the newer error clears it")
+    }
     @Test @MainActor static func snapshotLifecycleTests() async throws {
         _ = NSApplication.shared
         let audio = FakeAudio(), recognizer = FakeRecognizer(), synth = FakeSynthesizer()

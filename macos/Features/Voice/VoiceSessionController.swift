@@ -642,13 +642,13 @@ import Observation
         guard let id = conversationID else { return }
         workspace?.revealVoice(conversationID: id)
     }
-    func reveal(owner: VoiceSessionSnapshot.Owner) {
-        guard snapshot.session.owner == owner else { return }
-        reveal()
-    }
     func clearError() { updateSnapshot { $0.error = nil } }
     func clearError(conversationID: UUID) {
         if snapshot.error?.conversationID == conversationID { clearError() }
+    }
+    /// The composer's ✕ names the error it shows, so it never clears one that replaced it since.
+    func clearError(id: UUID) {
+        if snapshot.error?.id == id { clearError() }
     }
     /// Runs `submission` with listening and the reply stopped, then listens again as the stopped
     /// reply would have: after its tail protection when some of it was heard.

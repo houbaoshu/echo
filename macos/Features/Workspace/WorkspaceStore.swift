@@ -382,7 +382,8 @@ struct WorkspaceProject: Identifiable, Codable, Equatable {
         composerFocusRequest += 1
     }
     func revealVoice(conversationID: UUID? = nil, owner: VoiceSessionSnapshot.Owner? = nil) {
-        guard let targetID = conversationID ?? owner?.conversationID ?? voice.conversationID else { return }
+        if let owner, voice.snapshot.session.owner != owner { return }
+        guard let targetID = conversationID ?? voice.conversationID else { return }
         if selectedID != targetID { select(targetID) }
         requestComposerFocus(conversationID: targetID)
         isMainWindowVisible = true

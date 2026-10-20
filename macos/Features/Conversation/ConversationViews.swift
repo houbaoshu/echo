@@ -404,7 +404,7 @@ private struct ConversationComposer: View {
                     Text(error.message).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.primary).textSelection(.enabled)
                     Spacer()
                     Button {
-                        voice.clearError(conversationID: conversationID)
+                        voice.clearError(id: error.id)
                     } label: {
                         Image(systemName: "xmark")
                     }

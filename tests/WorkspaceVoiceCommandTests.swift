@@ -181,7 +181,7 @@ import Foundation
         #expect(workspace.startVoice(conversationID: a.id), "A can explicitly start a fresh Session")
         let nextOwner = voice.snapshot.session.owner!
         workspace.endVoice(owner: firstOwner); workspace.toggleVoiceMute(owner: firstOwner); workspace.toggleVoiceSpeakerMute(owner: firstOwner)
-        voice.reveal(owner: firstOwner)
+        workspace.revealVoice(owner: firstOwner)
         #expect(workspace.selectedID == b.id, "Old reveal controls cannot navigate to a fresh Session")
         #expect(voice.snapshot.session.owner == nextOwner && !voice.isMuted && !voice.snapshot.speakerMuted, "Old same-conversation controls cannot affect a new Session")
         #expect(workspace.send("during permission", conversationID: a.id) && a.store.messages.last?.steering == .queued,
