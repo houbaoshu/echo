@@ -9,7 +9,10 @@ Echo 是一个 macOS 原生桌宠，也是一个面向日常使用的轻量 Agen
 ![桌宠完成任务后在卡片上显示结果，访达里出现新生成的待办清单.md](docs/images/hero.jpg)
 
 <!-- 视频占位：30–60 秒演示 -->
-> 🎬 演示视频待补：`docs/media/demo.mp4`
+
+https://github.com/user-attachments/assets/36226fe2-f1e8-4589-aa79-90b95919d719
+
+
 
 ---
 

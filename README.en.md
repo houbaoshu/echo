@@ -9,7 +9,10 @@ It lives in a corner of your desktop: it turns to follow your pointer and waves 
 ![The pet shows a finished task on its card, and the new 待办清单.md appears in Finder](docs/images/hero-en.jpg)
 
 <!-- Video placeholder: 30–60 second demo -->
-> 🎬 Demo video coming soon: `docs/media/demo-en.mp4`
+
+https://github.com/user-attachments/assets/59d98c61-2bc6-4132-af79-529281a9a88f
+
+
 
 ---
 
