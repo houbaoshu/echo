@@ -3,8 +3,11 @@ import Combine
 import CoreServices
 import Foundation
 import FoundationModels
+import ImageIO
+import PDFKit
 import Synchronization
 import Testing
+import UniformTypeIdentifiers
 
 /// The native Agent engine driven through `TaskStore`, the surface the UI and Live Voice use,
 /// with an in-process scripted model: deterministic and without sockets.
@@ -36,8 +39,8 @@ import Testing
              trash: AgentTrash? = nil, calendar: FakeCalendarStore = FakeCalendarStore(), clock: AgentClock = AgentCalendarTests.clock,
              opener: FakeOpener = FakeOpener(), webSearch: AgentWebSearcher? = nil, fetcher: any AgentWebFetching = FakeFetcher(),
              imageGenerator: ArkImageGenerator? = nil,
-             memoryEnabled: @escaping @MainActor () -> Bool = { true }) {
-            let model = ScriptedAgentModel(step: step)
+             memoryEnabled: @escaping @MainActor () -> Bool = { true }, vision: Bool = false) {
+            let model = ScriptedAgentModel(vision: vision, step: step)
             self.model = model
             self.project = project
             self.calendar = calendar
@@ -639,7 +642,7 @@ import Testing
 
     @Test func argumentsAreDecodedByTheTool() async throws {
         let context = AgentReadContext(access: FixedRoot(), steering: AgentSteeringSignal())
-        let output = try await ReadFileTool(context: context).call(arguments: GeneratedContent(json: #"{"file":"x"}"#))
+        let output = try await ReadFileTool(context: context).call(arguments: GeneratedContent(json: #"{"file":"x"}"#)).text
         #expect(output.contains(#""status":"failed""#) && output.contains("invalid arguments for read_file"))
         let steering = AgentSteeringSignal(); steering.set(true)
         let superseded = try await ListFilesTool(context: AgentReadContext(access: FixedRoot(), steering: steering))
@@ -650,6 +653,273 @@ import Testing
     struct FixedRoot: AgentProjectAccess {
         func projectRoot() async throws -> AgentProjectRoot { .path(FileManager.default.temporaryDirectory.path) }
         func finderRoot(call: GenerationID?) async throws -> AgentFinderRoot { .failed(FinderLocation.unavailable(.noFolder).toolResult) }
+    }
+}
+
+/// read_file on PDFs and images, without a turn: what is read, how it is drawn and scaled, and
+/// what a model that sees no images gets instead.
+@Suite struct AgentFilePagesTests {
+    /// A folder of PDFs and images made by the test, with a page folder of its own.
+    struct Files {
+        let root: URL
+        let folder: AgentPageFolder
+        var reader: AgentPageReader { AgentPageReader(vision: true, folder: folder) }
+        init() throws {
+            root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-pages-\(UUID())").resolvingSymlinksInPath()
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            folder = AgentPageFolder(parent: root.appendingPathComponent(".pages"))
+        }
+        func url(_ name: String) -> URL { root.appendingPathComponent(name) }
+        func remove() { folder.close(); try? FileManager.default.removeItem(at: root) }
+
+        /// Pages of the given sizes in points, each with a black square in its top left quarter as
+        /// drawn, then turned by `rotations` (degrees) where given.
+        func pdf(_ name: String, sizes: [CGSize], rotations: [Int: Int] = [:], options: [PDFDocumentWriteOption: Any] = [:]) throws {
+            let data = NSMutableData()
+            let consumer = try #require(CGDataConsumer(data: data as CFMutableData))
+            let context = try #require(CGContext(consumer: consumer, mediaBox: nil, nil))
+            for size in sizes {
+                var box = CGRect(origin: .zero, size: size)
+                context.beginPage(mediaBox: &box)
+                context.setFillColor(CGColor(gray: 0, alpha: 1))
+                context.fill(CGRect(x: 0, y: size.height / 2, width: size.width / 2, height: size.height / 2))
+                context.endPage()
+            }
+            context.closePDF()
+            let document = try #require(PDFDocument(data: data as Data))
+            for (index, rotation) in rotations { document.page(at: index)?.rotation = rotation }
+            #expect(document.write(to: url(name), withOptions: options))
+        }
+        func image(_ name: String, _ type: UTType, width: Int, height: Int, orientation: Int? = nil) throws {
+            let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.setFillColor(CGColor(red: 0.9, green: 0.2, blue: 0.1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+            let destination = try #require(CGImageDestinationCreateWithURL(url(name) as CFURL, type.identifier as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, try #require(context.makeImage()),
+                                       orientation.map { [kCGImagePropertyOrientation: $0] as CFDictionary })
+            #expect(CGImageDestinationFinalize(destination))
+        }
+        func read(_ name: String, pages: String? = nil, reader: AgentPageReader? = nil) -> AgentFileRead {
+            ReadFileTool.read(root: root.path, path: name, startLine: 1, pages: pages, reader: reader ?? self.reader)
+        }
+    }
+
+    static func object(_ read: AgentFileRead) -> [String: Any] { AgentCalendarTests.json(read.text) }
+    static func size(_ url: URL) -> (Int, Int)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return nil }
+        return (properties[kCGImagePropertyPixelWidth] as? Int ?? 0, properties[kCGImagePropertyPixelHeight] as? Int ?? 0)
+    }
+    /// Which quarter of an image is darkest: 0 top left, 1 top right, 2 bottom left, 3 bottom right.
+    static func darkestQuarter(_ image: CGImage) -> Int? {
+        var pixels = [UInt8](repeating: 0, count: 2 * 2 * 4)
+        guard let context = CGContext(data: &pixels, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 8,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 2, height: 2))
+        let light = (0..<4).map { Int(pixels[$0 * 4]) + Int(pixels[$0 * 4 + 1]) + Int(pixels[$0 * 4 + 2]) }
+        return light.indices.min { light[$0] < light[$1] }
+    }
+
+    @Test func pdfPagesAreDrawnAtAbout100DPI() throws {
+        let f = try Files()
+        defer { f.remove() }
+        try f.pdf("letter.pdf", sizes: Array(repeating: CGSize(width: 612, height: 792), count: 3))
+        let read = f.read("letter.pdf")
+        let result = Self.object(read)
+        #expect(result["kind"] as? String == "pdf" && result["page_count"] as? Int == 3 && result["pages"] as? String == "1-3")
+        #expect(result["images"] as? Int == 3 && read.images.count == 3)
+        for image in read.images {
+            #expect(Self.size(image).map { $0 == (850, 1100) } == true, "Letter at 100 dpi")
+            #expect(AgentImageFormat.of(try Data(contentsOf: image)) == .jpeg)
+        }
+        #expect(Set(read.images.map { $0.deletingLastPathComponent() }).count == 1, "One folder for the turn")
+    }
+
+    @Test func aLongPDFIsReadByPages() throws {
+        let f = try Files()
+        defer { f.remove() }
+        try f.pdf("long.pdf", sizes: Array(repeating: CGSize(width: 300, height: 400), count: 25))
+        let whole = f.read("long.pdf")
+        #expect(whole.images.isEmpty)
+        #expect(Self.object(whole)["reason"] as? String == "pages_needed" && Self.object(whole)["page_count"] as? Int == 25)
+        #expect(whole.text.contains("1-20"))
+        for (pages, shown, count) in [("21-25", "21-25", 5), ("3", "3", 1), (" 3 – 4 ", "3-4", 2), ("1-20", "1-20", 20)] {
+            let read = f.read("long.pdf", pages: pages)
+            #expect(Self.object(read)["pages"] as? String == shown && read.images.count == count, "\(pages)")
+        }
+        for pages in ["0", "26", "24-30", "5-3", "1-21", "abc", "1-2-3", "-3", "3-"] {
+            let read = f.read("long.pdf", pages: pages)
+            #expect(read.images.isEmpty && Self.object(read)["status"] as? String == "failed", "\(pages): \(read.text)")
+        }
+    }
+
+    @Test func largeAndTurnedPagesShowAsTheyDo() throws {
+        let f = try Files()
+        defer { f.remove() }
+        try f.pdf("pages.pdf", sizes: [CGSize(width: 2384, height: 3370), CGSize(width: 612, height: 792), CGSize(width: 612, height: 792)],
+                  rotations: [1: 90, 2: 270])
+        let read = f.read("pages.pdf")
+        #expect(read.images.count == 3)
+        #expect(Self.size(read.images[0]).map { max($0.0, $0.1) == 2048 } == true, "A large page is drawn smaller")
+        let document = try #require(PDFDocument(url: f.url("pages.pdf")))
+        for index in 1...2 {
+            #expect(Self.size(read.images[index]).map { $0 == (1100, 850) } == true, "A turned page is wider than tall")
+            let page = try #require(document.page(at: index))
+            let thumbnail = try #require(page.thumbnail(of: NSSize(width: 110, height: 85), for: .cropBox).cgImage(forProposedRect: nil, context: nil, hints: nil))
+            let drawn = try #require(CGImageSourceCreateWithURL(read.images[index] as CFURL, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) })
+            #expect(Self.darkestQuarter(drawn) == Self.darkestQuarter(thumbnail), "Turned as PDFKit shows page \(index + 1)")
+        }
+    }
+
+    @Test func passwordsDecideWhetherAPDFIsRead() throws {
+        let f = try Files()
+        defer { f.remove() }
+        let size = [CGSize(width: 200, height: 200)]
+        try f.pdf("locked.pdf", sizes: size, options: [.userPasswordOption: "secret", .ownerPasswordOption: "owner"])
+        try f.pdf("owner-only.pdf", sizes: size, options: [.ownerPasswordOption: "owner"])
+        #expect(Self.object(f.read("locked.pdf"))["reason"] as? String == "password")
+        #expect(f.read("owner-only.pdf").images.count == 1, "A PDF locked only against changes opens")
+    }
+
+    @Test func imagesGoAsTheyAreUnlessTooLargeOrTurned() throws {
+        let f = try Files()
+        defer { f.remove() }
+        try f.image("photo.png", .png, width: 300, height: 200)
+        try f.image("anim.gif", .gif, width: 40, height: 30)
+        try f.image("named.jpg", .png, width: 60, height: 40)   // PNG inside, whatever its name says
+        try f.image("turned.jpg", .jpeg, width: 300, height: 200, orientation: 6)
+        try f.image("wide.png", .png, width: 5000, height: 40)
+        try f.image("tiny.png", .png, width: 10, height: 10)
+
+        for (name, format) in [("photo.png", "png"), ("anim.gif", "gif"), ("named.jpg", "png")] {
+            let read = f.read(name)
+            #expect(read.images.count == 1 && Self.object(read)["format"] as? String == format, "\(name)")
+            #expect(try Data(contentsOf: read.images[0]) == Data(contentsOf: f.url(name)), "\(name) goes as it is")
+        }
+        let turned = f.read("turned.jpg")
+        #expect(Self.object(turned)["width"] as? Int == 200 && Self.object(turned)["height"] as? Int == 300, "Turned upright")
+        #expect(Self.size(turned.images[0]).map { $0 == (200, 300) } == true)
+        let wide = f.read("wide.png")
+        #expect(Self.object(wide)["format"] as? String == "jpeg" && Self.object(wide)["scaled_from"] as? String == "5000×40")
+        #expect(Self.size(wide.images[0]).map { $0.0 <= 4096 } == true)
+        #expect(Self.object(f.read("tiny.png"))["reason"] as? String == "image_size")
+    }
+
+    /// HEIF, which neither service reads, always goes as JPEG: upright, and scaled when large, by
+    /// what it holds whatever its name says.
+    @Test func heicPhotosAlwaysGoAsJPEG() throws {
+        let f = try Files()
+        defer { f.remove() }
+        try f.image("IMG_0001.HEIC", .heic, width: 300, height: 200)
+        try f.image("turned.heic", .heic, width: 300, height: 200, orientation: 6)
+        try f.image("large.heic", .heic, width: 3000, height: 2000)
+        try f.image("photo.jpg", .heic, width: 60, height: 40)
+        #expect(AgentDocumentKind(start: try Data(contentsOf: f.url("IMG_0001.HEIC"))) == .heif)
+
+        for (name, size) in [("IMG_0001.HEIC", (300, 200)), ("turned.heic", (200, 300)), ("photo.jpg", (60, 40))] {
+            let read = f.read(name)
+            let result = Self.object(read)
+            #expect(read.images.count == 1 && result["kind"] as? String == "image" && result["format"] as? String == "jpeg", "\(name): \(read.text)")
+            #expect(result["width"] as? Int == size.0 && result["height"] as? Int == size.1 && result["scaled_from"] == nil, "\(name)")
+            #expect(AgentImageFormat.of(try Data(contentsOf: try #require(read.images.first))) == .jpeg, "\(name)")
+            #expect(Self.size(try #require(read.images.first)).map { $0 == size } == true, "\(name)")
+        }
+        let large = f.read("large.heic")
+        #expect(Self.object(large)["scaled_from"] as? String == "3000×2000")
+        #expect(Self.size(try #require(large.images.first)).map { $0.0 * $0.1 <= AgentFilePages.scaledImagePixels } == true)
+
+        let unseen = f.read("IMG_0001.HEIC", reader: .noVision)
+        #expect(unseen.images.isEmpty && Self.object(unseen)["reason"] as? String == "no_vision" && unseen.text.contains("an image"))
+    }
+
+    @Test func aModelThatSeesNoImagesReadsNoPDFOrImage() throws {
+        let f = try Files()
+        defer { f.remove() }
+        try f.pdf("doc.pdf", sizes: [CGSize(width: 200, height: 200)])
+        try f.image("photo.png", .png, width: 30, height: 30)
+        try Data("plain text\n".utf8).write(to: f.url("notes.txt"))
+        for name in ["doc.pdf", "photo.png"] {
+            let read = f.read(name, reader: .noVision)
+            #expect(read.images.isEmpty && Self.object(read)["reason"] as? String == "no_vision", "\(name)")
+            #expect(read.text.contains("deepseek-flash") && read.text.contains("doubao-seed-2.0-mini"))
+        }
+        #expect(Self.object(f.read("notes.txt", reader: .noVision))["content"] as? String == "plain text")
+    }
+
+    @Test func aPDFIsKnownByItsStartAndAStoppedReadWritesNothing() throws {
+        let f = try Files()
+        defer { f.remove() }
+        try f.pdf("doc.pdf", sizes: Array(repeating: CGSize(width: 200, height: 200), count: 3))
+        var data = Data(repeating: 0x20, count: 100); data.append(try Data(contentsOf: f.url("doc.pdf")))
+        try data.write(to: f.url("prefixed.bin"))
+        #expect(f.read("prefixed.bin").images.isEmpty, "Only a file that starts with the header is taken for a PDF")
+        #expect(AgentDocumentKind(start: Data("%PDF-1.7".utf8)) == .pdf && AgentDocumentKind(start: Data("hello %PDF-1.7".utf8)) == nil)
+        let steering = AgentSteeringSignal(); steering.set(true)
+        #expect(f.read("doc.pdf", reader: AgentPageReader(vision: true, folder: f.folder, steering: steering)).text == AgentToolResult.superseded)
+        f.folder.close()
+        #expect(f.read("doc.pdf").text == AgentToolResult.superseded, "Nothing is written once the turn ended")
+    }
+
+    /// Text that starts like a PDF or an image but does not open as one reads as text, for a
+    /// model that sees images or not; a binary file that does not open says so.
+    @Test func textThatStartsLikeAPDFOrAnImageReadsAsText() throws {
+        let f = try Files()
+        defer { f.remove() }
+        try Data("%PDF-1.7 is the header a PDF starts with.\n第二行\n".utf8).write(to: f.url("about-pdf.md"))
+        try Data("GIF89a is the header of a GIF.\n".utf8).write(to: f.url("gif.txt"))
+        try Data("# Notes\nA PDF starts with %PDF-1.7.\n".utf8).write(to: f.url("notes.md"))
+        var broken = Data("%PDF-1.7\n".utf8); broken.append(contentsOf: [0x00, 0xFF, 0xFE, 0x00])
+        try broken.write(to: f.url("broken.pdf"))
+        for reader in [f.reader, .noVision] {
+            #expect(Self.object(f.read("about-pdf.md", reader: reader))["content"] as? String == "%PDF-1.7 is the header a PDF starts with.\n第二行")
+            #expect(Self.object(f.read("gif.txt", reader: reader))["content"] as? String == "GIF89a is the header of a GIF.")
+            #expect(Self.object(f.read("notes.md", reader: reader))["content"] as? String == "# Notes\nA PDF starts with %PDF-1.7.")
+            #expect(Self.object(f.read("broken.pdf", reader: reader))["detail"] as? String == "broken.pdf could not be read as a PDF")
+        }
+    }
+
+    /// Each process keeps its pages in a folder named after it; the folders of processes that are
+    /// gone are removed, those of running ones kept.
+    @Test func pageFoldersBelongToTheirProcess() throws {
+        let f = try Files()
+        defer { f.remove() }
+        let parent = f.url(".pages")
+        let url = try #require(f.folder.url())
+        #expect(url.deletingLastPathComponent().lastPathComponent == String(getpid()))
+        let gone = Process()
+        gone.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try gone.run(); gone.waitUntilExit()
+        for name in ["1", String(gone.processIdentifier), "old-folder"] {
+            try FileManager.default.createDirectory(at: parent.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        AgentPageFolder.removeLeftovers(in: parent)
+        let left = try FileManager.default.contentsOfDirectory(atPath: parent.path).sorted()
+        #expect(left == ["1", String(getpid())].sorted(), "launchd's folder and this process's stay")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func imagesLeaveTheTranscriptAndAreNeverSaved() throws {
+        let f = try Files()
+        defer { f.remove() }
+        try f.image("photo.png", .png, width: 30, height: 30)
+        let read = f.read("photo.png")
+        let call = Transcript.ToolCall(id: "call_i", toolName: "read_file", arguments: try GeneratedContent(json: #"{"path":"photo.png"}"#))
+        let image = Transcript.Segment.attachment(.init(content: .image(.init(imageURL: read.images[0]))))
+        var state = NativeAgentState()
+        state.entries = [.toolCalls(.init(id: "calls", [call])),
+                         .toolOutput(.init(id: "call_i", toolName: "read_file", segments: [.text(.init(content: read.text)), image])),
+                         .toolOutput(.init(id: "call_t", toolName: "note", segments: [.text(.init(content: "plain")), image])),
+                         .toolOutput(.init(id: "call_x", toolName: "read_file", segments: [.text(.init(content: #"{"content":"x"}"#))]))]
+        let saved = try JSONDecoder().decode(NativeAgentState.self, from: JSONEncoder().encode(state))
+        for entries in [saved.entries, AgentFilePages.droppingImages(state.entries)] {
+            let kept = entries.toolImages.flatMap { $0 }
+            #expect(kept.isEmpty)
+            #expect((AgentToolResult.jsonObject(entries.toolOutputs[0])?["images_removed"] as? String) == AgentFilePages.removedNote(count: 1))
+            #expect(entries.toolOutputs[1] == "plain\n\n" + AgentFilePages.removedNote(count: 1))
+            #expect(entries.toolOutputs[2] == #"{"content":"x"}"#)
+        }
     }
 }
 

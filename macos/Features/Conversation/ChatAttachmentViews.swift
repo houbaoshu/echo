@@ -2,24 +2,26 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Which files a chat takes: text files, told by what they hold. Whether a file is text is known
-/// only once its start is read (`ChatAttachment.inspect`), after the person has picked it: a drag
-/// and the file dialog have to answer at once, and reading could wait on the system's access
-/// prompt. So they answer from the type alone, turning away only what the type says cannot be
-/// text: images, PDFs, archives, office and iWork documents, audio. Video is not among them, since
-/// TypeScript's .ts reads as an MPEG transport stream. A type that is text always passes, so an
-/// SVG image does. Folders go to projects instead.
+/// Which files a chat takes: text files, PDFs, and JPEG, PNG, GIF, WebP and HEIC images, told by what
+/// they hold. What a file holds is known only once its start is read (`ChatAttachment.inspect`),
+/// after the person has picked it: a drag and the file dialog have to answer at once, and reading
+/// could wait on the system's access prompt. So they answer from the type alone, turning away only
+/// what the type says is none of these: other images, archives, office and iWork documents, audio.
+/// Video is not among them, since TypeScript's .ts reads as an MPEG transport stream. A type that
+/// is text always passes, so an SVG image does. Folders go to projects instead.
 enum ChatAttachmentTypes {
     private static let excluded: [UTType] = [.image, .pdf, .archive, .audio, .spreadsheet, .presentation]
+    /// What read_file reads besides text, for a chat model that sees images.
+    private static let documents: [UTType] = [.pdf, .heic, .heif] + AgentImageFormat.allCases.map(\.type)
     /// Word processing documents, which conform to no family of their own.
     private static let excludedPrefixes = ["org.openxmlformats.", "com.microsoft.word.", "org.oasis-open.opendocument.", "com.apple.iwork."]
 
     static func excludes(_ type: UTType) -> Bool {
-        guard !type.conforms(to: .text) else { return false }
+        guard !type.conforms(to: .text), !documents.contains(where: { type.conforms(to: $0) }) else { return false }
         return excluded.contains { type.conforms(to: $0) } || excludedPrefixes.contains { type.identifier.hasPrefix($0) }
     }
 
-    /// Whether the file at `url` may be text: a regular file, not a package, of a type not excluded.
+    /// Whether the file at `url` may be one a chat takes: a regular file, not a package, of a type not excluded.
     static func accepts(_ url: URL) -> Bool {
         guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isPackageKey, .contentTypeKey]),
               values.isRegularFile == true, values.isPackage != true else { return false }
@@ -27,7 +29,7 @@ enum ChatAttachmentTypes {
     }
 
     /// The files a drag carries, one per item, or nil when any item is something else: a folder,
-    /// a package, a file whose type cannot be text, or anything that is not a file at all. A drag is
+    /// a package, a file of a type a chat does not take, or anything that is not a file at all. A drag is
     /// taken or refused as a whole, as the pet and the sidebar treat folders.
     static func droppedFiles(on pasteboard: NSPasteboard) -> [URL]? {
         WorkspaceActions.droppedURLs(on: pasteboard, where: accepts)
@@ -35,8 +37,8 @@ enum ChatAttachmentTypes {
 }
 
 extension WorkspaceActions {
-    /// The system's file dialog, taking several files at once. Files whose type cannot be text are
-    /// dimmed; the others are told apart by what they hold once chosen. `asSheet: false` runs a
+    /// The system's file dialog, taking several files at once. Files of types a chat does not take
+    /// are dimmed; the others are told apart by what they hold once chosen. `asSheet: false` runs a
     /// standalone dialog, as for folders.
     static func chooseFiles(asSheet: Bool = true, completion: @escaping ([URL]) -> Void) {
         let panel = NSOpenPanel()
@@ -88,7 +90,7 @@ struct DraftAttachmentChip: View {
     private var readable: Bool { attachment.problem == nil }
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: readable ? "doc.text" : "exclamationmark.triangle.fill")
+            Image(systemName: readable ? attachment.icon : "exclamationmark.triangle.fill")
                 .foregroundStyle(readable ? AnyShapeStyle(.secondary) : AnyShapeStyle(WorkspaceStyle.warning))
                 .accessibilityHidden(true)
             Text(name).lineLimit(1).truncationMode(.middle)
@@ -118,7 +120,7 @@ struct MessageAttachments: View {
     var body: some View {
         ChipFlow(alignment: .trailing) {
             ForEach(attachments) { attachment in
-                Label(attachment.displayName, systemImage: "doc.text").lineLimit(1).truncationMode(.middle)
+                Label(attachment.displayName, systemImage: attachment.icon).lineLimit(1).truncationMode(.middle)
                     .font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
                     .padding(.horizontal, 8).frame(height: 24)
                     .background(.primary.opacity(0.06), in: Capsule())

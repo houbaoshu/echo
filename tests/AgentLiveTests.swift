@@ -1,6 +1,8 @@
+import AppKit
 import Foundation
 import FoundationModels
 import ImageIO
+import UniformTypeIdentifiers
 
 /// Opt-in real service acceptance. Uses saved credentials only in memory and
 /// synthetic conversations with disposable projects, never the user's history.
@@ -328,6 +330,119 @@ import ImageIO
             fflush(nil)
         }
         guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过联网搜索验收。") }
+    }
+
+    /// PDFs and an image read by a saved chat model that sees images: a short report read whole, a
+    /// 30-page PDF read by the page range that holds what was asked, and a PNG. Each turn's time is
+    /// printed, for the 60 s request budget.
+    static func runReadPDFAndImage(protocols: [ModelAPIProtocol]) async throws {
+        let settings = SettingsStore(url: SettingsStore.directory.appendingPathComponent("settings.json"))
+        let (saved, key) = try settings.savedModelCredentials()
+        guard AgentVisionLimits.named(saved.model) != nil else {
+            throw SettingsError("保存的聊天模型 \(saved.model) 看不到图片：请改用 \(AgentVisionLimits.modelNames.joined(separator: " 或 "))。")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("echo-agent-live-\(UUID())")
+        let files = root.appendingPathComponent("files")
+        try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+        print("Model: \(saved.model). Disposable live files: \(root.path)"); fflush(nil)
+        let report = files.appendingPathComponent("季度报告.pdf"), long = files.appendingPathComponent("手册.pdf")
+        let picture = files.appendingPathComponent("暗号.png")
+        try writePDF(to: report, pages: [["2026 年第三季度报告", "华东、华南两个地区的营收汇总"],
+                                         ["表 1 各地区营收（万元）", "地区    Q1    Q2    Q3    合计", "华东    310   402   455   1167", "华南    276   350   462   1088"],
+                                         ["附录", "审阅人：周明远", "编号：XH-2026-0921"]])
+        try writePDF(to: long, pages: (1...30).map { $0 == 27 ? ["第 \($0) 页", "本页暗号：海盐"] : ["第 \($0) 页", "本页没有暗号。"] })
+        try writePNG(to: picture, lines: ["暗号：葡萄柚"])
+
+        var failures = 0
+        for api in protocols {
+            var config = saved; config.apiProtocol = api
+            print("START: \(api.title) 读 PDF 和图片"); fflush(nil)
+            let endpoint = AgentEndpoint(config, key: key)
+            let workspace = WorkspaceStore(persistence: WorkspacePersistence(url: root.appendingPathComponent("\(api.rawValue)/workspace.json")),
+                                           harnessFactory: {
+                AgentHarness(resolveModel: {
+                    let transport = AgentTransport.make(for: endpoint)
+                    return { EchoLanguageModel(endpoint: endpoint, transport: transport, ledger: $0, budget: $1) }
+                }, calendar: FakeCalendarStore(), opener: FakeOpener())
+            })
+            do {
+                func ask(_ text: String, _ file: URL, expecting answers: [String]) async throws -> [AgentToolRecord] {
+                    let chat = workspace.newConversation()
+                    let start = ContinuousClock.now
+                    chat.store.send(text, attachments: ChatAttachment.adding([file], to: []))
+                    try await wait(chat.store)
+                    let reply = chat.store.messages.last { $0.role == .assistant }?.content ?? ""
+                    let reads = chat.store.tools.filter { $0.tool == "read_file" }
+                    print("  \(file.lastPathComponent): \(ContinuousClock.now - start), reads \(reads.map(\.command)) → \(reply.prefix(120))"); fflush(nil)
+                    guard chat.store.task?.status == .completed, !reads.isEmpty, answers.allSatisfy(reply.contains) else {
+                        throw SettingsError("\(file.lastPathComponent) 没有读对：\(reads.map { "\($0.command) \($0.result?.prefix(200) ?? "")" }) \(reply.prefix(300))")
+                    }
+                    return reads
+                }
+                _ = try await ask("请读我附上的报告，告诉我表 1 里华南的合计，以及附录里的审阅人。只根据文件回答。", report, expecting: ["1088", "周明远"])
+                let longReads = try await ask("我附上了一本 30 页的手册。请只读第 27 页，告诉我那一页上的暗号。", long, expecting: ["海盐"])
+                guard longReads.contains(where: { ($0.resultObject?["pages"] as? String).map(Self.covers27) == true }) else {
+                    throw SettingsError("手册没有按页码读到第 27 页：\(longReads.map(\.command))")
+                }
+                _ = try await ask("图片上写的暗号是什么？", picture, expecting: ["葡萄柚"])
+                print("PASS: \(api.title) PDF pages and an image read"); fflush(nil)
+            } catch {
+                failures += 1
+                print("FAIL: \(api.title): \(error is SettingsError ? error.localizedDescription : "请检查服务的协议支持或连接。")")
+            }
+            await workspace.prepareForTermination()
+            fflush(nil)
+        }
+        guard failures == 0 else { throw SettingsError("\(failures) 种协议未通过读 PDF 和图片验收。") }
+    }
+
+    /// Whether a page range such as "21-30" holds page 27.
+    static func covers27(_ pages: String) -> Bool {
+        let bounds = pages.split(separator: "-").compactMap { Int($0) }
+        guard let first = bounds.first, let last = bounds.last else { return false }
+        return (first...last).contains(27)
+    }
+
+    /// A PDF of A4 pages, each with its lines of text.
+    static func writePDF(to url: URL, pages: [[String]]) throws {
+        let data = NSMutableData()
+        guard let consumer = CGDataConsumer(data: data as CFMutableData), let context = CGContext(consumer: consumer, mediaBox: nil, nil) else {
+            throw SettingsError("无法生成 PDF。")
+        }
+        for lines in pages {
+            var box = CGRect(x: 0, y: 0, width: 595, height: 842)
+            context.beginPage(mediaBox: &box)
+            draw(lines, in: context, height: box.height, size: 22)
+            context.endPage()
+        }
+        context.closePDF()
+        try (data as Data).write(to: url)
+    }
+
+    static func writePNG(to url: URL, lines: [String]) throws {
+        guard let context = CGContext(data: nil, width: 900, height: 300, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+            throw SettingsError("无法生成图片。")
+        }
+        context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 900, height: 300))
+        draw(lines, in: context, height: 300, size: 64)
+        guard let image = context.makeImage(), let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            throw SettingsError("无法生成图片。")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw SettingsError("无法生成图片。") }
+    }
+
+    private static func draw(_ lines: [String], in context: CGContext, height: CGFloat, size: CGFloat) {
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        var y = height - 60 - size
+        for line in lines {
+            NSAttributedString(string: line, attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.black])
+                .draw(at: CGPoint(x: 50, y: y))
+            y -= size * 1.8
+        }
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// One image, end to end: the saved model calls generate_image for a square picture, the Agent

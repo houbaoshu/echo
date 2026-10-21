@@ -66,6 +66,8 @@
 		A6C1E7D2B3F4950A1B2C3D71 /* macos/Features/Agent/AgentMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3D70 /* macos/Features/Agent/AgentMemory.swift */; };
 		A6C1E7D2B3F4950A1B2C3D81 /* macos/Features/Agent/AgentImageGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3D80 /* macos/Features/Agent/AgentImageGeneration.swift */; };
 		A6C1E7D2B3F4950A1B2C3D91 /* macos/Features/Agent/AgentWebFetch.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3D90 /* macos/Features/Agent/AgentWebFetch.swift */; };
+		A6C1E7D2B3F4950A1B2C3DB1 /* macos/Features/Agent/AgentFilePages.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3DB0 /* macos/Features/Agent/AgentFilePages.swift */; };
+		A6C1E7D2B3F4950A1B2C3DA1 /* macos/Features/Agent/AgentVision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1E7D2B3F4950A1B2C3DA0 /* macos/Features/Agent/AgentVision.swift */; };
 		A90FABF2D2B029FA59548B59 /* VoiceSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E12500000000000000000F00 /* VoiceSoakTests.swift */; };
 		B1AA482C4F889BAA418DAE42 /* planets in Resources */ = {isa = PBXBuildFile; fileRef = E0000000000000000000001E /* planets */; };
 		B704670FAF0415C2098489CE /* tests/fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 4FAB991673380E8FF8B32862 /* tests/fixtures */; };
@@ -279,6 +281,8 @@
 		A6C1E7D2B3F4950A1B2C3D70 /* macos/Features/Agent/AgentMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentMemory.swift; sourceTree = "<group>"; };
 		A6C1E7D2B3F4950A1B2C3D80 /* macos/Features/Agent/AgentImageGeneration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentImageGeneration.swift; sourceTree = "<group>"; };
 		A6C1E7D2B3F4950A1B2C3D90 /* macos/Features/Agent/AgentWebFetch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentWebFetch.swift; sourceTree = "<group>"; };
+		A6C1E7D2B3F4950A1B2C3DB0 /* macos/Features/Agent/AgentFilePages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentFilePages.swift; sourceTree = "<group>"; };
+		A6C1E7D2B3F4950A1B2C3DA0 /* macos/Features/Agent/AgentVision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macos/Features/Agent/AgentVision.swift; sourceTree = "<group>"; };
 		AC2342CC6EB3F55C38085D3E /* tests/native/LiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/native/LiveTests.swift; sourceTree = "<group>"; };
 		B628CE43BFCAC712B3D75BF1 /* tests/fixtures/speech/mixed.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = tests/fixtures/speech/mixed.wav; sourceTree = "<group>"; };
 		B7D2E8F3C4A5061B2C3D4E50 /* tests/AgentCalendarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tests/AgentCalendarTests.swift; sourceTree = "<group>"; };
@@ -540,6 +544,8 @@
 				A6C1E7D2B3F4950A1B2C3D50 /* macos/Features/Agent/AgentOpen.swift */,
 				A6C1E7D2B3F4950A1B2C3D60 /* macos/Features/Agent/AgentWebSearch.swift */,
 				A6C1E7D2B3F4950A1B2C3D90 /* macos/Features/Agent/AgentWebFetch.swift */,
+				A6C1E7D2B3F4950A1B2C3DB0 /* macos/Features/Agent/AgentFilePages.swift */,
+				A6C1E7D2B3F4950A1B2C3DA0 /* macos/Features/Agent/AgentVision.swift */,
 				A6C1E7D2B3F4950A1B2C3D80 /* macos/Features/Agent/AgentImageGeneration.swift */,
 				A6C1E7D2B3F4950A1B2C3D70 /* macos/Features/Agent/AgentMemory.swift */,
 				CF3DABC0D10122CBD030B84D /* macos/Features/Agent/AgentHarness.swift */,
@@ -1223,6 +1229,8 @@
 				A6C1E7D2B3F4950A1B2C3D51 /* macos/Features/Agent/AgentOpen.swift in Sources */,
 				A6C1E7D2B3F4950A1B2C3D61 /* macos/Features/Agent/AgentWebSearch.swift in Sources */,
 				A6C1E7D2B3F4950A1B2C3D91 /* macos/Features/Agent/AgentWebFetch.swift in Sources */,
+				A6C1E7D2B3F4950A1B2C3DB1 /* macos/Features/Agent/AgentFilePages.swift in Sources */,
+				A6C1E7D2B3F4950A1B2C3DA1 /* macos/Features/Agent/AgentVision.swift in Sources */,
 				A6C1E7D2B3F4950A1B2C3D81 /* macos/Features/Agent/AgentImageGeneration.swift in Sources */,
 				A6C1E7D2B3F4950A1B2C3D71 /* macos/Features/Agent/AgentMemory.swift in Sources */,
 				534B7D287D089271F8634C32 /* macos/Features/Agent/AgentHarness.swift in Sources */,

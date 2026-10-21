@@ -12,8 +12,10 @@ final class ScriptedAgentModel: Sendable, Hashable {
     private let step: Step
     private let recorded = Mutex<[LanguageModelExecutorGenerationRequest]>([])
     private let finished = Mutex(0)
+    /// Whether the model sees images, as deepseek-flash and doubao-seed-2.0-mini do.
+    let vision: Bool
 
-    init(step: @escaping Step) { self.step = step }
+    init(vision: Bool = false, step: @escaping Step) { self.vision = vision; self.step = step }
 
     var factory: AgentHarness.ModelFactory {
         { ledger, budget in ScriptedLanguageModel(script: self, ledger: ledger, budget: budget) }
@@ -81,7 +83,7 @@ struct ScriptedLanguageModel: LanguageModel {
     let script: ScriptedAgentModel
     let ledger: GenerationLedger
     let budget: GenerationBudget
-    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.toolCalling]) }
+    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.toolCalling] + (script.vision ? [.vision] : [])) }
     var executorConfiguration: ScriptedExecutor.Configuration { .init(script: script, ledger: ledger, budget: budget) }
 }
 
@@ -170,6 +172,8 @@ extension LanguageModelExecutorGenerationRequest {
         }
     }
     var toolOutputs: [String] { transcript.toolOutputs }
+    /// The images of every tool result, in order, by the files they were read from.
+    var toolImages: [[URL]] { transcript.toolImages }
     /// Text of the model's earlier replies the request carries, in order.
     var replies: [String] {
         transcript.compactMap { entry in
@@ -187,6 +191,14 @@ extension LanguageModelExecutorGenerationRequest {
 }
 
 extension Sequence where Element == Transcript.Entry {
+    var toolImages: [[URL]] {
+        compactMap { entry in
+            guard case .toolOutput(let output) = entry else { return nil }
+            return output.segments.compactMap { segment in
+                if case .attachment(let attachment) = segment, case .image(let image) = attachment.content { image.url } else { nil }
+            }
+        }
+    }
     /// The text of every tool result, in order.
     var toolOutputs: [String] {
         compactMap { entry in

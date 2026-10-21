@@ -91,7 +91,7 @@ import UniformTypeIdentifiers
 
     /// An image of `width` by `height`, as the service encodes it. `noise` makes it hard to
     /// compress, for a PNG over 4 MiB.
-    static func encoded(_ format: AgentGeneratedImage.Format, width: Int = 64, height: Int = 48, noise: Bool = false) -> Data {
+    nonisolated static func encoded(_ format: AgentGeneratedImage.Format, width: Int = 64, height: Int = 48, noise: Bool = false) -> Data {
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         for index in stride(from: 0, to: pixels.count, by: 4) {
             if noise {

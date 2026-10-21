@@ -153,7 +153,12 @@ struct AgentToolView: View {
         switch tool.tool {
         case nil: "terminal"
         case "list_files": "folder"
-        case "read_file": "doc.text"
+        // A PDF's pages or an image, by what the call read.
+        case "read_file": switch tool.resultObject?["kind"] as? String {
+            case "pdf": "doc.richtext"
+            case "image": "photo"
+            default: "doc.text"
+            }
         case "finder_location": "macwindow"
         case "write_file": "square.and.pencil"
         case "edit_file": "pencil.line"
@@ -172,6 +177,17 @@ struct AgentToolView: View {
             parts.append(Int64(bytes).formatted(.byteCount(style: .file)))
         }
         if json["truncated"] as? Bool == true { parts.append(String(localized: "已截断")) }
+        switch json["kind"] as? String {
+        case "pdf":
+            if let pages = json["pages"] as? String, let count = json["page_count"] as? Int {
+                parts.append(String(localized: "第 \(pages) 页，共 \(count) 页"))
+            }
+        case "image":
+            if let width = json["width"] as? Int, let height = json["height"] as? Int {
+                parts.append(String(localized: "图片 · \(String(width))×\(String(height))"))
+            }
+        default: break
+        }
         if let code = json["exit_code"] as? Int { parts.append(String(localized: "退出码 \(code)")) }
         if json["timed_out"] as? Bool == true { parts.append(String(localized: "超时")) }
         if json["stdout_truncated"] as? Bool == true { parts.append(String(localized: "stdout 已截断")) }

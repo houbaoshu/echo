@@ -1067,9 +1067,9 @@ extension ConversationViewTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pet-drop-\(UUID())")
         let folder = root.appendingPathComponent("拖来的项目"), known = root.appendingPathComponent("已有项目")
         let file = root.appendingPathComponent("notes.txt"), package = root.appendingPathComponent("Probe.app")
-        let pdf = root.appendingPathComponent("paper.pdf"), markdown = root.appendingPathComponent("plan.md")
+        let archive = root.appendingPathComponent("archive.zip"), markdown = root.appendingPathComponent("plan.md")
         for directory in [folder, known, package] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
-        for text in [file, pdf, markdown] { try Data("notes".utf8).write(to: text) }
+        for text in [file, archive, markdown] { try Data("notes".utf8).write(to: text) }
         defer { try? FileManager.default.removeItem(at: root) }
         let pet = try PetStore(directory: EchoTestResources.resource("pets/chiyan"))
         let workspace = WorkspaceStore(harnessFactory: { idleAgent() })
@@ -1086,7 +1086,7 @@ extension ConversationViewTests {
             return (view.draggingEntered(drag), view.performDragOperation(drag))
         }
 
-        for (refused, label) in [([pdf], "a file that is not text"), ([file, pdf], "text with a file that is not"),
+        for (refused, label) in [([archive], "a file a chat does not take"), ([file, archive], "text with a file a chat does not take"),
                                  ([folder, known], "two folders"), ([folder, file], "a folder with a file"), ([package], "a package")] {
             let result = drop(refused)
             XCTAssertTrue(result.operation == [] && !result.accepted, "The pet refuses \(label)")

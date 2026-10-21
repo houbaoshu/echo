@@ -32,14 +32,14 @@ protocol AgentProjectAccess: Sendable {
     /// `call` is done, however it ended; the write calls after it may go.
     func finished(call: GenerationID?) async
     /// read_file on the file attached to the chat as `name`.
-    func readAttached(name: String, startLine: Int, call: GenerationID?) async throws -> String
+    func readAttached(name: String, startLine: Int, pages: String?, call: GenerationID?) async throws -> AgentFileRead
 }
 
 extension AgentProjectAccess {
     func waitForTurn(call: GenerationID?) async throws {}
     func finished(call: GenerationID?) async {}
-    func readAttached(name: String, startLine: Int, call: GenerationID?) async throws -> String {
-        AgentToolResult.failed(AgentToolResult.notAttached(name: name, attached: []))
+    func readAttached(name: String, startLine: Int, pages: String?, call: GenerationID?) async throws -> AgentFileRead {
+        AgentFileRead(text: AgentToolResult.failed(AgentToolResult.notAttached(name: name, attached: [])))
     }
 }
 
@@ -205,7 +205,7 @@ struct AgentReadContext: Sendable {
     /// Runs a call in its place in its batch: after the finder_location and write calls written
     /// before it. A call whose arguments the tool cannot read takes its place too, so a write after
     /// it is not held up.
-    func ordered(call: GenerationID?, _ body: () async throws -> String) async throws -> String {
+    func ordered<Result>(call: GenerationID?, _ body: () async throws -> Result) async throws -> Result {
         do {
             try await access.waitForTurn(call: call)
             let result = try await body()
@@ -218,9 +218,17 @@ struct AgentReadContext: Sendable {
     }
 
     func run(call: GenerationID?, _ body: @Sendable (String, AgentReadScope) -> String) async throws -> String {
+        try await read(call: call) { AgentFileRead(text: body($0, $1)) }.text
+    }
+
+    /// As `run`, for a read that may return images; the folder is named in its text.
+    func read(call: GenerationID?, _ body: @Sendable (String, AgentReadScope) -> AgentFileRead) async throws -> AgentFileRead {
         switch try await Self.resolve(call: call, access: access, steering: steering, nothing: "read") {
-        case .result(let result): return result
-        case .folder(let root, let scope): return AgentToolResult.naming(root: root, scope: scope, in: body(root, scope))
+        case .result(let result): return AgentFileRead(text: result)
+        case .folder(let root, let scope):
+            var read = body(root, scope)
+            read.text = AgentToolResult.naming(root: root, scope: scope, in: read.text)
+            return read
         }
     }
 
@@ -341,8 +349,10 @@ struct ListFilesTool: Tool {
 
 struct ReadFileTool: Tool {
     let name = "read_file"
-    let description = "Read a UTF-8 file in the workspace (bounded output)"
+    let description = "Read a file in the workspace: a UTF-8 text file by lines (bounded output), a PDF as images of its pages, or a JPEG, PNG, GIF, WebP or HEIC image"
     let context: AgentReadContext
+    /// How PDFs and images are read this turn; a model that sees no images reads neither.
+    var pages: AgentPageReader = .noVision
     static let maxFileBytes = 4 * 1024 * 1024
     static let maxLines = 200
     static let maxOutputBytes = 64 * 1024
@@ -351,49 +361,60 @@ struct ReadFileTool: Tool {
     struct Input {
         @Guide(description: "File path relative to the root")
         var path: String
-        @Guide(description: "First line to read, 1-based; omit to start at line 1")
+        @Guide(description: "First line of a text file to read, 1-based; omit to start at line 1")
         var start_line: Int?
+        @Guide(description: "For a PDF, the pages to read, such as 3 or 1-20, at most 20 at a time; omit for a PDF of up to 20 pages, and for any other file")
+        var pages: String?
         @Guide(description: "true for a file attached to this chat, with its name as the path; omit otherwise")
         var attached: Bool?
     }
 
     var parameters: GenerationSchema { Input.generationSchema }
 
-    @concurrent func call(arguments: GeneratedContent) async throws -> String {
+    @concurrent func call(arguments: GeneratedContent) async throws -> AgentFileRead {
         try await context.ordered(call: arguments.id) {
             guard let input = try? Input(arguments) else {
-                return AgentInvalidArguments.expected(#"{"path": string, "start_line"?: integer, "attached"?: boolean}"#, by: name,
-                                                      received: arguments).result
+                return AgentFileRead(text: AgentInvalidArguments.expected(#"{"path": string, "start_line"?: integer, "pages"?: string, "attached"?: boolean}"#,
+                                                                          by: name, received: arguments).result)
             }
             if AgentAttachedArguments.named(in: arguments) {
-                return try await context.access.readAttached(name: input.path, startLine: input.start_line ?? 1, call: arguments.id)
+                return try await context.access.readAttached(name: input.path, startLine: input.start_line ?? 1, pages: input.pages, call: arguments.id)
             }
-            return try await context.run(call: arguments.id) { root, scope in
-                Self.read(root: root, path: input.path, startLine: input.start_line ?? 1, scope: scope)
+            let pages = self.pages
+            return try await context.read(call: arguments.id) { root, scope in
+                Self.read(root: root, path: input.path, startLine: input.start_line ?? 1, pages: input.pages, scope: scope, reader: pages)
             }
         }
     }
 
+    /// A text file's lines, as the model reads them; a PDF or an image reads as nothing for a
+    /// model that sees no images.
     static func read(root: String, path raw: String, startLine: Int, scope: AgentReadScope = .project) -> String {
+        read(root: root, path: raw, startLine: startLine, pages: nil, scope: scope, reader: .noVision).text
+    }
+
+    /// A read the reader stopped before it was done returns superseded.
+    static func read(root: String, path raw: String, startLine: Int, pages: String?, scope: AgentReadScope = .project,
+                     reader: AgentPageReader) -> AgentFileRead {
         guard let path = AgentToolPath.normalize(raw), !path.isEmpty else {
-            return AgentToolResult.failed(AgentToolPath.message(.outsideProject, path: raw, scope: scope))
+            return AgentFileRead(text: AgentToolResult.failed(AgentToolPath.message(.outsideProject, path: raw, scope: scope)))
         }
-        guard startLine >= 1 else { return AgentToolResult.failed("start_line must be at least 1") }
+        guard startLine >= 1 else { return AgentFileRead(text: AgentToolResult.failed("start_line must be at least 1")) }
         let fd: Int32
         do { fd = try ProjectPath.open(root: root, path: path, directory: false) }
-        catch { return AgentToolResult.failed(AgentToolPath.message(error, path: raw, scope: scope)) }
+        catch { return AgentFileRead(text: AgentToolResult.failed(AgentToolPath.message(error, path: raw, scope: scope))) }
         defer { close(fd) }
-        return read(fd, raw: raw, startLine: startLine)
+        return read(fd, raw: raw, startLine: startLine, pages: pages, reader: reader)
     }
 
     /// A file attached to the chat, by the path it was attached from. A file that is gone or
     /// that the system will not open says so; where it went is not looked for.
-    static func read(attached file: AttachedFile, startLine: Int) -> String {
-        guard startLine >= 1 else { return AgentToolResult.failed("start_line must be at least 1") }
+    static func read(attached file: AttachedFile, startLine: Int, pages: String?, reader: AgentPageReader) -> AgentFileRead {
+        guard startLine >= 1 else { return AgentFileRead(text: AgentToolResult.failed("start_line must be at least 1")) }
         let fd = open(file.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
-        guard fd >= 0 else { return AgentToolResult.failed(attachedFailure(errno, name: file.name)) }
+        guard fd >= 0 else { return AgentFileRead(text: AgentToolResult.failed(attachedFailure(errno, name: file.name))) }
         defer { close(fd) }
-        return read(fd, raw: file.name, startLine: startLine, textOnly: true)
+        return read(fd, raw: file.name, startLine: startLine, pages: pages, reader: reader, textOnly: true)
     }
 
     static func attachedFailure(_ code: Int32, name: String) -> String {
@@ -405,24 +426,54 @@ struct ReadFileTool: Tool {
         }
     }
 
-    /// The lines of an open file from `startLine`, bounded; `raw` names it in messages. `textOnly`
-    /// refuses a file whose start is not text, by the test that admitted it to the chat.
-    private static func read(_ fd: Int32, raw: String, startLine: Int, textOnly: Bool = false) -> String {
+    /// An open file: a PDF's pages or an image, told by how it starts and by its opening as one,
+    /// else its lines from `startLine`, bounded. `raw` names it in messages. `textOnly` refuses any
+    /// other file whose start is not text, by the test that admitted it to the chat.
+    private static func read(_ fd: Int32, raw: String, startLine: Int, pages: String?, reader: AgentPageReader,
+                             textOnly: Bool = false) -> AgentFileRead {
         var info = stat()
-        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return AgentToolResult.failed("not a regular file: \(raw)") }
-        guard info.st_size <= maxFileBytes else { return AgentToolResult.failed("file exceeds 4 MiB: \(raw)") }
-        var data = Data(count: Int(info.st_size))
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return AgentFileRead(text: AgentToolResult.failed("not a regular file: \(raw)")) }
+        let size = Int(info.st_size)
+        guard let kind = AgentDocumentKind(start: contents(fd, size: min(size, AgentDocumentKind.sniffLength))) else {
+            guard size <= maxFileBytes else { return AgentFileRead(text: AgentToolResult.failed("file exceeds 4 MiB: \(raw)")) }
+            return AgentFileRead(text: text(contents(fd, size: size), raw: raw, startLine: startLine, textOnly: textOnly))
+        }
+        guard size <= kind.maxBytes else {
+            return AgentFileRead(text: AgentToolResult.failed("\(raw) is larger than \(kind.maxBytes >> 20) MiB, so it was not read"))
+        }
+        let data = contents(fd, size: size)
+        switch AgentFilePages.read(data, kind: kind, name: raw, pages: pages, reader: reader) {
+        case .read(let read): return read
+        case .stopped: return AgentFileRead(text: AgentToolResult.superseded)
+        case .notThisKind:
+            // Text that merely starts like a PDF or an image is read as text.
+            guard size <= maxFileBytes, ChatAttachment.isText(data.prefix(ChatAttachment.sniffLength), whole: data.count <= ChatAttachment.sniffLength) else {
+                return AgentFileRead(text: AgentToolResult.failed("\(raw) could not be read as \(kind == .pdf ? "a PDF" : "an image")"))
+            }
+            return AgentFileRead(text: text(data, raw: raw, startLine: startLine, textOnly: textOnly))
+        }
+    }
+
+    /// Up to `size` bytes from the start of an open file, read into memory; fewer when it is
+    /// shorter by now.
+    private static func contents(_ fd: Int32, size: Int) -> Data {
+        var data = Data(count: size)
         var total = 0
         while total < data.count {
-            let count = data.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress!.advanced(by: total), $0.count - total) }
+            let count = data.withUnsafeMutableBytes { pread(fd, $0.baseAddress!.advanced(by: total), $0.count - total, off_t(total)) }
             if count < 0, errno == EINTR { continue }
             guard count > 0 else { break }
             total += count
         }
+        return data.prefix(total)
+    }
+
+    private static func text(_ data: Data, raw: String, startLine: Int, textOnly: Bool) -> String {
+        let total = data.count
         if textOnly, !ChatAttachment.isText(data.prefix(min(total, ChatAttachment.sniffLength)), whole: total <= ChatAttachment.sniffLength) {
             return AgentToolResult.failed("\(raw) is not a text file, so it was not read")
         }
-        let text = String(decoding: data.prefix(total), as: UTF8.self)
+        let text = String(decoding: data, as: UTF8.self)
         // Split on "\n" like Rust's `str::lines`; a String would keep "\r\n" together as one Character.
         var lines = text.components(separatedBy: "\n").dropFirst(startLine - 1)
         if text.hasSuffix("\n"), lines.last == "" { lines = lines.dropLast() }

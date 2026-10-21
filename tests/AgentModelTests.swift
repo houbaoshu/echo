@@ -97,12 +97,30 @@ import Testing
         func call(arguments: GeneratedContent) async throws -> String { "noted" }
     }
 
+    /// Returns its JSON and an image from each file, as read_file returns pages.
+    struct PagesTool: Tool {
+        let name = "pages"
+        let description = "Show pages."
+        let files: [URL]
+        @Generable struct Input {
+            @Guide(description: "Which pages") var pages: String
+        }
+        var parameters: GenerationSchema { Input.generationSchema }
+        func call(arguments: GeneratedContent) async throws -> Prompt {
+            Prompt {
+                #"{"images":\#(files.count)}"#
+                for file in files { Attachment<ImageAttachmentContent>(imageURL: file) }
+            }
+        }
+    }
+
     struct TestProfile: LanguageModelSession.DynamicProfile {
         let model: EchoLanguageModel
+        var tools: [any Tool] = [NoteTool()]
         var body: some DynamicProfile {
             Profile {
                 Instructions("system text")
-                NoteTool()
+                tools
             }
             .model(model)
             .transcriptErrorHandlingPolicy(.preserveTranscript)
@@ -118,12 +136,12 @@ import Testing
 
     static func run(_ api: ModelAPIProtocol, key: String? = "sk-test", history: [Transcript.Entry] = [], prompt: String = "hi",
                     metadata: [String: any ConvertibleToGeneratedContent] = [:], budget: GenerationBudget = GenerationBudget(),
-                    replies: [Reply]) async -> Run {
+                    vision: AgentVisionLimits? = nil, tools: [any Tool] = [NoteTool()], replies: [Reply]) async -> Run {
         reset(replies)
         let ledger = GenerationLedger()
         let endpoint = AgentEndpoint(baseURL: "https://models.example/v1/", model: "m", apiKey: key, apiProtocol: api)
-        let model = EchoLanguageModel(endpoint: endpoint, transport: transport(), ledger: ledger, budget: budget)
-        let session = LanguageModelSession(profile: TestProfile(model: model), history: history)
+        let model = EchoLanguageModel(endpoint: endpoint, transport: transport(), ledger: ledger, budget: budget, vision: vision)
+        let session = LanguageModelSession(profile: TestProfile(model: model, tools: tools), history: history)
         do { return Run(session: session, ledger: ledger, result: .success(try await session.respond(to: Prompt(prompt), metadata: metadata).content)) }
         catch { return Run(session: session, ledger: ledger, result: .failure(error)) }
     }
@@ -156,7 +174,7 @@ import Testing
         let answer = Reply.sse([Self.chatChunk(["content": "Done\u{2028}here"]), Self.chatChunk(["content": ""]), Self.chatChunk([:], finish: "stop")])
         let run = await Self.run(.chatCompletions, replies: [calls, answer])
         #expect(try run.result.get() == "Done\u{2028}here", "U+2028 inside a JSON string does not split the event")
-        #expect(run.kinds == ["instructions", "prompt", "response", "toolCalls", "toolOutput", "response"], "No empty response entries")
+        #expect(run.kinds == ["instructions", "prompt", "reasoning", "response", "toolCalls", "toolOutput", "response"], "No empty response entries")
         #expect(run.ledger.finalReply?.text == "Done\u{2028}here", "The ledger keeps the whole final reply")
         let request = try #require(Self.requests.first)
         #expect(request.url?.absoluteString == "https://models.example/v1/chat/completions")
@@ -172,7 +190,8 @@ import Testing
         let call = try #require((messages[2]["tool_calls"] as? [[String: Any]])?.first)
         #expect(call["id"] as? String == "call_1" && Self.object((call["function"] as? [String: Any])?["arguments"]) == ["text": "a"])
         #expect(messages[3]["tool_call_id"] as? String == "call_1" && messages[3]["content"] as? String == "noted")
-        #expect(!String(describing: second).contains("thinking"), "reasoning_content is neither kept nor replayed")
+        #expect(messages[2]["reasoning_content"] as? String == "thinking", "reasoning_content goes back with its generation's message")
+        #expect(messages[0]["reasoning_content"] == nil && messages[1]["reasoning_content"] == nil)
     }
 
     @Test(arguments: [-1, 65, Int.max])
@@ -323,6 +342,197 @@ import Testing
         #expect(input[2]["id"] as? String == "rs_1" && input[2]["encrypted_content"] as? String == "opaque")
         #expect(input[3]["call_id"] as? String == "call_a" && Self.object(input[3]["arguments"]) == ["text": "b"])
         #expect(input[4]["output"] as? String == "noted")
+    }
+
+    /// DeepSeek sends its reasoning as `content` and, once it no longer holds it, takes a tool call
+    /// back only with that text in `content` again; a summary is turned away.
+    @Test(arguments: [true, false])
+    func responsesReplayReasoningTextAsContent(streamed: Bool) async throws {
+        let reasoning: [String: Any] = ["type": "reasoning", "id": "rs_d", "summary": [],
+                                        "content": [["type": "reasoning_text", "text": "37×43=1591"]], "encrypted_content": "opaque-0"]
+        let item: [String: Any] = ["type": "function_call", "id": "fc_1", "call_id": "call_d", "name": "note", "arguments": #"{"text":"b"}"#]
+        let completed: [String: Any] = ["type": "response.completed", "response": ["id": "r1", "status": "completed", "output": [reasoning, item]]]
+        let calls = Reply.sse(streamed ? [
+            ["type": "response.output_item.added", "item": ["type": "reasoning", "id": "rs_d", "summary": []]],
+            ["type": "response.reasoning_text.delta", "item_id": "rs_d", "content_index": 0, "delta": "37×43"],
+            ["type": "response.reasoning_text.delta", "item_id": "rs_d", "content_index": 0, "delta": "=1591"],
+            completed,
+        ] : [completed])
+        let answer = Reply.sse([["type": "response.completed", "response": ["id": "r2", "status": "completed",
+            "output": [["type": "message", "id": "msg_1", "content": [["type": "output_text", "text": "Fine"]]]]]]])
+        let run = await Self.run(.responses, replies: [calls, answer])
+        #expect(try run.result.get() == "Fine")
+        guard case .reasoning(let saved) = Array(run.session.transcript)[2] else { Issue.record("reasoning"); return }
+        #expect(AgentHarness.text(saved.segments) == "37×43=1591" && AgentReasoningField.of(saved) == .content)
+        let input = try #require(Self.bodies.last?["input"] as? [[String: Any]])
+        let replayed = try #require(input.first { $0["type"] as? String == "reasoning" })
+        #expect(replayed["id"] as? String == "rs_d" && (replayed["summary"] as? [Any])?.isEmpty == true)
+        let content = try #require(replayed["content"] as? [[String: Any]])
+        #expect(content.count == 1 && content[0]["type"] as? String == "reasoning_text" && content[0]["text"] as? String == "37×43=1591")
+    }
+
+    /// Each protocol sends back only the reasoning it recorded, in the field it came in; reasoning
+    /// saved before the field was kept goes back over Responses as a summary, as it always did.
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
+    func reasoningGoesBackOnlyOverTheProtocolThatRecordedIt(api: ModelAPIProtocol) async throws {
+        func reasoning(_ id: String, _ text: String, _ field: AgentReasoningField?) -> Transcript.Entry {
+            .reasoning(.init(id: id, metadata: field.map(\.metadata) ?? [:], segments: [.text(.init(content: text))]))
+        }
+        let call = Transcript.ToolCall(id: "call_c", toolName: "note", arguments: try GeneratedContent(json: #"{"text":"a"}"#))
+        let history: [Transcript.Entry] = [
+            .prompt(.init(segments: [.text(.init(content: "first"))])),
+            reasoning("echo-chat", "chat thinking", .chat),
+            .toolCalls(.init(id: "calls-c", [call])),
+            .toolOutput(.init(id: "call_c", toolName: "note", segments: [.text(.init(content: "noted"))])),
+            reasoning("rs_content", "content thinking", .content),
+            reasoning("rs_summary", "summary thinking", nil),
+            .response(.init(id: "echo-reply", assetIDs: [], segments: [.text(.init(content: "answer"))])),
+        ]
+        let reply = api == .chatCompletions
+            ? Reply.sse([Self.chatChunk(["content": "ok"]), Self.chatChunk([:], finish: "stop")])
+            : Reply.sse([["type": "response.completed", "response": ["status": "completed",
+                "output": [["type": "message", "content": [["type": "output_text", "text": "ok"]]]]]]])
+        let run = await Self.run(api, history: history, replies: [reply])
+        #expect(try run.result.get() == "ok")
+        let body = try #require(Self.bodies.last)
+        if api == .chatCompletions {
+            let messages = try #require(body["messages"] as? [[String: Any]])
+            let assistants = messages.filter { $0["role"] as? String == "assistant" }
+            #expect(assistants.count == 2)
+            #expect(assistants.first?["reasoning_content"] as? String == "chat thinking")
+            #expect(assistants.last?["content"] as? String == "answer" && assistants.last?["reasoning_content"] == nil,
+                    "Responses reasoning does not go over Chat Completions")
+        } else {
+            let items = try #require(body["input"] as? [[String: Any]]).filter { $0["type"] as? String == "reasoning" }
+            #expect(items.map { $0["id"] as? String } == ["rs_content", "rs_summary"], "Chat Completions reasoning does not go over Responses")
+            #expect((items[0]["content"] as? [[String: Any]])?.first?["text"] as? String == "content thinking")
+            #expect((items[1]["summary"] as? [[String: Any]])?.first?["text"] as? String == "summary thinking" && items[1]["content"] == nil)
+        }
+    }
+
+    // MARK: Images in tool results
+
+    /// A JPEG and a PNG of noise, so their bytes outweigh any request's text, in a folder of their
+    /// own removed when the test ends.
+    struct ImageFiles {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("echo-images-\(UUID())")
+        let jpeg: URL, png: URL
+        init() throws {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            jpeg = folder.appendingPathComponent("page.jpg"); png = folder.appendingPathComponent("photo.png")
+            try AgentImageTests.encoded(.jpeg, width: 160, height: 120, noise: true).write(to: jpeg)
+            try AgentImageTests.encoded(.png, width: 160, height: 120, noise: true).write(to: png)
+        }
+        func remove() { try? FileManager.default.removeItem(at: folder) }
+    }
+
+    static let roomy = AgentVisionLimits(maxRequestBytes: 48 << 20, maxImages: 600, maxImageBytes: 32 << 20, contextTokens: 1_000_000, tokensPerImage: 1024)
+
+    static func pagesCall(_ api: ModelAPIProtocol, id: String) -> Reply {
+        api == .chatCompletions
+            ? Reply.sse([Self.chatChunk(["tool_calls": [["index": 0, "id": id, "type": "function",
+                                                          "function": ["name": "pages", "arguments": #"{"pages":"1-2"}"#]]]], finish: "tool_calls")])
+            : Reply.sse([["type": "response.completed", "response": ["status": "completed", "output": [
+                ["type": "function_call", "id": "fc-\(id)", "call_id": id, "name": "pages", "arguments": #"{"pages":"1-2"}"#]]]]])
+    }
+    static func answer(_ api: ModelAPIProtocol) -> Reply {
+        api == .chatCompletions
+            ? Reply.sse([Self.chatChunk(["content": "seen"]), Self.chatChunk([:], finish: "stop")])
+            : Reply.sse([["type": "response.completed", "response": ["status": "completed",
+                "output": [["type": "message", "content": [["type": "output_text", "text": "seen"]]]]]]])
+    }
+    /// What the last request carried as each tool result: a string, or its parts.
+    static func toolResults(_ api: ModelAPIProtocol) throws -> [Any] {
+        let body = try #require(bodies.last)
+        if api == .chatCompletions {
+            return try #require(body["messages"] as? [[String: Any]]).filter { $0["role"] as? String == "tool" }.compactMap { $0["content"] }
+        }
+        return try #require(body["input"] as? [[String: Any]]).filter { $0["type"] as? String == "function_call_output" }.compactMap { $0["output"] }
+    }
+    /// The data URLs of a tool result's images, in order.
+    static func imageURLs(_ result: Any, _ api: ModelAPIProtocol) -> [String] {
+        (result as? [[String: Any]] ?? []).compactMap { part in
+            api == .chatCompletions ? (part["image_url"] as? [String: Any])?["url"] as? String : part["image_url"] as? String
+        }
+    }
+
+    /// A tool's images reach the transcript as attachments of its result, and the request as
+    /// image parts after the result's text, in each file's own format and bytes.
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
+    func toolResultImagesGoOutAsImageParts(api: ModelAPIProtocol) async throws {
+        let files = try ImageFiles()
+        defer { files.remove() }
+        let run = await Self.run(api, vision: Self.roomy, tools: [PagesTool(files: [files.jpeg, files.png])],
+                                 replies: [Self.pagesCall(api, id: "call_p"), Self.answer(api)])
+        #expect(try run.result.get() == "seen")
+        #expect(run.session.transcript.toolImages.first == [files.jpeg, files.png], "Foundation Models keeps each image as the file it came from")
+        #expect(run.session.transcript.toolOutputs.first == #"{"images":2}"#)
+
+        let result = try #require(Self.toolResults(api).first as? [[String: Any]])
+        #expect(result.first?["type"] as? String == (api == .chatCompletions ? "text" : "input_text"))
+        #expect(result.first?["text"] as? String == #"{"images":2}"#)
+        #expect(result.dropFirst().allSatisfy { $0["type"] as? String == (api == .chatCompletions ? "image_url" : "input_image") })
+        let expected = ["data:image/jpeg;base64," + (try Data(contentsOf: files.jpeg)).base64EncodedString(),
+                        "data:image/png;base64," + (try Data(contentsOf: files.png)).base64EncodedString()]
+        #expect(Self.imageURLs(result, api) == expected)
+    }
+
+    /// Past a model's limits the oldest results' images stay out, each result's together, and the
+    /// result says so where they would be; the newest go.
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses], ["images", "bytes", "tokens"])
+    func imagesPastTheLimitsStayOutOldestFirst(api: ModelAPIProtocol, limit: String) async throws {
+        let files = try ImageFiles()
+        defer { files.remove() }
+        var limits = Self.roomy
+        let pair = try [files.jpeg, files.png].reduce(0) { $0 + (try Data(contentsOf: $1).count + 2) / 3 * 4 + 128 }
+        switch limit {
+        case "images": limits.maxImages = 5
+        // The request's text is a few hundred bytes: room for two results' images, not three.
+        case "bytes": limits.maxRequestBytes = 64 * 1024 + pair * 2 + pair / 2
+        default: limits.contextTokens = AgentVisionLimits.outputReserve + 4 * limits.tokensPerImage + limits.tokensPerImage / 2
+        }
+        let run = await Self.run(api, vision: limits, tools: [PagesTool(files: [files.jpeg, files.png])],
+                                 replies: [Self.pagesCall(api, id: "call_1"), Self.pagesCall(api, id: "call_2"),
+                                           Self.pagesCall(api, id: "call_3"), Self.answer(api)])
+        #expect(try run.result.get() == "seen")
+        let results = try Self.toolResults(api)
+        #expect(results.count == 3)
+        #expect(results.first as? String == #"{"images":2}"# + "\n\n" + AgentToolImages.leftOutNote(count: 2), "\(limit)")
+        #expect(results.dropFirst().map { Self.imageURLs($0, api).count } == [2, 2], "\(limit)")
+    }
+
+    /// A model not known to see images gets none: each result says its images were not sent.
+    @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
+    func aModelThatSeesNoImagesIsToldInstead(api: ModelAPIProtocol) async throws {
+        let files = try ImageFiles()
+        defer { files.remove() }
+        let run = await Self.run(api, tools: [PagesTool(files: [files.jpeg])], replies: [Self.pagesCall(api, id: "call_n"), Self.answer(api)])
+        #expect(try run.result.get() == "seen")
+        #expect(try Self.toolResults(api).first as? String == #"{"images":1}"# + "\n\n" + AgentToolImages.noVisionNote(count: 1))
+        #expect(!String(decoding: try #require(Stub.state.withLock { $0.bodies.last }), as: UTF8.self).contains("base64"))
+    }
+
+    @Test func theModelsThatSeeImagesAreKnownByNameAlone() {
+        #expect(AgentVisionLimits.named("deepseek-flash")?.maxImages == 600)
+        #expect(AgentVisionLimits.named(" Doubao-Seed-2.0-Mini\n")?.contextTokens == 256_000)
+        for other in ["deepseek-v4-pro", "doubao-seed-2.0-lite", "deepseek-v4.1-flash", "m", ""] { #expect(AgentVisionLimits.named(other) == nil, "\(other)") }
+        let endpoint = AgentEndpoint(baseURL: "https://example.com/v1", model: "deepseek-flash", apiKey: nil, apiProtocol: .chatCompletions)
+        let model = EchoLanguageModel(endpoint: endpoint, transport: Self.transport(), ledger: GenerationLedger(), budget: GenerationBudget())
+        #expect(model.capabilities.contains(.vision), "Whatever the address, the model's name decides")
+        let other = EchoLanguageModel(endpoint: AgentEndpoint(baseURL: endpoint.baseURL, model: "deepseek-v4-pro", apiKey: nil, apiProtocol: .responses),
+                                      transport: Self.transport(), ledger: GenerationLedger(), budget: GenerationBudget())
+        #expect(!other.capabilities.contains(.vision))
+    }
+
+    @Test func imageFormatsAreToldByWhatTheFilesHold() throws {
+        let files = try ImageFiles()
+        defer { files.remove() }
+        #expect(AgentImageFormat.of(try Data(contentsOf: files.jpeg)) == .jpeg)
+        #expect(AgentImageFormat.of(try Data(contentsOf: files.png)) == .png)
+        #expect(AgentImageFormat.of(Data("GIF89a....".utf8)) == .gif)
+        #expect(AgentImageFormat.of(Data("RIFF\u{0}\u{0}\u{0}\u{0}WEBPVP8 ".utf8)) == .webp)
+        #expect(AgentImageFormat.of(Data("RIFF\u{0}\u{0}\u{0}\u{0}WAVEfmt ".utf8)) == nil)
+        #expect(AgentImageFormat.of(Data("%PDF-1.7".utf8)) == nil)
     }
 
     @Test func responsesFailuresAndLimits() async throws {

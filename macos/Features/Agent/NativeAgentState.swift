@@ -58,7 +58,8 @@ struct NativeAgentState: Codable {
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
-        try values.encode(Transcript(entries: entries), forKey: .transcript)
+        // Images are seen only in the turn that read them, and never saved.
+        try values.encode(Transcript(entries: AgentFilePages.droppingImages(entries)), forKey: .transcript)
         try values.encode(turns, forKey: .turns)
         try values.encode(pendingInputs, forKey: .pendingInputs)
         try values.encode(replies, forKey: .replies)

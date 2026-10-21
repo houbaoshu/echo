@@ -5,6 +5,7 @@ import Foundation
 import FoundationModels
 import Synchronization
 import Testing
+import UniformTypeIdentifiers
 
 /// Files the person adds to a chat: which files are taken, what the model is told and can read
 /// in every later turn, that they are only read, and that they survive reopening.
@@ -67,13 +68,15 @@ import Testing
         }
     }
 
-    /// A drag and the file dialog answer from the type alone: images, PDFs, archives, office and
-    /// iWork documents and audio are turned away, as are folders, packages and mixed drags.
+    /// A drag and the file dialog answer from the type alone: PDFs and JPEG, PNG, GIF, WebP and HEIC
+    /// images pass, while other images, archives, office and iWork documents and audio are turned
+    /// away, as are folders, packages and mixed drags.
     @Test func typesThatCannotBeTextAreTurnedAwayAtOnce() throws {
         let f = try Files()
         defer { f.remove() }
-        let maybe = ["notes.md", "main.swift", "data.json", "plain.txt", "main.rs", "index.ts", "clip.mp4", "Dockerfile", "script.scpt", "logo.svg"]
-        let other = ["paper.pdf", "photo.png", "report.docx", "old.doc", "sheet.xlsx", "slides.pptx", "archive.zip", "song.mp3", "draft.pages"]
+        let maybe = ["notes.md", "main.swift", "data.json", "plain.txt", "main.rs", "index.ts", "clip.mp4", "Dockerfile", "script.scpt", "logo.svg",
+                     "paper.pdf", "photo.png", "shot.jpg", "photo.jpeg", "anim.gif", "pic.webp", "photo.heic", "IMG_0001.HEIC", "still.heif"]
+        let other = ["scan.tiff", "icon.bmp", "report.docx", "old.doc", "sheet.xlsx", "slides.pptx", "archive.zip", "song.mp3", "draft.pages"]
         for name in maybe + other { try f.write(name, "x") }
         try FileManager.default.createDirectory(at: f.url("folder"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: f.url("Tool.app/Contents"), withIntermediateDirectories: true)
@@ -87,19 +90,23 @@ import Testing
             return board
         }
         #expect(ChatAttachmentTypes.droppedFiles(on: pasteboard(["notes.md", "main.rs"]))?.count == 2)
-        #expect(ChatAttachmentTypes.droppedFiles(on: pasteboard(["notes.md", "paper.pdf"])) == nil, "One excluded type refuses the drag")
+        #expect(ChatAttachmentTypes.droppedFiles(on: pasteboard(["notes.md", "paper.pdf", "photo.png"]))?.count == 3)
+        #expect(ChatAttachmentTypes.droppedFiles(on: pasteboard(["notes.md", "archive.zip"])) == nil, "One excluded type refuses the drag")
         #expect(ChatAttachmentTypes.droppedFiles(on: pasteboard(["notes.md", "folder"])) == nil, "Files and folders together are refused")
         #expect(ChatAttachmentTypes.droppedFiles(on: pasteboard(["Tool.app"])) == nil)
         // On the pet, one folder is a project and files are a draft's.
         #expect(PetInteractionView.Drop(pasteboard(["folder"])) == .folder(f.url("folder")))
         #expect(PetInteractionView.Drop(pasteboard(["notes.md", "index.ts"])).map { if case .files(let urls) = $0 { urls.count } else { 0 } } == 2)
         #expect(PetInteractionView.Drop(pasteboard(["notes.md", "folder"])) == nil)
-        #expect(PetInteractionView.Drop(pasteboard(["photo.png"])) == nil)
+        #expect(PetInteractionView.Drop(pasteboard(["photo.png", "paper.pdf"])).map { if case .files(let urls) = $0 { urls.count } else { 0 } } == 2)
+        #expect(PetInteractionView.Drop(pasteboard(["IMG_0001.HEIC"])).map { if case .files(let urls) = $0 { urls.count } else { 0 } } == 1)
+        #expect(PetInteractionView.Drop(pasteboard(["scan.tiff"])) == nil)
     }
 
-    /// Whether a file joins the draft is decided by what it holds: UTF-8 without a zero byte. A
-    /// type the system calls text is still refused when its content is binary, and one it does not
-    /// know is taken when its content is text. Refused files are named beside the composer.
+    /// Whether a file joins the draft is decided by what it holds: UTF-8 without a zero byte, or the
+    /// start of a PDF or of a JPEG, PNG, GIF, WebP or HEIC image, whatever its name says. A type the system
+    /// calls text is still refused when its content is other binary, and one it does not know is
+    /// taken when its content is text. Refused files are named beside the composer.
     @Test func whatAFileHoldsDecides() async throws {
         let f = try Files()
         defer { f.remove() }
@@ -112,15 +119,23 @@ import Testing
         try binary.write(to: f.url("script.scpt"))
         try binary.write(to: f.url("clip.mp4"))
         try Data([0xc3, 0x28]).write(to: f.url("broken.txt"))
+        try Data("%PDF-1.7\n%\u{E2}\u{E3}\n".utf8).write(to: f.url("paper.pdf"))
+        try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00]).write(to: f.url("named.jpg"))
+        try binary.write(to: f.url("fake.png"))
+        try Data([0x00, 0x00, 0x00, 0x18] + Array("ftypheic".utf8) + [0x00, 0x00, 0x00, 0x00]).write(to: f.url("IMG_0001.HEIC"))
+        try Data([0x00, 0x00, 0x00, 0x18] + Array("ftypavif".utf8) + [0x00, 0x00, 0x00, 0x00]).write(to: f.url("photo.heif"))
         // A character split by the end of the part read still counts as text.
         try f.write("long.md", String(repeating: "a", count: ChatAttachment.sniffLength - 1) + "赤焰")
         let store = TaskStore()
-        let names = ["main.rs", "index.ts", "Dockerfile", "中文.conf", "empty.txt", "long.md", "script.scpt", "clip.mp4", "broken.txt"]
+        let names = ["main.rs", "index.ts", "Dockerfile", "中文.conf", "empty.txt", "long.md", "paper.pdf", "named.jpg", "IMG_0001.HEIC",
+                     "script.scpt", "clip.mp4", "broken.txt", "fake.png", "photo.heif"]
         store.attachToMainDraft(names.map(f.url))
         try await eventually("checked") { store.attachmentNotice != nil }
-        #expect(store.mainAttachments.map(\.name) == ["main.rs", "index.ts", "Dockerfile", "中文.conf", "empty.txt", "long.md"])
+        #expect(store.mainAttachments.map(\.name) == ["main.rs", "index.ts", "Dockerfile", "中文.conf", "empty.txt", "long.md", "paper.pdf", "named.jpg", "IMG_0001.HEIC"])
         #expect(store.mainAttachments.allSatisfy { $0.problem == nil })
-        #expect(store.attachmentNotice == ChatAttachment.refusalNotice(["script.scpt", "clip.mp4", "broken.txt"]))
+        #expect(store.attachmentNotice == ChatAttachment.refusalNotice(["script.scpt", "clip.mp4", "broken.txt", "fake.png", "photo.heif"]),
+                "An AVIF image is not HEIF, whatever its name says")
+        #expect(store.mainAttachments.map(\.icon) == Array(repeating: "doc.text", count: 6) + ["doc.richtext", "photo", "photo"])
         store.attachToMainDraft([f.url("notes2.md")])
         #expect(store.attachmentNotice == nil, "Adding again clears the notice")
         #expect(ChatAttachment.isText(Data("赤".utf8).dropLast(), whole: false) && !ChatAttachment.isText(Data("赤".utf8).dropLast(), whole: true))
@@ -315,6 +330,58 @@ import Testing
         try Data([0x00, 0x01, 0x02]).write(to: f.url("a/notes.md"))
         try await chat.run("读一下")
         #expect(chat.store.tools.last?.result == AgentToolResult.failed("notes.md is not a text file, so it was not read"))
+    }
+
+    /// An attached PDF's pages reach a model that sees images as images of the call's result, for
+    /// that turn only: once it ends the images are gone from the transcript and from disk, and the
+    /// result says so in every later request.
+    @Test func attachedPDFPagesAreSeenOnlyInTheirTurn() async throws {
+        let p = try AgentFilePagesTests.Files()
+        defer { p.remove() }
+        try p.pdf("report.pdf", sizes: Array(repeating: CGSize(width: 300, height: 400), count: 2))
+        let chat = Chat(Self.reads([[("read_file", #"{"path":"report.pdf","attached":true}"#)], []]), vision: true)
+        try await chat.run("读一下", attachments: ChatAttachment.adding([p.url("report.pdf")], to: []))
+        let images = try #require(chat.model.requests.last?.toolImages.last)
+        #expect(images.count == 2 && images.allSatisfy { $0.pathExtension == "jpg" })
+        let gone = images.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
+        #expect(gone, "The turn's images went with it")
+        let kept = chat.native.entries.toolImages.flatMap { $0 }
+        #expect(kept.isEmpty)
+        #expect(AgentToolResult.jsonObject(chat.native.entries.toolOutputs.last ?? "")?["images_removed"] as? String == AgentFilePages.removedNote(count: 2))
+        #expect(chat.store.tools.first?.resultObject?["kind"] as? String == "pdf")
+        try await chat.run("第二页呢？")
+        let later = try #require(chat.model.requests.last)
+        let sent = later.toolImages.flatMap { $0 }
+        #expect(sent.isEmpty)
+        #expect(later.toolOutputs.last?.contains("images_removed") == true)
+        #expect(Self.instructions(later).contains("read_file also reads PDFs"))
+    }
+
+    /// A model that sees no images reads no PDF and says why; it is not told it could.
+    @Test func aModelThatSeesNoImagesIsToldWhyAPDFWasNotRead() async throws {
+        let p = try AgentFilePagesTests.Files()
+        defer { p.remove() }
+        try p.pdf("report.pdf", sizes: [CGSize(width: 300, height: 400)])
+        let chat = Chat(Self.reads([[("read_file", #"{"path":"report.pdf","attached":true}"#)]]))
+        try await chat.run("读一下", attachments: ChatAttachment.adding([p.url("report.pdf")], to: []))
+        #expect(chat.store.tools.first?.resultObject?["reason"] as? String == "no_vision")
+        let sent = chat.model.requests.flatMap { $0.toolImages.flatMap { $0 } }
+        #expect(sent.isEmpty)
+        #expect(!Self.instructions(try #require(chat.model.requests.first)).contains("read_file also reads PDFs"))
+    }
+
+    /// PDFs and images in the chat's project or Finder folder are read the same way.
+    @Test(arguments: [true, false])
+    func imagesInTheChatsFolderAreRead(project: Bool) async throws {
+        let p = try AgentFilePagesTests.Files()
+        defer { p.remove() }
+        try p.image("photo.png", .png, width: 40, height: 30)
+        let finder = project ? AgentHarnessTests.FakeFinder() : AgentHarnessTests.FakeFinder.answering([.folder(p.root.path)])
+        let chat = Chat(Self.reads([[("read_file", #"{"path":"photo.png"}"#)]]), project: project ? p.root : nil, finder: finder, vision: true)
+        try await chat.run("看看这张图")
+        #expect(chat.model.requests.last?.toolImages.last?.count == 1)
+        #expect(chat.store.tools.first?.resultObject?["kind"] as? String == "image")
+        #expect((chat.store.tools.first?.resultObject?["in_folder"] != nil) == !project, "A Finder read names its folder")
     }
 
     @Test func namesFollowFinder() {

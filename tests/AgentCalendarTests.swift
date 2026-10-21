@@ -23,7 +23,7 @@ import Testing
         Chat(FinderRootTests.oneByOne(calls), calendar: calendar, clock: clock)
     }
 
-    static func json(_ text: String?) -> [String: Any] {
+    nonisolated static func json(_ text: String?) -> [String: Any] {
         (text.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]) ?? [:]
     }
 

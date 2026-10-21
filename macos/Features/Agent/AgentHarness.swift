@@ -135,6 +135,9 @@ final class ResumeOnce<T: Sendable>: Sendable {
     private let memoryEnabled: @MainActor () -> Bool
     /// The running turn's memory; nil offers no memory tools and gives no memory.
     private var turnMemory: AgentMemoryFile?
+    /// How the running turn reads PDFs and images: only for a model that sees images, into a
+    /// folder that lasts as long as the turn.
+    private var turnReader = AgentPageReader.noVision
     /// Write calls this turn that left a record their card can undo from.
     private var undoableCalls: Set<String> = []
     /// Undos under way. A turn must not start meanwhile: an undo amends the transcript when it ends.
@@ -390,6 +393,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
         searcher = route.isLocal ? nil : webSearch()
         imageGenerator = route.isLocal ? nil : imageGeneration()
         turnMemory = route.isLocal || !memoryEnabled() ? nil : memory
+        turnReader = AgentPageReader(vision: false, folder: AgentPageFolder(), steering: steering)
 
         let budget = GenerationBudget(limit: Self.generationLimit, steering: steering)
         state.turns.append(.init(start: state.entries.count))
@@ -442,8 +446,10 @@ final class ResumeOnce<T: Sendable>: Sendable {
             var inputError: (any Error)?
             switch route {
             case .cloud(let factory):
+                let model = factory(ledger, budget)
+                turnReader = AgentPageReader(vision: model.capabilities.contains(.vision), folder: turnReader.folder, steering: steering)
                 session = LanguageModelSession(
-                    profile: AgentProfile(model: factory(ledger, budget), tools: tools(), attachments: state.attachments.map(\.name),
+                    profile: AgentProfile(model: model, tools: tools(), attachments: state.attachments.map(\.name),
                                           memory: turnMemory?.read(), harness: self),
                     history: history)
             case .local(let service):
@@ -635,6 +641,9 @@ final class ResumeOnce<T: Sendable>: Sendable {
     }
 
     private func finish(_ ending: AgentTurnEnding, outcome: AgentTurnOutcome? = nil) {
+        // Images are seen only in the turn that read them.
+        state.entries = AgentFilePages.droppingImages(state.entries)
+        turnReader.folder.close()
         if let last = state.turns.indices.last, state.turns[last].outcome == nil {
             state.turns[last].outcome = outcome ?? {
                 switch ending {
@@ -780,20 +789,20 @@ final class ResumeOnce<T: Sendable>: Sendable {
     /// One read_file call on a file attached to the chat, by its name. The file is read on a thread
     /// of its own: opening it can wait on the system's access prompt, and a Stop or newer input
     /// ends the call at once while the read runs on. Its card shows the file's path.
-    fileprivate func readAttached(name raw: String, startLine: Int, call identity: GenerationID?) async throws -> String {
+    fileprivate func readAttached(name raw: String, startLine: Int, pages: String?, call identity: GenerationID?) async throws -> AgentFileRead {
         guard isRunning, !stopRequested else { throw CancellationError() }
-        if steering.isPending { return AgentToolResult.superseded }
+        if steering.isPending { return AgentFileRead(text: AgentToolResult.superseded) }
         let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let file = state.attachments.first(where: { $0.name == name }) else {
-            return AgentToolResult.failed(AgentToolResult.notAttached(name: raw, attached: state.attachments.map(\.name)))
+            return AgentFileRead(text: AgentToolResult.failed(AgentToolResult.notAttached(name: raw, attached: state.attachments.map(\.name))))
         }
         if let key = callKey(identity) { callDirectories[key] = file.path; project() }
-        let hooks = attachmentHooks
-        let read: String? = try await unlessInterrupted {
+        let hooks = attachmentHooks, reader = turnReader
+        let read: AgentFileRead? = try await unlessInterrupted {
             hooks.beforeOpening()
-            return ReadFileTool.read(attached: file, startLine: startLine)
+            return ReadFileTool.read(attached: file, startLine: startLine, pages: pages, reader: reader)
         }
-        return read ?? AgentToolResult.superseded
+        return read ?? AgentFileRead(text: AgentToolResult.superseded)
     }
 
     nonisolated static let writeTools: Set<String> = ["write_file", "edit_file"]
@@ -1279,7 +1288,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
         // switches. A chat gets its project before its first message, so its tools stay the same
         // from request to request and a service's prompt cache keeps matching.
         let finder: [any Tool] = host?.harnessProjectDirectory() == .noProject ? [FinderLocationTool(access: access)] : []
-        return [ListFilesTool(context: context), ReadFileTool(context: context)] + finder + [
+        return [ListFilesTool(context: context), ReadFileTool(context: context, pages: turnReader)] + finder + [
                 WriteFileTool(access: access), EditFileTool(access: access),
                 ListRemindersTool(access: access), CreateReminderTool(access: access), CompleteReminderTool(access: access),
                 ListEventsTool(access: access), CreateEventTool(access: access),
@@ -1515,8 +1524,8 @@ private struct HarnessAccess: AgentProjectAccess, AgentFinderAccess, AgentWriteA
     func finderRoot(call: GenerationID?) async throws -> AgentFinderRoot { try await live.finderRoot(call: call) }
     func waitForTurn(call: GenerationID?) async throws { try await live.waitForTurn(call: call) }
     func finished(call: GenerationID?) async { await harness?.finished(call: call) }
-    func readAttached(name: String, startLine: Int, call: GenerationID?) async throws -> String {
-        try await live.readAttached(name: name, startLine: startLine, call: call)
+    func readAttached(name: String, startLine: Int, pages: String?, call: GenerationID?) async throws -> AgentFileRead {
+        try await live.readAttached(name: name, startLine: startLine, pages: pages, call: call)
     }
     func locate(call: GenerationID?) async throws -> FinderLocation? { try await live.locateFinder(call: call) }
     func write(call: GenerationID?, _ request: Result<AgentWriteRequest, AgentInvalidArguments>) async throws -> String {
@@ -1552,7 +1561,8 @@ private struct AgentProfile: LanguageModelSession.DynamicProfile {
 
     var body: some DynamicProfile {
         Profile {
-            Instructions(AgentInstructions.text(tools: tools.map(\.name), attachments: attachments, memory: memory))
+            Instructions(AgentInstructions.text(tools: tools.map(\.name), attachments: attachments, memory: memory,
+                                                vision: model.capabilities.contains(.vision)))
             tools
         }
         .model(model)

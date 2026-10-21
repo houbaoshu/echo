@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 enum TaskStatus: String, Codable {
     case running, stopping, stopped, completed, interrupted, failed
@@ -108,6 +109,12 @@ struct ChatAttachment: Identifiable, Equatable, Codable, Sendable {
     var name: String { (path as NSString).lastPathComponent }
     /// What a sent message shows: the model's name for the file.
     var displayName: String { label ?? name }
+    /// A PDF, an image or a text file, as its name says.
+    var icon: String {
+        guard let type = UTType(filenameExtension: (path as NSString).pathExtension) else { return "doc.text" }
+        if type.conforms(to: .pdf) { return "doc.richtext" }
+        return type.conforms(to: .image) && !type.conforms(to: .text) ? "photo" : "doc.text"
+    }
 
     init(path: String, problem: Problem? = nil) {
         self.path = path; self.problem = problem
@@ -138,10 +145,12 @@ struct ChatAttachment: Identifiable, Equatable, Codable, Sendable {
     /// What reading the start of a file found.
     enum Inspection: Equatable, Sendable {
         case text, binary
+        /// A PDF or an image read_file reads, by how it starts.
+        case document
         case unreadable(Problem)
     }
 
-    /// Reads the start of the file to tell whether it is text. The same read is what makes macOS
+    /// Reads the start of the file to tell whether it is text, a PDF or an image. The same read is what makes macOS
     /// ask for access while the person is adding the file rather than when the Agent first reads
     /// it; the system's prompt holds the call until it is answered, so it never runs on the main actor.
     @concurrent static func inspect(_ path: String) async -> Inspection {
@@ -157,13 +166,14 @@ struct ChatAttachment: Identifiable, Equatable, Codable, Sendable {
             guard count > 0 else { break }
             total += count
         }
+        if AgentDocumentKind(start: data.prefix(total)) != nil { return .document }
         return isText(data.prefix(total), whole: total < sniffLength) ? .text : .binary
     }
 
-    /// Adds the text files among `urls` to the draft `list` of `owner`. Each new file's start is
-    /// read first, one file after another, so files from one folder bring up at most one prompt:
-    /// text joins the draft, a file that could not be read joins it marked with why, and anything
-    /// else stays out, its name going to `refused`.
+    /// Adds the text files, PDFs and images among `urls` to the draft `list` of `owner`. Each new
+    /// file's start is read first, one file after another, so files from one folder bring up at
+    /// most one prompt: these join the draft, a file that could not be read joins it marked with
+    /// why, and anything else stays out, its name going to `refused`.
     @MainActor static func add<Owner: AnyObject>(_ urls: [URL], to owner: Owner, _ list: ReferenceWritableKeyPath<Owner, [ChatAttachment]>,
                                                  refused: @escaping @MainActor ([String]) -> Void) {
         let before = owner[keyPath: list]
@@ -173,7 +183,7 @@ struct ChatAttachment: Identifiable, Equatable, Codable, Sendable {
             var binary: [String] = []
             for var attachment in candidates {
                 switch await inspect(attachment.path) {
-                case .text: break
+                case .text, .document: break
                 case .binary: binary.append(attachment.name); continue
                 case .unreadable(let problem): attachment.problem = problem
                 }
@@ -184,11 +194,11 @@ struct ChatAttachment: Identifiable, Equatable, Codable, Sendable {
         }
     }
 
-    /// Says which files stayed out of a draft for not being text.
+    /// Says which files stayed out of a draft for being none of text, PDF or image.
     static func refusalNotice(_ names: [String]) -> String {
         names.count == 1
-            ? String(localized: "“\(names[0])”不是文本文件，没有添加。")
-            : String(localized: "\(names.map { "“\($0)”" }.joined(separator: "、")) 不是文本文件，没有添加。")
+            ? String(localized: "“\(names[0])”不是文本、PDF 或图片文件，没有添加。")
+            : String(localized: "\(names.map { "“\($0)”" }.joined(separator: "、")) 不是文本、PDF 或图片文件，没有添加。")
     }
 }
 

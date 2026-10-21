@@ -5,7 +5,8 @@ enum AgentInstructions {
     /// `attachments` names the files the person added to the chat. They hold nothing that changes
     /// from turn to turn, so a service's prompt cache keeps matching: the time goes with each message.
     /// `memory` is what the memory file holds, read for this request; nil when it holds nothing.
-    nonisolated static func text(tools: [String], attachments: [String] = [], memory: String? = nil) -> String {
+    /// `vision` says the model sees images, so read_file reads PDFs and images for it.
+    nonisolated static func text(tools: [String], attachments: [String] = [], memory: String? = nil, vision: Bool = false) -> String {
         var parts = ["You are a helpful assistant in a persistent conversation. Answer ordinary questions directly.",
                      "Each message from the person starts with a line from Echo, \"[Echo: sent …]\", giving the person's local date, weekday, time and time zone when the message reached you. It is not part of what they wrote."]
         let writes = tools.contains("write_file") || tools.contains("edit_file")
@@ -18,6 +19,9 @@ enum AgentInstructions {
         }
         if writes {
             parts.append("write_file creates a UTF-8 text file or replaces one in full; edit_file replaces a passage that appears exactly once in an existing UTF-8 text file. They work in the same folder as list_files and read_file, with paths relative to it, and create folders missing on the way. A file they write is at most 4 MiB. Hidden files and folders (names starting with .), executable files, .terminal files and anything inside an application bundle (.app) are not written. The home folder itself, the folders above it, hidden folders, and ~/Library outside iCloud Drive and cloud storage folders can only be read. Before a file is replaced or edited, Echo keeps a copy of the original. No tool deletes, renames or moves files.")
+        }
+        if tools.contains("read_file"), vision {
+            parts.append("read_file also reads PDFs, as images of their pages, and JPEG, PNG, GIF, WebP and HEIC images, which you then see. It reads at most \(AgentFilePages.maxPagesPerRead) pages of a PDF at a time: pass pages, such as 1-\(AgentFilePages.maxPagesPerRead), and read a longer PDF in several calls. You see those images only until this turn ends; to look at them again in a later turn, read them again.")
         }
         if tools.contains("read_file"), !attachments.isEmpty {
             let names = attachments.map { "\"\($0)\"" }.joined(separator: ", ")

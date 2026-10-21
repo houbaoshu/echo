@@ -164,7 +164,7 @@ final class PetInteractionView: NSView, NSGestureRecognizerDelegate {
         return folders[0]
     }
 
-    /// What a drag on the pet brings: one folder for a chat's project, or text files for its draft.
+    /// What a drag on the pet brings: one folder for a chat's project, or files for its draft.
     /// Anything else, a folder with files or a package such as an app among them, is refused whole.
     enum Drop: Equatable {
         case folder(URL)

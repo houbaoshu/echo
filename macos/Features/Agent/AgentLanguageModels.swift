@@ -89,6 +89,22 @@ enum AgentPromptMarker {
     static func isContinue(_ prompt: Transcript.Prompt) -> Bool { prompt.metadata[continueKey] != nil }
 }
 
+/// Where a provider sent a reasoning entry's text, kept in the entry's metadata so the text goes
+/// back where it came from. DeepSeek in thinking mode turns away a tool call whose reasoning does
+/// not come back that way, unless it still holds that reasoning itself. Entries without it came as
+/// Responses summaries, or were saved before Echo kept it, and go back as they always have.
+enum AgentReasoningField: String {
+    /// Responses `content`, as `reasoning_text`.
+    case content
+    /// Chat Completions `reasoning_content`.
+    case chat = "reasoning_content"
+    static let key = "echo.reasoningField"
+    static func of(_ reasoning: Transcript.Reasoning) -> Self? {
+        (try? reasoning.metadata[key]?.value(String.self)).flatMap(Self.init(rawValue:))
+    }
+    var metadata: [String: any ConvertibleToGeneratedContent] { [Self.key: rawValue] }
+}
+
 // MARK: - Per-respond collaborators
 
 /// Transcript entry IDs whose generation completed normally. An entry written by a generation
@@ -172,10 +188,21 @@ struct EchoLanguageModel: LanguageModel {
     let transport: AgentTransport
     let ledger: GenerationLedger
     let budget: GenerationBudget
+    /// Set for a model known to see images in a tool result: the limits its requests keep to.
+    let vision: AgentVisionLimits?
 
-    var capabilities: LanguageModelCapabilities { LanguageModelCapabilities([.toolCalling, .reasoning]) }
+    /// `vision` defaults to what Echo knows of the endpoint's model.
+    init(endpoint: AgentEndpoint, transport: AgentTransport, ledger: GenerationLedger, budget: GenerationBudget,
+         vision: AgentVisionLimits? = nil) {
+        self.endpoint = endpoint; self.transport = transport; self.ledger = ledger; self.budget = budget
+        self.vision = vision ?? AgentVisionLimits.named(endpoint.model)
+    }
+
+    var capabilities: LanguageModelCapabilities {
+        LanguageModelCapabilities([.toolCalling, .reasoning] + (vision == nil ? [] : [.vision]))
+    }
     var executorConfiguration: EchoModelExecutor.Configuration {
-        .init(endpoint: endpoint, transport: ObjectIdentifierBox(transport), ledger: ledger, budget: budget)
+        .init(endpoint: endpoint, transport: ObjectIdentifierBox(transport), ledger: ledger, budget: budget, vision: vision)
     }
 }
 
@@ -194,6 +221,7 @@ struct EchoModelExecutor: LanguageModelExecutor {
         let transport: ObjectIdentifierBox<AgentTransport>
         let ledger: GenerationLedger
         let budget: GenerationBudget
+        let vision: AgentVisionLimits?
     }
     let configuration: Configuration
     init(configuration: Configuration) { self.configuration = configuration }
@@ -207,10 +235,11 @@ struct EchoModelExecutor: LanguageModelExecutor {
         if request.schema != nil { throw AgentModelError.invalidChat }
         let endpoint = configuration.endpoint
         guard let url = endpoint.url, let scheme = url.scheme, ["http", "https"].contains(scheme) else { throw AgentModelError.invalidEndpoint }
+        let images = AgentToolImages(request.transcript, limits: configuration.vision)
         let body: Data
         switch endpoint.apiProtocol {
-        case .responses: body = try ResponsesWire.body(request, model: endpoint.model)
-        case .chatCompletions: body = try ChatWire.body(request, model: endpoint.model)
+        case .responses: body = try ResponsesWire.body(request, model: endpoint.model, images: images)
+        case .chatCompletions: body = try ChatWire.body(request, model: endpoint.model, images: images)
         }
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
@@ -378,9 +407,9 @@ private func localID() -> String { "echo-" + UUID().uuidString }
 // MARK: - Responses
 
 enum ResponsesWire {
-    static func body(_ request: LanguageModelExecutorGenerationRequest, model: String) throws -> Data {
+    static func body(_ request: LanguageModelExecutorGenerationRequest, model: String, images: AgentToolImages = .none) throws -> Data {
         var input: [[String: Any]] = []
-        for entry in request.transcript {
+        for (index, entry) in request.transcript.enumerated() {
             switch entry {
             case .instructions(let instructions):
                 input.append(["role": "system", "content": segmentText(instructions.segments)])
@@ -388,19 +417,29 @@ enum ResponsesWire {
                 guard !AgentPromptMarker.isContinue(prompt) else { continue }
                 input.append(["role": "user", "content": segmentText(prompt.segments)])
             case .reasoning(let reasoning):
-                let summary = segmentText(reasoning.segments)
-                var item: [String: Any] = ["type": "reasoning",
-                                           "summary": summary.isEmpty ? [] : [["type": "summary_text", "text": summary]]]
+                let field = AgentReasoningField.of(reasoning)
+                // Reasoning a Chat Completions request recorded does not go back over Responses.
+                guard field != .chat else { continue }
+                let text = segmentText(reasoning.segments)
+                var item: [String: Any] = ["type": "reasoning"]
+                if field == .content {
+                    item["summary"] = []
+                    item["content"] = [["type": "reasoning_text", "text": text]]
+                } else {
+                    item["summary"] = text.isEmpty ? [] : [["type": "summary_text", "text": text]]
+                }
                 if !reasoning.id.hasPrefix("echo-") { item["id"] = reasoning.id }
                 if let signature = reasoning.signature { item["encrypted_content"] = String(decoding: signature, as: UTF8.self) }
-                guard !summary.isEmpty || reasoning.signature != nil else { continue }
+                guard !text.isEmpty || reasoning.signature != nil else { continue }
                 input.append(item)
             case .toolCalls(let calls):
                 for call in calls {
                     input.append(["type": "function_call", "call_id": call.id, "name": call.toolName, "arguments": AgentCallArguments.text(call)])
                 }
             case .toolOutput(let output):
-                input.append(["type": "function_call_output", "call_id": output.id, "output": segmentText(output.segments)])
+                let value = images.result(at: index, text: segmentText(output.segments), textPart: { ["type": "input_text", "text": $0] },
+                                          imagePart: { ["type": "input_image", "image_url": $0.dataURL] })
+                input.append(["type": "function_call_output", "call_id": output.id, "output": value])
             case .response(let response):
                 let text = segmentText(response.segments)
                 guard !text.isEmpty else { continue }
@@ -431,6 +470,8 @@ enum ResponsesWire {
         private var messagesStreamed: Set<String> = []
         private var reasoningStreamed: Set<String> = []
         private var reasoningPart: (item: String, index: Int)?
+        /// Reasoning items whose text came as `content`, not as a summary.
+        private var reasoningAsContent: Set<String> = []
         private var completed: [String: Any]?
         private var emitted: [String] = []
         private var text = ""
@@ -470,6 +511,9 @@ enum ResponsesWire {
                 reasoningPart = (item, index)
                 if reasoningStreamed.insert(item).inserted { emitted.append(item) }
                 await channel.send(.reasoning(entryID: item, action: .appendText(text, tokenCount: 1)))
+                if event["type"] as? String == "response.reasoning_text.delta", reasoningAsContent.insert(item).inserted {
+                    await channel.send(.reasoning(entryID: item, action: .updateMetadata(AgentReasoningField.content.metadata)))
+                }
             case "response.completed":
                 guard let response = event["response"] as? [String: Any],
                       (response["status"] as? String).map({ $0 == "completed" }) ?? true else { throw AgentModelError.invalidResponses }
@@ -498,8 +542,13 @@ enum ResponsesWire {
                     let id = item["id"] as? String ?? localID()
                     if !reasoningStreamed.contains(id) {
                         let summary = (item["summary"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n\n")
-                        guard !summary.isEmpty || item["encrypted_content"] is String else { continue }
-                        await channel.send(.reasoning(entryID: id, action: .appendText(summary, tokenCount: 1)))
+                        let content = (item["content"] as? [[String: Any]] ?? [])
+                            .compactMap { $0["type"] as? String == "reasoning_text" ? $0["text"] as? String : nil }.joined(separator: "\n\n")
+                        let asContent = summary.isEmpty && !content.isEmpty
+                        let text = asContent ? content : summary
+                        guard !text.isEmpty || item["encrypted_content"] is String else { continue }
+                        await channel.send(.reasoning(entryID: id, action: .appendText(text, tokenCount: 1)))
+                        if asContent { await channel.send(.reasoning(entryID: id, action: .updateMetadata(AgentReasoningField.content.metadata))) }
                         emitted.append(id)
                     }
                     if let encrypted = item["encrypted_content"] as? String {
@@ -540,19 +589,28 @@ enum ResponsesWire {
 // MARK: - Chat Completions
 
 enum ChatWire {
-    static func body(_ request: LanguageModelExecutorGenerationRequest, model: String) throws -> Data {
+    static func body(_ request: LanguageModelExecutorGenerationRequest, model: String, images: AgentToolImages = .none) throws -> Data {
         var messages: [[String: Any]] = []
         var pendingText: String?
+        // The reasoning_content of the generation whose assistant message comes next.
+        var pendingReasoning: String?
+        func assistant(_ content: Any) -> [String: Any] {
+            var message: [String: Any] = ["role": "assistant", "content": content]
+            if let reasoning = pendingReasoning { message["reasoning_content"] = reasoning }
+            pendingReasoning = nil
+            return message
+        }
         func flushText() {
-            if let text = pendingText { messages.append(["role": "assistant", "content": text]) }
+            if let text = pendingText { messages.append(assistant(text)) }
             pendingText = nil
         }
-        for entry in request.transcript {
+        for (index, entry) in request.transcript.enumerated() {
             switch entry {
             case .instructions(let instructions):
-                flushText(); messages.append(["role": "system", "content": segmentText(instructions.segments)])
+                flushText(); pendingReasoning = nil
+                messages.append(["role": "system", "content": segmentText(instructions.segments)])
             case .prompt(let prompt):
-                flushText()
+                flushText(); pendingReasoning = nil
                 guard !AgentPromptMarker.isContinue(prompt) else { continue }
                 messages.append(["role": "user", "content": segmentText(prompt.segments)])
             case .response(let response):
@@ -561,16 +619,22 @@ enum ChatWire {
                 if !text.isEmpty { pendingText = text }
             case .toolCalls(let calls):
                 // Text written beside the calls travels in the same assistant message, as the provider sent it.
-                var message: [String: Any] = ["role": "assistant", "content": pendingText.map { $0 as Any } ?? NSNull()]
+                var message = assistant(pendingText.map { $0 as Any } ?? NSNull())
                 pendingText = nil
                 message["tool_calls"] = calls.map {
                     ["id": $0.id, "type": "function", "function": ["name": $0.toolName, "arguments": AgentCallArguments.text($0)]] as [String: Any]
                 }
                 messages.append(message)
             case .toolOutput(let output):
-                flushText(); messages.append(["role": "tool", "tool_call_id": output.id, "content": segmentText(output.segments)])
-            case .reasoning:
-                continue   // Echo never replayed reasoning_content, and Responses reasoning is not portable.
+                flushText(); pendingReasoning = nil
+                let content = images.result(at: index, text: segmentText(output.segments), textPart: { ["type": "text", "text": $0] },
+                                            imagePart: { ["type": "image_url", "image_url": ["url": $0.dataURL]] })
+                messages.append(["role": "tool", "tool_call_id": output.id, "content": content])
+            case .reasoning(let reasoning):
+                // Only reasoning a Chat Completions request recorded goes back, with the assistant
+                // message of its generation; Responses reasoning is not portable.
+                flushText()
+                pendingReasoning = AgentReasoningField.of(reasoning) == .chat ? segmentText(reasoning.segments) : nil
             @unknown default:
                 continue
             }
@@ -593,6 +657,8 @@ enum ChatWire {
         private let responseID = localID()
         private var wroteText = false
         private var text = ""
+        private let reasoningID = localID()
+        private var wroteReasoning = false
 
         /// The text this generation ended with, when it made no tool call.
         var reply: GenerationLedger.Reply? {
@@ -613,6 +679,7 @@ enum ChatWire {
             if let error = chunk["error"], !(error is NSNull) { throw AgentModelError.chatStreamError }
             guard let choice = (chunk["choices"] as? [[String: Any]])?.first(where: { ($0["index"] as? Int ?? 0) == 0 }) else { return }
             let delta = choice["delta"] as? [String: Any] ?? [:]
+            if let piece = delta["reasoning_content"] as? String, !piece.isEmpty { await reason(piece) }
             if let piece = delta["content"] as? String, !piece.isEmpty {
                 wroteText = true; text += piece
                 await channel.send(.response(entryID: responseID, action: .appendText(piece, tokenCount: 1)))
@@ -643,6 +710,7 @@ enum ChatWire {
             guard let completion = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                   let choice = (completion["choices"] as? [[String: Any]])?.first,
                   let message = choice["message"] as? [String: Any] else { throw AgentModelError.invalidChat }
+            if let reasoning = message["reasoning_content"] as? String, !reasoning.isEmpty { await reason(reasoning) }
             if let content = message["content"] as? String, !content.isEmpty {
                 wroteText = true; text = content
                 await channel.send(.response(entryID: responseID, action: .appendText(content, tokenCount: 1)))
@@ -655,8 +723,17 @@ enum ChatWire {
             return try await finish()
         }
 
+        /// Reasoning streams as it arrives, marked as `reasoning_content` so it goes back as that.
+        private mutating func reason(_ piece: String) async {
+            await channel.send(.reasoning(entryID: reasoningID, action: .appendText(piece, tokenCount: 1)))
+            if !wroteReasoning {
+                wroteReasoning = true
+                await channel.send(.reasoning(entryID: reasoningID, action: .updateMetadata(AgentReasoningField.chat.metadata)))
+            }
+        }
+
         private func sendCalls() async throws -> [String] {
-            var emitted = wroteText ? [responseID] : []
+            var emitted = (wroteReasoning ? [reasoningID] : []) + (wroteText ? [responseID] : [])
             guard !calls.isEmpty else { return emitted }
             let entryID = localID()
             for call in calls {

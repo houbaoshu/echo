@@ -71,12 +71,12 @@
         }
       }
     },
-    "%@ 不是文本文件，没有添加。" : {
+    "%@ 不是文本、PDF 或图片文件，没有添加。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ aren’t text files, so they weren’t added."
+            "value" : "%@ aren’t text files, PDFs or images, so they weren’t added."
           }
         }
       }
@@ -539,12 +539,12 @@
         }
       }
     },
-    "“%@”不是文本文件，没有添加。" : {
+    "“%@”不是文本、PDF 或图片文件，没有添加。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "“%@” isn’t a text file, so it wasn’t added."
+            "value" : "“%@” isn’t a text file, PDF or image, so it wasn’t added."
           }
         }
       }
@@ -1289,6 +1289,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Jump to Latest"
+          }
+        }
+      }
+    },
+    "图片 · %@×%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "image · %1$@×%2$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图片 · %1$@×%2$@"
           }
         }
       }
@@ -4277,6 +4293,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Symbolic links aren’t followed. Open it in Finder instead."
+          }
+        }
+      }
+    },
+    "第 %@ 页，共 %lld 页" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "pages %1$@ of %2$lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 %1$@ 页，共 %2$lld 页"
           }
         }
       }

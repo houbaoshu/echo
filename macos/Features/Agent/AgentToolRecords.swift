@@ -23,6 +23,7 @@ extension AgentToolRecord {
         case "bash": return object?["command"] as? String ?? text
         case "list_files", "read_file", "write_file", "edit_file":
             let path = object?["path"] as? String ?? text
+            if let pages = (object?["pages"] as? String)?.trimmingCharacters(in: .whitespaces), !pages.isEmpty { return "\(path) · \(pages)" }
             if let line = object?["start_line"] as? Int, line > 1 { return "\(path):\(line)" }
             return path
         case "finder_location": return ""
