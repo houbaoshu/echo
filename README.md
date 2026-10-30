@@ -171,7 +171,7 @@ TestPlans/        三个测试计划
 
 **环境要求**
 - Apple 芯片的 Mac，macOS 27 或更新
-- Xcode 27.1 或更新
+- Xcode 27.2 或更新
 - Rust 工具链（通过 rustup 安装，需要 `aarch64-apple-darwin` 目标）
 - 一个 Apple Development 签名证书
 

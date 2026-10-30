@@ -171,7 +171,7 @@ Models known to see images (currently `doubao-seed-2.0-mini` and `deepseek-flash
 
 **Requirements**
 - A Mac with Apple silicon, running macOS 27 or later
-- Xcode 27.1 or later
+- Xcode 27.2 or later
 - A Rust toolchain (installed with rustup, with the `aarch64-apple-darwin` target)
 - An Apple Development signing certificate
 

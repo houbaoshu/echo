@@ -202,6 +202,7 @@ import UniformTypeIdentifiers
 
     /// From macOS 27.2 Foundation Models throws for a generation that writes nothing, or only
     /// reasoning, and takes the prompt back; the harness still answers it with hidden feedback.
+    /// Before 27.2 a reasoning-only generation returns and its reasoning stays, so it is ignored.
     @Test func invalidOutputGetsHiddenFeedbackAndTheThirdInARowFails() async throws {
         for mode in ["empty", "reasoning-only", "unknown-tool", "bad-json"] {
             let chat = Chat { _, emit, _ in
@@ -228,16 +229,17 @@ import UniformTypeIdentifiers
                 #expect(chat.store.tools.isEmpty && last.feedback.count == 2 && last.feedback.allSatisfy { $0.contains("not_executed") })
             default:
                 #expect(chat.store.tools.isEmpty && last.feedback.count == 2 && last.feedback.allSatisfy { $0.contains("not_executed") })
-                #expect(last.kinds == ["instructions", "prompt", "feedback", "feedback"],
+                #expect(Self.withoutReasoning(last.kinds) == ["instructions", "prompt", "feedback", "feedback"],
                         "\(mode): the third request has the prompt and both feedback messages: \(last.kinds)")
-                #expect(chat.native.entries.map(Self.kind) == ["prompt", "prompt", "prompt"],
+                #expect(Self.withoutReasoning(chat.native.entries.map(Self.kind)) == ["prompt", "prompt", "prompt"],
                         "\(mode): the history keeps the prompt and both feedback messages")
             }
         }
     }
 
     /// The whole `respond` is taken back when its last generation is empty, tool calls that
-    /// already ran included: the call and its result come back, and run only once.
+    /// already ran included: the call and its result come back, and run only once. Reasoning may
+    /// stay or go (see above).
     @Test func anEmptyGenerationAfterAToolCallKeepsTheCallAndItsResult() async throws {
         let root = try Self.project()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -252,10 +254,11 @@ import UniformTypeIdentifiers
             try await chat.run("read it")
             #expect(chat.store.task?.status == .completed && chat.store.responseMessage?.content == "读完了。", "\(mode)")
             let kinds = chat.model.requests.map(\.kinds)
-            #expect(kinds.count == 3 && kinds[2] == ["instructions", "prompt", "toolCalls", "toolOutput", "feedback"],
+            #expect(kinds.count == 3 && Self.withoutReasoning(kinds[2]) == ["instructions", "prompt", "toolCalls", "toolOutput", "feedback"],
                     "\(mode): the feedback request has the call and its result: \(kinds)")
             #expect(chat.store.tools.count == 1 && chat.store.tools.first?.state == .finished, "\(mode): the call ran once")
-            #expect(chat.native.entries.map(Self.kind) == ["prompt", "toolCalls", "toolOutput", "prompt", "response"], "\(mode)")
+            #expect(Self.withoutReasoning(chat.native.entries.map(Self.kind)) == ["prompt", "toolCalls", "toolOutput", "prompt", "response"],
+                    "\(mode): \(chat.native.entries.map(Self.kind))")
         }
     }
 
@@ -702,6 +705,9 @@ import UniformTypeIdentifiers
         @unknown default: "unknown"
         }
     }
+
+    /// Entry kinds with reasoning left out, for histories whose reasoning depends on the OS.
+    nonisolated static func withoutReasoning(_ kinds: [String]) -> [String] { kinds.filter { $0 != "reasoning" } }
 }
 
 /// `list_files` and `read_file`: mini-agent-rs semantics, confined to the project.
