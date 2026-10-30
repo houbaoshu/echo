@@ -1432,7 +1432,8 @@ final class ResumeOnce<T: Sendable>: Sendable {
         case .reasoning: 3
         case .toolCalls: 4
         case .toolOutput: 5
-        @unknown default: 6
+        case .data: 6
+        @unknown default: 7
         }
     }
 

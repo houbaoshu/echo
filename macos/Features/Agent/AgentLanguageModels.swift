@@ -444,6 +444,8 @@ enum ResponsesWire {
                 let text = segmentText(response.segments)
                 guard !text.isEmpty else { continue }
                 input.append(["role": "assistant", "content": text])
+            case .data:
+                continue
             @unknown default:
                 continue
             }
@@ -635,6 +637,8 @@ enum ChatWire {
                 // message of its generation; Responses reasoning is not portable.
                 flushText()
                 pendingReasoning = AgentReasoningField.of(reasoning) == .chat ? segmentText(reasoning.segments) : nil
+            case .data:
+                continue
             @unknown default:
                 continue
             }

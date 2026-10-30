@@ -178,6 +178,7 @@ struct AgentToolImages: Sendable {
             case .reasoning(let value): total + bytes(value.segments)
             case .toolOutput(let value): total + bytes(value.segments)
             case .toolCalls(let calls): total + calls.reduce(0) { $0 + AgentCallArguments.text($1).utf8.count }
+            case .data: total
             @unknown default: total
             }
         }

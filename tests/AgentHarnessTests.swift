@@ -588,6 +588,7 @@ import UniformTypeIdentifiers
         case .reasoning: "reasoning"
         case .toolCalls: "toolCalls"
         case .toolOutput: "toolOutput"
+        case .data: "data"
         @unknown default: "unknown"
         }
     }
