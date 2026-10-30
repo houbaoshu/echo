@@ -753,6 +753,28 @@ func keyDown(_ code: UInt16, _ characters: String, flags: NSEvent.ModifierFlags 
         store.stopTask()
     }
 
+    /// A turn the model leaves empty, or answers with malformed tool calls, three times ends with
+    /// Echo's own message, which Echo ships in both of its languages; the system's English wording
+    /// never reaches the person. These tests run without the app's catalog, so the strings are read
+    /// from the built Echo.app beside them.
+    func testTurnLimitMessagesShipInBothLanguages() throws {
+        let products = Bundle(for: ConversationViewTests.self).bundleURL.deletingLastPathComponent()
+        let app = try XCTUnwrap(Bundle(url: products.appendingPathComponent("Echo.app")), "Echo.app beside the tests")
+        // Chinese is the source language: without an entry of its own the key is the text.
+        func message(_ key: String, _ language: String, fallback: String) throws -> String {
+            let bundle = try XCTUnwrap(app.path(forResource: language, ofType: "lproj").flatMap(Bundle.init(path:)), language)
+            return bundle.localizedString(forKey: key, value: fallback, table: nil)
+        }
+        for (key, english, shown) in [
+            ("模型连续没有给出回复，已停止。", "Stopped because the model kept returning empty replies.", AgentHarness.emptyReplyMessage),
+            ("模型连续返回无效工具格式，已停止。", "Stopped because the model kept returning malformed tool calls.", AgentHarness.formatErrorMessage),
+        ] {
+            XCTAssertEqual(try message(key, "zh-Hans", fallback: key), key)
+            XCTAssertEqual(try message(key, "en", fallback: "missing"), english)
+            XCTAssertTrue([key, english].contains(shown), "The app shows one of the two: \(shown)")
+        }
+    }
+
     func testCodeCopyAndSyntaxPreview() async throws {
         let pasteboard = NSPasteboard.general
         let savedItems = (pasteboard.pasteboardItems ?? []).map { item in

@@ -1,5 +1,6 @@
 import Foundation
 import FoundationModels
+import OSLog
 import Synchronization
 
 // The native Agent engine. Foundation Models runs the model and the tool loop inside each
@@ -79,7 +80,10 @@ final class ResumeOnce<T: Sendable>: Sendable {
     static let formatErrorLimit = 3
     static var stepLimitMessage: String { String(localized: "已达到本轮 \(generationLimit) 次模型请求限制。") }
     static var formatErrorMessage: String { String(localized: "模型连续返回无效工具格式，已停止。") }
+    /// Shown when the output that reaches `formatErrorLimit` is an empty reply.
+    static var emptyReplyMessage: String { String(localized: "模型连续没有给出回复，已停止。") }
     static var offlineAfterOutputMessage: String { String(localized: "网络已断开，本轮已有输出或执行过工具，未自动改用本地模型。联网后点“继续处理”。") }
+    private static let logger = Logger(subsystem: "io.github.houbaoshu.echo", category: "agent")
 
     weak var host: (any AgentHarnessHost)?
     private(set) var state = NativeAgentState()
@@ -462,7 +466,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
                     session = nil; inputError = error
                 }
             }
-            let result: Result<Void, any Error>
+            var result: Result<Void, any Error>
             var entries = history
             if let session {
                 result = await Self.consume(session, prompt: Prompt(promptText), metadata: metadata) { [weak self] entries in
@@ -475,6 +479,15 @@ final class ResumeOnce<T: Sendable>: Sendable {
                 entries = history + written.dropFirst(modelHistory.count)
             } else {
                 result = .failure(inputError!)
+            }
+            if !stopRequested, case .failure(let error) = result, Self.isEmptyGeneration(error, ledger: ledger) {
+                // Foundation Models (macOS 27.2) throws where it used to return, and takes back the
+                // whole `respond`: the prompt and any tool calls that already ran. What was saved
+                // comes back, so the next request sees the same context, and the turn goes on as
+                // for a generation that wrote nothing.
+                Self.logger.notice("Empty generation recovered as no reply (\(route.isLocal ? "local" : "cloud", privacy: .public))")
+                entries = closingInterruptedCalls(history + [runningPrompt].compactMap(\.self) + checkpointed)
+                result = .success(())
             }
             // A Stop before Foundation Models recorded the prompt still leaves the input in the history.
             if let userPrompt, !entries[history.count...].contains(where: { Self.messageID(of: $0) == userPrompt.metadata[AgentPromptKey.message].flatMap(Self.string) }) {
@@ -499,7 +512,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
                     if route.isLocal { return finishLocalWithoutReply(entries, base: history.count) }
                     // Neither a reply nor a tool call.
                     formatErrors += 1
-                    guard formatErrors < Self.formatErrorLimit else { return finish(.failed(Self.formatErrorMessage, notice: false), outcome: .formatErrorLimit) }
+                    guard formatErrors < Self.formatErrorLimit else { return finish(.failed(Self.emptyReplyMessage, notice: false), outcome: .formatErrorLimit) }
                     next = .feedback(AgentToolResult.status("not_executed",
                         "expected a reply or a tool call, received neither. Reply directly or call one of the available tools with valid arguments."))
                     continue
@@ -1494,6 +1507,16 @@ final class ResumeOnce<T: Sendable>: Sendable {
             default: return true
             }
         }.map(\.element)
+    }
+
+    /// Whether `error` is how Foundation Models reports a generation that wrote neither a reply
+    /// nor a tool call: it found nothing, or only reasoning, and the ledger shows the last
+    /// generation ran to its end without either (or, for a model that does not say what it wrote,
+    /// ran to its end). Any other unsupported content is a real error.
+    nonisolated static func isEmptyGeneration(_ error: any Error, ledger: GenerationLedger) -> Bool {
+        guard case .unsupportedTranscriptContent(let content)? = unwrap(error) as? LanguageModelError,
+              content.unsupportedContent.allSatisfy({ if case .reasoning = $0 { true } else { false } }) else { return false }
+        return ledger.lastEnding == .unanswered || ledger.lastEnding == .unreported
     }
 
     private nonisolated static func unwrap(_ error: any Error) -> any Error {

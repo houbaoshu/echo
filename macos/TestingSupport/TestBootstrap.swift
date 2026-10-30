@@ -119,7 +119,7 @@ import FoundationModels
                 await channel.send(.response(entryID: entryID, action: .appendText(chunk, tokenCount: 1)))
                 try await Task.sleep(for: gap)
             }
-            configuration.ledger.markComplete([entryID], reply: .init(id: entryID, text: "Offline reply: \(text)"))
+            configuration.ledger.markComplete([entryID], reply: .init(id: entryID, text: "Offline reply: \(text)"), answered: true)
         }
     }
 

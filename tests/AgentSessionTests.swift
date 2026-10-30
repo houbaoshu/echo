@@ -341,20 +341,27 @@ extension EchoIntegrationScenarios {
     }
 
     /// Invalid model output over both wire protocols fails the turn on the third in a row with the
-    /// format-error message. An empty reply gets feedback that reaches the model but never shows as
-    /// a user message; each call to an unknown tool is recorded as not run and executes nothing.
+    /// empty-reply or format-error message. An empty reply, or one with only reasoning, gets feedback
+    /// that reaches the model but never shows as a user message; each call to an unknown tool is
+    /// recorded as not run and executes nothing.
     @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
     static func nativeInvalidModelOutputGetsHiddenFeedback(api: ModelAPIProtocol) async throws {
       try await withSession { f in
         f.protocolName = api
-        let empty = f.workspace.newConversation()
-        #expect(empty.store.send("empty-reply please"))
-        try await eventually("empty replies", timeout: .seconds(8)) { !empty.store.isGenerating }
-        #expect(empty.store.task?.status == .failed && empty.store.task?.summary == "模型连续返回无效工具格式，已停止。")
-        #expect(empty.store.messages.filter { $0.role == .user }.map(\.content) == ["empty-reply please"])
-        #expect(f.server.requests.last.map { String(decoding: $0, as: UTF8.self).contains("not_executed") } == true,
-                "The feedback reaches the model")
-        #expect(empty.store.canRetry)
+        for trigger in ["empty-reply", "reasoning-only"] {
+            let sent = f.server.requests.count
+            let empty = f.workspace.newConversation()
+            #expect(empty.store.send("\(trigger) please"))
+            try await eventually("\(trigger) replies", timeout: .seconds(8)) { !empty.store.isGenerating }
+            #expect(empty.store.task?.status == .failed && empty.store.task?.summary == "模型连续没有给出回复，已停止。",
+                    "\(trigger): \(empty.store.task?.summary ?? "")")
+            #expect(empty.store.messages.filter { $0.role == .user }.map(\.content) == ["\(trigger) please"])
+            #expect(f.server.requests.count - sent == 3, "\(trigger): every empty output reaches the model again")
+            let last = f.server.requests.last.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            #expect(last.contains("\(trigger) please") && last.components(separatedBy: "received neither").count - 1 == 2,
+                    "\(trigger): the third request still holds the prompt and both feedback messages")
+            #expect(empty.store.canRetry)
+        }
 
         let project = f.root.appendingPathComponent("invalid-tool-project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)

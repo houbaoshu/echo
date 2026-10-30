@@ -30,7 +30,7 @@ final class ScriptedAgentModel: Sendable, Hashable {
         let index = recorded.withLock { $0.append(request); return $0.count - 1 }
         let emitter = ScriptedEmitter(channel: channel)
         try await step(request, emitter, index)
-        ledger.markComplete(emitter.entryIDs, reply: emitter.reply)
+        ledger.markComplete(emitter.entryIDs, reply: emitter.reply, answered: emitter.answered)
         finished.withLock { $0 += 1 }
     }
 
@@ -51,7 +51,15 @@ final class ScriptedEmitter: Sendable {
             return GenerationLedger.Reply(id: id, text: state.text)
         }
     }
+    /// Whether the step wrote a reply or tool calls at all.
+    var answered: Bool { texts.withLock { $0.calls || $0.id != nil } }
     private func note(_ id: String) { ids.withLock { if !$0.contains(id) { $0.append(id) } } }
+
+    /// Streams reasoning as one entry, as the adapters do for a thinking model.
+    func reasoning(_ text: String, entryID: String = "reasoning-" + UUID().uuidString) async {
+        note(entryID)
+        await channel.send(.reasoning(entryID: entryID, action: .appendText(text, tokenCount: 1)))
+    }
 
     /// Streams text as one response entry; waits `gap` between chunks (cancellable).
     func text(_ chunks: [String], gap: Duration = .zero, entryID: String = "reply-" + UUID().uuidString) async throws {

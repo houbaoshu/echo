@@ -200,17 +200,21 @@ import UniformTypeIdentifiers
 
     // MARK: Failures
 
+    /// From macOS 27.2 Foundation Models throws for a generation that writes nothing, or only
+    /// reasoning, and takes the prompt back; the harness still answers it with hidden feedback.
     @Test func invalidOutputGetsHiddenFeedbackAndTheThirdInARowFails() async throws {
-        for mode in ["empty", "unknown-tool", "bad-json"] {
+        for mode in ["empty", "reasoning-only", "unknown-tool", "bad-json"] {
             let chat = Chat { _, emit, _ in
                 switch mode {
                 case "empty": break
+                case "reasoning-only": await emit.reasoning("先想一想。")
                 case "unknown-tool": await emit.call("python", #"{"command":"printf invalid"}"#)
                 default: await emit.call("read_file", "not json")
                 }
             }
             try await chat.run("\(mode) please")
-            #expect(chat.store.task?.status == .failed && chat.store.task?.summary == "模型连续返回无效工具格式，已停止。",
+            let message = ["empty", "reasoning-only"].contains(mode) ? "模型连续没有给出回复，已停止。" : "模型连续返回无效工具格式，已停止。"
+            #expect(chat.store.task?.status == .failed && chat.store.task?.summary == message,
                     "\(mode): \(chat.store.task?.summary ?? "")")
             #expect(chat.model.requests.count == 3, "\(mode): \(chat.model.requests.map(\.kinds))")
             #expect(chat.userTexts == ["\(mode) please"], "Feedback never shows as a user message: \(mode)")
@@ -220,10 +224,58 @@ import UniformTypeIdentifiers
             case "unknown-tool":
                 #expect(chat.store.tools.count == 3 && chat.store.tools.allSatisfy { $0.state == .notExecuted && $0.tool == "python" })
                 #expect(last.toolOutputs.count == 2 && last.toolOutputs.allSatisfy { $0.contains("unknown tool python") })
+            case "bad-json":
+                #expect(chat.store.tools.isEmpty && last.feedback.count == 2 && last.feedback.allSatisfy { $0.contains("not_executed") })
             default:
                 #expect(chat.store.tools.isEmpty && last.feedback.count == 2 && last.feedback.allSatisfy { $0.contains("not_executed") })
+                #expect(last.kinds == ["instructions", "prompt", "feedback", "feedback"],
+                        "\(mode): the third request has the prompt and both feedback messages: \(last.kinds)")
+                #expect(chat.native.entries.map(Self.kind) == ["prompt", "prompt", "prompt"],
+                        "\(mode): the history keeps the prompt and both feedback messages")
             }
         }
+    }
+
+    /// The whole `respond` is taken back when its last generation is empty, tool calls that
+    /// already ran included: the call and its result come back, and run only once.
+    @Test func anEmptyGenerationAfterAToolCallKeepsTheCallAndItsResult() async throws {
+        let root = try Self.project()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for mode in ["empty", "reasoning-only"] {
+            let chat = Chat({ _, emit, index in
+                switch index {
+                case 0: await emit.call("read_file", #"{"path":"./src/main.txt"}"#)
+                case 1: if mode == "reasoning-only" { await emit.reasoning("先想一想。") }
+                default: try await emit.text("读完了。")
+                }
+            }, project: root)
+            try await chat.run("read it")
+            #expect(chat.store.task?.status == .completed && chat.store.responseMessage?.content == "读完了。", "\(mode)")
+            let kinds = chat.model.requests.map(\.kinds)
+            #expect(kinds.count == 3 && kinds[2] == ["instructions", "prompt", "toolCalls", "toolOutput", "feedback"],
+                    "\(mode): the feedback request has the call and its result: \(kinds)")
+            #expect(chat.store.tools.count == 1 && chat.store.tools.first?.state == .finished, "\(mode): the call ran once")
+            #expect(chat.native.entries.map(Self.kind) == ["prompt", "toolCalls", "toolOutput", "prompt", "response"], "\(mode)")
+        }
+    }
+
+    /// Unsupported content the model did not produce is a real error, shown as it is.
+    @Test func otherUnsupportedContentIsReportedAsItIs() async throws {
+        let error = LanguageModelError.unsupportedTranscriptContent(.init(unsupportedContent: [], debugDescription: "test"))
+        let chat = Chat { _, _, _ in throw error }
+        try await chat.run("hello")
+        #expect(chat.model.requests.count == 1, "No feedback follows an error the model did not cause")
+        #expect(chat.store.task?.status == .failed && chat.store.task?.summary == error.errorDescription)
+    }
+
+    /// Three empty outputs in a row end the turn with Echo's own message, never the system's.
+    @Test func threeEmptyOutputsShowEchosOwnMessage() async throws {
+        let chat = Chat { _, _, _ in }
+        try await chat.run("hello")
+        let system = LanguageModelError.unsupportedTranscriptContent(.init(unsupportedContent: [], debugDescription: "")).errorDescription
+        #expect(chat.store.task?.summary == AgentHarness.emptyReplyMessage && chat.store.task?.summary != system)
+        #expect(AgentHarness.emptyReplyMessage != AgentHarness.formatErrorMessage, "Empty replies have their own message")
+        #expect(chat.store.canRetry)
     }
 
     @Test func modelErrorsAndTheRequestLimit() async throws {

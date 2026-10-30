@@ -182,6 +182,9 @@ final class LoopbackModelServer: @unchecked Sendable {
         if text.contains("skip") { call = nil }
         // Invalid model output, every time: no text and no call, or a call to a tool that does not exist.
         if conversation.contains("empty-reply") { call = nil; reply = "" }
+        // Reasoning and nothing else, as a thinking model can end.
+        let reasoningOnly = conversation.contains("reasoning-only")
+        if reasoningOnly { call = nil; reply = "" }
         if conversation.contains("invalid-tool") { call = ("python", ["command": "printf invalid"]) }
         var toolName = call?.name ?? ""
         var arguments = try call.map { try json($0.arguments) }
@@ -192,12 +195,16 @@ final class LoopbackModelServer: @unchecked Sendable {
         if responses {
             var output: [[String: Any]] = arguments.map { [["type": "function_call", "call_id": "call-1", "name": toolName, "arguments": $0]] }
                 ?? [["type": "message", "id": "msg-test", "role": "assistant", "content": [["type": "output_text", "text": reply]]]]
+            if reasoningOnly {
+                output = [["type": "reasoning", "id": "rs-only", "summary": [["type": "summary_text", "text": "先想一想。"]]]]
+            }
             if text.contains("acceptance-reads"), call != nil {
                 output.insert(["type": "reasoning", "id": "rs-acceptance-\(results.count)", "summary": [], "encrypted_content": "acceptance-opaque-reasoning"], at: 0)
             }
             value = ["id": "resp-test", "status": "completed", "output": output]
         } else {
             var message: [String: Any] = ["role": "assistant", "content": calling ? "我先检查文件。" : reply]
+            if reasoningOnly { message["reasoning_content"] = "先想一想。" }
             if let arguments { message["tool_calls"] = [["id": "call-1", "type": "function", "function": ["name": toolName, "arguments": arguments]]] }
             value = ["choices": [["message": message, "finish_reason": calling ? "tool_calls" : "stop"]]]
         }
@@ -226,6 +233,9 @@ final class LoopbackModelServer: @unchecked Sendable {
             }
             _ = emit(["type": "response.completed", "response": value])
         } else {
+            if reasoningOnly {
+                guard emit(["choices": [["index": 0, "delta": ["reasoning_content": "先想一想。"], "finish_reason": NSNull()]]]) else { return }
+            }
             for piece in pieces(calling ? "我先检查文件。" : reply) {
                 guard emit(["choices": [["index": 0, "delta": ["content": piece], "finish_reason": NSNull()]]]) else { return }
             }

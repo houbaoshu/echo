@@ -117,23 +117,39 @@ final class GenerationLedger: Sendable, Hashable {
         let id: String
         let text: String
     }
+    /// How a generation that ran to its end ended.
+    enum Ending: Sendable, Equatable {
+        /// It wrote a reply or tool calls.
+        case answered
+        /// It wrote neither: nothing, or only reasoning.
+        case unanswered
+        /// Its model does not say what it wrote (`markAllComplete`).
+        case unreported
+    }
     private struct State {
         var completed: Set<String> = []
         var allComplete = false
         var finalReply: Reply?
+        var lastEnding: Ending?
     }
     private let state = Mutex(State())
     init() {}
-    /// `reply` is the text of a generation that made no tool call; nil otherwise.
-    func markComplete(_ ids: some Sequence<String>, reply: Reply? = nil) {
-        state.withLock { $0.completed.formUnion(ids); $0.finalReply = reply }
+    /// `reply` is the text of a generation that made no tool call; nil otherwise. `answered` is
+    /// whether the generation wrote a reply or tool calls at all.
+    func markComplete(_ ids: some Sequence<String>, reply: Reply? = nil, answered: Bool) {
+        state.withLock {
+            $0.completed.formUnion(ids); $0.finalReply = reply
+            $0.lastEnding = answered ? .answered : .unanswered
+        }
     }
     /// For a model that makes one generation per `respond` and cannot name its entries: every
     /// entry the `respond` wrote is complete.
-    func markAllComplete() { state.withLock { $0.allComplete = true } }
+    func markAllComplete() { state.withLock { $0.allComplete = true; $0.lastEnding = .unreported } }
     func isComplete(_ id: String) -> Bool { state.withLock { $0.allComplete || $0.completed.contains(id) } }
     /// The reply of the last completed generation, when it ended the tool loop.
     var finalReply: Reply? { state.withLock { $0.finalReply } }
+    /// How the last generation that ran to its end ended; nil while none has.
+    var lastEnding: Ending? { state.withLock { $0.lastEnding } }
     static func == (lhs: GenerationLedger, rhs: GenerationLedger) -> Bool { lhs === rhs }
     func hash(into hasher: inout Hasher) { hasher.combine(ObjectIdentifier(self)) }
 }
@@ -267,7 +283,7 @@ struct EchoModelExecutor: LanguageModelExecutor {
             throw AgentModelError.httpStatus(status)
         }
         let streaming = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")?.contains("event-stream") ?? false
-        let emitted: [String], reply: GenerationLedger.Reply?
+        let emitted: [String], reply: GenerationLedger.Reply?, answered: Bool
         switch endpoint.apiProtocol {
         case .responses:
             var mapper = ResponsesWire.StreamMapper(channel: channel)
@@ -276,7 +292,7 @@ struct EchoModelExecutor: LanguageModelExecutor {
             } else {
                 try await mapper.accept(completedJSON: lines.collect(limit: SSELines.limit))
             }
-            emitted = try mapper.finish(); reply = mapper.reply
+            emitted = try mapper.finish(); reply = mapper.reply; answered = mapper.answered
         case .chatCompletions:
             var mapper = ChatWire.StreamMapper(channel: channel)
             if streaming {
@@ -285,9 +301,9 @@ struct EchoModelExecutor: LanguageModelExecutor {
             } else {
                 emitted = try await mapper.acceptCompletion(lines.collect(limit: SSELines.limit))
             }
-            reply = mapper.reply
+            reply = mapper.reply; answered = mapper.answered
         }
-        configuration.ledger.markComplete(emitted, reply: reply)
+        configuration.ledger.markComplete(emitted, reply: reply, answered: answered)
     }
 }
 
@@ -486,6 +502,8 @@ enum ResponsesWire {
             guard calls == 0, let responseID, !text.isEmpty else { return nil }
             return .init(id: responseID, text: text)
         }
+        /// Whether this generation wrote a reply or tool calls at all.
+        var answered: Bool { calls > 0 || responseID != nil }
 
         mutating func accept(_ payload: String) async throws {
             if payload == "[DONE]" { return }
@@ -669,6 +687,8 @@ enum ChatWire {
             guard calls.isEmpty, wroteText else { return nil }
             return .init(id: responseID, text: text)
         }
+        /// Whether this generation wrote a reply or tool calls at all.
+        var answered: Bool { !calls.isEmpty || wroteText }
         private var calls: [(id: String, name: String, arguments: String)] = []
         private var finishReason: String?
         private var done = false

@@ -3456,6 +3456,16 @@
         }
       }
     },
+    "模型连续没有给出回复，已停止。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stopped because the model kept returning empty replies."
+          }
+        }
+      }
+    },
     "模型连续返回无效工具格式，已停止。" : {
       "localizations" : {
         "en" : {

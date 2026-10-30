@@ -229,12 +229,22 @@ import Testing
         chat.store.shutdown()
     }
 
-    @Test func anEmptyLocalReplyFailsWithoutRetryingTheModel() async throws {
-        let chat = LocalChat { _, channel, _ in try await FakeBackend.stream([" "], into: channel) }
+    /// Whitespace, nothing at all, or only reasoning. From macOS 27.2 Foundation Models throws for
+    /// the last two and takes the prompt back; the turn ends the same way for all three.
+    @Test(arguments: ["whitespace", "nothing", "reasoning-only"])
+    func anEmptyLocalReplyFailsWithoutRetryingTheModel(output: String) async throws {
+        let chat = LocalChat { _, channel, _ in
+            switch output {
+            case "whitespace": try await FakeBackend.stream([" "], into: channel)
+            case "reasoning-only": await channel.send(.reasoning(action: .appendText("先想一想。", tokenCount: 1)))
+            default: break
+            }
+        }
         try await chat.run("你好")
         #expect(chat.backend.requests.count == 1)
         #expect(chat.store.task?.summary == LocalChatError.noReply.localizedDescription)
         #expect(chat.native.entries.map(AgentHarnessTests.kind) == ["prompt"])
+        #expect(chat.store.messages.filter { $0.role == .user }.map(\.content) == ["你好"], "The person's message stays")
         chat.store.shutdown()
     }
 
