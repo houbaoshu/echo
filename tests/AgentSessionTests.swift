@@ -278,18 +278,16 @@ extension EchoIntegrationScenarios {
     @Test static func nativeMissingSidecarBlocksSend() async throws {
       try await withSession { f in try await ChatScenarios.missingSidecarBlocksSend(f) }
     }
-    /// The adapters keep the wording Echo showed with the Rust engine.
+    /// Echo's own wording, never the provider's; the log keeps the wording Echo showed with the
+    /// Rust engine (`AgentModelError.diagnostic`).
     @Test(arguments: [ModelAPIProtocol.chatCompletions, .responses])
     static func nativeModelErrorsAreSanitized(api: ModelAPIProtocol) async throws {
       try await withSession { f in
         f.protocolName = api
         let summaries = try await ChatScenarios.modelErrorsAreSanitized(f)
-        #expect(summaries["http-500"] == "model API returned HTTP 500 Internal Server Error")
-        #expect(summaries["context-length"]
-                == "model protocol error: context length exceeded; history is retained, inspect it or start a new conversation")
-        #expect(summaries["stream-error"] == (api == .responses
-                ? "model protocol error: invalid or incomplete Responses response"
-                : "model protocol error: model stream reported an error"))
+        #expect(summaries["http-500"] == "模型服务暂时不可用，请稍后再试。")
+        #expect(summaries["context-length"] == "这个聊天超出了模型能处理的长度，记录已保留。请开始新的聊天。")
+        #expect(summaries["stream-error"] == (api == .responses ? "模型服务的返回无法识别，请重试。" : "模型服务在回复途中出错，请重试。"))
       }
     }
     /// Read-only project tools over both wire protocols, streamed and not: the call, its record,

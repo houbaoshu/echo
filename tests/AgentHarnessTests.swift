@@ -259,13 +259,71 @@ import UniformTypeIdentifiers
         }
     }
 
-    /// Unsupported content the model did not produce is a real error, shown as it is.
-    @Test func otherUnsupportedContentIsReportedAsItIs() async throws {
+    /// Unsupported content the model did not produce is a real error: no feedback follows, and
+    /// the turn fails with Echo's general message, not the system's.
+    @Test func otherUnsupportedContentIsNotRecovered() async throws {
         let error = LanguageModelError.unsupportedTranscriptContent(.init(unsupportedContent: [], debugDescription: "test"))
         let chat = Chat { _, _, _ in throw error }
         try await chat.run("hello")
         #expect(chat.model.requests.count == 1, "No feedback follows an error the model did not cause")
-        #expect(chat.store.task?.status == .failed && chat.store.task?.summary == error.errorDescription)
+        #expect(chat.store.task?.status == .failed && chat.store.task?.summary == "出了点问题，这次没有完成。请重试。")
+    }
+
+    /// A failed turn shows Echo's own words: the common Foundation Models errors each have one,
+    /// Echo's own errors keep theirs, and anything else gets the general message.
+    @Test func failedTurnsShowEchosOwnMessages() {
+        let cases: [(any Error, String)] = [
+            (LanguageModelError.guardrailViolation(.init(debugDescription: "x")), "内容触发了模型的安全限制，这次没有回复。"),
+            (LanguageModelError.refusal(.init(explanation: "no", debugDescription: "x")), "模型拒绝回答这个请求。"),
+            (LanguageModelError.contextSizeExceeded(.init(contextSize: 8, tokenCount: 9, debugDescription: "x")),
+             "这个聊天超出了模型能处理的长度，记录已保留。请开始新的聊天。"),
+            (LanguageModelError.rateLimited(.init(resetDate: nil, debugDescription: "x")), "请求太频繁，请稍后再试。"),
+            (LanguageModelError.timeout(.init(debugDescription: "x")), "模型服务响应超时，请重试。"),
+            (LanguageModelError.unsupportedTranscriptContent(.init(unsupportedContent: [], debugDescription: "x")), "出了点问题，这次没有完成。请重试。"),
+            (URLError(.badServerResponse), "出了点问题，这次没有完成。请重试。"),
+            (CocoaError(.fileReadUnknown), "出了点问题，这次没有完成。请重试。"),
+            (AgentModelError.httpStatus(401), "模型服务不接受这个 API Key，请在设置的模型页检查。"),
+            (SettingsError("设置里的错误"), "设置里的错误"),
+            (LocalChatError.noReply, LocalChatError.noReply.localizedDescription),
+            (CancellationError(), "Agent 请求已取消。"),
+            (LanguageModelSession.ToolCallError(tool: StandInTool(), underlyingError: LanguageModelError.timeout(.init(debugDescription: "x"))),
+             "模型服务响应超时，请重试。"),
+        ]
+        for (error, expected) in cases {
+            #expect(AgentHarness.message(for: error) == expected, "\(error)")
+        }
+    }
+
+    /// Provider failures in words a person can act on; the status and protocol detail stay for the log.
+    @Test func modelErrorsSayWhatToDo() {
+        let statuses: [(Int, String)] = [
+            (401, "模型服务不接受这个 API Key，请在设置的模型页检查。"), (403, "模型服务不接受这个 API Key，请在设置的模型页检查。"),
+            (402, "模型服务账户余额不足，请充值后重试。"), (404, "找不到这个模型。请在设置中检查服务地址和模型名称。"),
+            (408, "模型服务响应超时，请重试。"), (504, "模型服务响应超时，请重试。"), (429, "请求太频繁，请稍后再试。"),
+            (500, "模型服务暂时不可用，请稍后再试。"), (502, "模型服务暂时不可用，请稍后再试。"), (503, "模型服务暂时不可用，请稍后再试。"),
+            (400, "模型服务没有接受这次请求，请检查设置后重试。"), (422, "模型服务没有接受这次请求，请检查设置后重试。"),
+        ]
+        for (status, message) in statuses {
+            let error = AgentModelError.httpStatus(status)
+            #expect(error.message == message, "\(status)")
+            #expect(error.diagnostic.hasPrefix("model API returned HTTP \(status)"), "\(status): \(error.diagnostic)")
+        }
+        #expect(AgentModelError.httpStatus(500).diagnostic == "model API returned HTTP 500 Internal Server Error")
+        let transports: [(URLError.Code, String)] = [
+            (.notConnectedToInternet, "当前没有网络连接，请联网后重试。"), (.dataNotAllowed, "当前没有网络连接，请联网后重试。"),
+            (.timedOut, "连接超时，请检查服务地址与网络后重试。"),
+            (.cannotFindHost, "网络连接失败，请检查服务地址、证书和网络。"), (.secureConnectionFailed, "网络连接失败，请检查服务地址、证书和网络。"),
+        ]
+        for (code, message) in transports {
+            let error = AgentModelError.transport(URLError(code))
+            #expect(error.message == message && error.transportCode == code, "\(code.rawValue)")
+            #expect(error.diagnostic.hasPrefix("HTTP transport error: \(code.rawValue) "), "\(code.rawValue): \(error.diagnostic)")
+        }
+        #expect(AgentModelError.transport(CocoaError(.fileReadUnknown)).message == "网络连接失败，请检查服务地址、证书和网络。")
+        for error in [AgentModelError.contextLength, .tooLarge, .invalidResponses, .chatStreamError, .incompleteChat, .invalidChat, .invalidEndpoint] {
+            #expect(!error.message.contains("model protocol") && !error.message.contains("invalid configuration"), "\(error.message)")
+            #expect(error.diagnostic.hasPrefix("model protocol error:") || error.diagnostic.hasPrefix("invalid configuration:"), "\(error.diagnostic)")
+        }
     }
 
     /// Three empty outputs in a row end the turn with Echo's own message, never the system's.
@@ -281,8 +339,8 @@ import UniformTypeIdentifiers
     @Test func modelErrorsAndTheRequestLimit() async throws {
         let failing = Chat { _, _, _ in throw AgentModelError.httpStatus(500) }
         try await failing.run("hello")
-        #expect(failing.store.task?.status == .failed && failing.store.task?.summary == "model API returned HTTP 500 Internal Server Error")
-        #expect(failing.store.canRetry && failing.events.last == "failed:model API returned HTTP 500 Internal Server Error")
+        #expect(failing.store.task?.status == .failed && failing.store.task?.summary == "模型服务暂时不可用，请稍后再试。")
+        #expect(failing.store.canRetry && failing.events.last == "failed:模型服务暂时不可用，请稍后再试。")
         #expect(failing.store.notice == nil, "A model failure is the turn's summary, not a settings notice")
 
         let root = try Self.project()
@@ -1167,4 +1225,13 @@ final class AsyncGate: Sendable {
         }
         waiters.forEach { $0.resume() }
     }
+}
+
+/// A tool that only stands in a `ToolCallError`.
+private struct StandInTool: Tool {
+    let name = "stand_in"
+    let description = "Stands in a failed tool call."
+    @Generable struct Input { var note: String }
+    var parameters: GenerationSchema { Input.generationSchema }
+    func call(arguments: GeneratedContent) async throws -> String { "" }
 }

@@ -1171,6 +1171,8 @@ func keyDown(_ code: UInt16, _ characters: String, flags: NSEvent.ModifierFlags 
         try await eventually("The reply fails") { failed.task?.status == .failed }
         let failure = try await texts(of: failed, showing: "连接已中断")
         XCTAssertTrue(failure.contains { $0.contains("连接已中断") }, "A failed reply keeps its reason: \(failure)")
+        XCTAssertTrue(!failure.contains { $0.contains(ConversationMessage.Status.failed.label) },
+                     "The reason stands alone, with no fixed title above it: \(failure)")
 
         let (stopped, stoppedModel) = puppetStore()
         defer { stopped.shutdown() }

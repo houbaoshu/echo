@@ -181,8 +181,8 @@ extension EchoVoiceScenarios {
         engine.fail("测试识别失败")
         do { try await failingTask.value; Issue.record("An engine failure must fail the recognition") }
         catch {
-            #expect(error is SettingsError && error.localizedDescription.contains("Apple 本地语音识别失败")
-                    && error.localizedDescription.contains("测试识别失败"))
+            #expect(error is SettingsError && error.localizedDescription == "Apple 本地语音识别失败，请重新开始转写。",
+                    "Echo's own words, never Speech's: \(error.localizedDescription)")
         }
         #expect(received.map { $0.result?.text } == ["失败前"] && received.allSatisfy { !$0.streamFinal },
                 "A failure delivers no final")

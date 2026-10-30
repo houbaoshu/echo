@@ -148,13 +148,22 @@ struct ConversationMessageView: View {
                 // normal path shows no status line. Everything the reply alone cannot
                 // tell — stopped, failed, interrupted — keeps one, and so does an
                 // unfinished one outside Live Voice.
-                if showsStatus {
-                    HStack(spacing: 6) {
-                        if message.status == .pending || message.status == .streaming { ProgressView().controlSize(.mini) }
-                        Text(message.status.label).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                if message.status == .failed, let error = message.errorMessage {
+                    // The failure says what went wrong; a fixed title above it would only repeat
+                    // that it failed. The mark is the pet card's.
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange).accessibilityHidden(true)
+                        Text(error).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled)
+                    }.font(WorkspaceStyle.caption)
+                } else {
+                    if showsStatus {
+                        HStack(spacing: 6) {
+                            if message.status == .pending || message.status == .streaming { ProgressView().controlSize(.mini) }
+                            Text(message.status.label).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary)
+                        }
                     }
+                    if let error = message.errorMessage { Text(error).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled) }
                 }
-                if let error = message.errorMessage { Text(error).font(WorkspaceStyle.caption).foregroundStyle(WorkspaceStyle.secondary).textSelection(.enabled) }
                 if let retry { Button("继续处理", systemImage: "arrow.clockwise", action: retry).buttonStyle(.bordered) }
             } else {
                 if !message.attachments.isEmpty { MessageAttachments(attachments: message.attachments) }

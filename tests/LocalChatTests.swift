@@ -384,17 +384,17 @@ import Testing
 
     @Test func otherFailuresKeepTheirMessageAndNeverReachTheLocalModel() async throws {
         let failures: [(() -> AgentHarness.ModelFactory, String)] = [
-            ({ Self.unreachableCloud(.cannotFindHost) }, "HTTP transport error: -1003"),
-            ({ Self.unreachableCloud(.cannotConnectToHost) }, "HTTP transport error: -1004"),
-            ({ Self.unreachableCloud(.networkConnectionLost) }, "HTTP transport error: -1005"),
-            ({ Self.unreachableCloud(.timedOut) }, "HTTP transport error: -1001"),
-            ({ ScriptedAgentModel { _, _, _ in throw AgentModelError.httpStatus(401) }.factory }, "model API returned HTTP 401"),
-            ({ ScriptedAgentModel { _, _, _ in throw AgentModelError.invalidEndpoint }.factory }, "invalid configuration"),
+            ({ Self.unreachableCloud(.cannotFindHost) }, "网络连接失败，请检查服务地址、证书和网络。"),
+            ({ Self.unreachableCloud(.cannotConnectToHost) }, "网络连接失败，请检查服务地址、证书和网络。"),
+            ({ Self.unreachableCloud(.networkConnectionLost) }, "网络连接失败，请检查服务地址、证书和网络。"),
+            ({ Self.unreachableCloud(.timedOut) }, "连接超时，请检查服务地址与网络后重试。"),
+            ({ ScriptedAgentModel { _, _, _ in throw AgentModelError.httpStatus(401) }.factory }, "模型服务不接受这个 API Key，请在设置的模型页检查。"),
+            ({ ScriptedAgentModel { _, _, _ in throw AgentModelError.invalidEndpoint }.factory }, AgentModelError.invalidEndpoint.message),
         ]
         for (factory, message) in failures {
             let chat = FallbackChat(cloud: factory)
             try await chat.run("你好")
-            #expect(chat.store.task?.status == .failed && chat.store.task?.summary.hasPrefix(message) == true, "\(message): \(chat.store.task?.summary ?? "")")
+            #expect(chat.store.task?.status == .failed && chat.store.task?.summary == message, "\(message): \(chat.store.task?.summary ?? "")")
             #expect(chat.backend.requests.isEmpty && chat.assistant.map(\.content) == [""] && chat.assistant.last?.status == .failed,
                     "\(message): only the failure's empty message, no local reply")
             chat.store.shutdown()

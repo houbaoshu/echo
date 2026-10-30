@@ -420,8 +420,8 @@ extension EchoVoiceScenarios {
         engine.fail("测试识别失败")
         try await eventually("the recognizer failure fails the recording") { dictation.state == .failed }
         kept += "\n识别失败前的文字"
-        #expect(dictation.state == .failed && dictation.error?.contains("测试识别失败") == true
-                     && store.mainDraft == kept, "Local runtime failure keeps the latest text")
+        #expect(dictation.state == .failed && dictation.error == "Apple 本地语音识别失败，请重新开始转写。"
+                     && store.mainDraft == kept, "Local runtime failure keeps the latest text and shows Echo's words, not Speech's")
         engine.emit("识别失败后迟到", final: true)
         #expect(store.mainDraft == kept, "A late final after a recognizer failure is not committed again")
 

@@ -37,11 +37,17 @@ struct AgentEndpoint: Hashable, Sendable {
     }
 }
 
-/// Model failures as the user sees them. Wording follows mini-agent-rs, which Echo showed so far.
+/// Model failures. `message` is what the person sees, in the interface language; `diagnostic` is
+/// what the log gets: the status, code or protocol detail, in English, never the provider's text,
+/// which can reflect secrets.
 struct AgentModelError: Error, LocalizedError, Equatable {
     let message: String
+    let diagnostic: String
     /// Set for failures to reach the provider at all.
     var transportCode: URLError.Code?
+    init(message: String, diagnostic: String? = nil, transportCode: URLError.Code? = nil) {
+        self.message = message; self.diagnostic = diagnostic ?? message; self.transportCode = transportCode
+    }
     var errorDescription: String? { message }
     /// The Mac has no usable network: only these may hand a turn to the local model.
     var isOffline: Bool {
@@ -54,21 +60,58 @@ struct AgentModelError: Error, LocalizedError, Equatable {
                        408: "Request Timeout", 409: "Conflict", 413: "Payload Too Large", 422: "Unprocessable Entity",
                        429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway",
                        503: "Service Unavailable", 504: "Gateway Timeout"]
-        return .init(message: "model API returned HTTP \(code)" + (reasons[code].map { " \($0)" } ?? ""))
-    }
-    static let contextLength = AgentModelError(message: "model protocol error: context length exceeded; history is retained, inspect it or start a new conversation")
-    static let tooLarge = AgentModelError(message: "model protocol error: model response exceeds 1 MiB")
-    static let invalidResponses = AgentModelError(message: "model protocol error: invalid or incomplete Responses response")
-    static let chatStreamError = AgentModelError(message: "model protocol error: model stream reported an error")
-    static let incompleteChat = AgentModelError(message: "model protocol error: incomplete Chat Completions response")
-    static let invalidChat = AgentModelError(message: "model protocol error: invalid Chat Completions response")
-    static let invalidEndpoint = AgentModelError(message: "invalid configuration: base URL must use HTTP(S) without credentials, query or fragment")
-    static func transport(_ error: any Error) -> AgentModelError {
-        if let error = error as? URLError {
-            return .init(message: "HTTP transport error: \(error.code.rawValue) \(error.localizedDescription)", transportCode: error.code)
+        let message = switch code {
+        case 401, 403: String(localized: "模型服务不接受这个 API Key，请在设置的模型页检查。")
+        case 402: String(localized: "模型服务账户余额不足，请充值后重试。")
+        case 404: String(localized: "找不到这个模型。请在设置中检查服务地址和模型名称。")
+        case 408, 504: Self.timeoutMessage
+        case 429: Self.rateLimitedMessage
+        case 500...599: String(localized: "模型服务暂时不可用，请稍后再试。")
+        default: String(localized: "模型服务没有接受这次请求，请检查设置后重试。")
         }
-        return .init(message: "HTTP transport error")
+        return .init(message: message, diagnostic: "model API returned HTTP \(code)" + (reasons[code].map { " \($0)" } ?? ""))
     }
+    static var contextLength: AgentModelError {
+        .init(message: contextLengthMessage,
+              diagnostic: "model protocol error: context length exceeded; history is retained, inspect it or start a new conversation")
+    }
+    static var tooLarge: AgentModelError {
+        .init(message: String(localized: "模型的回复超过 1 MB，没有读取。"), diagnostic: "model protocol error: model response exceeds 1 MiB")
+    }
+    static var invalidResponses: AgentModelError {
+        .init(message: unreadableMessage, diagnostic: "model protocol error: invalid or incomplete Responses response")
+    }
+    static var chatStreamError: AgentModelError {
+        .init(message: String(localized: "模型服务在回复途中出错，请重试。"), diagnostic: "model protocol error: model stream reported an error")
+    }
+    static var incompleteChat: AgentModelError {
+        .init(message: String(localized: "模型的回复不完整，请重试。"), diagnostic: "model protocol error: incomplete Chat Completions response")
+    }
+    static var invalidChat: AgentModelError {
+        .init(message: unreadableMessage, diagnostic: "model protocol error: invalid Chat Completions response")
+    }
+    static var invalidEndpoint: AgentModelError {
+        .init(message: String(localized: "设置中的服务地址无效。请填写 HTTPS 地址（本机服务可用 HTTP），且不含凭据、查询参数或片段。"),
+              diagnostic: "invalid configuration: base URL must use HTTP(S) without credentials, query or fragment")
+    }
+    static func transport(_ error: any Error) -> AgentModelError {
+        guard let error = error as? URLError else {
+            return .init(message: String(localized: "网络连接失败，请检查服务地址、证书和网络。"), diagnostic: "HTTP transport error")
+        }
+        let message = switch error.code {
+        case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff: String(localized: "当前没有网络连接，请联网后重试。")
+        case .timedOut: String(localized: "连接超时，请检查服务地址与网络后重试。")
+        default: String(localized: "网络连接失败，请检查服务地址、证书和网络。")
+        }
+        return .init(message: message, diagnostic: "HTTP transport error: \(error.code.rawValue) \(error.localizedDescription)",
+                     transportCode: error.code)
+    }
+
+    /// Shared with the same failures Foundation Models reports for other models.
+    static var contextLengthMessage: String { String(localized: "这个聊天超出了模型能处理的长度，记录已保留。请开始新的聊天。") }
+    static var rateLimitedMessage: String { String(localized: "请求太频繁，请稍后再试。") }
+    static var timeoutMessage: String { String(localized: "模型服务响应超时，请重试。") }
+    private static var unreadableMessage: String { String(localized: "模型服务的返回无法识别，请重试。") }
 }
 
 /// A call's arguments as the model wrote them. A call whose saved history keeps them verbatim in

@@ -300,16 +300,6 @@
         }
       }
     },
-    "Apple 本地语音识别失败：%@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "On-device speech recognition failed: %@"
-          }
-        }
-      }
-    },
     "Apple 语音识别不支持听写语言 %@，请检查首选语言。" : {
       "localizations" : {
         "en" : {
@@ -883,6 +873,16 @@
         }
       }
     },
+    "内容触发了模型的安全限制，这次没有回复。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model’s safety guardrails blocked this reply."
+          }
+        }
+      }
+    },
     "写入" : {
       "localizations" : {
         "en" : {
@@ -899,6 +899,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Getting ready"
+          }
+        }
+      }
+    },
+    "出了点问题，这次没有完成。请重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Something went wrong, and this didn’t finish. Try again."
           }
         }
       }
@@ -1959,6 +1969,16 @@
         }
       }
     },
+    "当前没有网络连接，请联网后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You’re offline. Connect to the internet, then try again."
+          }
+        }
+      }
+    },
     "当前离线，本地模型不完整（%@）。请联网后重试，或在设置中重新导入本地模型。" : {
       "localizations" : {
         "en" : {
@@ -2175,6 +2195,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t find the server %@."
+          }
+        }
+      }
+    },
+    "找不到这个模型。请在设置中检查服务地址和模型名称。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t find this model. Check Base URL and the model name in Settings."
           }
         }
       }
@@ -3426,6 +3456,16 @@
         }
       }
     },
+    "模型拒绝回答这个请求。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model declined to answer this request."
+          }
+        }
+      }
+    },
     "模型改写了已播报的文本，语音通话已结束；完整回复保留在聊天中。" : {
       "localizations" : {
         "en" : {
@@ -3442,6 +3482,96 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Model Provider"
+          }
+        }
+      }
+    },
+    "模型服务不接受这个 API Key，请在设置的模型页检查。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model service didn’t accept this API key. Check it on the Model page in Settings."
+          }
+        }
+      }
+    },
+    "模型服务响应超时，请重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model service took too long to respond. Try again."
+          }
+        }
+      }
+    },
+    "模型服务在回复途中出错，请重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model service ran into an error while replying. Try again."
+          }
+        }
+      }
+    },
+    "模型服务暂时不可用，请稍后再试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model service is temporarily unavailable. Try again later."
+          }
+        }
+      }
+    },
+    "模型服务没有接受这次请求，请检查设置后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model service didn’t accept this request. Check Settings, then try again."
+          }
+        }
+      }
+    },
+    "模型服务的返回无法识别，请重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model service returned a response Echo couldn’t read. Try again."
+          }
+        }
+      }
+    },
+    "模型服务账户余额不足，请充值后重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your model service account is out of credit. Top it up, then try again."
+          }
+        }
+      }
+    },
+    "模型的回复不完整，请重试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model’s reply was cut off. Try again."
+          }
+        }
+      }
+    },
+    "模型的回复超过 1 MB，没有读取。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model’s reply was larger than 1 MB, so it wasn’t read."
           }
         }
       }
@@ -4874,6 +5004,16 @@
         }
       }
     },
+    "设置中的服务地址无效。请填写 HTTPS 地址（本机服务可用 HTTP），且不含凭据、查询参数或片段。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base URL in Settings isn’t valid. Use an HTTPS address (HTTP is fine for a service on this Mac) without credentials, a query, or a fragment."
+          }
+        }
+      }
+    },
     "设置保存失败，请检查目录写入权限。" : {
       "localizations" : {
         "en" : {
@@ -5457,6 +5597,16 @@
         }
       }
     },
+    "请求太频繁，请稍后再试。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Too many requests. Try again in a moment."
+          }
+        }
+      }
+    },
     "请求失败" : {
       "localizations" : {
         "en" : {
@@ -5869,6 +6019,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t undo because the event no longer exists."
+          }
+        }
+      }
+    },
+    "这个聊天超出了模型能处理的长度，记录已保留。请开始新的聊天。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This chat is longer than the model can handle. Your history is kept; start a new chat to continue."
           }
         }
       }

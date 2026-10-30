@@ -83,7 +83,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
     /// Shown when the output that reaches `formatErrorLimit` is an empty reply.
     static var emptyReplyMessage: String { String(localized: "模型连续没有给出回复，已停止。") }
     static var offlineAfterOutputMessage: String { String(localized: "网络已断开，本轮已有输出或执行过工具，未自动改用本地模型。联网后点“继续处理”。") }
-    private static let logger = Logger(subsystem: "io.github.houbaoshu.echo", category: "agent")
+    private nonisolated static let logger = Logger(subsystem: "io.github.houbaoshu.echo", category: "agent")
 
     weak var host: (any AgentHarnessHost)?
     private(set) var state = NativeAgentState()
@@ -1524,11 +1524,29 @@ final class ResumeOnce<T: Sendable>: Sendable {
         return error
     }
 
-    private nonisolated static func message(for error: any Error) -> String {
+    /// What the person sees when a turn fails: Echo's own words, in the interface language. The
+    /// error's own text goes to the log; the system's and the provider's never reach the person.
+    nonisolated static func message(for error: any Error) -> String {
         let error = unwrap(error)
-        if let model = error as? AgentModelError { return model.message }
+        if let model = error as? AgentModelError {
+            logger.error("Turn failed: \(model.diagnostic, privacy: .public)")
+            return model.message
+        }
         if error is CancellationError { return String(localized: "Agent 请求已取消。") }
-        return (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+        if let settings = error as? SettingsError { return settings.message }
+        if let local = error as? LocalChatError { return local.localizedDescription }
+        // The error itself can hold the chat's content, so only its type, domain, code and
+        // description are public.
+        let ns = error as NSError
+        logger.error("Turn failed: \(String(describing: type(of: error)), privacy: .public) \(ns.domain, privacy: .public) \(ns.code, privacy: .public): \((error as? LocalizedError)?.errorDescription ?? "", privacy: .public) \(String(describing: error), privacy: .private)")
+        switch error as? LanguageModelError {
+        case .guardrailViolation?: return String(localized: "内容触发了模型的安全限制，这次没有回复。")
+        case .refusal?: return String(localized: "模型拒绝回答这个请求。")
+        case .contextSizeExceeded?: return AgentModelError.contextLengthMessage
+        case .rateLimited?: return AgentModelError.rateLimitedMessage
+        case .timeout?: return AgentModelError.timeoutMessage
+        default: return String(localized: "出了点问题，这次没有完成。请重试。")
+        }
     }
 }
 

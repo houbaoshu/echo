@@ -288,12 +288,12 @@ import Testing
         let secret = "secret-provider-body sk-live"
         let cases: [(Reply, String)] = [
             (Reply(status: 500, contentType: "application/json", chunks: [#"{"error":{"message":"\#(secret)"}}"#]),
-             "model API returned HTTP 500 Internal Server Error"),
+             AgentModelError.httpStatus(500).message),
             (Reply(status: 400, contentType: "application/json", chunks: [#"{"error":{"code":"context_length_exceeded","message":"\#(secret)"}}"#]),
              AgentModelError.contextLength.message),
             // A proxy's error page larger than what is read for an error code still reports its status.
             (Reply(status: 502, contentType: "text/html", chunks: [String(repeating: "<p>\(secret)</p>", count: 4_000)]),
-             "model API returned HTTP 502 Bad Gateway"),
+             AgentModelError.httpStatus(502).message),
             (Reply.sse([["error": ["message": secret]]]), AgentModelError.chatStreamError.message),
             (Reply.sse([Self.chatChunk(["content": "cut"]), Self.chatChunk([:], finish: "length")]), AgentModelError.incompleteChat.message),
             (Reply.sse([Self.chatChunk(["content": "no end"])], done: false), AgentModelError.incompleteChat.message),
@@ -302,6 +302,9 @@ import Testing
             let run = await Self.run(.chatCompletions, replies: [reply])
             #expect(Self.message(run) == expected)
             #expect(!(Self.message(run) ?? "").contains("secret"))
+            if case .failure(let error as AgentModelError) = run.result {
+                #expect(!error.diagnostic.contains("secret"), "The log never gets the provider's text either")
+            }
         }
     }
 

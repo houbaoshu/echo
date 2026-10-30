@@ -1,4 +1,5 @@
 import AVFoundation
+import OSLog
 import Speech
 
 /// One stretch of recognized speech. A final segment is settled and carries its own leading
@@ -183,7 +184,10 @@ struct AppleSpeechSegment: Sendable {
                 if !text.isEmpty { receive(ASRResult(result: .init(text: text, utterances: nil))) }
             }
         } catch let error where !(error is CancellationError || error is SettingsError) {
-            throw SettingsError(localized: "Apple 本地语音识别失败：\(String(describing: error))")
+            // The person sees Echo's words; Speech's own description goes to the log.
+            Logger(subsystem: "io.github.houbaoshu.echo", category: "dictation")
+                .error("Apple speech recognition failed: \(String(describing: error), privacy: .public)")
+            throw SettingsError(localized: "Apple 本地语音识别失败，请重新开始转写。")
         }
         try checkCancelled()
         // Delivered even when empty: nothing said is no failure, and an empty final withdraws
