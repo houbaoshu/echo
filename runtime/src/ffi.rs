@@ -231,3 +231,85 @@ pub unsafe extern "C" fn echo_tick(handle: *mut EchoRuntime, out: *mut EchoTick)
     }))
     .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    /// What `write_error` leaves in a buffer of `capacity` bytes, checking that the byte after it is untouched.
+    fn written(capacity: usize, error: &str) -> String {
+        let mut buffer = vec![0x7f as c_char; capacity + 1];
+        unsafe { write_error(buffer.as_mut_ptr(), capacity, error) };
+        assert_eq!(buffer[capacity], 0x7f, "nothing is written past the capacity");
+        unsafe { CStr::from_ptr(buffer.as_ptr()) }.to_str().expect("whole characters only").to_owned()
+    }
+
+    /// An error is cut to the caller's buffer, NUL included, and never in the middle of a
+    /// character: Swift reads it back as UTF-8.
+    #[test]
+    fn errors_are_cut_to_the_buffer_at_a_character_boundary() {
+        assert_eq!(written(64, "missing idle animation"), "missing idle animation");
+        assert_eq!(written(4, "missing"), "mis");
+        // 精 and 灵 are three bytes each: five bytes hold one of them and the NUL.
+        assert_eq!(written(5, "精灵图损坏"), "精");
+        assert_eq!(written(7, "精灵图损坏"), "精灵");
+        assert_eq!(written(1, "精灵"), "");
+        let mut untouched = [0x7f as c_char];
+        unsafe { write_error(untouched.as_mut_ptr(), 0, "abc") };
+        assert_eq!(untouched[0], 0x7f, "a zero capacity writes nothing");
+        unsafe { write_error(ptr::null_mut(), 16, "abc") };
+    }
+
+    /// The header's promise: a null handle, buffer or name fails safely, and a failed create says why.
+    #[test]
+    fn null_handles_and_names_fail_safely() {
+        let mut error = [0 as c_char; 64];
+        let handle = unsafe { echo_create(ptr::null(), error.as_mut_ptr(), error.len()) };
+        assert!(handle.is_null());
+        assert_eq!(unsafe { CStr::from_ptr(error.as_ptr()) }.to_str().unwrap(), "missing pet directory");
+        assert!(unsafe { echo_create(ptr::null(), ptr::null_mut(), 0) }.is_null(), "no buffer, no message, still no handle");
+        let mut info = EchoInfo { width: 0, height: 0, frame_count: 0 };
+        let mut frame = EchoFrame { data: ptr::null(), length: 0 };
+        let mut tick = EchoTick { sprite_index: 0, next_frame_seconds: 0.0 };
+        unsafe {
+            assert!(!echo_info(ptr::null(), &mut info));
+            assert!(!echo_frame(ptr::null(), 0, &mut frame));
+            assert!(!echo_tick(ptr::null_mut(), &mut tick));
+            assert!(!echo_set_animation(ptr::null_mut(), c"idle".as_ptr()));
+            assert!(!echo_play_once(ptr::null_mut(), c"waving".as_ptr()));
+            assert!(!echo_set_interaction(ptr::null_mut(), true, 0));
+            assert!(!echo_look_at(ptr::null_mut(), 1.0, 1.0));
+            echo_destroy(ptr::null_mut());
+        }
+    }
+
+    /// A live handle refuses what it cannot do and stays usable: a frame past the last, a null,
+    /// unknown or non-UTF-8 animation name.
+    #[test]
+    fn a_live_handle_refuses_what_it_cannot_do() {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/pets/chiyan");
+        let directory = CString::new(directory.to_str().unwrap()).unwrap();
+        let mut error = [0x7f as c_char; 256];
+        let handle = unsafe { echo_create(directory.as_ptr(), error.as_mut_ptr(), error.len()) };
+        assert!(!handle.is_null(), "{}", unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy());
+        assert_eq!(error[0], 0, "a create that succeeds leaves the buffer empty");
+        let mut info = EchoInfo { width: 0, height: 0, frame_count: 0 };
+        let mut frame = EchoFrame { data: ptr::null(), length: 0 };
+        let mut tick = EchoTick { sprite_index: 99, next_frame_seconds: 0.0 };
+        unsafe {
+            assert!(echo_info(handle, &mut info) && info.frame_count == 88);
+            assert!(echo_frame(handle, 0, &mut frame) && !frame.data.is_null());
+            assert_eq!(frame.length, (info.width * info.height * 4) as usize);
+            assert!(!echo_frame(handle, info.frame_count, &mut frame) && frame.data.is_null() && frame.length == 0);
+            let invalid = [0xff_u8 as c_char, 0];
+            assert!(!echo_set_animation(handle, ptr::null()));
+            assert!(!echo_set_animation(handle, c"no-such-clip".as_ptr()));
+            assert!(!echo_set_animation(handle, invalid.as_ptr()), "a name that is not UTF-8");
+            assert!(!echo_play_once(handle, c"no-such-clip".as_ptr()));
+            assert!(echo_play_once(handle, c"waving".as_ptr()) && echo_tick(handle, &mut tick));
+            assert!((24..=27).contains(&tick.sprite_index), "the wave shows: {}", tick.sprite_index);
+            echo_destroy(handle);
+        }
+    }
+}

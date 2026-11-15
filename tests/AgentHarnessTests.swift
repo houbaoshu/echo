@@ -1282,6 +1282,55 @@ import UniformTypeIdentifiers
     }
 }
 
+/// The one-shot resume behind every wait a Stop or newer input can end: the work, the Stop and the
+/// newer input race to resume one continuation, which may only be resumed once.
+@Suite struct ResumeOnceTests {
+    /// A result that comes before anyone waits is kept, and handed over once someone does.
+    @Test func aResultThatComesFirstIsDeliveredOnceTheWaitBegins() async throws {
+        let once = ResumeOnce<Int>()
+        once.resume(returning: 1)
+        once.resume(returning: 2)
+        let value = try await withCheckedThrowingContinuation { once.set($0) }
+        #expect(value == 1, "The first result counts; later ones are ignored")
+    }
+
+    /// Whoever comes first decides, a value or an error; the others change nothing and do not
+    /// resume the continuation again, which would trap.
+    @Test func onlyTheFirstOfManyCallersResumes() async throws {
+        let once = ResumeOnce<Int>()
+        let value = try await withCheckedThrowingContinuation { continuation in
+            once.set(continuation)
+            once.resume(returning: 7)
+            once.resume(throwing: CancellationError())
+            once.resume(returning: 8)
+        }
+        #expect(value == 7)
+
+        let stopped = ResumeOnce<Int>()
+        await #expect(throws: CancellationError.self) {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int, any Error>) in
+                stopped.set(continuation)
+                stopped.resume(throwing: CancellationError())
+                stopped.resume(returning: 1)
+            }
+        }
+    }
+
+    /// Callers on many threads at once, the wait itself among them, still resume it exactly once,
+    /// whether the wait begins before, between or after them.
+    @Test func racingCallersResumeItExactlyOnce() async throws {
+        for _ in 0..<200 {
+            let once = ResumeOnce<Int>()
+            let value = try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.concurrentPerform(iterations: 8) { index in
+                    if index == 4 { once.set(continuation) } else { once.resume(returning: index) }
+                }
+            }
+            #expect((0..<8).contains(value) && value != 4)
+        }
+    }
+}
+
 /// Holds async callers until opened.
 final class AsyncGate: Sendable {
     private let state = Mutex<(open: Bool, waiters: [CheckedContinuation<Void, Never>])>((false, []))

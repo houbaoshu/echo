@@ -335,3 +335,101 @@ fn default_animations() -> HashMap<String, Animation> {
     }
     animations
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::PetRuntime;
+    use serde_json::{Value, json};
+
+    /// A version 2 manifest on the standard sheet with these animations; `extra` adds or replaces
+    /// top-level fields.
+    fn manifest(animations: Value, extra: Value) -> String {
+        let mut file = json!({"id": "test", "displayName": "Test", "spriteVersionNumber": 2, "animations": animations});
+        for (key, value) in extra.as_object().expect("an object") {
+            file[key] = value.clone();
+        }
+        file.to_string()
+    }
+
+    fn load(raw: &str) -> Result<Pet> {
+        Pet::from_manifest(Path::new("/pets/test"), raw)
+    }
+
+    /// Why a manifest is refused, its causes included, as the import reports it.
+    fn refused(raw: &str) -> String {
+        format!("{:#}", load(raw).expect_err("the manifest is refused"))
+    }
+
+    /// One-shots that fall back to one another never reach a loop, so `advance()` after a long
+    /// sleep would walk the cycle for as long as the sleep lasted: every such cycle is refused,
+    /// whether it starts at the clip, passes through an overridden idle, or is entered later on.
+    #[test]
+    fn one_shot_fallback_cycles_are_refused() {
+        let one_shot = |frame: usize, fallback: &str| json!({"frames": [frame], "loop": false, "fallback": fallback});
+        let cycles = [
+            ("to itself", json!({"a": one_shot(8, "a")})),
+            ("in a pair", json!({"a": one_shot(8, "b"), "b": one_shot(9, "a")})),
+            ("in three", json!({"a": one_shot(8, "b"), "b": one_shot(9, "c"), "c": one_shot(10, "a")})),
+            ("through idle", json!({"idle": one_shot(0, "a"), "a": one_shot(8, "idle")})),
+            ("entered later", json!({"a": one_shot(8, "b"), "b": one_shot(9, "c"), "c": one_shot(10, "b")})),
+        ];
+        for (name, animations) in cycles {
+            let error = refused(&manifest(animations, json!({})));
+            assert!(error.contains("one-shot fallback cycle"), "{name}: {error}");
+        }
+    }
+
+    /// A chain of one-shots that ends in a loop is fine, and however long the pet slept, the frame
+    /// it wakes to is the loop's, found at once.
+    #[test]
+    fn a_one_shot_chain_that_reaches_a_loop_settles_there() {
+        let pet = load(&manifest(json!({
+            "a": {"frames": [8], "fps": 8, "loop": false, "fallback": "b"},
+            "b": {"frames": [16], "fps": 8, "loop": false, "fallback": "idle"},
+        }), json!({}))).expect("a chain that ends in a loop loads");
+        let mut runtime = PetRuntime::new(pet).expect("the runtime accepts it");
+        runtime.set_animation("a", Duration::ZERO).expect("a is known");
+        assert_eq!(runtime.advance(Duration::from_millis(100)).sprite_index, 8);
+        assert_eq!(runtime.advance(Duration::from_millis(200)).sprite_index, 16);
+        let late = runtime.advance(Duration::from_secs(30 * 86_400));
+        assert!((0..=5).contains(&late.sprite_index), "idle after a month: {}", late.sprite_index);
+        assert!(late.next_frame_in.is_some(), "idle keeps moving");
+    }
+
+    /// Each other check a manifest must pass, with the reason it gives.
+    #[test]
+    fn manifests_that_break_a_rule_say_which() {
+        let clip = |frames: Value, extra: Value| {
+            let mut spec = json!({"frames": frames});
+            for (key, value) in extra.as_object().expect("an object") {
+                spec[key] = value.clone();
+            }
+            manifest(json!({"a": spec}), json!({}))
+        };
+        let cases = [
+            (clip(json!([0]), json!({"loop": false, "fallback": "nowhere"})), "missing fallback for a"),
+            (clip(json!([88]), json!({})), "sprite index out of range in a"),
+            (clip(json!([]), json!({})), "animation a has no frames"),
+            (clip(json!(vec![0; 1025]), json!({})), "animation a has too many frames"),
+            (clip(json!([0]), json!({"fps": 0})), "invalid fps for a"),
+            (clip(json!([0]), json!({"fps": 61})), "invalid fps for a"),
+            (manifest(json!({}), json!({"spritesheetPath": "../sheet.webp"})), "spritesheetPath must be a relative child path"),
+            (manifest(json!({}), json!({"spritesheetPath": "/tmp/sheet.webp"})), "spritesheetPath must be a relative child path"),
+            (manifest(json!({}), json!({"spritesheetPath": ""})), "spritesheetPath must be a relative child path"),
+            (manifest(json!({}), json!({"frame": {"width": 192, "height": 208, "columns": 0, "rows": 11}})),
+             "frame dimensions and grid counts must be positive"),
+            (manifest(json!({}), json!({"frame": {"width": 10, "height": 10, "columns": 20, "rows": 20}})), "pet frame count exceeds 256"),
+            (manifest(json!({}), json!({"frame": {"width": 4_294_967_295_u32, "height": 10, "columns": 2, "rows": 1}})),
+             "sheet width overflow"),
+            (manifest(json!({}), json!({"spriteVersionNumber": 1})), "unsupported spriteVersionNumber: 1"),
+            (manifest(json!({}), json!({"spriteVersionNumber": null})), "spriteVersionNumber is missing"),
+            ("{".to_owned(), "parse pet.json"),
+        ];
+        for (raw, reason) in cases {
+            let error = refused(&raw);
+            assert!(error.contains(reason), "expected {reason:?}, got {error:?} for {raw}");
+        }
+        assert!(load(&clip(json!([0, 87]), json!({"fps": 60}))).is_ok(), "The last sprite and 60 fps are allowed");
+    }
+}

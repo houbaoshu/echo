@@ -402,3 +402,63 @@ import Testing
         #expect(rows(chat.messages) == ["user|Hello|completed|-", "user|next|completed|-"] && chat.mainDraft == "follow up")
     }
 }
+
+/// The reply that surfaces following a live chat show while the model writes it: the pet's card
+/// and Live Voice's subtitles. Snapshots of a step arrive late and out of order, so which text
+/// shows, and whether it is live, follows the steps' own order.
+@MainActor @Suite struct AssistantReplyStreamTests {
+    /// A step's text grows as it streams and becomes the reply once the step completes; anything
+    /// that arrives for that step afterwards is late and changes nothing.
+    @Test func aStepStreamsThenSettlesAndLateSnapshotsChangeNothing() {
+        let stream = AssistantReplyStream()
+        stream.receive(operationID: 1, text: "今", toolCall: false)
+        #expect(stream.text == "今" && stream.live == "今")
+        stream.receive(operationID: 1, text: "今天", toolCall: false)
+        #expect(stream.text == "今天" && stream.live == "今天")
+        stream.complete(operationID: 1, text: "今天不错")
+        #expect(stream.text == "今天不错" && stream.live == nil)
+        stream.receive(operationID: 1, text: "今天不错，", toolCall: false)
+        stream.complete(operationID: 1, text: "别的")
+        stream.withdraw(1)
+        #expect(stream.text == "今天不错" && stream.live == nil, "A settled step never shows again")
+    }
+
+    /// The previous reply stays until the next step writes real text, and comes back when that step
+    /// turns into a tool call, ends with nothing, or is abandoned.
+    @Test func thePreviousReplyComesBackWhenTheNextStepIsWithdrawn() {
+        let stream = AssistantReplyStream()
+        stream.complete(operationID: 1, text: "上一条回复")
+        stream.receive(operationID: 2, text: " \n", toolCall: false)
+        #expect(stream.text == "上一条回复" && stream.live == nil, "Blank text is no reply yet")
+        stream.receive(operationID: 2, text: "我先看看目录。", toolCall: false)
+        #expect(stream.text == "我先看看目录。" && stream.live == "我先看看目录。")
+        stream.receive(operationID: 2, text: "我先看看目录。", toolCall: true)
+        #expect(stream.text == "上一条回复" && stream.live == nil, "Text beside a tool call is withdrawn")
+
+        stream.receive(operationID: 3, text: "然后", toolCall: false)
+        stream.complete(operationID: 3, text: "  ")
+        #expect(stream.text == "上一条回复" && stream.live == nil, "A step that ends with nothing leaves the previous reply")
+
+        stream.receive(operationID: 4, text: "停下之前", toolCall: false)
+        stream.abandon()
+        #expect(stream.text == "上一条回复" && stream.live == nil, "A stopped or failed turn keeps no partial reply")
+        stream.abandon()
+        #expect(stream.text == "上一条回复", "Abandoning with nothing under way changes nothing")
+    }
+
+    /// A step that settles ends the live text of every step before it, and their late snapshots are
+    /// dropped; an earlier step's withdrawal leaves a later step that streams alone.
+    @Test func aLaterStepSettlingEndsAnEarlierStepsLiveText() {
+        let stream = AssistantReplyStream()
+        stream.complete(operationID: 1, text: "一")
+        stream.receive(operationID: 3, text: "三的开头", toolCall: false)
+        stream.withdraw(2)
+        #expect(stream.text == "三的开头" && stream.live == "三的开头", "An earlier step's withdrawal leaves the later one alone")
+        stream.withdraw(4)
+        #expect(stream.text == "三的开头" && stream.live == nil, "Once a later step settled, the earlier one is no longer live")
+        stream.receive(operationID: 3, text: "三的开头和后来", toolCall: false)
+        #expect(stream.text == "三的开头" && stream.live == nil, "and its late snapshots are dropped")
+        stream.complete(operationID: 5, text: "五")
+        #expect(stream.text == "五" && stream.live == nil)
+    }
+}
