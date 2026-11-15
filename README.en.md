@@ -87,7 +87,7 @@ Without a network connection, a turn that has not produced any output yet is ans
 
 **Sensitive details stay out of memory.** The memory is a Markdown file in Echo's data folder, read once per turn into the instructions. When the model writes to it through `remember` or `update_memory`, Echo checks the text for Chinese ID card numbers, bank card numbers, phone numbers (numbers count only when their check digits agree), passwords, API keys with well-known service prefixes, email addresses and street addresses down to the door number. Any match rejects the whole write and tells the model why. Your own edits to the file in an editor are not checked.
 
-**Tool calls in a batch run in order.** When the model issues several calls at once, reads may run in parallel, but every change waits for all the calls before it, so "read, then change" and "switch folders, then read" mean what they say.
+**Tool calls in a batch run in order.** When the model issues several calls at once, reads may run in parallel, but every change waits for all the calls before it, so "read, then change" and "switch folders, then read" mean what they say. `web_search` and `web_fetch` take no part in this order: they only read the web and change nothing on the Mac, so they wait for no call before them in the batch, and no call after them waits for them.
 
 **Interrupting keeps finished work.** If you send another message while the Agent is running, tool calls that have not started are marked as superseded and skipped, every finished result is kept, and your message goes in before the next model request.
 
