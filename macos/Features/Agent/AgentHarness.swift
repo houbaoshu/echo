@@ -371,28 +371,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
 
     private func runTurn() async {
         guard !stopRequested else { return finish(.stopped(reply: nil)) }
-        var route: Route
-        if let local, localOnly() {
-            // Only the local model: when it cannot be used the turn says so and never goes to the cloud.
-            switch local.backend.availability() {
-            case .ready: route = .local(local)
-            case .missing: return finish(.failed(LocalChatError.modelMissing.localizedDescription, notice: true))
-            case .invalid(let reason): return finish(.failed(LocalChatError.modelInvalid(reason).localizedDescription, notice: true))
-            }
-        } else {
-            do { route = .cloud(try resolveModel()) }
-            catch let error as SettingsError where error == .modelNotConfigured && local != nil {
-                // Without a cloud model the local one answers, when there is one.
-                switch local!.backend.availability() {
-                case .ready: route = .local(local!)
-                case .missing:
-                    return finish(.failed(String(localized: "尚未配置模型。请在设置中配置并保存默认模型，或导入本地模型。"), notice: true))
-                case .invalid(let reason):
-                    return finish(.failed(String(localized: "尚未配置默认模型，本地模型也不完整（\(reason)）。请在设置中配置默认模型，或重新导入本地模型。"), notice: true))
-                }
-            }
-            catch { return finish(.failed(error.localizedDescription, notice: true)) }
-        }
+        guard var route = resolveRoute() else { return }
         // The local model has no tools, so no search, images or memory either.
         searcher = route.isLocal ? nil : webSearch()
         imageGenerator = route.isLocal ? nil : imageGeneration()
@@ -407,79 +386,11 @@ final class ResumeOnce<T: Sendable>: Sendable {
             // What this request starts from, restored if it goes to the local model instead.
             let before = (entries: state.entries, pendingInputs: state.pendingInputs, undoNotices: state.undoNotices,
                           attachments: state.attachments)
-            let resuming = if case .resume = next { true } else { false }
-            // Input that enters the transcript is no longer pending; the UI drops its "待处理".
-            var history = state.entries
-            let promptText: String, metadata: [String: any ConvertibleToGeneratedContent]
-            var userPrompt: Transcript.Prompt?
-            var marker: Transcript.Prompt?
-            switch next {
-            case .inputs:
-                steering.set(false)
-                let inputs = state.pendingInputs
-                state.pendingInputs = []
-                // Each message carries the time it reached the cloud model, saved with it, so the
-                // history reads the same in every later request. The local model has no tools to
-                // work out dates for, and is not told.
-                let sent = route.isLocal ? "" : AgentToolResult.sentNotice(AgentTimeText.now(clock))
-                for input in inputs.dropLast() { history.append(.prompt(Self.userPrompt(input, prefix: sent + attached(input, local: route.isLocal)))) }
-                let last = inputs.last!
-                // The cloud model hears of undone changes before the person's next words. The local
-                // model has no tools, so it is not told.
-                let notice = route.isLocal ? "" : AgentToolResult.undoNotice(state.undoNotices)
-                if !route.isLocal { state.undoNotices = [] }
-                let prefix = sent + notice + attached(last, local: route.isLocal)
-                userPrompt = Self.userPrompt(last, prefix: prefix)
-                promptText = prefix + last.text; metadata = [AgentPromptKey.message: last.messageID.uuidString]
-            case .resume:
-                promptText = ""; metadata = [AgentPromptMarker.continueKey: true]
-                marker = Transcript.Prompt(metadata: metadata, segments: [])
-            case .feedback(let text):
-                promptText = text; metadata = [AgentPromptKey.feedback: true]
-                marker = Transcript.Prompt(metadata: metadata, segments: [.text(.init(content: text))])
-            }
-            state.entries = history
-            runningPrompt = (userPrompt ?? marker).map { .prompt($0) }
-            live = []; checkpointed = []; dispatched = []; operations = [:]
-            project()
-            host?.harnessStatus(String(localized: "正在请求模型…"))
-
-            let ledger = GenerationLedger()
-            var modelHistory = history
-            let session: LanguageModelSession?
-            var inputError: (any Error)?
-            switch route {
-            case .cloud(let factory):
-                let model = factory(ledger, budget)
-                turnReader = AgentPageReader(vision: model.capabilities.contains(.vision), folder: turnReader.folder, steering: steering)
-                session = LanguageModelSession(
-                    profile: AgentProfile(model: model, tools: tools(), attachments: state.attachments.map(\.name),
-                                          memory: turnMemory?.read(), harness: self),
-                    history: history)
-            case .local(let service):
-                do {
-                    // A continue is answered only for a message nothing was done for yet.
-                    if resuming && !LocalChatContext.isUnanswered(history) { throw LocalChatError.cannotContinue }
-                    modelHistory = try LocalChatContext.history(history, prompt: promptText)
-                    session = LanguageModelSession(profile: LocalChatProfile(model: service.factory(ledger, budget)), history: modelHistory)
-                } catch {
-                    session = nil; inputError = error
-                }
-            }
-            var result: Result<Void, any Error>
-            var entries = history
-            if let session {
-                result = await Self.consume(session, prompt: Prompt(promptText), metadata: metadata) { [weak self] entries in
-                    await self?.receive(entries)
-                }
-                // A stopped stream ends without waiting for its tools; a write under way ends first.
-                await writesSettled()
-                // The local model saw a filtered view; what it added follows the whole history.
-                let written = Array(session.transcript).filter { if case .instructions = $0 { false } else { true } }
-                entries = history + written.dropFirst(modelHistory.count)
-            } else {
-                result = .failure(inputError!)
-            }
+            let request = startRequest(next, route: route)
+            let history = request.history
+            let outcome = await send(request, on: route, budget: budget)
+            var result = outcome.result, entries = outcome.entries
+            let ledger = outcome.ledger
             if !stopRequested, case .failure(let error) = result, Self.isEmptyGeneration(error, ledger: ledger) {
                 // Foundation Models (macOS 27.2) throws where it used to return, and takes back the
                 // whole `respond`: the prompt and any tool calls that already ran. What was saved
@@ -490,7 +401,8 @@ final class ResumeOnce<T: Sendable>: Sendable {
                 result = .success(())
             }
             // A Stop before Foundation Models recorded the prompt still leaves the input in the history.
-            if let userPrompt, !entries[history.count...].contains(where: { Self.messageID(of: $0) == userPrompt.metadata[AgentPromptKey.message].flatMap(Self.string) }) {
+            if let userPrompt = request.userPrompt,
+               !entries[history.count...].contains(where: { Self.messageID(of: $0) == userPrompt.metadata[AgentPromptKey.message].flatMap(Self.string) }) {
                 entries.insert(.prompt(userPrompt), at: history.count)
             }
             let added = entries[history.count...]
@@ -564,32 +476,179 @@ final class ResumeOnce<T: Sendable>: Sendable {
                         let turnStart = state.turns[state.turns.count - 1].start
                         let untouched = !streamed
                             && entries[turnStart...].allSatisfy { if case .prompt = $0 { true } else { false } }
-                            && (!resuming || LocalChatContext.isUnanswered(history))
+                            && (!request.resuming || LocalChatContext.isUnanswered(history))
                         guard untouched else {
                             state.entries = closingInterruptedCalls(Self.trimmingUnfinished(entries, base: history.count, ledger: ledger))
                             return finish(.failed(Self.offlineAfterOutputMessage, notice: false))
                         }
-                        switch local.backend.availability() {
-                        case .ready:
-                            state.entries = before.entries
-                            state.pendingInputs = before.pendingInputs + state.pendingInputs
-                            state.undoNotices = before.undoNotices
-                            state.attachments = before.attachments
-                            route = .local(local)
-                            continue
-                        case .missing:
+                        if let ending = Self.unusable(local, when: .offline) {
                             state.entries = entries
-                            return finish(.failed(String(localized: "当前离线，本地模型未安装。请联网后重试，或在设置中导入本地模型。"), notice: false))
-                        case .invalid(let reason):
-                            state.entries = entries
-                            return finish(.failed(String(localized: "当前离线，本地模型不完整（\(reason)）。请联网后重试，或在设置中重新导入本地模型。"), notice: false))
+                            return finish(ending)
                         }
+                        state.entries = before.entries
+                        state.pendingInputs = before.pendingInputs + state.pendingInputs
+                        state.undoNotices = before.undoNotices
+                        state.attachments = before.attachments
+                        route = .local(local)
+                        continue
                     }
                     state.entries = closingInterruptedCalls(Self.trimmingUnfinished(entries, base: history.count, ledger: ledger))
                     return finish(.failed(Self.message(for: error), notice: false))
                 }
             }
         }
+    }
+
+    /// Why a turn goes to the local model. Each words a local model that is missing or incomplete
+    /// its own way, and only a turn that could not start at all also shows it beside the composer.
+    private enum LocalFallback {
+        /// The person chose the local model for every turn.
+        case localOnly
+        /// No cloud model is set up.
+        case noCloudModel
+        /// The cloud model could not be reached before the turn did anything.
+        case offline
+    }
+
+    /// How a turn that went to `local` ends when the model cannot be used; nil when it is ready.
+    private static func unusable(_ local: LocalChatService, when situation: LocalFallback) -> AgentTurnEnding? {
+        switch (local.backend.availability(), situation) {
+        case (.ready, _): nil
+        case (.missing, .localOnly): .failed(LocalChatError.modelMissing.localizedDescription, notice: true)
+        case (.invalid(let reason), .localOnly): .failed(LocalChatError.modelInvalid(reason).localizedDescription, notice: true)
+        case (.missing, .noCloudModel): .failed(String(localized: "尚未配置模型。请在设置中配置并保存默认模型，或导入本地模型。"), notice: true)
+        case (.invalid(let reason), .noCloudModel):
+            .failed(String(localized: "尚未配置默认模型，本地模型也不完整（\(reason)）。请在设置中配置默认模型，或重新导入本地模型。"), notice: true)
+        case (.missing, .offline): .failed(String(localized: "当前离线，本地模型未安装。请联网后重试，或在设置中导入本地模型。"), notice: false)
+        case (.invalid(let reason), .offline):
+            .failed(String(localized: "当前离线，本地模型不完整（\(reason)）。请联网后重试，或在设置中重新导入本地模型。"), notice: false)
+        }
+    }
+
+    /// The model a new turn uses: the local model alone when the person chose it, otherwise the
+    /// cloud model, or the local one when no cloud model is set up. Nil once the turn has ended
+    /// because none can be used.
+    private func resolveRoute() -> Route? {
+        if let local, localOnly() {
+            // Only the local model: when it cannot be used the turn says so and never goes to the cloud.
+            if let ending = Self.unusable(local, when: .localOnly) { finish(ending); return nil }
+            return .local(local)
+        }
+        do {
+            return .cloud(try resolveModel())
+        } catch let error as SettingsError where error == .modelNotConfigured {
+            // Without a cloud model the local one answers, when there is one.
+            guard let local else { finish(.failed(error.localizedDescription, notice: true)); return nil }
+            if let ending = Self.unusable(local, when: .noCloudModel) { finish(ending); return nil }
+            return .local(local)
+        } catch {
+            finish(.failed(error.localizedDescription, notice: true))
+            return nil
+        }
+    }
+
+    /// What a request's prompt is: the person's message, a continue, or feedback about invalid output.
+    private enum PromptKind: Sendable {
+        case message(UUID)
+        case resume
+        case feedback
+    }
+
+    /// The metadata a prompt of `kind` carries, made afresh for each use.
+    private nonisolated static func metadata(_ kind: PromptKind) -> [String: any ConvertibleToGeneratedContent] {
+        switch kind {
+        case .message(let id): [AgentPromptKey.message: id.uuidString]
+        case .resume: [AgentPromptMarker.continueKey: true]
+        case .feedback: [AgentPromptKey.feedback: true]
+        }
+    }
+
+    /// One model request: the history it continues and the prompt that follows it.
+    private struct Request: Sendable {
+        let history: [Transcript.Entry]
+        let promptText: String
+        let kind: PromptKind
+        /// The person's message, when the request carries their input.
+        let userPrompt: Transcript.Prompt?
+        /// Whether the request continues the turn without new input.
+        var resuming: Bool { if case .resume = kind { true } else { false } }
+    }
+
+    /// Starts a request: the pending input enters the history, or the request is marked as a
+    /// continue or as feedback, and the conversation shows it under way. Input that enters the
+    /// transcript is no longer pending; the UI drops its "待处理".
+    private func startRequest(_ next: Next, route: Route) -> Request {
+        var history = state.entries
+        let promptText: String, kind: PromptKind
+        var userPrompt: Transcript.Prompt?
+        var marker: Transcript.Prompt?
+        switch next {
+        case .inputs:
+            steering.set(false)
+            let inputs = state.pendingInputs
+            state.pendingInputs = []
+            // Each message carries the time it reached the cloud model, saved with it, so the
+            // history reads the same in every later request. The local model has no tools to
+            // work out dates for, and is not told.
+            let sent = route.isLocal ? "" : AgentToolResult.sentNotice(AgentTimeText.now(clock))
+            for input in inputs.dropLast() { history.append(.prompt(Self.userPrompt(input, prefix: sent + attached(input, local: route.isLocal)))) }
+            let last = inputs.last!
+            // The cloud model hears of undone changes before the person's next words. The local
+            // model has no tools, so it is not told.
+            let notice = route.isLocal ? "" : AgentToolResult.undoNotice(state.undoNotices)
+            if !route.isLocal { state.undoNotices = [] }
+            let prefix = sent + notice + attached(last, local: route.isLocal)
+            userPrompt = Self.userPrompt(last, prefix: prefix)
+            promptText = prefix + last.text; kind = .message(last.messageID)
+        case .resume:
+            promptText = ""; kind = .resume
+            marker = Transcript.Prompt(metadata: Self.metadata(kind), segments: [])
+        case .feedback(let text):
+            promptText = text; kind = .feedback
+            marker = Transcript.Prompt(metadata: Self.metadata(kind), segments: [.text(.init(content: text))])
+        }
+        state.entries = history
+        runningPrompt = (userPrompt ?? marker).map { .prompt($0) }
+        live = []; checkpointed = []; dispatched = []; operations = [:]
+        project()
+        host?.harnessStatus(String(localized: "正在请求模型…"))
+        return Request(history: history, promptText: promptText, kind: kind, userPrompt: userPrompt)
+    }
+
+    /// Sends `request` to the route's model and waits for Foundation Models to end its `respond`:
+    /// how it ended, the transcript as the request left it, and which of its entries finished.
+    private func send(_ request: Request, on route: Route, budget: GenerationBudget)
+        async -> (result: Result<Void, any Error>, entries: [Transcript.Entry], ledger: GenerationLedger) {
+        let ledger = GenerationLedger()
+        let history = request.history
+        var modelHistory = history
+        let session: LanguageModelSession
+        switch route {
+        case .cloud(let factory):
+            let model = factory(ledger, budget)
+            turnReader = AgentPageReader(vision: model.capabilities.contains(.vision), folder: turnReader.folder, steering: steering)
+            session = LanguageModelSession(
+                profile: AgentProfile(model: model, tools: tools(), attachments: state.attachments.map(\.name),
+                                      memory: turnMemory?.read(), harness: self),
+                history: history)
+        case .local(let service):
+            do {
+                // A continue is answered only for a message nothing was done for yet.
+                if request.resuming && !LocalChatContext.isUnanswered(history) { throw LocalChatError.cannotContinue }
+                modelHistory = try LocalChatContext.history(history, prompt: request.promptText)
+                session = LanguageModelSession(profile: LocalChatProfile(model: service.factory(ledger, budget)), history: modelHistory)
+            } catch {
+                return (.failure(error), history, ledger)
+            }
+        }
+        let result = await Self.consume(session, prompt: Prompt(request.promptText), metadata: Self.metadata(request.kind)) { [weak self] entries in
+            await self?.receive(entries)
+        }
+        // A stopped stream ends without waiting for its tools; a write under way ends first.
+        await writesSettled()
+        // The local model saw a filtered view; what it added follows the whole history.
+        let written = Array(session.transcript).filter { if case .instructions = $0 { false } else { true } }
+        return (result, history + written.dropFirst(modelHistory.count), ledger)
     }
 
     /// The files sent with `input` join the chat's attached files as it enters the transcript. The

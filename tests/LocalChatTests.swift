@@ -453,6 +453,38 @@ import Testing
         restarted.store.shutdown()
     }
 
+    /// Each of the three situations that turn to the local model words a model that is missing or
+    /// incomplete its own way, and only a turn that could not start at all shows it beside the
+    /// composer too: the local-only setting, no cloud model, and the cloud unreachable before the
+    /// turn did anything. The message stays, and no model answers it.
+    @Test(arguments: [false, true])
+    func everySituationWithoutAUsableLocalModelSaysWhatToDo(incomplete: Bool) async throws {
+        let reason = "缺少内嵌 tokenizer"
+        func chat(_ cloud: @escaping () throws -> AgentHarness.ModelFactory, localOnly: Bool = false) -> FallbackChat {
+            let chat = FallbackChat(cloud: cloud, backend: FakeBackend(available: incomplete ? .invalid(reason) : .missing) { _, _, _ in })
+            chat.localOnly = localOnly
+            return chat
+        }
+        let situations: [(name: String, chat: FallbackChat, summary: String, besideComposer: Bool)] = [
+            ("local only", chat({ Self.unreachableCloud(.notConnectedToInternet) }, localOnly: true),
+             incomplete ? "本地模型不完整（\(reason)）。请在设置中重新导入模型文件夹。" : "本地模型未安装。请在设置中导入模型文件夹后重试。", true),
+            ("no cloud model", chat({ throw SettingsError.modelNotConfigured }),
+             incomplete ? "尚未配置默认模型，本地模型也不完整（\(reason)）。请在设置中配置默认模型，或重新导入本地模型。"
+                        : "尚未配置模型。请在设置中配置并保存默认模型，或导入本地模型。", true),
+            ("offline", chat({ Self.unreachableCloud(.notConnectedToInternet) }),
+             incomplete ? "当前离线，本地模型不完整（\(reason)）。请联网后重试，或在设置中重新导入本地模型。"
+                        : "当前离线，本地模型未安装。请联网后重试，或在设置中导入本地模型。", false),
+        ]
+        for situation in situations {
+            try await situation.chat.run("你好")
+            let store = situation.chat.store
+            #expect(store.task?.status == .failed && store.task?.summary == situation.summary, "\(situation.name)")
+            #expect(store.notice == (situation.besideComposer ? situation.summary : nil), "\(situation.name)")
+            #expect(situation.chat.users == ["你好"] && situation.chat.backend.requests.isEmpty, "\(situation.name)")
+            store.shutdown()
+        }
+    }
+
     @Test func withoutACloudModelTheLocalModelAnswersOrBothAreExplained() async throws {
         let chat = FallbackChat(cloud: { throw SettingsError.modelNotConfigured })
         try await chat.run("你好")
