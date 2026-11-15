@@ -39,7 +39,7 @@ protocol AgentWriteAccess: Sendable {
 }
 
 struct WriteFileTool: Tool {
-    let name = "write_file"
+    let name = AgentToolName.writeFile.rawValue
     let description = "Create a UTF-8 text file in the workspace, or replace one in full"
     let access: any AgentWriteAccess
 
@@ -65,7 +65,7 @@ struct WriteFileTool: Tool {
 }
 
 struct EditFileTool: Tool {
-    let name = "edit_file"
+    let name = AgentToolName.editFile.rawValue
     let description = "Replace one exact passage of a UTF-8 text file in the workspace"
     let access: any AgentWriteAccess
 

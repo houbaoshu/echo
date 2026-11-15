@@ -9,6 +9,79 @@ import Synchronization
 // instead of aborting the turn: a typed `Arguments` would have to decode before the tool runs.
 // `AgentReadToolTests.argumentsAreDecodedByTheTool` covers the model-visible failure.
 
+/// Every tool the native Agent offers, by the name the model calls it with. The raw values are also
+/// what transcripts, cards (`AgentToolRecord.tool`) and backup records keep, so they never change.
+enum AgentToolName: String, CaseIterable, Sendable {
+    case listFiles = "list_files", readFile = "read_file", finderLocation = "finder_location"
+    case writeFile = "write_file", editFile = "edit_file"
+    case listReminders = "list_reminders", createReminder = "create_reminder", completeReminder = "complete_reminder"
+    case listEvents = "list_events", createEvent = "create_event"
+    case openApp = "open_app", openURL = "open_url"
+    case webSearch = "web_search", webFetch = "web_fetch"
+    case generateImage = "generate_image"
+    case remember, updateMemory = "update_memory"
+
+    /// The one tool before the native engine. Chats saved by earlier builds still hold its calls:
+    /// their cards show the command, and a call to it now is answered as an unknown tool.
+    static let legacyBash = "bash"
+
+    /// What a tool's calls do, which decides how a batch orders them and how their cards read. Every
+    /// tool has one, so no tool can be added without saying which.
+    enum Effect: Sendable {
+        /// list_files and read_file: they read the chat's folder.
+        case readsFolder
+        /// finder_location: it switches the chat's Finder folder, which the reads after it read.
+        case locatesFinder
+        /// write_file and edit_file.
+        case writesFile
+        case readsCalendar, changesCalendar
+        /// open_app and open_url: they change what is on the person's screen, and cannot be undone.
+        case opens
+        case changesMemory
+        /// generate_image: it creates a file of its own, outside the write tools' rules.
+        case createsImage
+        /// web_search and web_fetch: nothing on this Mac changes.
+        case readsWeb
+    }
+
+    var effect: Effect {
+        switch self {
+        case .listFiles, .readFile: .readsFolder
+        case .finderLocation: .locatesFinder
+        case .writeFile, .editFile: .writesFile
+        case .listReminders, .listEvents: .readsCalendar
+        case .createReminder, .completeReminder, .createEvent: .changesCalendar
+        case .openApp, .openURL: .opens
+        case .remember, .updateMemory: .changesMemory
+        case .generateImage: .createsImage
+        case .webSearch, .webFetch: .readsWeb
+        }
+    }
+
+    /// The reminders and calendar tools.
+    var isCalendar: Bool { effect == .readsCalendar || effect == .changesCalendar }
+    /// Every tool that changes something: each waits for every call written before it in its batch.
+    var isChange: Bool {
+        switch effect {
+        case .writesFile, .changesCalendar, .opens, .changesMemory, .createsImage: true
+        case .readsFolder, .locatesFinder, .readsCalendar, .readsWeb: false
+        }
+    }
+    /// The tools whose calls a batch orders. web_search and web_fetch change nothing on this Mac:
+    /// their calls take no place in their batch, so they wait for no call and no call waits for them.
+    var isOrdered: Bool { effect != .readsWeb }
+
+    /// Whether a call to `tool` waits for an `earlier` call in its batch: a change waits for every
+    /// call written before it, and any other call for the changes and, unless it is one itself, the
+    /// finder_location calls before it. A call to a name Echo does not know never runs, so nothing
+    /// waits for it.
+    static func waits(_ tool: String, for earlier: String) -> Bool {
+        guard let earlier = AgentToolName(rawValue: earlier), earlier.isOrdered else { return false }
+        let tool = AgentToolName(rawValue: tool)
+        return tool?.isChange == true || earlier.isChange || (earlier == .finderLocation && tool != .finderLocation)
+    }
+}
+
 /// The project folder a tool works in, as the conversation resolved it.
 enum AgentProjectRoot: Sendable, Equatable {
     case path(String)
@@ -121,13 +194,13 @@ enum AgentToolResult {
         "The conversation's project folder can no longer be found; it may have been moved or deleted, so nothing was \(nothing). Ask the person to locate it with Relocate Folder… on the project in the sidebar."
     }
     /// A change's result once the person undid it, as later requests show it to the model.
-    static func undone(_ result: String, tool: String = "write_file") -> String {
+    static func undone(_ result: String, tool: String = AgentToolName.writeFile.rawValue) -> String {
         guard var value = jsonObject(result) else { return result }
-        value["undone"] = switch (tool, value["action"] as? String) {
-        case ("create_reminder", _): "After this call, the person undid it: the reminder it created was deleted, so it no longer exists."
-        case ("complete_reminder", _): "After this call, the person undid it: the reminder is no longer marked as completed."
-        case ("create_event", _): "After this call, the person undid it: the event it created was deleted, so it no longer exists."
-        case ("remember", _), ("update_memory", _): "After this call, the person undid it: the memory is back as it was before this call."
+        value["undone"] = switch (AgentToolName(rawValue: tool), value["action"] as? String) {
+        case (.createReminder?, _): "After this call, the person undid it: the reminder it created was deleted, so it no longer exists."
+        case (.completeReminder?, _): "After this call, the person undid it: the reminder is no longer marked as completed."
+        case (.createEvent?, _): "After this call, the person undid it: the event it created was deleted, so it no longer exists."
+        case (.remember?, _), (.updateMemory?, _): "After this call, the person undid it: the memory is back as it was before this call."
         case (_, "created"): "After this call, the person undid it: the file it created was moved to the Trash, so it no longer exists. Anything read from it after this call predates the undo."
         default: "After this call, the person undid it: the file was put back as it was before this call, so it no longer has what this call wrote. Anything read from it after this call predates the undo."
         }
@@ -138,12 +211,12 @@ enum AgentToolResult {
         let value = jsonObject(result)
         let reminder = (value?["reminder"] as? [String: Any])?["title"] as? String ?? ""
         let event = (value?["event"] as? [String: Any])?["title"] as? String ?? ""
-        switch tool {
-        case "create_reminder": return "Reminder \"\(reminder)\": the reminder your create_reminder call created was deleted."
-        case "complete_reminder": return "Reminder \"\(reminder)\": no longer marked as completed by your complete_reminder call."
-        case "create_event": return "Event \"\(event)\": the event your create_event call created was deleted."
-        case "remember": return "Memory: the line your remember call added was taken out again."
-        case "update_memory": return "Memory: put back as it was before your update_memory call."
+        switch AgentToolName(rawValue: tool) {
+        case .createReminder?: return "Reminder \"\(reminder)\": the reminder your create_reminder call created was deleted."
+        case .completeReminder?: return "Reminder \"\(reminder)\": no longer marked as completed by your complete_reminder call."
+        case .createEvent?: return "Event \"\(event)\": the event your create_event call created was deleted."
+        case .remember?: return "Memory: the line your remember call added was taken out again."
+        case .updateMemory?: return "Memory: put back as it was before your update_memory call."
         default: break
         }
         let path = value?["path"] as? String ?? "a file"
@@ -294,7 +367,7 @@ enum AgentToolPath {
 }
 
 struct ListFilesTool: Tool {
-    let name = "list_files"
+    let name = AgentToolName.listFiles.rawValue
     static let toolDescription = "List a workspace directory; use . for the root. Only entries ending in / are subfolders; listed_folder, when present, names the folder listed and is not an entry"
     let description = toolDescription
     let context: AgentReadContext
@@ -348,7 +421,7 @@ struct ListFilesTool: Tool {
 }
 
 struct ReadFileTool: Tool {
-    let name = "read_file"
+    let name = AgentToolName.readFile.rawValue
     let description = "Read a file in the workspace: a UTF-8 text file by lines (bounded output), a PDF as images of its pages, or a JPEG, PNG, GIF, WebP or HEIC image"
     let context: AgentReadContext
     /// How PDFs and images are read this turn; a model that sees no images reads neither.
@@ -503,7 +576,7 @@ protocol AgentFinderAccess: Sendable {
 /// Points this chat's Finder folder at the folder in Finder's frontmost window and names it as
 /// Finder shows it. Its path stays with Echo.
 struct FinderLocationTool: Tool {
-    let name = "finder_location"
+    let name = AgentToolName.finderLocation.rawValue
     let description = "Switch this chat's Finder folder to the folder shown in Finder's frontmost window"
     let access: any AgentFinderAccess
 

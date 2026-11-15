@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 struct AgentImageCard: AgentToolCard {
     let tool: AgentToolRecord
 
-    static func applies(to tool: AgentToolRecord) -> Bool { tool.tool == GenerateImageTool.toolName }
+    static func applies(to tool: AgentToolRecord) -> Bool { tool.toolName == .generateImage }
 
     let icon = "photo"
 
@@ -198,7 +198,7 @@ struct AgentImageView: View {
     static let prompt = "一只橘猫坐在木窗台上，午后阳光，写实摄影"
     static func record(_ id: String, result: String?, state: AgentToolRecord.State, undo: AgentToolRecord.Undo? = nil) -> AgentToolRecord {
         .init(callID: id, entryID: 1, turnID: 1, command: prompt, result: result, state: state, directory: folder,
-              tool: GenerateImageTool.toolName, undo: undo)
+              tool: AgentToolName.generateImage.rawValue, undo: undo)
     }
     static var cards: [AgentToolRecord] {
         let made = AgentGeneratedImage(data: Data(count: 412_000), format: .jpeg, width: 2304, height: 1728)
@@ -206,7 +206,7 @@ struct AgentImageView: View {
         return [
             record("1", result: nil, state: .running),
             record("2", result: saved, state: .finished, undo: .available),
-            record("3", result: AgentToolResult.undone(saved, tool: GenerateImageTool.toolName), state: .finished, undo: .undone),
+            record("3", result: AgentToolResult.undone(saved, tool: AgentToolName.generateImage.rawValue), state: .finished, undo: .undone),
             record("4", result: AgentImageResult.failed(.service(status: 400, code: "OutputImageSensitiveContentDetected",
                                                                  message: "The request failed because the output image may contain sensitive information.")),
                    state: .failed),

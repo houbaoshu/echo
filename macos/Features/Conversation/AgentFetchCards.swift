@@ -6,7 +6,7 @@ import Foundation
 struct AgentFetchCard: AgentToolCard {
     let tool: AgentToolRecord
 
-    static func applies(to tool: AgentToolRecord) -> Bool { tool.tool == "web_fetch" }
+    static func applies(to tool: AgentToolRecord) -> Bool { tool.toolName == .webFetch }
 
     let icon = "doc.text.magnifyingglass"
 

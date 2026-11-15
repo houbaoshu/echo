@@ -162,7 +162,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
     /// The Finder lookup under way, which every caller asking at the same time shares.
     private var finderLookup: Task<FinderLocation, Never>?
     /// Each batch's calls in the order the model wrote them, and the calls that are done. A batch
-    /// runs as if its calls ran in the order written; `waits(_:for:)` says which call waits for which.
+    /// runs as if its calls ran in the order written; `AgentToolName.waits(_:for:)` says which call waits for which.
     private var batchCalls: [Int: [(key: String, tool: String)]] = [:]
     private var doneCalls: Set<String> = []
     private var turnWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
@@ -818,22 +818,6 @@ final class ResumeOnce<T: Sendable>: Sendable {
         return read ?? AgentFileRead(text: AgentToolResult.superseded)
     }
 
-    nonisolated static let writeTools: Set<String> = ["write_file", "edit_file"]
-    /// The reminders and calendar tools that change something.
-    nonisolated static let calendarChangeTools: Set<String> = ["create_reminder", "complete_reminder", "create_event"]
-    nonisolated static let calendarTools: Set<String> = calendarChangeTools.union(["list_reminders", "list_events"])
-    /// The tools that open an app or a web page: they change what is on the person's screen, and
-    /// cannot be undone.
-    nonisolated static let openTools: Set<String> = ["open_app", "open_url"]
-    /// The tools that change the memory.
-    nonisolated static let memoryTools: Set<String> = ["remember", "update_memory"]
-    /// The tools that create a file of their own, outside the write tools' rules.
-    nonisolated static let imageTools: Set<String> = [GenerateImageTool.toolName]
-    /// Every tool that changes something: each waits for every call written before it in its batch.
-    nonisolated static let changeTools = writeTools.union(calendarChangeTools).union(openTools).union(memoryTools).union(imageTools)
-    /// The tools a batch orders; a call to any other tool never runs, so nothing waits for it.
-    private static let orderedTools: Set<String> = changeTools.union(calendarTools).union(["list_files", "read_file", "finder_location"])
-
     /// A read's turn: after the finder_location and change calls written before it in its batch.
     fileprivate func waitForTurn(call identity: GenerationID?) async throws {
         guard isRunning, !stopRequested else { throw CancellationError() }
@@ -845,21 +829,13 @@ final class ResumeOnce<T: Sendable>: Sendable {
         if let key = callKey(identity) { finishCall(key) }
     }
 
-    /// Whether a call to `tool` waits for an `earlier` call in its batch: a change waits for every
-    /// call written before it, and any other call for the changes and, unless it is one itself, the
-    /// finder_location calls before it.
-    private static func waits(_ tool: String, for earlier: String) -> Bool {
-        orderedTools.contains(earlier)
-            && (changeTools.contains(tool) || changeTools.contains(earlier) || (earlier == "finder_location" && tool != "finder_location"))
-    }
-
     /// Returns once every call written before `key` in its batch that it waits for is done.
     private func waitForEarlierCalls(_ key: String) async throws {
         while true {
             guard let batch = Int(key.prefix { $0 != ":" }), let calls = batchCalls[batch],
                   let position = calls.firstIndex(where: { $0.key == key }) else { return }
             let tool = calls[position].tool
-            if calls[..<position].allSatisfy({ !Self.waits(tool, for: $0.tool) || doneCalls.contains($0.key) }) { return }
+            if calls[..<position].allSatisfy({ !AgentToolName.waits(tool, for: $0.tool) || doneCalls.contains($0.key) }) { return }
             let id = UUID()
             try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
@@ -999,7 +975,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
 
         try beginChange()
         let directory = host?.harnessBackupDirectory(), chat = host?.harnessChatID
-        let tool = if case .edit = request.change { "edit_file" } else { "write_file" }
+        let tool: AgentToolName = if case .edit = request.change { .editFile } else { .writeFile }
         let card = key.map(cardID) ?? ""
         let output = await Task.detached {
             AgentFileWriter.commit(plan, hooks: hooks) { original in
@@ -1010,7 +986,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
                 }
                 try AgentBackupStore(directory: directory).save(original, record: .init(
                     path: root + "/" + plan.path, root: root, rootKind: scope.rawValue, relativePath: plan.path,
-                    chat: chat, toolRecord: card, tool: tool, savedAt: Date(), original: original, action: plan.action, written: plan.content))
+                    chat: chat, toolRecord: card, tool: tool.rawValue, savedAt: Date(), original: original, action: plan.action, written: plan.content))
             }
         }.value
         let result = AgentToolResult.naming(root: root, scope: scope, in: output)
@@ -1114,14 +1090,14 @@ final class ResumeOnce<T: Sendable>: Sendable {
 
         try beginChange()
         let directory = host?.harnessBackupDirectory(), chat = host?.harnessChatID
-        let tool = if case .remember = change { "remember" } else { "update_memory" }
+        let tool: AgentToolName = if case .remember = change { .remember } else { .updateMemory }
         let card = key.map(cardID) ?? ""
         let output = await Task.detached {
             AgentFileWriter.commit(plan, hooks: hooks) { original in
                 guard let directory, let chat else { return }
                 try AgentBackupStore(directory: directory).save(original, record: .init(
                     path: root + "/" + plan.path, root: root, rootKind: AgentBackupStore.memoryRoot, relativePath: plan.path,
-                    chat: chat, toolRecord: card, tool: tool, savedAt: Date(), original: original, action: plan.action, written: plan.content))
+                    chat: chat, toolRecord: card, tool: tool.rawValue, savedAt: Date(), original: original, action: plan.action, written: plan.content))
             }
         }.value
         // The memory's own words for what was done; a failure says it as the write tools do.
@@ -1218,7 +1194,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
                 guard let directory, let chat else { return }
                 try AgentBackupStore(directory: directory).save(nil, record: .init(
                     path: root + "/" + name, root: root, rootKind: rootKind, relativePath: name, chat: chat, toolRecord: card,
-                    tool: GenerateImageTool.toolName, savedAt: Date(), original: nil, action: "created", written: image.data))
+                    tool: AgentToolName.generateImage.rawValue, savedAt: Date(), original: nil, action: "created", written: image.data))
             }
             switch saved {
             case .failure(let failure): return (AgentImageResult.notSaved(failure.message), root)
@@ -1373,7 +1349,7 @@ final class ResumeOnce<T: Sendable>: Sendable {
                         callID: call.id, entryID: UInt64(index), turnID: UInt64(turnIndex), afterMessageID: anchor,
                         command: AgentToolRecord.display(call))
                     // bash calls in chats saved by earlier builds keep their records without a tool name.
-                    record.tool = call.toolName == "bash" ? nil : call.toolName
+                    record.tool = call.toolName == AgentToolName.legacyBash ? nil : call.toolName
                     record.afterMessageID = anchor; record.result = nil
                     if record.edit == nil { record.edit = AgentToolRecord.edit(call) }
                     if record.timeRange == nil { record.timeRange = AgentToolRecord.timeRange(call) }

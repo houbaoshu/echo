@@ -53,7 +53,7 @@ struct AgentToolView: View {
                     Text(tool.command).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 if let directory = tool.directory { Text(directory).font(.caption).foregroundStyle(.secondary) }
-                if let edit = tool.edit, tool.tool == "remember" {
+                if let edit = tool.edit, tool.toolName == .remember {
                     // A remember call has nothing before: the line it adds is all there is to show.
                     Text("新增").font(.caption).foregroundStyle(.secondary)
                     Text(edit.new).font(.system(.caption, design: .monospaced)).lineLimit(12).textSelection(.enabled)
@@ -134,34 +134,34 @@ struct AgentToolView: View {
     /// finder_location has no arguments to show. The folder's name is in the result; a call that
     /// found none ends at what it looked at.
     private var finderTitle: String? {
-        guard tool.tool == "finder_location" else { return nil }
+        guard tool.toolName == .finderLocation else { return nil }
         let folder = tool.resultObject?["folder"] as? String
         return ([tool.state.label, String(localized: "访达位置")] + (folder.map { [$0] } ?? [])).joined(separator: " · ")
     }
     /// Bash cards show the command alone, as they always have; other tools say what they did.
     private var action: String {
-        switch tool.tool {
-        case nil: ""
-        case "list_files": String(localized: "列出") + " "
-        case "read_file": String(localized: "读取") + " "
-        case "write_file": String(localized: "写入") + " "
-        case "edit_file": String(localized: "修改") + " "
-        case let name?: "\(name) "
+        guard let name = tool.tool else { return "" }
+        return switch tool.toolName {
+        case .listFiles?: String(localized: "列出") + " "
+        case .readFile?: String(localized: "读取") + " "
+        case .writeFile?: String(localized: "写入") + " "
+        case .editFile?: String(localized: "修改") + " "
+        default: "\(name) "
         }
     }
     private var icon: String {
-        switch tool.tool {
-        case nil: "terminal"
-        case "list_files": "folder"
+        guard tool.tool != nil else { return "terminal" }
+        return switch tool.toolName {
+        case .listFiles?: "folder"
         // A PDF's pages or an image, by what the call read.
-        case "read_file": switch tool.resultObject?["kind"] as? String {
+        case .readFile?: switch tool.resultObject?["kind"] as? String {
             case "pdf": "doc.richtext"
             case "image": "photo"
             default: "doc.text"
             }
-        case "finder_location": "macwindow"
-        case "write_file": "square.and.pencil"
-        case "edit_file": "pencil.line"
+        case .finderLocation?: "macwindow"
+        case .writeFile?: "square.and.pencil"
+        case .editFile?: "pencil.line"
         default: "wrench.and.screwdriver"
         }
     }

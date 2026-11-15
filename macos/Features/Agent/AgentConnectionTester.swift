@@ -51,7 +51,7 @@ struct NativeConnectionTester: ConnectionTesting {
     /// Named and shaped like list_files; ends the probe as soon as it is called.
     struct ProbeTool: Tool {
         enum Outcome: Error, Equatable { case called, invalid }
-        let name = "list_files"
+        let name = AgentToolName.listFiles.rawValue
         let description = ListFilesTool.toolDescription
         var parameters: GenerationSchema { ListFilesTool.Input.generationSchema }
         func call(arguments: GeneratedContent) async throws -> String {

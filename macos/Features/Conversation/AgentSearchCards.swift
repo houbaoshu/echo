@@ -14,7 +14,7 @@ struct AgentSearchCard: AgentToolCard {
         var url: URL?
     }
 
-    static func applies(to tool: AgentToolRecord) -> Bool { tool.tool == "web_search" }
+    static func applies(to tool: AgentToolRecord) -> Bool { tool.toolName == .webSearch }
 
     let icon = "magnifyingglass"
 

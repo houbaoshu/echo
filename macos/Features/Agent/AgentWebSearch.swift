@@ -254,7 +254,7 @@ protocol AgentWebSearchAccess: Sendable {
 }
 
 struct WebSearchTool: Tool {
-    let name = "web_search"
+    let name = AgentToolName.webSearch.rawValue
     let description: String
     let access: any AgentWebSearchAccess
 

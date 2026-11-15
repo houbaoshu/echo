@@ -46,7 +46,7 @@ protocol AgentOpenAccess: Sendable {
 }
 
 struct OpenAppTool: Tool {
-    let name = "open_app"
+    let name = AgentToolName.openApp.rawValue
     let description = "Open an app on the person's Mac, or bring it to the front when it is already open"
     let access: any AgentOpenAccess
 
@@ -70,7 +70,7 @@ struct OpenAppTool: Tool {
 }
 
 struct OpenURLTool: Tool {
-    let name = "open_url"
+    let name = AgentToolName.openURL.rawValue
     let description = "Open a web page in the person's default browser"
     let access: any AgentOpenAccess
 

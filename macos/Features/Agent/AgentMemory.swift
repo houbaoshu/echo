@@ -87,7 +87,7 @@ protocol AgentMemoryAccess: Sendable {
 }
 
 struct RememberTool: Tool {
-    let name = "remember"
+    let name = AgentToolName.remember.rawValue
     let description = "Add one line to what the person asked you to remember about them: \(AgentMemoryForm.rule). \(AgentMemoryForm.quote) "
         + AgentMemorySensitive.toolNote
     let access: any AgentMemoryAccess
@@ -109,7 +109,7 @@ struct RememberTool: Tool {
 }
 
 struct UpdateMemoryTool: Tool {
-    let name = "update_memory"
+    let name = AgentToolName.updateMemory.rawValue
     let description = "Replace one exact passage of what the person asked you to remember about them; an empty new_text removes it. "
         + "Each line new_text writes is \(AgentMemoryForm.rule). \(AgentMemoryForm.quote) " + AgentMemorySensitive.toolNote
     let access: any AgentMemoryAccess

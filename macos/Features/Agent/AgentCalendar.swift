@@ -369,7 +369,7 @@ private func nonEmpty(_ text: String?) -> String? {
 }
 
 struct ListRemindersTool: Tool {
-    let name = "list_reminders"
+    let name = AgentToolName.listReminders.rawValue
     let description = "List the person's reminders that are not completed"
     let access: any AgentCalendarAccess
 
@@ -399,7 +399,7 @@ struct ListRemindersTool: Tool {
 }
 
 struct CreateReminderTool: Tool {
-    let name = "create_reminder"
+    let name = AgentToolName.createReminder.rawValue
     let description = "Add a reminder to the person's Reminders"
     let access: any AgentCalendarAccess
 
@@ -431,7 +431,7 @@ struct CreateReminderTool: Tool {
 }
 
 struct CompleteReminderTool: Tool {
-    let name = "complete_reminder"
+    let name = AgentToolName.completeReminder.rawValue
     let description = "Mark one of the person's reminders as completed"
     let access: any AgentCalendarAccess
 
@@ -455,7 +455,7 @@ struct CompleteReminderTool: Tool {
 }
 
 struct ListEventsTool: Tool {
-    let name = "list_events"
+    let name = AgentToolName.listEvents.rawValue
     let description = "List the events in the person's calendars within a time range"
     let access: any AgentCalendarAccess
 
@@ -481,7 +481,7 @@ struct ListEventsTool: Tool {
 }
 
 struct CreateEventTool: Tool {
-    let name = "create_event"
+    let name = AgentToolName.createEvent.rawValue
     let description = "Add an event to the person's default calendar"
     let access: any AgentCalendarAccess
 

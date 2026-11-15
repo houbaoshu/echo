@@ -130,8 +130,7 @@ protocol AgentImageAccess: Sendable {
 }
 
 struct GenerateImageTool: Tool {
-    static let toolName = "generate_image"
-    let name = GenerateImageTool.toolName
+    let name = AgentToolName.generateImage.rawValue
     let description = "Generate one image from a text description with Doubao Seedream. It takes about half a minute. The image is saved as a JPEG in the Echo folder of the person's Pictures folder; with save_to_chat_folder, as a PNG in this chat's folder instead. Returns where it was saved"
     let access: any AgentImageAccess
 

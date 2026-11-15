@@ -6,16 +6,16 @@ struct AgentOpenCard: AgentToolCard {
     let tool: AgentToolRecord
 
     static func applies(to tool: AgentToolRecord) -> Bool {
-        tool.tool.map(AgentHarness.openTools.contains) ?? false
+        tool.toolName?.effect == .opens
     }
 
-    var icon: String { tool.tool == "open_app" ? "arrow.up.forward.app" : "globe" }
+    var icon: String { tool.toolName == .openApp ? "arrow.up.forward.app" : "globe" }
 
     /// "打开应用：提醒事项", "打开网址：example.com/docs"; a call that did not open says how it ended first.
     var title: String { titled(action) }
 
     private var action: String {
-        if tool.tool == "open_app" { return String(localized: "打开应用：\(result?["app"] as? String ?? tool.command)") }
+        if tool.toolName == .openApp { return String(localized: "打开应用：\(result?["app"] as? String ?? tool.command)") }
         // From the address as the model wrote it: the one opened spells a domain in other scripts as punycode.
         return String(localized: "打开网址：\(Self.address(tool.command.isEmpty ? result?["url"] as? String ?? "" : tool.command))")
     }
@@ -51,7 +51,7 @@ struct AgentOpenCard: AgentToolCard {
     var lines: [String]? {
         guard let result else { return nil }
         if let action = result["action"] as? String {
-            if tool.tool == "open_url" { return (result["url"] as? String).map { [$0] } }
+            if tool.toolName == .openURL { return (result["url"] as? String).map { [$0] } }
             let path = result["path"] as? String
             return (action == "brought_to_front" ? [String(localized: "已在运行，已切换到前台。")] : []) + (path.map { [$0] } ?? [])
         }

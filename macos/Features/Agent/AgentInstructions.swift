@@ -7,33 +7,34 @@ enum AgentInstructions {
     /// `memory` is what the memory file holds, read for this request; nil when it holds nothing.
     /// `vision` says the model sees images, so read_file reads PDFs and images for it.
     nonisolated static func text(tools: [String], attachments: [String] = [], memory: String? = nil, vision: Bool = false) -> String {
+        let offered = Set(tools.compactMap(AgentToolName.init(rawValue:)))
         var parts = ["You are a helpful assistant in a persistent conversation. Answer ordinary questions directly.",
                      "Each message from the person starts with a line from Echo, \"[Echo: sent …]\", giving the person's local date, weekday, time and time zone when the message reached you. It is not part of what they wrote."]
-        let writes = tools.contains("write_file") || tools.contains("edit_file")
+        let writes = offered.contains(.writeFile) || offered.contains(.editFile)
         // One folder per chat: the tools offer finder_location only in a chat without a project.
-        if tools.contains("finder_location") {
+        if offered.contains(.finderLocation) {
             let inside = writes ? "only what is inside it can be read or written" : "only what is inside it can be read"
             parts.append("When the person asks about the place they are viewing in Finder, list_files and read_file read it directly. They read this chat's Finder folder: the folder Finder showed the first time this chat read from Finder. It stays the same while the person browses elsewhere in Finder. finder_location switches this chat's Finder folder to the one Finder shows now, for when the person asks to switch, such as \"look at the folder I'm in now\". Paths are relative to the Finder folder, . is its root, and \(inside). The person can see which folder they are in; its name is context for you.")
-        } else if tools.contains("list_files") || tools.contains("read_file") {
+        } else if offered.contains(.listFiles) || offered.contains(.readFile) {
             parts.append("When the person asks about the files of the conversation's project, inspect them with list_files and read_file. Paths are relative to the project folder; use . for its root.")
         }
         if writes {
             parts.append("write_file creates a UTF-8 text file or replaces one in full; edit_file replaces a passage that appears exactly once in an existing UTF-8 text file. They work in the same folder as list_files and read_file, with paths relative to it, and create folders missing on the way. A file they write is at most 4 MiB. Hidden files and folders (names starting with .), executable files, .terminal files and anything inside an application bundle (.app) are not written. The home folder itself, the folders above it, hidden folders, and ~/Library outside iCloud Drive and cloud storage folders can only be read. Before a file is replaced or edited, Echo keeps a copy of the original. No tool deletes, renames or moves files.")
         }
-        if tools.contains("read_file"), vision {
+        if offered.contains(.readFile), vision {
             parts.append("read_file also reads PDFs, as images of their pages, and JPEG, PNG, GIF, WebP and HEIC images, which you then see. It reads at most \(AgentFilePages.maxPagesPerRead) pages of a PDF at a time: pass pages, such as 1-\(AgentFilePages.maxPagesPerRead), and read a longer PDF in several calls. You see those images only until this turn ends; to look at them again in a later turn, read them again.")
         }
-        if tools.contains("read_file"), !attachments.isEmpty {
+        if offered.contains(.readFile), !attachments.isEmpty {
             let names = attachments.map { "\"\($0)\"" }.joined(separator: ", ")
             parts.append("The person attached these files to this chat: \(names). read_file reads one with attached true and its name as the path. They can only be read: write_file and edit_file cannot change them, and list_files does not list them.")
         }
-        if tools.contains("create_reminder") || tools.contains("create_event") {
+        if offered.contains(.createReminder) || offered.contains(.createEvent) {
             parts.append("list_reminders, create_reminder and complete_reminder work with the person's Reminders; list_events and create_event with their calendars, adding events to the default calendar. A title names the thing to do or the event alone; its date, time, place and list each have their own argument. Times are ISO 8601 with a UTC offset, such as 2026-10-13T10:00:00+08:00, or a date alone for a whole day; results give times in the person's time zone with the weekday. The first use asks the person for access.")
         }
-        if tools.contains("web_fetch") {
+        if offered.contains(.webFetch) {
             parts.append("web_fetch reads the web page or PDF at an address and gives you its main text as Markdown.")
         }
-        if tools.contains("remember") || tools.contains("update_memory") {
+        if offered.contains(.remember) || offered.contains(.updateMemory) {
             parts.append("The memory is what the person asked you to remember about them: a file Echo keeps on this Mac and gives you at the start of every chat. remember adds one line to it; update_memory replaces a passage that appears exactly once in it, and an empty new_text removes the passage. It holds at most \(AgentMemoryFile.maxCharacters.formatted(.number.locale(Locale(identifier: "en_US")))) characters. Each line is \(AgentMemoryForm.rule). \(AgentMemoryForm.quote) The person can also see it in Echo's settings, open the file there and edit it themselves.")
         }
         parts.append("You may explain what you are doing alongside a tool call. Finish the turn with a useful text reply and no tool call.")

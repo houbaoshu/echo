@@ -7,20 +7,20 @@ struct AgentMemoryCard: AgentToolCard {
     let tool: AgentToolRecord
 
     static func applies(to tool: AgentToolRecord) -> Bool {
-        tool.tool.map(AgentHarness.memoryTools.contains) ?? false
+        tool.toolName?.effect == .changesMemory
     }
 
     var icon: String { "brain" }
 
-    private var removes: Bool { tool.tool == "update_memory" && tool.edit?.new.isEmpty == true }
+    private var removes: Bool { tool.toolName == .updateMemory && tool.edit?.new.isEmpty == true }
 
     /// "已记住 · 喜欢喝美式"; a card that did not finish says how it ended first, and an undone one says so.
     var title: String {
         if tool.state == .finished && tool.undo != .undone {
-            if tool.tool == "remember" { return String(localized: "已记住 · \(tool.command)") }
+            if tool.toolName == .remember { return String(localized: "已记住 · \(tool.command)") }
             return removes ? String(localized: "已从记忆中删除 · \(tool.command)") : String(localized: "已更新记忆 · \(tool.command)")
         }
-        let action = if tool.tool == "remember" { String(localized: "记住：\(tool.command)") }
+        let action = if tool.toolName == .remember { String(localized: "记住：\(tool.command)") }
             else if removes { String(localized: "从记忆中删除：\(tool.command)") }
             else { String(localized: "更新记忆：\(tool.command)") }
         return tool.stateLabel + " · " + action
@@ -41,7 +41,7 @@ struct AgentMemoryCard: AgentToolCard {
             let kind = (result["kinds"] as? [String])?.first.flatMap(AgentMemorySensitive.init)
             return [kind.map(Self.refusal) ?? String(localized: "含敏感个人信息，没有写入记忆。")]
         case .empty?:
-            return [tool.tool == "remember" ? String(localized: "没有要记住的内容，没有更改。") : String(localized: "没有指明要改哪段文字，没有更改。")]
+            return [tool.toolName == .remember ? String(localized: "没有要记住的内容，没有更改。") : String(localized: "没有指明要改哪段文字，没有更改。")]
         case nil: return [String(localized: "没有更改：\(result["detail"] as? String ?? "")")]
         }
     }

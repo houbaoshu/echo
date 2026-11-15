@@ -194,7 +194,7 @@ enum AgentFileUndo {
         default: return .notFile
         }
         // Echo never writes an executable file, or a text file over 4 MiB, so such a file was changed since.
-        let limit = AgentHarness.imageTools.contains(record.tool) ? AgentImageFiles.maxBytes : AgentFileWriter.maxFileBytes
+        let limit = AgentToolName(rawValue: record.tool)?.effect == .createsImage ? AgentImageFiles.maxBytes : AgentFileWriter.maxFileBytes
         guard info.st_mode & 0o111 == 0, info.st_size <= limit else { return .changed }
         let current: AgentOriginalFile
         switch AgentFileWriter.read(fd, name, path: record.root + "/" + path, limit: limit) {

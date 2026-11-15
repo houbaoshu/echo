@@ -470,7 +470,7 @@ import UniformTypeIdentifiers
         let start = ContinuousClock.now
         chat.store.send("画一张正方形的图：一只橘猫趴在洒满阳光的木窗台上。画好后告诉我存在哪里。")
         try await wait(chat.store)
-        let calls = chat.store.tools.filter { $0.tool == GenerateImageTool.toolName }
+        let calls = chat.store.tools.filter { $0.toolName == .generateImage }
         let reply = chat.store.messages.last { $0.role == .assistant }?.content ?? ""
         guard chat.store.task?.status == .completed, calls.count == 1, let call = calls.first, call.state == .finished,
               let file = AgentImageCard(tool: call).file, let data = try? Data(contentsOf: file),

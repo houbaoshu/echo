@@ -1211,6 +1211,77 @@ import UniformTypeIdentifiers
     }
 }
 
+/// Tool names have one home, `AgentToolName`: how a batch orders its calls and what each card says
+/// follow from it.
+@MainActor @Suite struct AgentToolNameTests {
+    /// The names are what saved chats, cards and backup records hold, so they never change.
+    @Test func namesAreTheOnesSavedChatsHold() {
+        #expect(AgentToolName.allCases.map(\.rawValue) == [
+            "list_files", "read_file", "finder_location", "write_file", "edit_file", "list_reminders", "create_reminder",
+            "complete_reminder", "list_events", "create_event", "open_app", "open_url", "web_search", "web_fetch",
+            "generate_image", "remember", "update_memory"])
+        #expect(AgentToolName.legacyBash == "bash")
+    }
+
+    /// Every pair of calls in a batch waits, or not, as it did when the rule was written over sets
+    /// of names in AgentHarness, before the names had a type: the sets and the rule are copied
+    /// here as they were. Earlier builds' bash and a name Echo does not know take part too.
+    @Test func everyPairOfCallsInABatchKeepsItsOrder() {
+        let writes: Set = ["write_file", "edit_file"]
+        let calendarChanges: Set = ["create_reminder", "complete_reminder", "create_event"]
+        let calendar = calendarChanges.union(["list_reminders", "list_events"])
+        let opens: Set = ["open_app", "open_url"]
+        let memory: Set = ["remember", "update_memory"]
+        let images: Set = ["generate_image"]
+        let changes = writes.union(calendarChanges).union(opens).union(memory).union(images)
+        let ordered = changes.union(calendar).union(["list_files", "read_file", "finder_location"])
+        func named(_ test: (AgentToolName) -> Bool) -> Set<String> { Set(AgentToolName.allCases.filter(test).map(\.rawValue)) }
+        #expect(named { $0.effect == .writesFile } == writes)
+        #expect(named { $0.effect == .changesCalendar } == calendarChanges && named(\.isCalendar) == calendar)
+        #expect(named { $0.effect == .opens } == opens && named { $0.effect == .changesMemory } == memory)
+        #expect(named { $0.effect == .createsImage } == images)
+        #expect(named(\.isChange) == changes && named(\.isOrdered) == ordered)
+        let names = AgentToolName.allCases.map(\.rawValue) + [AgentToolName.legacyBash, "no_such_tool"]
+        for tool in names {
+            for earlier in names {
+                let before = ordered.contains(earlier)
+                    && (changes.contains(tool) || changes.contains(earlier) || (earlier == "finder_location" && tool != "finder_location"))
+                #expect(AgentToolName.waits(tool, for: earlier) == before, "\(tool) after \(earlier)")
+            }
+        }
+    }
+
+    /// The rule in words: reads go side by side, changes go in the order written, a read sees the
+    /// folder finder_location switched to, and no call waits for web_search or web_fetch, which
+    /// change nothing on this Mac. (Their own calls never ask for a place in their batch.)
+    @Test func readsGoSideBySideAndChangesInOrder() {
+        #expect(!AgentToolName.waits("read_file", for: "list_files") && !AgentToolName.waits("list_events", for: "read_file"))
+        #expect(AgentToolName.waits("read_file", for: "write_file") && AgentToolName.waits("write_file", for: "read_file"))
+        #expect(AgentToolName.waits("create_event", for: "open_url") && AgentToolName.waits("remember", for: "generate_image"))
+        #expect(AgentToolName.waits("read_file", for: "finder_location") && AgentToolName.waits("finder_location", for: "write_file"))
+        #expect(!AgentToolName.waits("finder_location", for: "finder_location") && !AgentToolName.waits("finder_location", for: "list_files"))
+        for tool in AgentToolName.allCases {
+            #expect(!AgentToolName.waits(tool.rawValue, for: "web_fetch") && !AgentToolName.waits(tool.rawValue, for: "web_search"), "\(tool)")
+        }
+    }
+
+    /// A chat without a project, with search and images, offers every tool and no other, and
+    /// each has a status line of its own for the card and the Live Voice bubble, never the
+    /// catch-all one.
+    @Test func everyToolATurnOffersHasANameAndAStatusLine() async throws {
+        let chat = AgentHarnessTests.Chat({ _, emit, _ in try await emit.text("hi") },
+                                          webSearch: .doubao(DoubaoSearch(key: "key")),
+                                          imageGenerator: ArkImageGenerator(key: "key", model: ArkSettings.defaultVisionModel))
+        try await chat.run("hello")
+        let offered = try #require(chat.model.requests.first).enabledToolDefinitions.map(\.name)
+        #expect(offered.sorted() == AgentToolName.allCases.map(\.rawValue).sorted())
+        let lines = AgentToolName.allCases.map { AgentToolRecord(callID: "1", entryID: 0, turnID: 1, command: "x", tool: $0.rawValue).summary }
+        let catchAll = AgentToolRecord(callID: "1", entryID: 0, turnID: 1, command: "x", tool: "no_such_tool").summary
+        let catchAllStart = try #require(catchAll.components(separatedBy: "no_such_tool").first)
+        #expect(!catchAllStart.isEmpty && Set(lines).count == lines.count && !lines.contains { $0.hasPrefix(catchAllStart) }, "\(lines)")
+    }
+}
+
 /// Holds async callers until opened.
 final class AsyncGate: Sendable {
     private let state = Mutex<(open: Bool, waiters: [CheckedContinuation<Void, Never>])>((false, []))

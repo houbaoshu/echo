@@ -565,7 +565,7 @@ protocol AgentWebFetchAccess: Sendable {
 }
 
 struct WebFetchTool: Tool {
-    let name = "web_fetch"
+    let name = AgentToolName.webFetch.rawValue
     let description = "Read the web page or PDF at an http or https address. Returns its title, the address it ended up at, and its main text as Markdown"
     let access: any AgentWebFetchAccess
 

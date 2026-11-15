@@ -10,41 +10,41 @@ struct AgentCalendarCard: AgentToolCard {
     var locale = Locale.current
 
     static func applies(to tool: AgentToolRecord) -> Bool {
-        tool.tool.map(AgentHarness.calendarTools.contains) ?? false
+        tool.toolName?.isCalendar == true
     }
 
     var icon: String {
-        switch tool.tool {
-        case "list_reminders": "checklist"
-        case "create_reminder": "bell"
-        case "complete_reminder": "checkmark.circle"
-        case "list_events": "calendar"
+        switch tool.toolName {
+        case .listReminders?: "checklist"
+        case .createReminder?: "bell"
+        case .completeReminder?: "checkmark.circle"
+        case .listEvents?: "calendar"
         default: "calendar.badge.plus"
         }
     }
 
     /// "新建提醒：交报告 · 明天 10:00"; a call that did not finish says how it ended first.
     var title: String {
-        let changed = tool.undo != .undone && tool.state == .finished && AgentHarness.calendarChangeTools.contains(tool.tool ?? "")
+        let changed = tool.undo != .undone && tool.state == .finished && tool.toolName?.effect == .changesCalendar
         return (changed ? "" : tool.stateLabel + " · ") + action
     }
 
     private var action: String {
         let result = result
-        switch tool.tool {
-        case "create_reminder":
+        switch tool.toolName {
+        case .createReminder?:
             let reminder = result?["reminder"] as? [String: Any]
             let name = reminder?["title"] as? String ?? tool.command
             let due = (reminder?["due"] as? String).flatMap(when)
             return String(localized: "新建提醒：\(name)") + (due.map { " · " + $0 } ?? "")
-        case "complete_reminder":
+        case .completeReminder?:
             let name = (result?["reminder"] as? [String: Any])?["title"] as? String
             return name.map { String(localized: "完成提醒：\($0)") } ?? String(localized: "完成提醒")
-        case "create_event":
+        case .createEvent?:
             let event = result?["event"] as? [String: Any]
             let name = event?["title"] as? String ?? tool.command
             return String(localized: "新建日程：\(name)") + (event.flatMap(span).map { " · " + $0 } ?? "")
-        case "list_reminders":
+        case .listReminders?:
             return String(localized: "查看提醒事项") + (tool.command.isEmpty ? "" : " · " + tool.command)
         default:
             let from = (result?["from"] as? String).flatMap(Self.instant)
@@ -61,24 +61,24 @@ struct AgentCalendarCard: AgentToolCard {
     var lines: [String]? {
         if let missing = tool.result.flatMap(AgentCalendarResult.missingAccess) { return [Self.missingAccess(missing.kind, missing.permission)] }
         guard let result, result["status"] == nil else { return nil }
-        switch tool.tool {
-        case "list_reminders":
+        switch tool.toolName {
+        case .listReminders?:
             let reminders = result["reminders"] as? [[String: Any]] ?? []
             if reminders.isEmpty { return [String(localized: "（没有提醒事项）")] }
             return reminders.map { reminder in
                 ([reminder["title"] as? String ?? ""] + [(reminder["due"] as? String).flatMap(when), reminder["list"] as? String].compactMap { $0 })
                     .joined(separator: " · ")
             } + (result["truncated"] as? Bool == true ? [String(localized: "已截断")] : [])
-        case "list_events":
+        case .listEvents?:
             let events = result["events"] as? [[String: Any]] ?? []
             if events.isEmpty { return [String(localized: "（没有日程）")] }
             return events.map { event in
                 ([event["title"] as? String ?? "", span(event), event["location"] as? String].compactMap { $0 }).joined(separator: " · ")
             } + (result["truncated"] as? Bool == true ? [String(localized: "已截断")] : [])
-        case "create_reminder", "complete_reminder":
+        case .createReminder?, .completeReminder?:
             guard let reminder = result["reminder"] as? [String: Any] else { return nil }
             return [(reminder["list"] as? String).map { String(localized: "列表：\($0)") }].compactMap { $0 }
-        case "create_event":
+        case .createEvent?:
             guard let event = result["event"] as? [String: Any] else { return nil }
             return [(event["calendar"] as? String).map { String(localized: "日历：\($0)") },
                     (event["location"] as? String).map { String(localized: "地点：\($0)") }].compactMap { $0 }
