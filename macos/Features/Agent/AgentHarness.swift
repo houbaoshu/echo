@@ -917,6 +917,31 @@ final class ResumeOnce<T: Sendable>: Sendable {
     /// The card ID of a call this turn: turns count from 1, the batch's entry and the call ID come from its key.
     private func cardID(_ key: String) -> String { "\(state.turns.count):\(key)" }
 
+    /// Runs one change call in its turn: after every call written before it in its batch that it
+    /// waits for. However `body` ends, the calls after it in its batch may then go, unless a later
+    /// turn has begun meanwhile. `body` gets the call's key, nil for a call the harness did not see
+    /// dispatched, and the turn the call belongs to.
+    private func inTurn(call identity: GenerationID?, _ body: (_ key: String?, _ serial: Int) async throws -> String) async throws -> String {
+        let (key, serial) = try startCall(identity)
+        defer { endCall(key, of: serial) }
+        try await waitInBatch(key)
+        return try await body(key, serial)
+    }
+
+    /// Saves the call, then makes the change off the main actor and waits for it to end: from the
+    /// save on, a crash reopens the call as unknown, and the turn does not settle before the change does.
+    private func commitChange<T: Sendable>(_ change: @escaping @Sendable () async -> T) async throws -> T {
+        try beginChange()
+        return await Task.detached(operation: change).value
+    }
+
+    /// Where a change call keeps the record its card's Undo needs; nil when this chat keeps no
+    /// records, and the change then has no undo.
+    private func recorder(for key: String?, tool: AgentToolName) -> AgentBackupRecorder? {
+        guard let directory = host?.harnessBackupDirectory(), let chat = host?.harnessChatID else { return nil }
+        return AgentBackupRecorder(store: AgentBackupStore(directory: directory), chat: chat, card: key.map(cardID) ?? "", tool: tool)
+    }
+
     /// The chat's folder a change writes in, canonical, once the write policy allows writing there;
     /// otherwise the result that ends the call. `nothing` says what it did not do: "written" or "generated".
     private func writableFolder(call identity: GenerationID?, nothing: String) async throws -> AgentRootResolution {
@@ -945,52 +970,47 @@ final class ResumeOnce<T: Sendable>: Sendable {
     /// before it does, and its result is kept for the card and the save even if Foundation Models
     /// never records it. The calls after it in its batch wait for it.
     fileprivate func write(call identity: GenerationID?, _ arguments: Result<AgentWriteRequest, AgentInvalidArguments>) async throws -> String {
-        let (key, serial) = try startCall(identity)
-        defer { endCall(key, of: serial) }
-        try await waitInBatch(key)
-        let request: AgentWriteRequest
-        switch arguments {
-        case .failure(let invalid): return invalid.result
-        case .success(let valid): request = valid
-        }
-        let root: String, scope: AgentReadScope
-        switch try await writableFolder(call: identity, nothing: "written") {
-        case .result(let result): return result
-        case .folder(let path, let kind): (root, scope) = (path, kind)
-        }
-
-        let hooks = writeHooks
-        let prepared = try await unlessInterrupted {
-            AgentFileWriter.prepare(root: root, path: request.path, change: request.change, scope: scope, hooks: hooks)
-        }
-        guard let prepared else { return AgentToolResult.superseded }
-        // A later turn may have begun while the original was read; this call belongs to one that ended.
-        try checkTurn(serial)
-        if steering.isPending { return AgentToolResult.superseded }
-        let plan: AgentFileWriter.Plan
-        switch prepared {
-        case .failure(let failure): return AgentToolResult.naming(root: root, scope: scope, in: failure.result)
-        case .success(let ready): plan = ready
-        }
-
-        try beginChange()
-        let directory = host?.harnessBackupDirectory(), chat = host?.harnessChatID
-        let tool: AgentToolName = if case .edit = request.change { .editFile } else { .writeFile }
-        let card = key.map(cardID) ?? ""
-        let output = await Task.detached {
-            AgentFileWriter.commit(plan, hooks: hooks) { original in
-                guard let directory, let chat else {
-                    // Without a folder of records a new file is still created; it has no undo.
-                    if original == nil { return }
-                    throw CocoaError(.fileWriteNoPermission)
-                }
-                try AgentBackupStore(directory: directory).save(original, record: .init(
-                    path: root + "/" + plan.path, root: root, rootKind: scope.rawValue, relativePath: plan.path,
-                    chat: chat, toolRecord: card, tool: tool.rawValue, savedAt: Date(), original: original, action: plan.action, written: plan.content))
+        try await inTurn(call: identity) { key, serial in
+            let request: AgentWriteRequest
+            switch arguments {
+            case .failure(let invalid): return invalid.result
+            case .success(let valid): request = valid
             }
-        }.value
-        let result = AgentToolResult.naming(root: root, scope: scope, in: output)
-        return changeEnded(key, result: result, undoable: directory != nil && chat != nil && AgentToolResult.changed(result))
+            let root: String, scope: AgentReadScope
+            switch try await writableFolder(call: identity, nothing: "written") {
+            case .result(let result): return result
+            case .folder(let path, let kind): (root, scope) = (path, kind)
+            }
+
+            let hooks = writeHooks
+            let prepared = try await unlessInterrupted {
+                AgentFileWriter.prepare(root: root, path: request.path, change: request.change, scope: scope, hooks: hooks)
+            }
+            guard let prepared else { return AgentToolResult.superseded }
+            // A later turn may have begun while the original was read; this call belongs to one that ended.
+            try checkTurn(serial)
+            if steering.isPending { return AgentToolResult.superseded }
+            let plan: AgentFileWriter.Plan
+            switch prepared {
+            case .failure(let failure): return AgentToolResult.naming(root: root, scope: scope, in: failure.result)
+            case .success(let ready): plan = ready
+            }
+
+            let tool: AgentToolName = if case .edit = request.change { .editFile } else { .writeFile }
+            let records = recorder(for: key, tool: tool)
+            let output = try await commitChange {
+                AgentFileWriter.commit(plan, hooks: hooks) { original in
+                    guard let records else {
+                        // Without a folder of records a new file is still created; it has no undo.
+                        if original == nil { return }
+                        throw CocoaError(.fileWriteNoPermission)
+                    }
+                    try records.save(original, root: root, rootKind: scope.rawValue, relativePath: plan.path, action: plan.action, written: plan.content)
+                }
+            }
+            let result = AgentToolResult.naming(root: root, scope: scope, in: output)
+            return changeEnded(key, result: result, undoable: records != nil && AgentToolResult.changed(result))
+        }
     }
 
     private struct WriteSuperseded: Error {}
@@ -1001,57 +1021,53 @@ final class ResumeOnce<T: Sendable>: Sendable {
     /// change is saved before it is made and then runs to its end, as a write does; what it
     /// changed is kept for its card's Undo.
     fileprivate func calendar(call identity: GenerationID?, _ arguments: Result<AgentCalendarRequest, AgentInvalidArguments>) async throws -> String {
-        let (key, serial) = try startCall(identity)
-        defer { endCall(key, of: serial) }
-        try await waitInBatch(key)
-        if steering.isPending { return AgentToolResult.superseded }
-        let request: AgentCalendarRequest
-        switch arguments {
-        case .failure(let invalid): return invalid.result
-        case .success(let valid): request = valid
-        }
-        let store = calendarStore, clock = clock
-        guard let permission = try await unlessInterrupted({ await store.permission(for: request.kind) }) else {
-            return AgentToolResult.superseded
-        }
-        guard permission == .granted else { return AgentCalendarResult.denied(request.kind, permission) }
-        guard let plan = try await unlessInterrupted({ await AgentCalendarRunner.prepare(request, store: store, clock: clock) }) else {
-            return AgentToolResult.superseded
-        }
-        try checkTurn(serial)
-        if case .done(let result) = plan { return result }
-        if steering.isPending { return AgentToolResult.superseded }
+        try await inTurn(call: identity) { key, serial in
+            if steering.isPending { return AgentToolResult.superseded }
+            let request: AgentCalendarRequest
+            switch arguments {
+            case .failure(let invalid): return invalid.result
+            case .success(let valid): request = valid
+            }
+            let store = calendarStore, clock = clock
+            guard let permission = try await unlessInterrupted({ await store.permission(for: request.kind) }) else {
+                return AgentToolResult.superseded
+            }
+            guard permission == .granted else { return AgentCalendarResult.denied(request.kind, permission) }
+            guard let plan = try await unlessInterrupted({ await AgentCalendarRunner.prepare(request, store: store, clock: clock) }) else {
+                return AgentToolResult.superseded
+            }
+            try checkTurn(serial)
+            if case .done(let result) = plan { return result }
+            if steering.isPending { return AgentToolResult.superseded }
 
-        try beginChange()
-        let (result, change) = await Task.detached { await AgentCalendarRunner.commit(plan, store: store, clock: clock) }.value
-        if let key, let change { state.calendarChanges[cardID(key)] = change }
-        return changeEnded(key, result: result, undoable: change != nil)
+            let (result, change) = try await commitChange { await AgentCalendarRunner.commit(plan, store: store, clock: clock) }
+            if let key, let change { state.calendarChanges[cardID(key)] = change }
+            return changeEnded(key, result: result, undoable: change != nil)
+        }
     }
 
     /// One open_app or open_url call, in its turn: after every call written before it in its batch.
     /// Nothing is asked first. Finding the app is ended at once by a Stop or newer input; the call
     /// is saved before anything opens, and the opening then runs to its end, as a write does.
     fileprivate func open(call identity: GenerationID?, _ arguments: Result<AgentOpenRequest, AgentInvalidArguments>) async throws -> String {
-        let (key, serial) = try startCall(identity)
-        defer { endCall(key, of: serial) }
-        try await waitInBatch(key)
-        if steering.isPending { return AgentToolResult.superseded }
-        let request: AgentOpenRequest
-        switch arguments {
-        case .failure(let invalid): return invalid.result
-        case .success(let valid): request = valid
-        }
-        let opener = opener
-        guard let plan = try await unlessInterrupted({ await AgentOpenRunner.prepare(request, opener: opener) }) else {
-            return AgentToolResult.superseded
-        }
-        try checkTurn(serial)
-        if case .done(let result) = plan { return result }
-        if steering.isPending { return AgentToolResult.superseded }
+        try await inTurn(call: identity) { key, serial in
+            if steering.isPending { return AgentToolResult.superseded }
+            let request: AgentOpenRequest
+            switch arguments {
+            case .failure(let invalid): return invalid.result
+            case .success(let valid): request = valid
+            }
+            let opener = opener
+            guard let plan = try await unlessInterrupted({ await AgentOpenRunner.prepare(request, opener: opener) }) else {
+                return AgentToolResult.superseded
+            }
+            try checkTurn(serial)
+            if case .done(let result) = plan { return result }
+            if steering.isPending { return AgentToolResult.superseded }
 
-        try beginChange()
-        let result = await Task.detached { await AgentOpenRunner.commit(plan, opener: opener) }.value
-        return changeEnded(key, result: result, undoable: false)
+            let result = try await commitChange { await AgentOpenRunner.commit(plan, opener: opener) }
+            return changeEnded(key, result: result, undoable: false)
+        }
     }
 
     /// One remember or update_memory call, in its turn: after every call written before it in its
@@ -1060,49 +1076,45 @@ final class ResumeOnce<T: Sendable>: Sendable {
     /// file's earlier content is kept with this chat's records for the card's Undo; a chat without
     /// a records folder still changes the memory, with no undo.
     fileprivate func changeMemory(call identity: GenerationID?, _ arguments: Result<AgentMemoryChange, AgentInvalidArguments>) async throws -> String {
-        let (key, serial) = try startCall(identity)
-        defer { endCall(key, of: serial) }
-        try await waitInBatch(key)
-        if steering.isPending { return AgentToolResult.superseded }
-        let change: AgentMemoryChange
-        switch arguments {
-        case .failure(let invalid): return invalid.result
-        case .success(let valid): change = valid
-        }
-        guard let memory = turnMemory else { return AgentToolResult.failed("the memory is not available in this chat") }
-
-        let hooks = writeHooks
-        let prepared: Result<(root: String, plan: AgentFileWriter.Plan), AgentInvalidArguments>? = try await unlessInterrupted {
-            do { try FileManager.default.createDirectory(at: memory.folder, withIntermediateDirectories: true) }
-            catch { return .failure(.failed("the memory file's folder cannot be made: \(error.localizedDescription)")) }
-            guard let root = ProjectPath.canonical(memory.folder.path) else { return .failure(.failed("the memory file's folder cannot be found")) }
-            return AgentFileWriter.prepare(root: root, path: AgentMemoryFile.fileName, change: .derive { AgentMemoryEdit.apply(change, to: $0) },
-                                           hooks: hooks).map { (root: root, plan: $0) }
-        }
-        guard let prepared else { return AgentToolResult.superseded }
-        try checkTurn(serial)
-        if steering.isPending { return AgentToolResult.superseded }
-        let root: String, plan: AgentFileWriter.Plan
-        switch prepared {
-        case .failure(let failure): return failure.result
-        case .success(let ready): (root, plan) = ready
-        }
-
-        try beginChange()
-        let directory = host?.harnessBackupDirectory(), chat = host?.harnessChatID
-        let tool: AgentToolName = if case .remember = change { .remember } else { .updateMemory }
-        let card = key.map(cardID) ?? ""
-        let output = await Task.detached {
-            AgentFileWriter.commit(plan, hooks: hooks) { original in
-                guard let directory, let chat else { return }
-                try AgentBackupStore(directory: directory).save(original, record: .init(
-                    path: root + "/" + plan.path, root: root, rootKind: AgentBackupStore.memoryRoot, relativePath: plan.path,
-                    chat: chat, toolRecord: card, tool: tool.rawValue, savedAt: Date(), original: original, action: plan.action, written: plan.content))
+        try await inTurn(call: identity) { key, serial in
+            if steering.isPending { return AgentToolResult.superseded }
+            let change: AgentMemoryChange
+            switch arguments {
+            case .failure(let invalid): return invalid.result
+            case .success(let valid): change = valid
             }
-        }.value
-        // The memory's own words for what was done; a failure says it as the write tools do.
-        let changed = AgentToolResult.changed(output)
-        return changeEnded(key, result: changed ? AgentMemoryEdit.result(change) : output, undoable: changed && directory != nil && chat != nil)
+            guard let memory = turnMemory else { return AgentToolResult.failed("the memory is not available in this chat") }
+
+            let hooks = writeHooks
+            let prepared: Result<(root: String, plan: AgentFileWriter.Plan), AgentInvalidArguments>? = try await unlessInterrupted {
+                do { try FileManager.default.createDirectory(at: memory.folder, withIntermediateDirectories: true) }
+                catch { return .failure(.failed("the memory file's folder cannot be made: \(error.localizedDescription)")) }
+                guard let root = ProjectPath.canonical(memory.folder.path) else { return .failure(.failed("the memory file's folder cannot be found")) }
+                return AgentFileWriter.prepare(root: root, path: AgentMemoryFile.fileName, change: .derive { AgentMemoryEdit.apply(change, to: $0) },
+                                               hooks: hooks).map { (root: root, plan: $0) }
+            }
+            guard let prepared else { return AgentToolResult.superseded }
+            try checkTurn(serial)
+            if steering.isPending { return AgentToolResult.superseded }
+            let root: String, plan: AgentFileWriter.Plan
+            switch prepared {
+            case .failure(let failure): return failure.result
+            case .success(let ready): (root, plan) = ready
+            }
+
+            let tool: AgentToolName = if case .remember = change { .remember } else { .updateMemory }
+            let records = recorder(for: key, tool: tool)
+            let output = try await commitChange {
+                AgentFileWriter.commit(plan, hooks: hooks) { original in
+                    // Without a folder of records the memory still changes; it has no undo.
+                    try records?.save(original, root: root, rootKind: AgentBackupStore.memoryRoot, relativePath: plan.path,
+                                      action: plan.action, written: plan.content)
+                }
+            }
+            // The memory's own words for what was done; a failure says it as the write tools do.
+            let changed = AgentToolResult.changed(output)
+            return changeEnded(key, result: changed ? AgentMemoryEdit.result(change) : output, undoable: changed && records != nil)
+        }
     }
 
     /// One web_search call. Nothing on the Mac changes, so it waits for no other call and is not
@@ -1139,73 +1151,69 @@ final class ResumeOnce<T: Sendable>: Sendable {
     /// the call is saved before the file is written, and the write then runs to its end, as a write
     /// call's does; the card undoes it like a file write_file created.
     fileprivate func generateImage(call identity: GenerationID?, _ arguments: Result<AgentImageRequest, AgentInvalidArguments>) async throws -> String {
-        let (key, serial) = try startCall(identity)
-        defer { endCall(key, of: serial) }
-        try await waitInBatch(key)
-        if steering.isPending { return AgentToolResult.superseded }
-        let request: AgentImageRequest
-        switch arguments {
-        case .failure(let invalid): return invalid.result
-        case .success(let valid): request = valid
-        }
-        guard let generator = imageGenerator else { return AgentToolResult.failed("generate_image is not available: no Volcengine Ark key is saved") }
+        try await inTurn(call: identity) { key, serial in
+            if steering.isPending { return AgentToolResult.superseded }
+            let request: AgentImageRequest
+            switch arguments {
+            case .failure(let invalid): return invalid.result
+            case .success(let valid): request = valid
+            }
+            guard let generator = imageGenerator else { return AgentToolResult.failed("generate_image is not available: no Volcengine Ark key is saved") }
 
-        // The chat's folder, when the person asked for it; otherwise Pictures/Echo, made when the image is saved.
-        var chatRoot: (path: String, scope: AgentReadScope)?
-        if request.saveToChatFolder {
-            switch try await writableFolder(call: identity, nothing: "generated") {
-            case .result(let result): return result
-            case .folder(let root, let scope):
-                chatRoot = (root, scope)
-                if let key { callDirectories[key] = root; project() }
+            // The chat's folder, when the person asked for it; otherwise Pictures/Echo, made when the image is saved.
+            let chatRoot: (path: String, scope: AgentReadScope)?
+            if request.saveToChatFolder {
+                switch try await writableFolder(call: identity, nothing: "generated") {
+                case .result(let result): return result
+                case .folder(let root, let scope):
+                    chatRoot = (root, scope)
+                    if let key { callDirectories[key] = root; project() }
+                }
+            } else {
+                chatRoot = nil
             }
-        }
-        let named = { (result: String) in chatRoot.map { AgentToolResult.naming(root: $0.path, scope: $0.scope, in: result) } ?? result }
+            let named = { (result: String) in chatRoot.map { AgentToolResult.naming(root: $0.path, scope: $0.scope, in: result) } ?? result }
 
-        let generated = try await cancellingUnlessInterrupted { () async -> Result<AgentGeneratedImage, AgentImageFailure> in
-            do throws(AgentImageFailure) { return .success(try await generator.generate(request)) } catch { return .failure(error) }
-        }
-        guard let generated else { return AgentToolResult.superseded }
-        // A later turn may have begun while the image was made; this call belongs to one that ended.
-        try checkTurn(serial)
-        if steering.isPending { return AgentToolResult.superseded }
-        let image: AgentGeneratedImage
-        switch generated {
-        case .failure(let failure): return named(AgentImageResult.failed(failure))
-        case .success(let made): image = made
-        }
+            let generated = try await cancellingUnlessInterrupted { () async -> Result<AgentGeneratedImage, AgentImageFailure> in
+                do throws(AgentImageFailure) { return .success(try await generator.generate(request)) } catch { return .failure(error) }
+            }
+            guard let generated else { return AgentToolResult.superseded }
+            // A later turn may have begun while the image was made; this call belongs to one that ended.
+            try checkTurn(serial)
+            if steering.isPending { return AgentToolResult.superseded }
+            let image: AgentGeneratedImage
+            switch generated {
+            case .failure(let failure): return named(AgentImageResult.failed(failure))
+            case .success(let made): image = made
+            }
 
-        try beginChange()
-        let directory = host?.harnessBackupDirectory(), chat = host?.harnessChatID
-        let card = key.map(cardID) ?? ""
-        let base = AgentImageFiles.baseName(prompt: request.prompt, at: clock.now(), in: clock.timeZone)
-        let pictures = picturesFolder
-        let (output, folder) = await Task.detached { () -> (String, String?) in
-            let root: String
-            if let chatRoot { root = chatRoot.path } else {
-                do { try FileManager.default.createDirectory(at: pictures, withIntermediateDirectories: true) }
-                catch { return (AgentImageResult.notSaved(error.localizedDescription), nil) }
-                guard let canonical = ProjectPath.canonical(pictures.path) else { return (AgentImageResult.notSaved(String(cString: strerror(ENOENT))), nil) }
-                root = canonical
+            let records = recorder(for: key, tool: .generateImage)
+            let base = AgentImageFiles.baseName(prompt: request.prompt, at: clock.now(), in: clock.timeZone)
+            let pictures = picturesFolder
+            let (output, folder) = try await commitChange { () -> (String, String?) in
+                let root: String
+                if let chatRoot { root = chatRoot.path } else {
+                    do { try FileManager.default.createDirectory(at: pictures, withIntermediateDirectories: true) }
+                    catch { return (AgentImageResult.notSaved(error.localizedDescription), nil) }
+                    guard let canonical = ProjectPath.canonical(pictures.path) else { return (AgentImageResult.notSaved(String(cString: strerror(ENOENT))), nil) }
+                    root = canonical
+                }
+                let rootKind = chatRoot?.scope.rawValue ?? AgentImageFiles.picturesRoot
+                let saved = AgentImageFiles.save(image, in: root, base: base) { name in
+                    // Without a folder of records the image is still saved; it has no undo.
+                    try records?.save(nil, root: root, rootKind: rootKind, relativePath: name, action: "created", written: image.data)
+                }
+                switch saved {
+                case .failure(let failure): return (AgentImageResult.notSaved(failure.message), root)
+                case .success(let name):
+                    let path = chatRoot == nil ? (pictures.path as NSString).abbreviatingWithTildeInPath + "/" + name : name
+                    return (AgentImageResult.saved(image, path: path), root)
+                }
             }
-            let rootKind = chatRoot?.scope.rawValue ?? AgentImageFiles.picturesRoot
-            let saved = AgentImageFiles.save(image, in: root, base: base) { name in
-                // Without a folder of records the image is still saved; it has no undo.
-                guard let directory, let chat else { return }
-                try AgentBackupStore(directory: directory).save(nil, record: .init(
-                    path: root + "/" + name, root: root, rootKind: rootKind, relativePath: name, chat: chat, toolRecord: card,
-                    tool: AgentToolName.generateImage.rawValue, savedAt: Date(), original: nil, action: "created", written: image.data))
-            }
-            switch saved {
-            case .failure(let failure): return (AgentImageResult.notSaved(failure.message), root)
-            case .success(let name):
-                let path = chatRoot == nil ? (pictures.path as NSString).abbreviatingWithTildeInPath + "/" + name : name
-                return (AgentImageResult.saved(image, path: path), root)
-            }
-        }.value
-        let result = named(output)
-        if let key, let folder { callDirectories[key] = folder }
-        return changeEnded(key, result: result, undoable: directory != nil && chat != nil && AgentToolResult.changed(result))
+            let result = named(output)
+            if let key, let folder { callDirectories[key] = folder }
+            return changeEnded(key, result: result, undoable: records != nil && AgentToolResult.changed(result))
+        }
     }
 
     /// Awaits `work` off the main actor. A Stop ends the wait at once by throwing CancellationError,

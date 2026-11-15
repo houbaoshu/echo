@@ -214,6 +214,47 @@ import UniformTypeIdentifiers
         #expect(FileManager.default.fileExists(atPath: finder.appendingPathComponent("2026-10-12 20.00.00 一只橘猫.png").path))
     }
 
+    /// A chat that keeps no records still saves the image, as it still creates a new file: the card
+    /// offers no Undo, and nothing is kept anywhere.
+    @Test func aChatThatKeepsNoRecordsStillSavesTheImageWithNoUndo() async throws {
+        let jpeg = Self.encoded(.jpeg)
+        let chat = Chat(FinderRootTests.oneByOne([("generate_image", Self.cat)]), imageGenerator: Self.generator([Self.made(jpeg)]))
+        defer { Self.remove(chat) }
+        chat.store.backupDirectory = nil
+        try await chat.run("画一张")
+        let folder = try #require(ProjectPath.canonical(chat.pictures.path))
+        #expect(try Data(contentsOf: URL(fileURLWithPath: folder).appendingPathComponent(Self.base + ".jpeg")) == jpeg)
+        let tool = try #require(chat.store.tools.first)
+        #expect(tool.state == .finished && tool.undo == nil && !chat.store.offersUndo(tool))
+        #expect(Self.json(tool.result)["action"] as? String == "created")
+        #expect(!FileManager.default.fileExists(atPath: chat.backups.path), "No record kept anywhere")
+    }
+
+    /// The record an image leaves for its card's Undo names the card, the tool and the folder the
+    /// image went to: Pictures/Echo by a kind of its own, the chat's folder as a write would.
+    @Test func theRecordNamesTheImageItsFolderAndItsCard() async throws {
+        let jpeg = Self.encoded(.jpeg), png = Self.encoded(.png)
+        let pictures = try await Self.chat(Self.cat, replies: [Self.made(jpeg)])
+        defer { Self.remove(pictures) }
+        let folder = try #require(ProjectPath.canonical(pictures.pictures.path))
+        let records = try WriteToolHarnessTests.backups(pictures)
+        let saved = try #require(records.first)
+        #expect(records.count == 1 && saved.original == nil)
+        #expect(saved.record.tool == "generate_image" && saved.record.rootKind == AgentImageFiles.picturesRoot && saved.record.root == folder)
+        #expect(saved.record.relativePath == Self.base + ".jpeg" && saved.record.path == folder + "/" + Self.base + ".jpeg")
+        #expect(saved.record.action == "created" && saved.record.written == AgentFileWriter.fingerprint(jpeg))
+        #expect(saved.record.toolRecord == pictures.store.tools.first?.id && saved.record.chat == pictures.store.sessionID)
+
+        let project = URL(fileURLWithPath: try #require(ProjectPath.canonical(try AgentHarnessTests.project().path)))
+        let inChat = try await Self.chat(#"{"prompt":"一只橘猫坐在木窗台上，午后阳光","save_to_chat_folder":true}"#,
+                                         replies: [Self.made(png)], project: project)
+        defer { Self.remove(inChat, project) }
+        let kept = try #require(try WriteToolHarnessTests.backups(inChat).first)
+        #expect(kept.record.rootKind == AgentReadScope.project.rawValue && kept.record.root == project.path)
+        #expect(kept.record.relativePath == Self.base + ".png" && kept.record.tool == "generate_image")
+        #expect(kept.record.toolRecord == inChat.store.tools.first?.id && kept.record.written == AgentFileWriter.fingerprint(png))
+    }
+
     @Test func aChatWithoutAFolderGeneratesNothingForIt() async throws {
         let chat = try await Self.chat(#"{"prompt":"一只橘猫","save_to_chat_folder":true}"#, replies: [Self.made(Self.encoded(.png))],
                                        finder: .answering([.unavailable(.noWindow)]))

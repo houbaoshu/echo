@@ -106,6 +106,25 @@ struct AgentBackupStore {
     }
 }
 
+/// Where one change call keeps the record its card's Undo needs: this chat's folder of records, the
+/// chat, the call's card and its tool. A chat that keeps no records has none, and its changes then
+/// have no undo.
+struct AgentBackupRecorder: Sendable {
+    let store: AgentBackupStore
+    let chat: UUID
+    /// The call's card: `AgentToolRecord.id`.
+    let card: String
+    let tool: AgentToolName
+
+    /// Keeps the record of a change to `relativePath` in `root`, a folder of `rootKind`, with a copy
+    /// of `original` when the change replaced a file.
+    func save(_ original: AgentOriginalFile?, root: String, rootKind: String, relativePath: String, action: String, written: Data) throws {
+        try store.save(original, record: .init(
+            path: root + "/" + relativePath, root: root, rootKind: rootKind, relativePath: relativePath, chat: chat, toolRecord: card,
+            tool: tool.rawValue, savedAt: Date(), original: original, action: action, written: written))
+    }
+}
+
 /// Moves a file a write created to the Trash when its change is undone, and an imported pet or
 /// planet's folder when it is deleted from settings.
 struct AgentTrash: Sendable {

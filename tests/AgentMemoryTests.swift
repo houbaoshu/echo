@@ -359,6 +359,23 @@ import Testing
         #expect(Self.instructions(try #require(chat.model.requests.last)).hasSuffix("- 住在上海\n</memory>"))
     }
 
+    /// A chat that keeps no records still changes the memory, unlike a write, which then replaces
+    /// nothing: the card offers no Undo, and nothing is kept anywhere.
+    @Test func aChatThatKeepsNoRecordsStillChangesTheMemoryWithNoUndo() async throws {
+        let chat = Chat(FinderRootTests.oneByOne([
+            ("remember", #"{"text":"喜欢喝美式"}"#),
+            ("update_memory", #"{"old_text":"美式","new_text":"拿铁"}"#),
+        ]))
+        defer { Self.remove(chat) }
+        chat.store.backupDirectory = nil
+        try await FinderRootTests.run(chat, "记住我喜欢喝美式")
+        #expect(Self.text(chat) == "- 喜欢喝拿铁\n")
+        let tools = chat.store.tools
+        #expect(tools.map(\.state) == [.finished, .finished] && tools.allSatisfy { $0.undo == nil && !chat.store.offersUndo($0) })
+        #expect(tools.map(\.result) == [#"{"action":"remembered","text":"喜欢喝美式"}"#, #"{"action":"updated"}"#])
+        #expect(!FileManager.default.fileExists(atPath: chat.backups.path), "No record kept anywhere")
+    }
+
     @Test func aCallThatChangesNothingFailsAndSaysWhy() async throws {
         let chat = Chat(FinderRootTests.oneByOne([
             ("update_memory", #"{"old_text":"杭州","new_text":"上海"}"#),
