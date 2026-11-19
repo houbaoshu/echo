@@ -428,7 +428,7 @@ private struct HeldExecutor: LanguageModelExecutor {
                                      secrets: ComposerSecrets())
         settings.draft.model = "test-model"
         settings.apiKey = "test-model"; settings.save()
-        settings.arkAPIKey = "test-voice"; settings.saveArk()
+        settings.voiceAPIKey = "test-voice"; settings.saveVoice()
         let recognizer = ComposerRecognizer()
         var permissionReply: CheckedContinuation<Bool, Never>?
         let dictation = DictationController(audio: ComposerAudio(), recognizer: { _ in recognizer }, permission: {
@@ -768,7 +768,7 @@ private struct HeldExecutor: LanguageModelExecutor {
                                      localModels: LocalModelLocation(models: root.appendingPathComponent("Models")),
                                      secrets: ComposerSecrets())
         settings.draft.model = "test-model"; settings.apiKey = "test-key"; settings.save()
-        settings.arkAPIKey = "test-voice"; settings.saveArk()
+        settings.voiceAPIKey = "test-voice"; settings.saveVoice()
         let voice = VoiceSessionController(audio: ComposerAudio(), recognizer: { ComposerRecognizer() }, permission: { true })
         let workspace = WorkspaceStore(voice: voice, harnessFactory: { HeldModel.session() })
         voice.attach(workspace: workspace, settings: settings)
@@ -901,13 +901,17 @@ private struct HeldExecutor: LanguageModelExecutor {
         XCTAssertTrue(settings.voiceDraft.speaker != speaker, "The voice field takes typed text")
         XCTAssertTrue(conversation.store.mainDraft.isEmpty,
                      "Typing on the settings page must not reach the chat draft: \(conversation.store.mainDraft)")
-        // The voice page has no save button: leaving the field saves the voice ID.
-        // System Return dispatch is covered by EchoUITests.
-        XCTAssertTrue(settings.isVoiceDirty && findAccessibility("voiceSettings.save", in: window.contentView!) == nil)
+        // The voice group saves with its own Save button, as the model page's groups do; leaving
+        // the field does not. System Return dispatch is covered by EchoUITests.
         try await key(TestKey.tab)
         try await settle()
+        XCTAssertTrue(settings.isVoiceDirty && settings.snapshot.voice?.speaker != settings.voiceDraft.speaker,
+                     "Leaving the voice ID field does not save it")
+        XCTAssertTrue(findAccessibility("voiceSettings.save", in: window.contentView!)?.accessibilityPerformPress?() == true,
+                     "The voice group's Save must be pressable")
+        try await settle()
         XCTAssertTrue(!settings.isVoiceDirty && settings.snapshot.voice?.speaker == settings.voiceDraft.speaker,
-                     "Leaving the voice ID field saves it")
+                     "Save keeps the voice ID")
 
         // 7. Typing reaches the model fields, including the secure field.
         settings.selectedSection = .model
@@ -978,7 +982,7 @@ private struct HeldExecutor: LanguageModelExecutor {
         XCTAssertTrue(modelTestLabel == "测试连接", "The model page names its connection test 测试连接: \(modelTestLabel ?? "nil")")
         settings.selectedSection = .voice
         try await settle()
-        XCTAssertTrue(settings.canTestVoice, "The saved Volcengine Ark key enables the voice page's tests")
+        XCTAssertTrue(settings.canTestVoice, "The Doubao Voice key enables the voice page's tests")
         let voiceTest = findAccessibility("voiceSettings.test", in: window.contentView!)
         XCTAssertTrue(voiceTest?.accessibilityLabel?() == modelTestLabel,
                      "The voice page names it the same: \(voiceTest?.accessibilityLabel?() ?? "nil")")

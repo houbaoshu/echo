@@ -155,8 +155,8 @@ struct SettingsGroupActions<Tests: View>: View {
     }
 }
 
-/// Volcengine Ark: one key for voice and image generation whichever service chats, and for chat and
-/// web_search while it chats. Its address and protocol are fixed, so the group shows only what the
+/// Volcengine Ark: one key for image generation whichever service chats, and for chat and web_search
+/// while it chats. Its address and protocol are fixed, so the group shows only what the
 /// person chooses.
 struct ArkSettingsSection: View {
     @Bindable var settings: SettingsStore

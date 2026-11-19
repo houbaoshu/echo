@@ -8,6 +8,22 @@ import SwiftUI
 
 @Suite(.serialized) enum EchoVoiceScenarios {}
 
+/// A keychain stand-in whose keys a test can see, and can make unreadable.
+@MainActor private final class VoiceKeySecrets: SecretStore {
+    var values: [String: String] = [:]
+    var unreadable: Set<String> = []
+    var failRemoves: Set<String> = []
+    func read(_ account: String) throws -> String {
+        guard !unreadable.contains(account), let value = values[account] else { throw SettingsError("unreadable") }
+        return value
+    }
+    func write(_ value: String, account: String) throws { values[account] = value }
+    func remove(_ account: String) throws {
+        guard !failRemoves.contains(account) else { throw SettingsError("remove failed") }
+        values[account] = nil
+    }
+}
+
 extension EchoVoiceScenarios {
 @Suite(.serialized) struct VoiceTests {
     @MainActor static func rejects(_ message: String, _ action: () throws -> Void, sourceLocation: SourceLocation = #_sourceLocation) {
@@ -1397,6 +1413,50 @@ extension EchoVoiceScenarios {
         #expect(voice.testResult == nil, "editing the voice form clears the result outright")
     }
 
+    /// Saving writes the key back trimmed, which the page sees as a change. That change outdates the
+    /// test, but must not clear what the save reported: here, that the old key could not be removed.
+    @Test @MainActor static func settingsPageKeepsTheSaveWarning() async throws {
+        _ = NSApplication.shared
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("echo-voice-warning-\(UUID())")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = VoiceKeySecrets()
+        let settings = SettingsStore(url: dir.appendingPathComponent("settings.json"), secrets: secrets)
+        settings.voiceAPIKey = "old-key"; settings.saveVoice()
+        let oldAccount = try #require(settings.snapshot.voiceSecretAccount)
+        secrets.failRemoves = [oldAccount]
+        let synth = FakeSynthesizer(); synth.emitsAudio = true
+        let voice = VoiceSessionController(audio: FakeAudio(), recognizer: { FakeRecognizer() }, synthesizer: { synth })
+        defer { voice.shutdown() }
+        let pets = PetCatalog(settings: settings, builtinRoot: EchoTestResources.resource("pets"))
+        settings.selectedSection = .voice
+        // Edited before the page exists: onChange does not fire for the value a view starts with,
+        // so only the save's write-back can reach it and outdate the test below.
+        settings.voiceAPIKey = " new-key "
+        let view = NSHostingView(rootView: SettingsView(settings: settings, voice: voice, pets: pets, planets: PlanetStore())
+            .frame(width: 820, height: 640))
+        view.frame = NSRect(x: 0, y: 0, width: 820, height: 640)
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = view
+        func enhancedUserInterface(_ on: Bool) {
+            NSApp.perform(NSSelectorFromString("accessibilitySetValue:forAttribute:"), with: NSNumber(value: on), with: "AXEnhancedUserInterface")
+        }
+        enhancedUserInterface(true)
+        defer { window.orderOut(nil); enhancedUserInterface(false) }
+        try await eventually("the voice page shows its key field", layingOut: view) {
+            findAccessibility("voiceSettings.apiKey", in: view) != nil
+        }
+        voice.test(configuration: settings.voiceDraft, key: "new-key", preview: false)
+        try await eventually("!voice.testing") { !voice.testing }
+        try #require(voice.testResult?.succeeded == true, "the page starts from a test result")
+        settings.saveVoice()
+        #expect(settings.voiceAPIKey == "new-key" && settings.voiceNotice != nil, "the save trims the key and reports the old one")
+        // The test result going is the page's onChange having run for the trimmed key.
+        try await eventually("the trimmed key outdates the test", layingOut: view) { voice.testResult == nil }
+        #expect(settings.voiceNotice != nil, "the cleanup warning stays on screen")
+        #expect(secrets.values[oldAccount] == "old-key")
+    }
+
     @Test @MainActor static func audioConversionTests() async throws {
         _ = NSApplication.shared
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 2, interleaved: false)!
@@ -1503,44 +1563,81 @@ extension EchoVoiceScenarios {
         let url = dir.appendingPathComponent("settings.json")
         let saved = #"{"version":2,"activeProvider":"custom","providers":{"custom":{"model":{"baseURL":"https://example.com/v1","model":"test","apiProtocol":"chatCompletions"}}},"selectedPetID":"builtin:chiyan"}"#
         try Data(saved.utf8).write(to: url)
-        let secrets = TestBootstrap.Secrets(), settings = SettingsStore(url: url, secrets: secrets)
+        let secrets = VoiceKeySecrets(), settings = SettingsStore(url: url, secrets: secrets)
         #expect(settings.voiceDraft == VoiceConfiguration(), "settings without voice receive the voice default")
         settings.voiceDraft.speaker = "  custom-voice  "
         #expect(settings.isVoiceDirty && settings.snapshot.voice == nil, "typing voice ID changes only the draft")
-        settings.commitVoice()
+        settings.saveVoice()
         #expect(settings.voiceNotice == nil && !settings.isVoiceDirty && settings.snapshot.voice?.speaker == "custom-voice",
-                "Return or leaving the field saves the voice ID, trimmed")
-        rejects("no Volcengine Ark key, no voice") { _ = try settings.savedVoiceCredentials() }
-        #expect(!settings.canTestVoice, "without the Volcengine Ark key the voice test stays off")
+                "Save keeps the voice ID, trimmed")
+        rejects("no Doubao Voice key, no voice") { _ = try settings.savedVoiceCredentials() }
+        #expect(!settings.canTestVoice, "without a Doubao Voice key the voice test stays off")
         settings.apiKey = "model-key"; settings.save()
         rejects("voice never borrows the saved model key") { _ = try settings.savedVoiceCredentials() }
-        settings.arkAPIKey = "ark-key"
-        #expect(!settings.canTestVoice, "a Volcengine Ark key still being typed does not test voice")
-        settings.saveArk()
-        #expect(settings.canTestVoice && (try? settings.voiceTestKey()) == "ark-key")
+        settings.arkAPIKey = "ark-key"; settings.saveArk()
+        rejects("voice never borrows the saved Volcengine Ark key") { _ = try settings.savedVoiceCredentials() }
+        #expect(!settings.canTestVoice, "the Volcengine Ark key does not test voice either")
+        settings.voiceAPIKey = " voice-key "
+        #expect(settings.isVoiceDirty && settings.canTestVoice && (try? settings.voiceTestKey()) == "voice-key",
+                "the tests use the key as typed, trimmed, before it is saved")
+        rejects("an unsaved voice key is not used by Live Voice") { _ = try settings.savedVoiceCredentials() }
+        settings.restoreVoice()
+        #expect(!settings.isVoiceDirty && settings.voiceAPIKey.isEmpty && settings.voiceDraft.speaker == "custom-voice",
+                "Revert brings back the saved key and voice ID")
+        settings.voiceAPIKey = "voice\nkey"; settings.saveVoice()
+        #expect(settings.voiceNotice != nil && settings.snapshot.voiceSecretAccount == nil, "a key with a line break is not saved")
+        #expect(throws: SettingsError.self) { try settings.voiceTestKey() }
+        settings.voiceAPIKey = " voice-key "; settings.saveVoice()
+        #expect(settings.voiceNotice == nil && !settings.isVoiceDirty && settings.voiceAPIKey == "voice-key")
+        let firstAccount = try #require(settings.snapshot.voiceSecretAccount)
+        #expect(firstAccount != settings.snapshot.arkSecretAccount && secrets.values[firstAccount] == "voice-key",
+                "the voice key has a keychain account of its own")
         let persisted = try String(contentsOf: url, encoding: .utf8)
-        #expect(!persisted.contains("ark-key") && !persisted.contains("model-key"), "keys are never written to JSON")
+        #expect(!persisted.contains("ark-key") && !persisted.contains("model-key") && !persisted.contains("voice-key"),
+                "keys are never written to JSON")
+        #expect(persisted.contains("doubaoVoiceSecretAccount") && !persisted.contains("\"voiceSecretAccount\""),
+                "the key's name is not the one launch removes")
         let restored = SettingsStore(url: url, secrets: secrets)
-        #expect(restored.voiceDraft.speaker == "custom-voice", "trimmed manual voice ID survives relaunch")
+        #expect(restored.voiceDraft.speaker == "custom-voice" && restored.voiceAPIKey == "voice-key",
+                "the trimmed voice ID and the key survive relaunch")
+        #expect(secrets.values[firstAccount] == "voice-key", "launch leaves the voice key alone")
         restored.voiceDraft.speaker = " "
-        restored.commitVoice()
+        restored.saveVoice()
         #expect(restored.voiceNotice != nil && restored.snapshot.voice?.speaker == "custom-voice", "empty voice cannot overwrite saved ID")
         restored.voiceDraft.speaker = String(repeating: "x", count: 257)
-        restored.commitVoice()
+        restored.saveVoice()
         #expect(restored.voiceNotice != nil && restored.snapshot.voice?.speaker == "custom-voice", "overlong voice cannot overwrite saved ID")
         restored.voiceDraft.speaker = "custom-voice"
         #expect(!restored.isVoiceDirty)
         let credentials = try restored.savedVoiceCredentials()
-        #expect(credentials.key == "ark-key" && credentials.configuration.speaker == "custom-voice", "voice uses the saved Volcengine Ark key")
+        #expect(credentials.key == "voice-key" && credentials.configuration.speaker == "custom-voice", "voice uses the saved Doubao Voice key")
         #expect(restored.snapshot.model.model == "test", "voice save preserves text model")
         restored.restore(); restored.apiKey = "rotated-model-key"; restored.save()
-        #expect(try restored.savedVoiceCredentials().key == "ark-key", "model key rotation leaves voice alone")
+        #expect(try restored.savedVoiceCredentials().key == "voice-key", "model key rotation leaves voice alone")
+        restored.arkAPIKey = "rotated-ark-key"; restored.saveArk()
+        #expect(try restored.savedVoiceCredentials().key == "voice-key", "Volcengine Ark key rotation leaves voice alone")
         restored.selectProvider(.deepSeek); restored.draft.model = "deepseek-chat"; restored.apiKey = "deepseek-key"; restored.save()
-        #expect(try restored.savedVoiceCredentials().key == "ark-key", "switching model provider leaves voice alone")
+        #expect(try restored.savedVoiceCredentials().key == "voice-key", "switching model provider leaves voice alone")
+        restored.voiceAPIKey = "rotated-voice-key"; restored.saveVoice()
+        let secondAccount = try #require(restored.snapshot.voiceSecretAccount)
+        #expect(secondAccount != firstAccount && secrets.values[firstAccount] == nil && secrets.values[secondAccount] == "rotated-voice-key",
+                "a new key replaces the old one's account")
         let logsBefore = VoiceDiagnostics.shared.lines.count
         _ = restored.canTestVoice; _ = restored.canTestVoice
         #expect(VoiceDiagnostics.shared.lines.count == logsBefore, "SwiftUI credential validation does not publish new logs")
-        #expect(!VoiceDiagnostics.shared.text.contains("ark-key"), "diagnostics never contain saved key values")
+        #expect(!VoiceDiagnostics.shared.text.contains("voice-key"), "diagnostics never contain saved key values")
+        restored.voiceAPIKey = ""; restored.saveVoice()
+        #expect(restored.snapshot.voiceSecretAccount == nil && secrets.values[secondAccount] == nil && restored.savedVoiceKey == nil,
+                "saving an empty key removes it")
+        #expect(throws: SettingsError.voiceKeyMissing) { try restored.savedVoiceCredentials() }
+        restored.voiceAPIKey = "unreadable-voice-key"; restored.saveVoice()
+        secrets.unreadable = [try #require(restored.snapshot.voiceSecretAccount)]
+        let unreadable = SettingsStore(url: url, secrets: secrets)
+        #expect(unreadable.voiceNotice != nil && unreadable.voiceAPIKey.isEmpty && unreadable.savedVoiceKey == nil)
+        #expect(throws: SettingsError.self) { try unreadable.savedVoiceCredentials() }
+        unreadable.saveVoice()
+        #expect(unreadable.snapshot.voiceSecretAccount != nil, "an unread key is not cleared by saving an empty field")
+        secrets.unreadable = []
         let badURL = dir.appendingPathComponent("not-a-directory/settings.json")
         try Data().write(to: dir.appendingPathComponent("not-a-directory"))
         let failed = SettingsStore(url: badURL, secrets: secrets)
@@ -2214,7 +2311,7 @@ extension EchoVoiceScenarios {
             let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
             let settings = SettingsStore(secrets: TestBootstrap.Secrets())
             settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
-            settings.arkAPIKey = "voice"; settings.saveArk()
+            settings.voiceAPIKey = "voice"; settings.saveVoice()
             voice.attach(workspace: workspace, settings: settings)
             defer { voice.shutdown(); workspace.shutdown() }
             let a = workspace.selected!

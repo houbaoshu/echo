@@ -47,12 +47,12 @@ struct RecordingWaveform: View {
 struct VoiceSettingsView: View {
     @Bindable var settings: SettingsStore
     var voice: VoiceSessionController
-    @FocusState private var editingSpeaker: Bool
+    @State private var revealsKey = false
     private var diagnostics: VoiceDiagnostics { .shared }
-    /// Voice has no key of its own: without the model page's Volcengine Ark key the tests stay grey.
+    /// Without a Doubao Voice key typed in, the tests stay grey.
     private var testsDisabled: Bool { voice.testing || voice.isActive || voice.isDictating || !settings.canTestVoice }
-    /// A voice ID that could not be saved says why below the group; otherwise the test's own result,
-    /// which no longer applies once the Volcengine Ark key is gone (it may go while the page is away).
+    /// A group that could not be saved says why below it; otherwise the test's own result, which no
+    /// longer applies once the key is gone.
     private var status: SettingsTestLine? {
         settings.voiceNotice.map { SettingsTestLine(text: $0, succeeded: false) }
             ?? (settings.canTestVoice ? voice.testResult : nil)
@@ -61,16 +61,16 @@ struct VoiceSettingsView: View {
         // Each group of the section is a `Section`, so the separator between them is the
         // form's own rather than a hand-placed `Divider()`.
         Form {
+            // Saved by its own Save button or Return, as the model page's groups are.
             Section {
-                // Saved on Return, when the field is left, or when the page goes; there is no save button.
-                TextField("音色 ID", text: $settings.voiceDraft.speaker, prompt: Text("输入音色 ID"))
-                    .focused($editingSpeaker)
-                    .onSubmit { settings.commitVoice() }
+                SettingsAPIKeyField(key: edit(\.voiceAPIKey), revealed: $revealsKey, identifier: "voiceSettings.apiKey")
+                TextField("音色 ID", text: edit(\.voiceDraft.speaker), prompt: Text("输入音色 ID"))
                     .accessibilityLabel("音色 ID")
                     .accessibilityIdentifier("voiceSettings.speaker")
-                // The test and the preview use the voice ID as typed, saved or not.
-                HStack(spacing: 12) {
-                    Spacer(minLength: 0)
+                // The test and the preview use the key and voice ID as typed, saved or not.
+                SettingsGroupActions(save: settings.saveVoice, canSave: settings.isVoiceDirty,
+                                     restore: settings.restoreVoice, canRestore: settings.isVoiceDirty,
+                                     identifier: "voiceSettings") {
                     Button("测试连接") { test(preview: false) }.disabled(testsDisabled)
                         .accessibilityIdentifier("voiceSettings.test")
                     Button("试听音色") { test(preview: true) }.disabled(testsDisabled)
@@ -82,6 +82,7 @@ struct VoiceSettingsView: View {
                 SettingsGroupStatus(testing: voice.testing, line: status, identifier: "voiceSettings",
                                     cancel: { voice.cancelTest() })
             }
+            .onSubmit { if settings.isVoiceDirty { settings.saveVoice() } }
             Section {
                 DisclosureGroup("诊断日志") {
                     HStack {
@@ -99,13 +100,24 @@ struct VoiceSettingsView: View {
                 }.accessibilityIdentifier("voiceSettings.diagnostics")
             }
         }.textFieldStyle(.roundedBorder)
-            .onChange(of: editingSpeaker) { _, editing in if !editing { settings.commitVoice() } }
-            .onChange(of: settings.savedArkKey) { _, _ in voice.invalidateTest() }
-            .onChange(of: settings.voiceDraft) { _, _ in voice.invalidateTest(); settings.voiceNotice = nil }
-            .onDisappear { settings.commitVoice(); voice.cancelTest() }
+            // Any change outdates the test, the trimmed values a save writes back included.
+            .onChange(of: settings.voiceAPIKey) { _, _ in voice.invalidateTest() }
+            .onChange(of: settings.voiceDraft) { _, _ in voice.invalidateTest() }
+            .onDisappear { revealsKey = false; voice.cancelTest() }
+    }
+    /// A field's binding that also clears what the group last reported, for an edit the person
+    /// makes. A save writes trimmed values back without coming through here, so a warning it
+    /// reports, such as an old key it could not remove, stays on screen.
+    private func edit<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<SettingsStore, Value>) -> Binding<Value> {
+        Binding(get: { settings[keyPath: keyPath] }, set: { value in
+            guard value != settings[keyPath: keyPath] else { return }
+            settings[keyPath: keyPath] = value
+            settings.voiceNotice = nil
+        })
     }
     private func test(preview: Bool) {
-        guard let key = try? settings.voiceTestKey() else { return }
+        let key: String
+        do { key = try settings.voiceTestKey() } catch { settings.voiceNotice = error.localizedDescription; return }
         settings.voiceNotice = nil
         voice.test(configuration: settings.voiceDraft, key: key, preview: preview)
     }

@@ -2,9 +2,12 @@ import Foundation
 import Observation
 
 @MainActor @Observable final class SettingsStore {
+    /// The voice group's key, as edited: Doubao Voice's own, not Volcengine Ark's.
+    var voiceAPIKey = ""
     var voiceDraft = VoiceConfiguration()
     var voiceNotice: String?
-    var isVoiceDirty: Bool { voiceDraft != (snapshot.voice ?? VoiceConfiguration()) }
+    private var voiceCredential = Credential()
+    var isVoiceDirty: Bool { voiceAPIKey != voiceCredential.key || voiceDraft != (snapshot.voice ?? VoiceConfiguration()) }
     /// The Volcengine Ark group's key, as edited. Emptying it turns "use for chat" off.
     var arkAPIKey = "" { didSet { arkGroupEdited() } }
     /// The rest of the Volcengine Ark group, as edited. "Use for chat" stays off without a key.
@@ -110,14 +113,19 @@ import Observation
         selectedProvider = snapshot.activeProvider
         loadProvider(selectedProvider)
         voiceDraft = snapshot.voice ?? VoiceConfiguration()
+        if let account = snapshot.voiceSecretAccount {
+            do { voiceCredential.key = try secrets.read(account); voiceAPIKey = voiceCredential.key }
+            catch { voiceCredential.loaded = false; voiceNotice = Self.unreadableVoiceKey.message }
+        }
         if let account = snapshot.arkSecretAccount {
             do { arkCredential.key = try secrets.read(account); arkAPIKey = arkCredential.key }
             catch { arkCredential.loaded = false; arkNotice = String(localized: "无法读取已保存的火山方舟 API Key，请检查钥匙串访问权限。") }
         }
         arkDraft = snapshot.ark
     }
-    /// Voice's own key and Volcengine Ark's own model key, from before the Volcengine Ark group,
-    /// are never read: launch removes them from the keychain and their names from settings.json.
+    /// The voice and Volcengine Ark model keys from before the Volcengine Ark group, both Agent
+    /// Plan keys, are never read: launch removes them from the keychain and their names from
+    /// settings.json. Doubao Voice's key has a name of its own and is not one of them.
     /// A name whose key could not be removed stays, to be tried again at the next launch.
     private func removeReplacedKeys() {
         guard !loadBlocked else { return }
@@ -154,29 +162,48 @@ import Observation
         notice = nil
         loadProvider(provider)
     }
+    /// What Live Voice uses: the saved voice ID and Doubao Voice's saved key, never another key.
     func savedVoiceCredentials() throws -> (configuration: VoiceConfiguration, key: String) {
-        let key = try savedArkCredential()
+        guard voiceCredential.loaded else { throw Self.unreadableVoiceKey }
+        guard let key = savedVoiceKey else { throw SettingsError.voiceKeyMissing }
         VoiceDiagnostics.shared.record("1 API Key", "PASS", "非空且格式有效，服务端鉴权待连接验证")
         return (try (snapshot.voice ?? VoiceConfiguration()).validated(), key)
     }
-    /// Voice tests what voice will use: the saved Volcengine Ark key, not one still being typed.
-    func voiceTestKey() throws -> String { try savedArkCredential() }
-    var canTestVoice: Bool { savedArkKey != nil }
-    /// Saves the voice ID when it was edited: the voice page has no save button, so Return and
-    /// leaving the field both come here.
-    func commitVoice() { if isVoiceDirty { saveVoice() } }
+    /// Doubao Voice's saved key, trimmed; nil when there is none or it cannot be read.
+    var savedVoiceKey: String? { Self.usableKey(voiceCredential) }
+    private static var unreadableVoiceKey: SettingsError {
+        SettingsError(localized: "无法读取已保存的豆包语音 API Key，请检查钥匙串访问权限。")
+    }
+    /// The voice group's tests use the key and voice ID as typed, saved or not, as the Volcengine
+    /// Ark group's test does.
+    var canTestVoice: Bool { !voiceAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    func voiceTestKey() throws -> String {
+        let key = voiceAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { throw SettingsError.voiceKeyMissing }
+        guard !key.hasLineBreak else { throw SettingsError(localized: "API Key 不能包含换行。") }
+        return key
+    }
+    func restoreVoice() { voiceAPIKey = voiceCredential.key; voiceDraft = snapshot.voice ?? VoiceConfiguration(); voiceNotice = nil }
+    /// Saves the voice group, its key and voice ID together; a key that changed goes to a keychain
+    /// account of its own and the one it replaced is removed.
     func saveVoice() {
         do {
             let value = try voiceDraft.validated()
+            let key = voiceAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.hasLineBreak else { throw SettingsError(localized: "API Key 不能包含换行。") }
+            guard voiceCredential.loaded || !key.isEmpty else { throw SettingsError(localized: "原 API Key 尚未读取，请重新填写密钥后保存。") }
+            let changed = key != voiceCredential.key || !voiceCredential.loaded
+            let oldAccount = snapshot.voiceSecretAccount
             var next = snapshot; next.voice = value
-            try persist(next)
-            snapshot = next; voiceDraft = value
-            voiceNotice = nil
+            if changed { next.voiceSecretAccount = try writeNewKey(key, prefix: "doubao-voice") }
+            try persist(next, removingOnFailure: changed ? next.voiceSecretAccount : nil)
+            snapshot = next; voiceCredential = Credential(key: key); voiceAPIKey = key; voiceDraft = value
+            voiceNotice = changed ? removeReplacedKey(oldAccount) : nil
         } catch { voiceNotice = Self.notice(for: error, otherwise: String(localized: "语音配置保存失败，请检查目录写入权限。")) }
     }
-    /// The saved Volcengine Ark key, trimmed; nil when there is none or it cannot be read. Voice
-    /// uses this key whichever service chats; chat with Volcengine Ark and Doubao search use it
-    /// while Volcengine Ark chats. No other key ever stands in for it.
+    /// The saved Volcengine Ark key, trimmed; nil when there is none or it cannot be read. Image
+    /// generation uses this key whichever service chats; chat with Volcengine Ark and Doubao search
+    /// use it while Volcengine Ark chats. No other key ever stands in for it.
     var savedArkKey: String? { Self.usableKey(arkCredential) }
     private func savedArkCredential() throws -> String {
         guard arkCredential.loaded else { throw SettingsError(localized: "无法读取已保存的火山方舟 API Key，请检查钥匙串访问权限。") }

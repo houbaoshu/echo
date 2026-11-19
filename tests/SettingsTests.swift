@@ -36,10 +36,10 @@ import Testing
 }
 
 @Suite(.serialized) enum SettingsTests {
-    /// With a Volcengine Ark key, voice uses it whether or not Ark chats; chat goes to Volcengine
-    /// Ark — its key, its language model, the Agent Plan's address — and search to Doubao search
-    /// only with the switch on, and both to the model service, here DeepSeek, otherwise. Without a
-    /// key the switch will not turn on, and the model service's key never stands in for voice.
+    /// With a Volcengine Ark key, image generation uses it whether or not Ark chats; chat goes to
+    /// Volcengine Ark — its key, its language model, the Agent Plan's address — and search to Doubao
+    /// search only with the switch on, and both to the model service, here DeepSeek, otherwise.
+    /// Without a key the switch will not turn on. Voice uses neither key: it has its own.
     @Test(arguments: [false, true], [nil, " ark-key "] as [String?])
     @MainActor static func theArkKeyAndSwitchDecideWhatEachServiceUses(useForChat: Bool, arkKey: String?) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ark-key-\(UUID())")
@@ -58,7 +58,7 @@ import Testing
         #expect(settings.arkDraft.useForChat == on, "The switch turns on only with a key")
         #expect(settings.canTestArk == (arkKey != nil) && settings.canTestModelService, "Each group's test needs its own key")
         if arkKey != nil {
-            #expect(AgentWebSearcher.searcher(for: settings) == nil && ArkImageGenerator.generator(for: settings) == nil && !settings.canTestVoice,
+            #expect(AgentWebSearcher.searcher(for: settings) == nil && ArkImageGenerator.generator(for: settings) == nil,
                     "An unsaved key is not used yet")
         }
         settings.save(); settings.saveArk()
@@ -69,8 +69,8 @@ import Testing
             #expect(search?.service == (on ? .doubao : .deepSeek) && search?.key == (on ? "ark-key" : "model-page-key"), "search")
             let images = ArkImageGenerator.generator(for: store)
             #expect(images?.key == saved && images.map { $0.model == "doubao-seedream-5.0-pro" } != false, "images, with the vision model")
-            #expect((try? store.savedVoiceCredentials().key) == saved, "voice")
-            #expect(store.canTestVoice == (saved != nil))
+            #expect(throws: SettingsError.voiceKeyMissing, "voice") { try store.savedVoiceCredentials() }
+            #expect(!store.canTestVoice)
             let chat = try store.savedModelCredentials()
             if on {
                 #expect(chat.key == "ark-key" && chat.configuration == ModelConfiguration(
@@ -226,7 +226,6 @@ import Testing
         secrets.unreadable = [try #require(settings.snapshot.arkSecretAccount)]
         let unreadable = SettingsStore(url: url, secrets: secrets)
         #expect(unreadable.arkNotice != nil && unreadable.arkAPIKey.isEmpty && unreadable.savedArkKey == nil)
-        #expect(throws: SettingsError.self) { try unreadable.savedVoiceCredentials() }
         unreadable.saveArk()
         #expect(unreadable.snapshot.arkSecretAccount != nil, "An unread key is not cleared by saving an empty field")
     }
@@ -247,7 +246,7 @@ import Testing
         var file = try String(contentsOf: url, encoding: .utf8)
         #expect(file.contains("voice-old") && !file.contains("model-ark-old"), "Only the removed key's name goes")
         #expect(first.savedArkKey == nil, "The old keys are not read")
-        #expect(throws: SettingsError.arkKeyMissing) { try first.savedVoiceCredentials() }
+        #expect(throws: SettingsError.voiceKeyMissing) { try first.savedVoiceCredentials() }
 
         secrets.failRemoves = []
         let second = SettingsStore(url: url, secrets: secrets)
@@ -346,8 +345,8 @@ import Testing
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("settings.json")
         let secrets = ProviderSecrets()
-        secrets.values = ["deepseek": "deepseek-secret", "ark": "agent-plan-secret"]
-        let saved = #"{"version":2,"activeProvider":"deepSeek","providers":{"deepSeek":{"model":{"baseURL":"https://api.deepseek.com/v1","model":"existing-deepseek","apiProtocol":"chatCompletions"},"secretAccount":"deepseek"}},"selectedPetID":"builtin:chiyan","arkSecretAccount":"ark"}"#
+        secrets.values = ["deepseek": "deepseek-secret", "ark": "agent-plan-secret", "voice": "doubao-voice-secret"]
+        let saved = #"{"version":2,"activeProvider":"deepSeek","providers":{"deepSeek":{"model":{"baseURL":"https://api.deepseek.com/v1","model":"existing-deepseek","apiProtocol":"chatCompletions"},"secretAccount":"deepseek"}},"selectedPetID":"builtin:chiyan","arkSecretAccount":"ark","doubaoVoiceSecretAccount":"voice"}"#
         try Data(saved.utf8).write(to: url)
         let settings = SettingsStore(url: url, secrets: secrets)
         #expect(settings.selectedProvider == .deepSeek && settings.apiKey == "deepseek-secret")
@@ -355,11 +354,11 @@ import Testing
         #expect(settings.draft.apiProtocol == .chatCompletions && !settings.isDirty)
         #expect(settings.snapshot.selectedPlanetID == SettingsSnapshot.defaultPlanetID,
                      "Settings saved before Live Voice had a planet fall back to the built-in one")
-        #expect(secrets.values.count == 2, "Loading reads the saved references without touching Keychain")
+        #expect(secrets.values.count == 3, "Loading reads the saved references without touching Keychain")
         settings.selectProvider(.openAI)
         #expect(settings.apiKey.isEmpty && settings.draft == ModelProvider.openAI.defaults && settings.isDirty)
         #expect(try tryValue { try settings.savedModelCredentials().key } == "deepseek-secret", "Selection stays a draft until saved")
-        #expect(try tryValue { try settings.savedVoiceCredentials().key } == "agent-plan-secret")
+        #expect(try tryValue { try settings.savedVoiceCredentials().key } == "doubao-voice-secret")
         settings.apiKey = "openai-secret"
         settings.draft = ModelConfiguration(baseURL: "https://gateway.example/v1/", model: "  custom-openai  ", apiProtocol: .responses)
         settings.selectProvider(.deepSeek)
@@ -369,8 +368,8 @@ import Testing
         settings.save()
         #expect(settings.notice == nil && !settings.isDirty && settings.snapshot.activeProvider == .openAI)
         #expect(secrets.values["deepseek"] == "deepseek-secret", "Saving another provider must not delete its key")
-        #expect(try tryValue { try settings.savedVoiceCredentials().key } == "agent-plan-secret",
-                     "Saving a model provider leaves the Volcengine Ark key alone")
+        #expect(try tryValue { try settings.savedVoiceCredentials().key } == "doubao-voice-secret" && settings.savedArkKey == "agent-plan-secret",
+                     "Saving a model provider leaves the voice and Volcengine Ark keys alone")
         let reopened = SettingsStore(url: url, secrets: secrets)
         #expect(reopened.selectedProvider == .openAI && reopened.apiKey == "openai-secret", "Explicit provider identity survives custom URLs")
         #expect(reopened.draft.baseURL == "https://gateway.example/v1" && reopened.draft.model == "custom-openai")
@@ -387,7 +386,7 @@ import Testing
         reopened.draft.model = "local-model"; reopened.apiKey = "must-not-save"; reopened.save()
         #expect(reopened.apiKey.isEmpty && reopened.snapshot.secretAccount == nil)
         #expect(try tryValue { try reopened.savedModelCredentials().key }.isEmpty)
-        #expect(try tryValue { try reopened.savedVoiceCredentials().key } == "agent-plan-secret")
+        #expect(try tryValue { try reopened.savedVoiceCredentials().key } == "doubao-voice-secret")
         reopened.selectProvider(.deepSeek)
         #expect(reopened.apiKey == "rotated-deepseek")
         reopened.restore()

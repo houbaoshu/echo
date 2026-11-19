@@ -50,7 +50,7 @@ Once Live Voice starts, from the pet or the main window, Echo keeps listening an
 
 **Settings**
 - Model service: DeepSeek, OpenAI, Ollama, or any service compatible with Chat Completions or Responses
-- Volcengine Ark has a group of its own: one key covers Live Voice and image generation, and optionally chat and web search
+- Volcengine Ark has a group of its own: one key covers image generation, and optionally chat and web search; Live Voice takes its own Doubao Voice key on the Voice page
 - The Memory page shows the memory, opens it for editing, or turns it off; the Pet and Planet pages manage imported characters
 - API keys are kept in the Keychain
 
@@ -158,7 +158,7 @@ TestPlans/        the three test plans
 | --- | --- |
 | Chat (default) | DeepSeek; or OpenAI, Ollama, or any compatible service |
 | Chat (optional) | Volcengine Ark Agent Plan, `doubao-seed-2.0-mini` by default, over Responses |
-| Live Voice | Doubao streaming speech recognition (Seed ASR) and bidirectional streaming speech synthesis (Seed TTS 2.0), with the Volcengine Ark key |
+| Live Voice | Doubao streaming speech recognition (Seed ASR) and bidirectional streaming speech synthesis (Seed TTS 2.0), with a Doubao Voice key |
 | Web search | Doubao search or DeepSeek search, following the service used for chat |
 | Image generation | Doubao Seedream, `doubao-seedream-5.0-pro` by default |
 | Offline | Local Qwen3 0.6B (Core AI) |
@@ -180,7 +180,7 @@ Models known to see images (currently `doubao-seed-2.0-mini` and `deepseek-flash
 1. Clone the repository and open `Echo.xcodeproj` in Xcode. The Swift package dependency [coreai-models](https://github.com/houbaoshu/coreai-models) is fetched automatically.
 2. In `Echo.xcconfig`, set `DEVELOPMENT_TEAM` to your own team ID. Every build setting lives in that file; `project.pbxproj` keeps only the project's structure.
 3. Choose the `Echo` scheme, then build and run. The Rust static library is built by `scripts/xcode-cargo-build.sh` during the build.
-4. On first launch, enter your model service's API key on the Model page in Settings; to use Live Voice, image generation or Doubao search, also enter a Volcengine Ark key.
+4. On first launch, enter your model service's API key on the Model page in Settings; to use image generation or Doubao search, also enter a Volcengine Ark key. For Live Voice, enter a Doubao Voice key on the Voice page (streaming speech recognition and speech synthesis must be enabled in the Doubao Voice console).
 
 **Optional: local model**
 

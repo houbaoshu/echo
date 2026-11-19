@@ -86,7 +86,7 @@ enum VoiceWire {
         if type == 15 {
             let code = try reader.uint()
             // Never surface an arbitrary remote payload, which may echo credentials.
-            throw SettingsError(localized: "语音服务拒绝请求（错误码 \(code)），请检查密钥、音色和套餐额度。")
+            throw SettingsError(localized: "语音服务拒绝请求（错误码 \(code)），请检查密钥、音色和额度。")
         }
         if flags & 1 != 0 { frame.sequence = Int32(bitPattern: try reader.uint()) }
         frame.final = flags & 2 != 0

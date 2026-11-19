@@ -2860,6 +2860,16 @@
         }
       }
     },
+    "无法读取已保存的豆包语音 API Key，请检查钥匙串访问权限。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t read the saved Doubao Voice API key. Check Echo’s keychain access."
+          }
+        }
+      }
+    },
     "无法读取星球素材。" : {
       "localizations" : {
         "en" : {
@@ -5211,12 +5221,12 @@
         }
       }
     },
-    "语音合成会话未能建立（事件 %lld），请检查音色与套餐权限。" : {
+    "语音合成会话未能建立（事件 %lld），请检查音色与服务权限。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Couldn’t start a speech synthesis session (event %lld). Check the voice and your plan permissions."
+            "value" : "Couldn’t start a speech synthesis session (event %lld). Check the voice and your service permissions."
           }
         }
       }
@@ -5231,12 +5241,12 @@
         }
       }
     },
-    "语音合成未完成，请检查音色与套餐额度。" : {
+    "语音合成未完成，请检查音色与额度。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Speech synthesis didn’t finish. Check the voice and your plan quota."
+            "value" : "Speech synthesis didn’t finish. Check the voice and your quota."
           }
         }
       }
@@ -5291,12 +5301,12 @@
         }
       }
     },
-    "语音服务拒绝请求（错误码 %u），请检查密钥、音色和套餐额度。" : {
+    "语音服务拒绝请求（错误码 %u），请检查密钥、音色和额度。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The voice service rejected the request (error %u). Check your key, the voice, and your plan quota."
+            "value" : "The voice service rejected the request (error %u). Check your key, the voice, and your quota."
           }
         }
       }
@@ -5371,12 +5381,12 @@
         }
       }
     },
-    "语音测试超时，请检查网络和套餐后重试。" : {
+    "语音测试超时，请检查网络和额度后重试。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The voice test timed out. Check your network and plan, then try again."
+            "value" : "The voice test timed out. Check your network and quota, then try again."
           }
         }
       }
@@ -5391,12 +5401,12 @@
         }
       }
     },
-    "语音识别失败，请检查网络和套餐。" : {
+    "语音识别失败，请检查网络和额度。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Speech recognition failed. Check your network and plan."
+            "value" : "Speech recognition failed. Check your network and quota."
           }
         }
       }
@@ -5461,12 +5471,12 @@
         }
       }
     },
-    "语音请求受限或套餐额度不足，请稍后重试。" : {
+    "语音请求受限或额度不足，请稍后重试。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Voice requests are rate-limited or your plan quota is used up. Try again later."
+            "value" : "Voice requests are rate-limited or your quota is used up. Try again later."
           }
         }
       }
@@ -5481,28 +5491,28 @@
         }
       }
     },
-    "语音连接中断（网络错误 %lld，关闭码 %lld），请检查网络、设备和套餐状态后重新开始。" : {
+    "语音连接中断（网络错误 %lld，关闭码 %lld），请检查网络、设备和服务状态后重新开始。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The voice connection dropped (network error %1$lld, close code %2$lld). Check your network, devices, and plan, then start again."
+            "value" : "The voice connection dropped (network error %1$lld, close code %2$lld). Check your network, devices, and the service status, then start again."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "语音连接中断（网络错误 %1$lld，关闭码 %2$lld），请检查网络、设备和套餐状态后重新开始。"
+            "value" : "语音连接中断（网络错误 %1$lld，关闭码 %2$lld），请检查网络、设备和服务状态后重新开始。"
           }
         }
       }
     },
-    "语音连接失败（HTTP %lld），请检查接口和套餐状态。" : {
+    "语音连接失败（HTTP %lld），请检查接口和服务状态。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The voice connection failed (HTTP %lld). Check the endpoint and your plan."
+            "value" : "The voice connection failed (HTTP %lld). Check the endpoint and the service status."
           }
         }
       }
@@ -5527,12 +5537,12 @@
         }
       }
     },
-    "语音鉴权失败，请检查设置的模型页里火山方舟的 API Key 和套餐权限。" : {
+    "语音鉴权失败，请检查设置的语音页里豆包语音的 API Key，以及是否已开通语音识别和语音合成。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Voice authentication failed. Check the Volcengine Ark API key on the Model page in Settings and your plan permissions."
+            "value" : "Voice authentication failed. Check the Doubao Voice API key on the Voice page in Settings, and that speech recognition and speech synthesis are enabled."
           }
         }
       }
@@ -5593,6 +5603,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enter the Volcengine Ark API key on the Model page in Settings and click Save."
+          }
+        }
+      }
+    },
+    "请在设置的语音页填写并保存豆包语音的 API Key。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter the Doubao Voice API key on the Voice page in Settings and click Save."
           }
         }
       }

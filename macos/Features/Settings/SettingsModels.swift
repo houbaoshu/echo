@@ -47,8 +47,10 @@ struct SettingsError: LocalizedError, Equatable {
     var errorDescription: String? { message }
     /// No default model is saved: a turn may use the local model instead.
     static let modelNotConfigured = SettingsError(localized: "请先在设置中配置并保存默认模型。")
-    /// Voice and chat with Volcengine Ark, and with it Doubao search, all wait for the one Volcengine Ark key.
+    /// Chat with Volcengine Ark, and with it Doubao search, waits for the Volcengine Ark key.
     static let arkKeyMissing = SettingsError(localized: "请在设置的模型页填写并保存火山方舟的 API Key。")
+    /// Live Voice waits for Doubao Voice's own key; no other key stands in for it.
+    static let voiceKeyMissing = SettingsError(localized: "请在设置的语音页填写并保存豆包语音的 API Key。")
 }
 
 extension LocalizedStringResource {
@@ -120,9 +122,9 @@ enum ModelProvider: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// Volcengine Ark's group on the model page. Its one key pays for voice and image generation, and
-/// for chat and web_search while it chats, so it stands apart from the model service rather than
-/// among its providers.
+/// Volcengine Ark's group on the model page. Its one key pays for image generation, and for chat
+/// and web_search while it chats, so it stands apart from the model service rather than among its
+/// providers. Voice has a key of its own, Doubao Voice's.
 /// The address and protocol are the Agent Plan's and are not shown.
 struct ArkSettings: Codable, Equatable, Sendable {
     static let defaultLanguageModel = "doubao-seed-2.0-mini"
@@ -172,11 +174,15 @@ struct SettingsSnapshot: Codable {
     static let defaultPlanetID = "builtin:ember-planet"
     var voice: VoiceConfiguration?
     var ark = ArkSettings()
-    /// The Volcengine Ark key: voice always uses it, and chat and Doubao search do when
-    /// `ark.useForChat` is on.
+    /// The Volcengine Ark key: image generation always uses it, and chat and Doubao search do
+    /// when `ark.useForChat` is on.
     var arkSecretAccount: String?
+    /// Doubao Voice's own key, from the voice page; Live Voice uses no other.
+    var voiceSecretAccount: String?
     /// The keys voice and Volcengine Ark chat kept before the Volcengine Ark group took their
-    /// place. Read only so launch can remove them; once removed they are nil and not written.
+    /// place, both Agent Plan keys. Read only so launch can remove them; once removed they are nil
+    /// and not written. The old voice key's name is not reused for `voiceSecretAccount`, so launch
+    /// never removes the new one.
     var legacyVoiceSecretAccount: String?
     var legacyArkSecretAccount: String?
     /// Every new turn goes to the local model, never the cloud.
@@ -191,6 +197,7 @@ struct SettingsSnapshot: Codable {
     }
     private enum CodingKeys: String, CodingKey {
         case version, activeProvider, providers, selectedPetID, selectedPlanetID, voice, ark, arkSecretAccount, localModelOnly, memoryEnabled
+        case voiceSecretAccount = "doubaoVoiceSecretAccount"
         case legacyVoiceSecretAccount = "voiceSecretAccount", legacyArkSecretAccount
     }
     /// What Volcengine Ark was called when it was one of the model service's providers.
@@ -205,6 +212,7 @@ struct SettingsSnapshot: Codable {
         selectedPlanetID = try values.decodeIfPresent(String.self, forKey: .selectedPlanetID) ?? SettingsSnapshot.defaultPlanetID
         voice = try values.decodeIfPresent(VoiceConfiguration.self, forKey: .voice)
         arkSecretAccount = try values.decodeIfPresent(String.self, forKey: .arkSecretAccount)
+        voiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .voiceSecretAccount)
         legacyVoiceSecretAccount = try values.decodeIfPresent(String.self, forKey: .legacyVoiceSecretAccount)
         legacyArkSecretAccount = try values.decodeIfPresent(String.self, forKey: .legacyArkSecretAccount)
         ark = try values.decodeIfPresent(ArkSettings.self, forKey: .ark) ?? ArkSettings()

@@ -308,7 +308,7 @@ import Observation
             } catch {
                 guard self.isCurrent(call), self.recognitionID == recognition else { return }
                 if error is CancellationError { return }
-                self.end(error: (error as? SettingsError) ?? SettingsError(localized: "语音识别失败，请检查网络和套餐。"),
+                self.end(error: (error as? SettingsError) ?? SettingsError(localized: "语音识别失败，请检查网络和额度。"),
                          reason: .recognitionFailed)
             }
         }
@@ -756,7 +756,7 @@ import Observation
             guard let self, self.probeID == id, self.testing else { return }
             self.cancelTest()
             VoiceDiagnostics.shared.record("连接测试", "FAIL", "总时限已到，取消 ASR/TTS 和播放器")
-            self.testResult = SettingsTestLine(text: String(localized: "语音测试超时，请检查网络和套餐后重试。"), succeeded: false)
+            self.testResult = SettingsTestLine(text: String(localized: "语音测试超时，请检查网络和额度后重试。"), succeeded: false)
         }
         probe = Task { [weak self] in
             guard let self else { return }

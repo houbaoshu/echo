@@ -50,7 +50,7 @@ https://github.com/user-attachments/assets/36226fe2-f1e8-4589-aa79-90b95919d719
 
 **设置**
 - 模型服务：DeepSeek、OpenAI、Ollama，或任意兼容 Chat Completions / Responses 的服务
-- 火山方舟单独一组：一把 Key 同时用于 Live Voice、文生图，并可选用于对话和联网搜索
+- 火山方舟单独一组：一把 Key 用于文生图，并可选用于对话和联网搜索；Live Voice 在「语音」页单独填豆包语音的 Key
 - 记忆页可查看、打开编辑或关闭记忆；精灵和星球页管理导入的形象
 - API Key 存在钥匙串里
 
@@ -158,7 +158,7 @@ TestPlans/        三个测试计划
 | --- | --- |
 | 对话（默认） | DeepSeek；也可选 OpenAI、Ollama 或任意兼容服务 |
 | 对话（可选） | 火山方舟 Agent Plan，默认 `doubao-seed-2.0-mini`，走 Responses 协议 |
-| Live Voice | 豆包流式语音识别（Seed ASR）与双向流式语音合成（Seed TTS 2.0），使用火山方舟 Key |
+| Live Voice | 豆包流式语音识别（Seed ASR）与双向流式语音合成（Seed TTS 2.0），使用豆包语音的 Key |
 | 联网搜索 | 豆包搜索或 DeepSeek 搜索，随“用于对话”的服务切换 |
 | 文生图 | 豆包 Seedream，默认 `doubao-seedream-5.0-pro` |
 | 离线 | 本地 Qwen3 0.6B（Core AI） |
@@ -180,7 +180,7 @@ TestPlans/        三个测试计划
 1. 克隆仓库，用 Xcode 打开 `Echo.xcodeproj`。Swift Package 依赖 [coreai-models](https://github.com/houbaoshu/coreai-models) 会自动拉取。
 2. 在 `Echo.xcconfig` 里把 `DEVELOPMENT_TEAM` 改成你自己的团队 ID。全部构建设置集中在这个文件里，`project.pbxproj` 只保留结构。
 3. 选择 `Echo` scheme，构建运行。Rust 静态库由构建阶段的 `scripts/xcode-cargo-build.sh` 自动编译。
-4. 首次启动后，在设置的「模型」页填写模型服务的 API Key；要用 Live Voice、文生图或豆包搜索，再填写火山方舟的 Key。
+4. 首次启动后，在设置的「模型」页填写模型服务的 API Key；要用文生图或豆包搜索，再填写火山方舟的 Key；要用 Live Voice，在「语音」页填写豆包语音的 Key（需在豆包语音控制台开通流式语音识别和语音合成）。
 
 **可选：本地模型**
 

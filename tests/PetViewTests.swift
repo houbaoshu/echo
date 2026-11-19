@@ -1437,7 +1437,7 @@ extension ConversationViewTests {
         let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
-        settings.arkAPIKey = "voice"; settings.saveArk()
+        settings.voiceAPIKey = "voice"; settings.saveVoice()
         voice.attach(workspace: workspace, settings: settings)
         defer { workspace.shutdown(); voice.shutdown() }
         let read = workspace.selected!
@@ -1511,7 +1511,7 @@ extension ConversationViewTests {
         let workspace = WorkspaceStore(voice: voice, harnessFactory: { idleAgent() })
         let settings = SettingsStore(secrets: ComposerSecrets())
         settings.draft.model = "test"; settings.apiKey = "test"; settings.save()
-        settings.arkAPIKey = "voice"; settings.saveArk()
+        settings.voiceAPIKey = "voice"; settings.saveVoice()
         let companion = CompanionController(petStore: pet, workspace: workspace, settings: settings,
                                             defaults: EchoTestResources.defaults())
         return (companion, workspace, voice)

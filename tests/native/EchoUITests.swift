@@ -638,19 +638,29 @@ import XCTest
             XCTAssertTrue(row("语音").isSelected)
             let speaker = app.textFields["voiceSettings.speaker"]
             XCTAssertTrue(speaker.waitForExistence(timeout: 3))
-            speaker.click(); try press(app, "a", .command); try type("saved-speaker", into: speaker, of: app)
+            // Edits delete the fixture's last character: a key no input method composes, and no
+            // text has to be typed or pasted.
+            let original = try XCTUnwrap(speaker.value as? String)
+            let saved = String(original.dropLast()), unsaved = String(original.dropLast(2))
+            speaker.click(); try press(app, .rightArrow, .command); try press(app, .delete)
+            wait("The voice ID loses its last character") { speaker.value as? String == saved }
+            let save = app.buttons["voiceSettings.save"]
+            wait("An edited voice ID can be saved") { save.isEnabled }
+            // Return saves the voice group, as its Save button does.
             try press(app, .return)
-            // The voice ID saves itself on Return and on leaving the field; the page has no save button.
-            XCTAssertFalse(app.buttons["voiceSettings.save"].exists)
-            XCTAssertEqual(speaker.value as? String, "saved-speaker")
-            try press(app, "a", .command); try type("unsaved-speaker", into: speaker, of: app)
+            wait("Return saves the voice ID") { !save.isEnabled }
+            XCTAssertEqual(speaker.value as? String, saved)
+            // Return leaves the field's text selected, as AppKit does on ending an edit; move to its
+            // end again so Delete removes one character, not all of them.
+            try press(app, .rightArrow, .command); try press(app, .delete)
+            wait("The voice ID is edited again") { speaker.value as? String == unsaved && save.isEnabled }
             try press(app, "w", .command)
             wait("Closing settings leaves the conversation editable") { !sections.exists }
             composerPoint(app).click(); try type("conversation stays editable", in: app)
             XCTAssertEqual(composer(app).value as? String, "conversation stays editable")
             try press(app, ",", .command)
             XCTAssertTrue(speaker.waitForExistence(timeout: 3))
-            XCTAssertEqual(speaker.value as? String, "unsaved-speaker")
+            XCTAssertEqual(speaker.value as? String, unsaved)
             XCTAssertTrue(row("语音").isSelected)
             try press(app, .escape)
             wait("Escape closes settings independently") { !sections.exists }

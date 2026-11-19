@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     settings.arkAPIKey = "offline-fixture"
                     settings.saveArk()
+                    settings.voiceAPIKey = "offline-fixture"
+                    settings.saveVoice()
                     let pets = PetCatalog(settings: settings,
                         builtinRoot: Bundle.main.resourceURL?.appendingPathComponent("pets"),
                         importedRoot: root.appendingPathComponent("pets"))

@@ -81,17 +81,17 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
     /// cancellation can tell this client's own teardown from a fault it discovered.
     private var closing = false
     init(path: String, resource: String, key: String) throws {
-        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !key.hasLineBreak else { throw SettingsError.arkKeyMissing }
+        guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !key.hasLineBreak else { throw SettingsError.voiceKeyMissing }
         isTTS = path.hasPrefix("tts")
         label = isTTS ? "TTS" : "ASR"
         let connectID = UUID().uuidString
         connection = String(connectID.prefix(8))
-        VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "\(label) [\(connection)] path=/api/v3/plan/\(path) resource=\(resource)")
+        VoiceDiagnostics.shared.record("2 服务初始化", "PASS", "\(label) [\(connection)] path=/api/v3/\(path) resource=\(resource)")
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 86400
         session = URLSession(configuration: config, delegate: VoiceSocketDelegate(label: label, connection: connection),
                              delegateQueue: nil)
-        var request = URLRequest(url: URL(string: "wss://openspeech.bytedance.com/api/v3/plan/\(path)")!)
+        var request = URLRequest(url: URL(string: "wss://openspeech.bytedance.com/api/v3/\(path)")!)
         request.setValue(key, forHTTPHeaderField: "X-Api-Key")
         request.setValue(resource, forHTTPHeaderField: "X-Api-Resource-Id")
         request.setValue(connectID, forHTTPHeaderField: "X-Api-Connect-Id")
@@ -188,14 +188,14 @@ final class VoiceSocketDelegate: NSObject, URLSessionWebSocketDelegate, Sendable
         log("FAIL", "上报 HTTP=\(httpStatus) close=\(task.closeCode.rawValue) \(counters)；\(VoiceDiagnostics.reason(error))")
         if let http = task.response as? HTTPURLResponse {
             switch http.statusCode {
-            case 401, 403: return SettingsError(localized: "语音鉴权失败，请检查设置的模型页里火山方舟的 API Key 和套餐权限。")
-            case 429: return SettingsError(localized: "语音请求受限或套餐额度不足，请稍后重试。")
+            case 401, 403: return SettingsError(localized: "语音鉴权失败，请检查设置的语音页里豆包语音的 API Key，以及是否已开通语音识别和语音合成。")
+            case 429: return SettingsError(localized: "语音请求受限或额度不足，请稍后重试。")
             case 400, 404: return SettingsError(localized: "语音接口或参数不可用，请检查语音配置。")
             case 101: break
-            default: return SettingsError(localized: "语音连接失败（HTTP \(http.statusCode)），请检查接口和套餐状态。")
+            default: return SettingsError(localized: "语音连接失败（HTTP \(http.statusCode)），请检查接口和服务状态。")
             }
         }
-        return (error as? SettingsError) ?? SettingsError(localized: "语音连接中断（网络错误 \((error as NSError).code)，关闭码 \(task.closeCode.rawValue)），请检查网络、设备和套餐状态后重新开始。")
+        return (error as? SettingsError) ?? SettingsError(localized: "语音连接中断（网络错误 \((error as NSError).code)，关闭码 \(task.closeCode.rawValue)），请检查网络、设备和服务状态后重新开始。")
     }
 }
 
@@ -331,7 +331,7 @@ extension VoiceSynthesizing {
     private func expect(_ event: Int, socket: VoiceSocket, session: String? = nil) async throws {
         let frame = try await socket.receive()
         guard frame.event == event, session == nil || frame.sessionID == session else {
-            throw SettingsError(localized: "语音合成会话未能建立（事件 \(frame.event ?? -1)），请检查音色与套餐权限。")
+            throw SettingsError(localized: "语音合成会话未能建立（事件 \(frame.event ?? -1)），请检查音色与服务权限。")
         }
     }
     func run(configuration: VoiceConfiguration, key: String, text: AsyncThrowingStream<String, Error>,
@@ -365,7 +365,7 @@ extension VoiceSynthesizing {
                         let frame = try await socket.receive(timeout: 120)
                         try Task.checkCancellation()
                         guard frame.sessionID == sessionID else { throw SettingsError(localized: "语音合成返回了不匹配的会话。") }
-                        if frame.event == 153 || frame.event == 151 { throw SettingsError(localized: "语音合成未完成，请检查音色与套餐额度。") }
+                        if frame.event == 153 || frame.event == 151 { throw SettingsError(localized: "语音合成未完成，请检查音色与额度。") }
                         if frame.type == 11, frame.event == 352 {
                             receivedAudio = receivedAudio || !frame.payload.isEmpty
                             chunks += 1; bytes += frame.payload.count
